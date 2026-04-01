@@ -21,7 +21,8 @@
       "sftp",
       "git-push",
       "git-receive-pack",
-      "git-send-pack"
+      "git-send-pack",
+      "git-remote"
     ],
     "add_deny_access": [
       "~/.ssh",
@@ -37,7 +38,10 @@
       "~/.npmrc",
       "~/.pypirc",
       "~/.composer/auth.json",
-      "~/.config/composer/auth.json"
+      "~/.config/composer/auth.json",
+      "~/.docker/config.json",
+      "~/.kube/config",
+      "~/.config/gh"
     ]
   },
   "filesystem": {

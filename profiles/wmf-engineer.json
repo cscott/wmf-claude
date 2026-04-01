@@ -67,7 +67,9 @@
       "*.wikisource.org",
       "*.wikinews.org",
       "*.wikiversity.org",
-      "*.wikifunctions.org"
+      "*.wikifunctions.org",
+      "codesearch.wmcloud.org",
+      "codesearch-backend.wmcloud.org"
     ]
   },
   "workdir": { "access": "readwrite" },

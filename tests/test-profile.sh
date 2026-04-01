@@ -7,10 +7,11 @@
 #
 # Default profile: profiles/wmf-engineer.json
 
-set -euo pipefail
+set -uo pipefail
 
 PROFILE="${1:-profiles/wmf-engineer.json}"
 WORKDIR="$(pwd)"
+HOME="${HOME:-/root}"
 PASS=0
 FAIL=0
 
@@ -32,14 +33,18 @@ assert_status() {
 # nono may emit log lines to stdout before the JSON, so we extract only the JSON object.
 why_path() {
   local path="$1" op="$2"
-  nono why --silent --profile "$PROFILE" --workdir "$WORKDIR" --path "$path" --op "$op" --json 2>/dev/null \
-    | sed -n '/^{/,/^}/p' | jq -r '.status'
+  local output
+  output=$(nono why --silent --profile "$PROFILE" --workdir "$WORKDIR" --path "$path" --op "$op" --json 2>/dev/null \
+    | sed -n '/^{/,/^}/p') || true
+  echo "$output" | jq -r '.status' 2>/dev/null || echo "error"
 }
 
 why_host() {
   local host="$1"
-  nono why --silent --profile "$PROFILE" --workdir "$WORKDIR" --host "$host" --json 2>/dev/null \
-    | sed -n '/^{/,/^}/p' | jq -r '.status'
+  local output
+  output=$(nono why --silent --profile "$PROFILE" --workdir "$WORKDIR" --host "$host" --json 2>/dev/null \
+    | sed -n '/^{/,/^}/p') || true
+  echo "$output" | jq -r '.status' 2>/dev/null || echo "error"
 }
 
 # Run a command inside the sandbox, return 0 if it succeeds, 1 if blocked

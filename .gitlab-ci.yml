@@ -1,0 +1,17 @@
+variables:
+  GIT_SUBMODULE_STRATEGY: recursive
+
+stages:
+  - test
+
+test-profiles:
+  stage: test
+  image: debian:bookworm-slim
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq wget curl jq >/dev/null 2>&1
+    - VERSION=$(curl -sI https://github.com/always-further/nono/releases/latest | grep -i location | grep -oP 'v\K[0-9.]+')
+    - ARCH=$(dpkg --print-architecture)
+    - wget -q "https://github.com/always-further/nono/releases/download/v${VERSION}/nono-cli_${VERSION}_${ARCH}.deb"
+    - dpkg -i "nono-cli_${VERSION}_${ARCH}.deb"
+  script:
+    - ./tests/test-profile.sh

@@ -1,0 +1,6 @@
+[submodule "mcp-phabricator"]
+	path = mcp-phabricator
+	url = https://gitlab.wikimedia.org/egardner/mcp-phabricator
+[submodule "gerrit-mcp-server"]
+	path = gerrit-mcp-server
+	url = https://gerrit.googlesource.com/gerrit-mcp-server

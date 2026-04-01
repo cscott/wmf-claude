@@ -1,0 +1,42 @@
+#!/bin/bash
+# Wrapper to launch Claude Code inside the wmf-engineer nono sandbox
+# with MCP server access pre-configured.
+#
+# Usage:
+#   bin/claude                           # launch in current directory
+#   bin/claude --allow ~/src/other-repo  # grant access to additional paths
+#
+# All flags before "--" are passed to nono. All flags after are passed to claude.
+# If no "--" is given, all arguments are passed to claude.
+set -eo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+
+NONO_ARGS=()
+CLAUDE_ARGS=()
+SEEN_SEPARATOR=false
+
+for arg in "$@"; do
+  if [[ "$arg" == "--" ]]; then
+    SEEN_SEPARATOR=true
+    continue
+  fi
+  if $SEEN_SEPARATOR; then
+    CLAUDE_ARGS+=("$arg")
+  else
+    NONO_ARGS+=("$arg")
+  fi
+done
+
+# If no separator was used, treat all args as claude args
+if ! $SEEN_SEPARATOR; then
+  CLAUDE_ARGS=("${NONO_ARGS[@]}")
+  NONO_ARGS=()
+fi
+
+exec nono run --profile wmf-engineer \
+  --allow-cwd \
+  --allow "$SCRIPT_DIR/mcp-phabricator" \
+  --allow "$SCRIPT_DIR/gerrit-mcp-server" \
+  "${NONO_ARGS[@]}" \
+  -- claude "${CLAUDE_ARGS[@]}"

@@ -1,0 +1,75 @@
+{
+  "extends": "claude-code",
+  "meta": {
+    "name": "wmf-engineer",
+    "version": "0.1.0",
+    "description": "Wikimedia Foundation engineer profile for Claude Code with WMF-specific domain access and destructive action prevention",
+    "author": "Kosta Harlan <kharlan@wikimedia.org>"
+  },
+  "security": {
+    "groups": [],
+    "signal_mode": "isolated",
+    "capability_elevation": false
+  },
+  "policy": {
+    "add_deny_commands": [
+      "ssh",
+      "ssh-keygen",
+      "ssh-agent",
+      "ssh-add",
+      "scp",
+      "sftp",
+      "git-push",
+      "git-receive-pack",
+      "git-send-pack"
+    ],
+    "add_deny_access": [
+      "~/.ssh",
+      "~/.env",
+      "~/.bashrc",
+      "~/.bash_profile",
+      "~/.bash_history",
+      "~/.zshrc",
+      "~/.zprofile",
+      "~/.zsh_history",
+      "~/.profile",
+      "~/.netrc",
+      "~/.npmrc",
+      "~/.pypirc",
+      "~/.composer/auth.json",
+      "~/.config/composer/auth.json"
+    ]
+  },
+  "filesystem": {
+    "read": [],
+    "allow": []
+  },
+  "network": {
+    "block": false,
+    "network_profile": "minimal",
+    "allow_domain": [
+      "*.wikimedia.org",
+      "*.wikipedia.org",
+      "*.mediawiki.org",
+      "*.wikidata.org",
+      "*.wiktionary.org",
+      "docs.python.org",
+      "docs.rs",
+      "doc.rust-lang.org",
+      "developer.mozilla.org",
+      "nodejs.org",
+      "pkg.go.dev",
+      "www.php.net",
+      "php.net",
+      "*.wikibooks.org",
+      "*.wikiquote.org",
+      "*.wikivoyage.org",
+      "*.wikisource.org",
+      "*.wikinews.org",
+      "*.wikiversity.org",
+      "*.wikifunctions.org"
+    ]
+  },
+  "workdir": { "access": "readwrite" },
+  "interactive": true
+}

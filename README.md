@@ -10,16 +10,16 @@ cd wmf-nono
 ./setup.sh
 ```
 
-Then launch Claude Code from your project directory:
+Then add the alias printed by `setup.sh` to your shell config and launch Claude Code from your project directory:
 
 ```bash
-~/path/to/wmf-nono/bin/claude
+wmf-claude
 ```
 
-To grant access to additional paths (e.g. MCP servers cloned elsewhere), pass nono flags before `--`:
+To grant access to additional paths, pass nono flags before `--`:
 
 ```bash
-~/path/to/wmf-nono/bin/claude --allow ~/src/mcp-phabricator --read ~/src/mediawiki/LocalSettings.php -- --resume
+wmf-claude --read ~/src/mediawiki/LocalSettings.php -- --resume
 ```
 
 Flags before `--` go to nono, flags after go to claude. If there's no `--`, everything goes to claude.

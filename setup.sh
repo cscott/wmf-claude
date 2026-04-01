@@ -6,70 +6,88 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-echo "=== wmf-nono setup ==="
+bold()  { printf '\033[1m%s\033[0m' "$*"; }
+dim()   { printf '\033[2m%s\033[0m' "$*"; }
+green() { printf '\033[32m%s\033[0m' "$*"; }
+red()   { printf '\033[31m%s\033[0m' "$*"; }
+
+step() {
+  printf '\n  %s %s\n' "$(bold ">")" "$(bold "$1")"
+}
+
+ok() {
+  printf '    %s %s\n' "$(green "+")" "$1"
+}
+
+fail() {
+  printf '    %s %s\n' "$(red "!")" "$1"
+}
+
 echo ""
+bold "  wmf-nono setup"; echo ""
+dim "  Security sandbox for Claude Code at WMF"; echo ""
 
 # Check dependencies
+step "Checking dependencies"
+MISSING=()
 for cmd in nono node npm python3 claude; do
-  if ! command -v "$cmd" &>/dev/null; then
-    echo "Error: $cmd is required but not found."
-    exit 1
+  if command -v "$cmd" &>/dev/null; then
+    ok "$cmd $(dim "($(command -v "$cmd"))")"
+  else
+    fail "$cmd not found"
+    MISSING+=("$cmd")
   fi
 done
 
+if [[ ${#MISSING[@]} -gt 0 ]]; then
+  echo ""
+  fail "Missing: ${MISSING[*]}"
+  exit 1
+fi
+
 # Install nono profile
-echo "--- Installing nono profile ---"
+step "Installing nono profile"
 mkdir -p ~/.config/nono/profiles
 cp "$SCRIPT_DIR/profiles/"*.json ~/.config/nono/profiles/
-echo "Installed profiles to ~/.config/nono/profiles/"
+ok "Copied to ~/.config/nono/profiles/"
 
 # Install mcp-phabricator dependencies
-echo ""
-echo "--- Setting up mcp-phabricator ---"
+step "Setting up mcp-phabricator"
 (cd "$SCRIPT_DIR/mcp-phabricator" && npm install --silent)
-echo "mcp-phabricator ready"
+ok "Dependencies installed"
 
 # Install gerrit-mcp-server dependencies
-echo ""
-echo "--- Setting up gerrit-mcp-server ---"
+step "Setting up gerrit-mcp-server"
 if command -v uv &>/dev/null; then
   (cd "$SCRIPT_DIR/gerrit-mcp-server" && uv venv -q --allow-existing && uv pip install -q -r requirements.txt)
 else
   (cd "$SCRIPT_DIR/gerrit-mcp-server" && python3 -m venv .venv && .venv/bin/pip install -q -r requirements.txt)
 fi
-echo "gerrit-mcp-server ready"
+ok "Dependencies installed"
 
-# Register MCP servers globally in Claude Code
+# Register MCP servers
+step "Registering MCP servers"
 echo ""
-echo "--- Registering MCP servers ---"
-echo ""
-read -rp "Phabricator username: " PHAB_USER
+read -rp "    Phabricator username: " PHAB_USER
 if [[ -z "$PHAB_USER" ]]; then
-  echo "Error: Phabricator username is required."
+  fail "Phabricator username is required."
   exit 1
 fi
 
-claude mcp remove --scope user phabricator 2>/dev/null || true
+claude mcp remove --scope user phabricator >/dev/null 2>&1 || true
 claude mcp add --scope user phabricator \
   -e "PHABRICATOR_USERNAME=$PHAB_USER" \
-  -- node "$SCRIPT_DIR/mcp-phabricator/src/index.js"
-echo "Registered phabricator MCP server"
+  -- node "$SCRIPT_DIR/mcp-phabricator/src/index.js" >/dev/null 2>&1
+ok "phabricator registered"
 
-claude mcp remove --scope user gerrit 2>/dev/null || true
+claude mcp remove --scope user gerrit >/dev/null 2>&1 || true
 claude mcp add --scope user gerrit \
   -e "PYTHONPATH=$SCRIPT_DIR/gerrit-mcp-server/" \
   -- "$SCRIPT_DIR/gerrit-mcp-server/.venv/bin/python" \
-  "$SCRIPT_DIR/gerrit-mcp-server/gerrit_mcp_server/main.py" stdio
-echo "Registered gerrit MCP server"
+  "$SCRIPT_DIR/gerrit-mcp-server/gerrit_mcp_server/main.py" stdio >/dev/null 2>&1
+ok "gerrit registered"
 
-echo ""
-echo "=== Setup complete ==="
-echo ""
-echo "Run Claude Code with:"
-echo "  $SCRIPT_DIR/bin/claude"
-echo ""
-
-# Detect shell and suggest alias
+# Done
 SHELL_NAME="$(basename "$SHELL")"
 case "$SHELL_NAME" in
   zsh)  RC_FILE="~/.zshrc" ;;
@@ -77,6 +95,8 @@ case "$SHELL_NAME" in
   *)    RC_FILE="your shell config" ;;
 esac
 
-echo "To create a global alias, add this to $RC_FILE:"
 echo ""
-echo "  alias wmf-claude='$SCRIPT_DIR/bin/claude'"
+echo "  $(green "Done.") Add this to $RC_FILE:"
+echo ""
+echo "    alias wmf-claude='$SCRIPT_DIR/bin/claude'"
+echo ""

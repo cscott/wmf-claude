@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-This repo contains [nono](https://github.com/anthropics/nono) security sandbox profiles for Wikimedia Foundation engineers using AI coding agents. It also bundles MCP servers (Phabricator, Gerrit) as git submodules.
+This repo contains [nono](https://github.com/always-further/nono) security sandbox profiles for Wikimedia Foundation engineers using AI coding agents. It also bundles MCP servers (Phabricator, Gerrit) as git submodules.
 
 ## Structure
 

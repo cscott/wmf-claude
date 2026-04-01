@@ -1,9 +1,12 @@
 # wmf-nono
 
-[Nono](https://github.com/anthropics/nono) security profiles for
-Wikimedia Foundation engineers using AI coding agents.
+Use [Claude Code](https://claude.ai/code) safely as a
+Wikimedia Foundation engineer.
 
-## Quick start
+Three commands to get a sandboxed Claude Code with
+Phabricator and Gerrit integration, access to Wikimedia
+domains and language docs, and reduced risk of accidental
+pushes or credential exposure:
 
 ```bash
 git clone --recurse-submodules \
@@ -12,86 +15,78 @@ cd wmf-nono
 ./setup.sh
 ```
 
-Then add the alias printed by `setup.sh` to your shell config
-and launch Claude Code from your project directory:
+Add the alias printed by setup, then from any project:
 
 ```bash
 wmf-claude
 ```
 
-To grant access to additional paths, pass nono flags before `--`:
+## What you get
+
+- **Phabricator MCP** — look up tasks, search, read
+  comments directly from Claude
+- **Gerrit MCP** — query changes and reviews
+- **Wikimedia network access** — all `*.wikimedia.org`,
+  `*.mediawiki.org`, `*.wikipedia.org`, codesearch, and
+  the rest of the wiki family
+- **Documentation sites** — php.net, MDN, docs.python.org,
+  docs.rs, doc.rust-lang.org, nodejs.org, pkg.go.dev
+- **Working directory read+write** — Claude can edit your
+  code, run tests, use git (but not push)
+
+## What's blocked
+
+- `git push`, `ssh`, `scp`, `sftp` — no accidental pushes
+  or remote access
+- `~/.ssh`, `~/.gnupg`, `~/.netrc`, `~/.npmrc`,
+  `~/.pypirc`, `~/.composer/auth.json` — credentials stay
+  private
+- `~/.bashrc`, `~/.zshrc`, `~/.profile` (and variants) —
+  shell configs can't be read or modified
+- Destructive commands (`rm`, `sudo`, `chmod`, `mv`, etc.)
+  are blocked by the base nono profile
+- All network access except LLM APIs and the allowlisted
+  domains above
+
+## Granting additional access
+
+Pass nono flags before `--` to allow extra paths:
 
 ```bash
-wmf-claude --read ~/src/mediawiki/LocalSettings.php -- --resume
+wmf-claude --read ~/src/schemas/event/secondary
 ```
 
 Flags before `--` go to nono, flags after go to claude.
 If there's no `--`, everything goes to claude.
 
-## What the wrapper does
+## VS Code
 
-`bin/claude` runs Claude Code inside the `wmf-engineer` nono
-sandbox with read+write access to the bundled MCP servers.
-Engineers can pass additional `--allow`/`--read` flags for paths
-outside the working directory (e.g. MCP servers installed
-elsewhere, config files).
+Set the process wrapper in your VS Code settings to use
+the sandbox with the Claude Code extension:
 
-## Profiles
+```json
+{
+  "claudeCode.claudeProcessWrapper":
+    "/absolute/path/to/wmf-nono/bin/claude"
+}
+```
 
-### wmf-engineer
+## How it works
 
-Claude Code profile for WMF engineers. Extends the built-in
-`claude-code` profile with:
+This repo uses [nono](https://github.com/always-further/nono),
+a capability-based sandbox, to run Claude Code with
+restricted filesystem, network, and command access.
 
-**Blocked commands:** ssh, ssh-keygen, ssh-agent, ssh-add, scp,
-sftp, git-push, git-receive-pack, git-send-pack
+`setup.sh` installs the nono profile, sets up both MCP
+servers (npm + pip/uv), registers them globally in Claude
+Code, and prints a shell alias. `bin/claude` is a thin
+wrapper that launches `nono run` with the right profile
+and grants access to the bundled MCP server submodules.
 
-**Denied paths:** `~/.ssh`, `~/.env`, `~/.bashrc`, `~/.zshrc`,
-`~/.profile` (and variants), `~/.netrc`, `~/.npmrc`, `~/.pypirc`,
-`~/.composer/auth.json`
+## Troubleshooting
 
-**Network access:** LLM APIs (via `minimal` network profile) plus:
-- Wikimedia domains: `*.wikimedia.org`, `*.wikipedia.org`,
-  `*.mediawiki.org`, `*.wikidata.org`, `*.wiktionary.org`,
-  `*.wikibooks.org`, `*.wikiquote.org`, `*.wikivoyage.org`,
-  `*.wikisource.org`, `*.wikinews.org`, `*.wikiversity.org`,
-  `*.wikifunctions.org`
-- Documentation sites: MDN, php.net, docs.python.org, docs.rs,
-  doc.rust-lang.org, nodejs.org, pkg.go.dev
-
-**Filesystem:**
-- Working directory: read+write
-- All other paths denied unless explicitly granted via
-  `--allow` or `--read` flags
-
-**Inherited protections (from claude-code/default):**
-- No access to credentials, keychains, browser data
-- Destructive commands blocked (rm, sudo, chmod, mv, cp, pip,
-  npm, brew, etc.)
-- File deletion blocked outside user-writable paths
-
-## What setup.sh does
-
-1. Installs the `wmf-engineer` nono profile to
-   `~/.config/nono/profiles/`
-2. Installs dependencies for the bundled MCP servers
-   (npm for phabricator, pip/uv for gerrit)
-3. Prompts for your Phabricator username
-4. Registers both MCP servers globally in Claude Code
-   (`claude mcp add --scope user`)
-5. Prints a shell alias you can add for easy access
-
-## Bundled MCP servers
-
-Included as git submodules and registered globally by
-`./setup.sh`:
-
-- `mcp-phabricator/` — Phabricator MCP server (Node.js) —
-  requires your Phabricator username
-- `gerrit-mcp-server/` — Gerrit MCP server (Python)
-
-If you previously configured these MCP servers at project scope,
-remove the old configs to avoid conflicts:
+If you previously configured Phabricator or Gerrit MCP
+servers at project scope, remove them to avoid conflicts:
 
 ```bash
 claude mcp remove gerrit -s local

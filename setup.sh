@@ -75,16 +75,14 @@ if [[ ! -f "$GERRIT_CONFIG" ]]; then
       "name": "Wikimedia",
       "external_url": "https://gerrit.wikimedia.org/r/",
       "authentication": {
-        "type": "git_cookies",
-        "gitcookies_path": "~/.gitcookies"
+        "type": "none"
       }
     },
     {
       "name": "Wikimedia (without /r/)",
       "external_url": "https://gerrit.wikimedia.org/",
       "authentication": {
-        "type": "git_cookies",
-        "gitcookies_path": "~/.gitcookies"
+        "type": "none"
       }
     }
   ]

@@ -91,6 +91,9 @@ for f in .env .bashrc .bash_profile .bash_history .zshrc .zprofile .zsh_history 
 done
 assert_status "~/.composer/auth.json read denied" "denied" "$(why_path "$HOME/.composer/auth.json" read)"
 assert_status "~/.config/composer/auth.json read denied" "denied" "$(why_path "$HOME/.config/composer/auth.json" read)"
+assert_status "~/.docker/config.json read denied" "denied" "$(why_path "$HOME/.docker/config.json" read)"
+assert_status "~/.kube/config read denied" "denied" "$(why_path "$HOME/.kube/config" read)"
+assert_status "~/.config/gh read denied" "denied" "$(why_path "$HOME/.config/gh" read)"
 
 # --- Filesystem: working directory (via nono run, since workdir grants are runtime-only) ---
 echo ""
@@ -117,7 +120,7 @@ fi
 echo ""
 echo "--- Blocked commands ---"
 
-for cmd in ssh scp sftp; do
+for cmd in ssh scp sftp git-remote; do
   if run_sandboxed "$cmd" 2>/dev/null; then
     red "FAIL: $cmd should be blocked"
     ((FAIL++))

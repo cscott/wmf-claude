@@ -34,6 +34,25 @@ if ! $SEEN_SEPARATOR; then
   NONO_ARGS=()
 fi
 
+# Reject flags that broadly weaken the sandbox
+for arg in "${NONO_ARGS[@]}"; do
+  case "$arg" in
+    --capability-elevation|--trust-override)
+      echo "error: $arg is not allowed — it would weaken the sandbox" >&2
+      exit 1
+      ;;
+  esac
+done
+
+for arg in "${CLAUDE_ARGS[@]}"; do
+  case "$arg" in
+    --dangerously-skip-permissions)
+      echo "error: $arg is not allowed — it would bypass permission checks" >&2
+      exit 1
+      ;;
+  esac
+done
+
 exec nono run --profile wmf-engineer \
   --allow-cwd \
   --allow "$SCRIPT_DIR/mcp-phabricator" \

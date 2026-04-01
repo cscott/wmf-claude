@@ -53,7 +53,7 @@ ok "Copied to ~/.config/nono/profiles/"
 
 # Install mcp-phabricator dependencies
 step "Setting up mcp-phabricator"
-(cd "$SCRIPT_DIR/mcp-phabricator" && npm install --silent)
+(cd "$SCRIPT_DIR/mcp-phabricator" && npm install --silent --ignore-scripts)
 ok "Dependencies installed"
 
 # Install gerrit-mcp-server dependencies

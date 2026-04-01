@@ -98,6 +98,19 @@ claude mcp remove gerrit -s local
 claude mcp remove phabricator -s local
 ```
 
+## VS Code extension
+
+To use the nono sandbox with the Claude Code VS Code extension,
+set the process wrapper in your VS Code settings:
+
+```json
+{
+  "claudeCode.claudeProcessWrapper": "/absolute/path/to/wmf-nono/bin/claude"
+}
+```
+
+Replace the path with where you cloned wmf-nono.
+
 ## Running tests
 
 ```bash

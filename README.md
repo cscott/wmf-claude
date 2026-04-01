@@ -53,6 +53,10 @@ wmf-claude
 Pass nono flags before `--` to allow extra paths:
 
 ```bash
+# Read+write access to another directory
+wmf-claude --allow ~/src/mediawiki --
+
+# Read-only access
 wmf-claude --read ~/src/schemas/event/secondary
 ```
 

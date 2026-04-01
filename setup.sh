@@ -65,6 +65,36 @@ else
 fi
 ok "Dependencies installed"
 
+GERRIT_CONFIG="$SCRIPT_DIR/gerrit-mcp-server/gerrit_mcp_server/gerrit_config.json"
+if [[ ! -f "$GERRIT_CONFIG" ]]; then
+  cat > "$GERRIT_CONFIG" <<'CONF'
+{
+  "default_gerrit_base_url": "https://gerrit.wikimedia.org/r/",
+  "gerrit_hosts": [
+    {
+      "name": "Wikimedia",
+      "external_url": "https://gerrit.wikimedia.org/r/",
+      "authentication": {
+        "type": "git_cookies",
+        "gitcookies_path": "~/.gitcookies"
+      }
+    },
+    {
+      "name": "Wikimedia (without /r/)",
+      "external_url": "https://gerrit.wikimedia.org/",
+      "authentication": {
+        "type": "git_cookies",
+        "gitcookies_path": "~/.gitcookies"
+      }
+    }
+  ]
+}
+CONF
+  ok "Created gerrit_config.json for Wikimedia Gerrit"
+else
+  ok "gerrit_config.json already exists"
+fi
+
 # Register MCP servers
 step "Registering MCP servers"
 echo ""

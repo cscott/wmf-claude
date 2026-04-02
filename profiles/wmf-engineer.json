@@ -74,7 +74,8 @@
       "*.wikifunctions.org",
       "codesearch.wmcloud.org",
       "codesearch-backend.wmcloud.org"
-    ]
+    ],
+    "port_allow": [3306]
   },
   "workdir": { "access": "readwrite" },
   "interactive": true

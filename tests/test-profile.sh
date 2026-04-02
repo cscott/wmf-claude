@@ -142,6 +142,22 @@ else
   ((FAIL++))
 fi
 
+# --- Network: localhost port access ---
+echo ""
+echo "--- Network: localhost port access ---"
+
+# Verify profile declares port_allow for MySQL.
+# Runtime enforcement of port_allow works on macOS but not yet on Linux
+# (nono blocks localhost connections under seccomp/landlock even with port_allow set).
+# TODO: replace with a real sandboxed connection test once nono supports port_allow on Linux.
+if jq -e '.network.port_allow | index(3306)' "$PROFILE" >/dev/null 2>&1; then
+  green "PASS: port_allow includes 3306 (MySQL)"
+  ((PASS++))
+else
+  red "FAIL: port_allow should include 3306 for local MySQL access"
+  ((FAIL++))
+fi
+
 # --- Network: blocked hosts ---
 echo ""
 echo "--- Network: arbitrary hosts denied ---"

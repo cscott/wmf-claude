@@ -1,5 +1,5 @@
 #!/bin/bash
-# Setup script for wmf-nono.
+# Setup script for wmf-claude.
 # Installs the nono profile, MCP server dependencies, and registers
 # MCP servers globally in Claude Code.
 set -euo pipefail
@@ -24,7 +24,7 @@ fail() {
 }
 
 echo ""
-bold "  wmf-nono setup"; echo ""
+bold "  wmf-claude setup"; echo ""
 dim "  Security sandbox for Claude Code at WMF"; echo ""
 
 # Check dependencies

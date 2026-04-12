@@ -1,4 +1,4 @@
-# wmf-nono
+# wmf-claude
 
 Use [Claude Code](https://claude.ai/code) safely as a
 Wikimedia Foundation engineer.
@@ -10,8 +10,8 @@ pushes or credential exposure:
 
 ```bash
 git clone --recurse-submodules \
-  https://gitlab.wikimedia.org/kharlan/wmf-nono.git
-cd wmf-nono
+  https://gitlab.wikimedia.org/kharlan/wmf-claude.git
+cd wmf-claude
 ./setup.sh
 ```
 
@@ -94,7 +94,7 @@ the sandbox with the Claude Code extension:
 ```json
 {
   "claudeCode.claudeProcessWrapper":
-    "/absolute/path/to/wmf-nono/bin/claude"
+    "/absolute/path/to/wmf-claude/bin/claude"
 }
 ```
 

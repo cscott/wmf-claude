@@ -52,6 +52,8 @@
     "block": false,
     "network_profile": "minimal",
     "allow_domain": [
+      "console.anthropic.com",
+      "claude.ai",
       "*.wikimedia.org",
       "*.wikipedia.org",
       "*.mediawiki.org",

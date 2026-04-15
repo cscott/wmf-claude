@@ -61,7 +61,7 @@ step "Setting up gerrit-mcp-server"
 if command -v uv &>/dev/null; then
   (cd "$SCRIPT_DIR/gerrit-mcp-server" && uv venv -q --allow-existing && uv pip install -q -r requirements.txt)
 else
-  (cd "$SCRIPT_DIR/gerrit-mcp-server" && python3 -m venv .venv && .venv/bin/pip install -q -r requirements.txt)
+  (cd "$SCRIPT_DIR/gerrit-mcp-server" && python3 -m venv .venv && .venv/bin/pip install -q --no-deps -r requirements.txt)
 fi
 ok "Dependencies installed"
 

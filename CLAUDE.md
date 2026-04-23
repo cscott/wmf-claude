@@ -37,7 +37,7 @@ Tests cannot run inside a nono sandbox (nested sandboxing doesn't work). Run dir
 
 ## Key Design Decisions
 
-- Blocks SSH and git push to prevent accidental pushes to Gerrit or production infrastructure
+- Blocks SSH push at the network layer — ports 22 and 29418 aren't in the `minimal` profile allowlist, so `git push` to any SSH remote (including `ssh://gerrit.wikimedia.org:29418`) fails. HTTPS push to `gerrit.wikimedia.org` is reachable at the network layer (same host+port as the Gerrit REST API used by the MCP server), but requires a Gerrit-generated HTTP password that WMF engineers on the standard SSH workflow don't have configured. `github.com` isn't in the allowlist, so GitHub push is also blocked. Residual gap: HTTPS push to a Wikimedia host (e.g. `gitlab.wikimedia.org`) would succeed if the user has credentials in the macOS keychain — `~/.netrc` and `~/.config/gh` are denied, but the keychain is accessible.
 - Denies access to shell configs (`~/.bashrc`, `~/.zshrc`, etc.) and credential files (`~/.netrc`, `~/.npmrc`, `~/.composer/auth.json`) to prevent credential exfiltration
 - Network uses a deny-by-default approach: `minimal` profile (LLM APIs only) plus explicit allowlists for Wikimedia domains and language documentation sites
 - No hardcoded filesystem grants in the profile — `bin/claude` wrapper adds `--allow` for the bundled MCP submodules; engineers can pass additional `--allow`/`--read` flags for other paths

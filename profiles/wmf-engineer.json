@@ -12,18 +12,6 @@
     "capability_elevation": false
   },
   "policy": {
-    "add_deny_commands": [
-      "ssh",
-      "ssh-keygen",
-      "ssh-agent",
-      "ssh-add",
-      "scp",
-      "sftp",
-      "git-push",
-      "git-receive-pack",
-      "git-send-pack",
-      "git-remote"
-    ],
     "add_deny_access": [
       "~/.ssh",
       "~/.env",

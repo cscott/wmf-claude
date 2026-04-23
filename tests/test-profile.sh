@@ -116,16 +116,35 @@ else
   rm -f "$WORKDIR/.test-write-probe"
 fi
 
-# --- Blocked commands ---
+# --- Network: profile allowlist structure ---
+# nono why --host only checks the capability layer, which is blocked for every
+# host on this profile (all traffic goes through the proxy). So to verify the
+# proxy-level allowlist we assert the profile JSON directly.
 echo ""
-echo "--- Blocked commands ---"
+echo "--- Network: profile allowlist structure ---"
 
-for cmd in ssh scp sftp git-remote; do
-  if run_sandboxed "$cmd" 2>/dev/null; then
-    red "FAIL: $cmd should be blocked"
+if jq -e '.network.allow_domain | index("github.com")' "$PROFILE" >/dev/null 2>&1; then
+  red "FAIL: github.com should not be in allow_domain (would enable HTTPS push to GitHub)"
+  ((FAIL++))
+else
+  green "PASS: github.com not in allow_domain"
+  ((PASS++))
+fi
+
+if jq -e '.network.allow_domain | index("*.wikimedia.org")' "$PROFILE" >/dev/null 2>&1; then
+  green "PASS: *.wikimedia.org in allow_domain"
+  ((PASS++))
+else
+  red "FAIL: *.wikimedia.org should be in allow_domain (required for Gerrit MCP)"
+  ((FAIL++))
+fi
+
+for port in 22 29418; do
+  if jq -e ".network.port_allow | index($port)" "$PROFILE" >/dev/null 2>&1; then
+    red "FAIL: port $port should not be in port_allow (would enable SSH push)"
     ((FAIL++))
   else
-    green "PASS: $cmd is blocked"
+    green "PASS: port $port not in port_allow"
     ((PASS++))
   fi
 done

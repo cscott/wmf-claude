@@ -12,7 +12,7 @@ This repo contains [nono](https://github.com/always-further/nono) security sandb
 - `profiles/wmf-engineer.json` — the primary profile, extending the built-in `claude-code` base profile
 - `bin/claude` — wrapper script that launches Claude Code inside the nono sandbox with MCP server access
 - `setup.sh` — installs the nono profile, MCP server dependencies, and registers MCP servers globally in Claude Code
-- `tests/test-profile.sh` — integration tests using `nono why`, `nono policy validate`, and `nono run`
+- `tests/test-profile.sh` — integration tests using `nono why`, `nono profile validate`, and `nono run`
 - `mcp-phabricator/` — Phabricator MCP server submodule (Node.js)
 - `gerrit-mcp-server/` — Gerrit MCP server submodule (Python)
 

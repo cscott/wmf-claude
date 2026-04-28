@@ -30,7 +30,7 @@ dim "  Security sandbox for Claude Code at WMF"; echo ""
 # Check dependencies
 step "Checking dependencies"
 MISSING=()
-for cmd in nono node npm python3 claude; do
+for cmd in nono node npm python3 claude git; do
   if command -v "$cmd" &>/dev/null; then
     ok "$cmd $(dim "($(command -v "$cmd"))")"
   else
@@ -42,6 +42,19 @@ done
 if [[ ${#MISSING[@]} -gt 0 ]]; then
   echo ""
   fail "Missing: ${MISSING[*]}"
+  exit 1
+fi
+
+# Initialize submodules — handles colleagues who cloned without --recurse-submodules
+step "Initializing submodules"
+if [[ -e "$SCRIPT_DIR/.git" ]]; then
+  (cd "$SCRIPT_DIR" && git submodule update --init --recursive --quiet)
+  ok "Submodules ready"
+elif [[ -f "$SCRIPT_DIR/mcp-phabricator/package.json" && -f "$SCRIPT_DIR/gerrit-mcp-server/requirements.txt" ]]; then
+  ok "Submodules present"
+else
+  fail "Submodules missing and this isn't a git checkout."
+  fail "Re-clone with: git clone --recurse-submodules <url>"
   exit 1
 fi
 

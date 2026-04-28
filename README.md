@@ -1,12 +1,30 @@
 # wmf-claude
 
 Use [Claude Code](https://claude.ai/code) safely as a
-Wikimedia Foundation engineer.
-
-Three commands to get a sandboxed Claude Code with
+Wikimedia Foundation engineer: a sandboxed runtime with
 Phabricator and Gerrit integration, access to Wikimedia
 domains and language docs, and reduced risk of accidental
-pushes or credential exposure:
+pushes or credential exposure.
+
+## Prerequisites
+
+Install these before running setup:
+
+- **[nono](https://github.com/always-further/nono)** — the
+  sandbox runtime (0.41 or newer). See nono's README for
+  platform-specific install instructions.
+- **Claude Code** — install via the
+  [official installer](https://docs.claude.com/en/docs/claude-code/setup).
+- **Node.js + npm** — for the Phabricator MCP server.
+- **Python 3** — for the Gerrit MCP server. `uv` is used
+  if available, otherwise `python3 -m venv`.
+- **`jq`** — only needed if you run `./tests/test-profile.sh`.
+
+You'll also need a Phabricator username (the one you log
+into [phabricator.wikimedia.org](https://phabricator.wikimedia.org)
+with) — `setup.sh` will prompt for it.
+
+## Install
 
 ```bash
 git clone --recurse-submodules \
@@ -15,10 +33,32 @@ cd wmf-claude
 ./setup.sh
 ```
 
-Add the alias printed by setup, then from any project:
+Then add this alias to your shell config (`~/.zshrc` or
+`~/.bashrc`) and reload your shell:
+
+```bash
+alias wmf-claude='/absolute/path/to/wmf-claude/bin/claude'
+```
+
+From any project directory:
 
 ```bash
 wmf-claude
+```
+
+## Verify
+
+Confirm the MCP servers registered:
+
+```bash
+wmf-claude mcp list
+```
+
+You should see both `phabricator` and `gerrit`. Optionally
+run the profile tests (requires `jq`):
+
+```bash
+./tests/test-profile.sh
 ```
 
 ## What you get
@@ -36,8 +76,10 @@ wmf-claude
 
 ## What's blocked
 
-- `git push`, `git remote`, `ssh`, `scp`, `sftp` — no
-  accidental pushes, remote URL tampering, or remote access
+- `git remote`, `ssh`, `scp`, `sftp` — no remote URL
+  tampering or remote access
+- SSH-based `git push` (including Gerrit on port 29418
+  and GitHub) — blocked at the network layer
 - `~/.ssh`, `~/.gnupg`, `~/.netrc`, `~/.npmrc`,
   `~/.pypirc`, `~/.composer/auth.json`, `~/.docker/config.json`,
   `~/.kube/config`, `~/.config/gh/` — credentials stay
@@ -48,6 +90,12 @@ wmf-claude
   are blocked by the base nono profile
 - All network access except LLM APIs and the allowlisted
   domains above
+
+**Push caveat:** HTTPS push to a Wikimedia host (e.g.
+`gitlab.wikimedia.org`) can still succeed if you have a
+token stored in your macOS keychain — the keychain is
+reachable inside the sandbox. The standard WMF Gerrit
+SSH workflow is fully blocked.
 
 **Note:** Claude can make HTTP requests to allowlisted
 Wikimedia domains. While credential files are blocked,
@@ -109,6 +157,17 @@ servers (npm + pip/uv), registers them globally in Claude
 Code, and prints a shell alias. `bin/claude` is a thin
 wrapper that launches `nono run` with the right profile
 and grants access to the bundled MCP server submodules.
+
+## Keeping it up to date
+
+Pull the latest changes and re-run setup to pick up new
+profile rules or MCP server updates:
+
+```bash
+git pull
+git submodule update --init --recursive
+./setup.sh
+```
 
 ## Troubleshooting
 

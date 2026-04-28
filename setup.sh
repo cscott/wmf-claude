@@ -47,11 +47,11 @@ fi
 
 # Initialize submodules — handles colleagues who cloned without --recurse-submodules
 step "Initializing submodules"
-if [[ -e "$SCRIPT_DIR/.git" ]]; then
+if [[ -f "$SCRIPT_DIR/mcp-phabricator/package.json" && -f "$SCRIPT_DIR/gerrit-mcp-server/requirements.txt" ]]; then
+  ok "Submodules present"
+elif [[ -e "$SCRIPT_DIR/.git" ]]; then
   (cd "$SCRIPT_DIR" && git submodule update --init --recursive --quiet)
   ok "Submodules ready"
-elif [[ -f "$SCRIPT_DIR/mcp-phabricator/package.json" && -f "$SCRIPT_DIR/gerrit-mcp-server/requirements.txt" ]]; then
-  ok "Submodules present"
 else
   fail "Submodules missing and this isn't a git checkout."
   fail "Re-clone with: git clone --recurse-submodules <url>"

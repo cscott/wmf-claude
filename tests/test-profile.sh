@@ -1,6 +1,6 @@
 #!/bin/bash
 # Integration tests for nono profiles.
-# Requires: nono, jq
+# Requires: nono >= 0.41, jq
 #
 # Usage:
 #   ./tests/test-profile.sh [profile-path]
@@ -58,7 +58,7 @@ echo ""
 
 # --- Structural validation ---
 echo "--- Structural validation ---"
-if nono policy validate "$PROFILE" >/dev/null 2>&1; then
+if nono profile validate "$PROFILE" >/dev/null 2>&1; then
   green "PASS: profile is valid JSON with valid group references"
   ((PASS++))
 else

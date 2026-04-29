@@ -33,16 +33,21 @@ cd wmf-claude
 ./setup.sh
 ```
 
-Then add this alias to your shell config (`~/.zshrc` or
-`~/.bashrc`) and reload your shell:
+`setup.sh` will append a `claude` alias to your shell
+config (`~/.zshrc` or `~/.bashrc`) — reload your shell to
+pick it up:
 
 ```bash
-alias claude='/absolute/path/to/wmf-claude/bin/claude'
+source ~/.zshrc   # or ~/.bashrc
 ```
 
-This shadows the system `claude` binary so plain `claude`
-runs sandboxed by default. To bypass the sandbox for a
-single invocation, use `\claude` or `command claude`.
+The alias shadows the system `claude` binary so plain
+`claude` runs sandboxed by default. To bypass the sandbox
+for a single invocation, use `\claude` or `command claude`.
+
+If you already have a different `alias claude=` in your
+rc file, setup will leave it alone and print the line for
+you to install manually.
 
 From any project directory:
 
@@ -158,7 +163,8 @@ restricted filesystem, network, and command access.
 
 `setup.sh` installs the nono profile, sets up both MCP
 servers (npm + pip/uv), registers them globally in Claude
-Code, and prints a shell alias. `bin/claude` is a thin
+Code, and appends a shell alias to `~/.zshrc` or
+`~/.bashrc`. `bin/claude` is a thin
 wrapper that launches `nono run` with the right profile
 and grants access to the bundled MCP server submodules.
 

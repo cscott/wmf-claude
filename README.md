@@ -37,13 +37,17 @@ Then add this alias to your shell config (`~/.zshrc` or
 `~/.bashrc`) and reload your shell:
 
 ```bash
-alias wmf-claude='/absolute/path/to/wmf-claude/bin/claude'
+alias claude='/absolute/path/to/wmf-claude/bin/claude'
 ```
+
+This shadows the system `claude` binary so plain `claude`
+runs sandboxed by default. To bypass the sandbox for a
+single invocation, use `\claude` or `command claude`.
 
 From any project directory:
 
 ```bash
-wmf-claude
+claude
 ```
 
 ## Verify
@@ -51,7 +55,7 @@ wmf-claude
 Confirm the MCP servers registered:
 
 ```bash
-wmf-claude mcp list
+claude mcp list
 ```
 
 You should see both `phabricator` and `gerrit`. Optionally
@@ -108,16 +112,16 @@ Pass nono flags before `--` to allow extra paths:
 
 ```bash
 # Read+write access to another directory
-wmf-claude --allow ~/src/mediawiki --
+claude --allow ~/src/mediawiki --
 
 # Read-only access
-wmf-claude --read ~/src/schemas/event/secondary
+claude --read ~/src/schemas/event/secondary
 
 # Allow a normally-blocked command for a session
-wmf-claude --allow-command rm --
+claude --allow-command rm --
 
 # Override a deny rule for a specific path
-wmf-claude --override-deny ~/.kube/config \
+claude --override-deny ~/.kube/config \
   --read-file ~/.kube/config --
 ```
 

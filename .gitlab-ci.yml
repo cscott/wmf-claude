@@ -13,5 +13,7 @@ test-profiles:
     - ARCH=$(dpkg --print-architecture)
     - wget -q "https://github.com/always-further/nono/releases/download/v${VERSION}/nono-cli_${VERSION}_${ARCH}.deb"
     - dpkg -i "nono-cli_${VERSION}_${ARCH}.deb"
+    # The claude-code base profile lives in the always-further/claude pack as of nono 0.44.
+    - nono pull always-further/claude --silent
   script:
     - ./tests/test-profile.sh

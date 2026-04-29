@@ -109,6 +109,11 @@ fi
 # Register MCP servers
 step "Registering MCP servers"
 echo ""
+dim "    The Phabricator MCP server reads phabricator.wikimedia.org"; echo ""
+dim "    anonymously — no auth token, no API key, public data only."; echo ""
+dim "    Your username is used as the default subscriber filter, so"; echo ""
+dim "    queries like \"show my tasks\" return yours by default."; echo ""
+echo ""
 read -rp "    Phabricator username: " PHAB_USER
 if [[ -z "$PHAB_USER" ]]; then
   fail "Phabricator username is required."

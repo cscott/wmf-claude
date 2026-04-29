@@ -11,8 +11,10 @@ pushes or credential exposure.
 Install these before running setup:
 
 - **[nono](https://github.com/always-further/nono)** — the
-  sandbox runtime (0.41 or newer). See nono's README for
-  platform-specific install instructions.
+  sandbox runtime (**0.44 or newer**; 0.44 moved the
+  `claude-code` profile to a registry pack that `setup.sh`
+  pulls). See nono's README for platform-specific install
+  instructions.
 - **Claude Code** — install via the
   [official installer](https://docs.claude.com/en/docs/claude-code/setup).
 - **Node.js + npm** — for the Phabricator MCP server.

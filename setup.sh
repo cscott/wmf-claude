@@ -28,6 +28,7 @@ bold "  wmf-claude setup"; echo ""
 dim "  Security sandbox for Claude Code at WMF"; echo ""
 echo ""
 dim "  This will:"; echo ""
+dim "    - Pull the always-further/claude nono pack (Claude Code integration)"; echo ""
 dim "    - Copy the nono profile to ~/.config/nono/profiles/"; echo ""
 dim "    - Install MCP server dependencies (npm + pip/uv) in this checkout"; echo ""
 dim "    - Register phabricator + gerrit MCP servers globally in Claude Code"; echo ""
@@ -53,6 +54,21 @@ if [[ ${#MISSING[@]} -gt 0 ]]; then
   exit 1
 fi
 
+# nono 0.44 moved the claude-code profile to a registry pack — older versions
+# can't pull packs and won't resolve the base profile our profile inherits from.
+NONO_MIN="0.44.0"
+NONO_VER=$(nono --version 2>/dev/null | awk '{print $2}')
+if [[ -z "$NONO_VER" ]]; then
+  fail "Could not determine nono version from 'nono --version'"
+  exit 1
+fi
+if [[ "$(printf '%s\n%s\n' "$NONO_MIN" "$NONO_VER" | sort -V | head -n1)" != "$NONO_MIN" ]]; then
+  fail "nono $NONO_VER is too old; this repo requires nono $NONO_MIN or newer."
+  fail "Upgrade nono and re-run setup."
+  exit 1
+fi
+ok "nono $NONO_VER (>= $NONO_MIN)"
+
 # Initialize submodules — handles colleagues who cloned without --recurse-submodules
 step "Initializing submodules"
 if [[ -f "$SCRIPT_DIR/mcp-phabricator/package.json" && -f "$SCRIPT_DIR/gerrit-mcp-server/requirements.txt" ]]; then
@@ -64,6 +80,19 @@ else
   fail "Submodules missing and this isn't a git checkout."
   fail "Re-clone with: git clone --recurse-submodules <url>"
   exit 1
+fi
+
+# Pull the claude nono pack (provides Claude Code integration: hooks, base policies)
+step "Pulling always-further/claude nono pack"
+if nono list --installed --silent --json 2>/dev/null | grep -q '"always-further/claude":'; then
+  ok "Already installed"
+else
+  if nono pull always-further/claude --silent; then
+    ok "Pulled always-further/claude"
+  else
+    fail "Failed to pull always-further/claude — check network access to the nono registry"
+    exit 1
+  fi
 fi
 
 # Install nono profile

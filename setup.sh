@@ -26,6 +26,14 @@ fail() {
 echo ""
 bold "  wmf-claude setup"; echo ""
 dim "  Security sandbox for Claude Code at WMF"; echo ""
+echo ""
+dim "  This will:"; echo ""
+dim "    - Copy the nono profile to ~/.config/nono/profiles/"; echo ""
+dim "    - Install MCP server dependencies (npm + pip/uv) in this checkout"; echo ""
+dim "    - Register phabricator + gerrit MCP servers globally in Claude Code"; echo ""
+dim "    - Append a 'claude' alias to ~/.zshrc or ~/.bashrc (skipped if present)"; echo ""
+echo ""
+read -rp "  Press Enter to continue, Ctrl-C to abort: " _
 
 # Check dependencies
 step "Checking dependencies"
@@ -133,19 +141,34 @@ claude mcp add --scope user gerrit \
   "$SCRIPT_DIR/gerrit-mcp-server/gerrit_mcp_server/main.py" stdio >/dev/null 2>&1
 ok "gerrit registered"
 
-# Done
+# Install shell alias
+step "Installing shell alias"
 SHELL_NAME="$(basename "$SHELL")"
 case "$SHELL_NAME" in
-  zsh)  RC_FILE="~/.zshrc" ;;
-  bash) RC_FILE="~/.bashrc" ;;
-  *)    RC_FILE="your shell config" ;;
+  zsh)  RC_PATH="$HOME/.zshrc"  ; RC_DISPLAY="~/.zshrc"  ;;
+  bash) RC_PATH="$HOME/.bashrc" ; RC_DISPLAY="~/.bashrc" ;;
+  *)    RC_PATH=""              ; RC_DISPLAY="your shell config" ;;
 esac
 
+ALIAS_LINE="alias claude='$SCRIPT_DIR/bin/claude'"
+
+if [[ -z "$RC_PATH" ]]; then
+  fail "Unsupported shell ($SHELL_NAME). Add this to $RC_DISPLAY:"
+  echo "      $ALIAS_LINE"
+elif [[ -f "$RC_PATH" ]] && grep -Fxq "$ALIAS_LINE" "$RC_PATH"; then
+  ok "Alias already present in $RC_DISPLAY"
+elif [[ -f "$RC_PATH" ]] && grep -Eq "^[[:space:]]*alias[[:space:]]+claude=" "$RC_PATH"; then
+  fail "A different 'alias claude=' is already in $RC_DISPLAY — leaving it alone."
+  fail "Replace it manually with:"
+  echo "      $ALIAS_LINE"
+else
+  printf '\n# wmf-claude: sandbox claude by default (bypass with \\claude or `command claude`)\n%s\n' "$ALIAS_LINE" >> "$RC_PATH"
+  ok "Added alias to $RC_DISPLAY"
+fi
+
 echo ""
-echo "  $(green "Done.") Add this to $RC_FILE:"
+echo "  $(green "Done.") Restart your shell or run: $(bold "source $RC_DISPLAY")"
 echo ""
-echo "    alias claude='$SCRIPT_DIR/bin/claude'"
-echo ""
-echo "  $(dim "This shadows the system 'claude' binary so 'claude' is sandboxed by default.")"
+echo "  $(dim "The 'claude' alias shadows the system binary so it's sandboxed by default.")"
 echo "  $(dim "Bypass with \\claude or 'command claude' when you need the unsandboxed binary.")"
 echo ""

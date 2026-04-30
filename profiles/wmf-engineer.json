@@ -77,7 +77,8 @@
       "*.wikiversity.org",
       "*.wikifunctions.org",
       "codesearch.wmcloud.org",
-      "codesearch-backend.wmcloud.org"
+      "codesearch-backend.wmcloud.org",
+      "api.minimax.io"
     ],
     "port_allow": [3306]
   },

@@ -192,12 +192,18 @@ elif [[ -f "$RC_PATH" ]] && grep -Eq "^[[:space:]]*alias[[:space:]]+claude=" "$R
   echo "      $ALIAS_LINE"
 else
   printf '\n# wmf-claude: sandbox claude by default (bypass with \\claude or `command claude`)\n%s\n' "$ALIAS_LINE" >> "$RC_PATH"
-  ok "Added alias to $RC_DISPLAY"
+  ok "Added 'claude' alias to $RC_DISPLAY"
 fi
 
 echo ""
 echo "  $(green "Done.") Restart your shell or run: $(bold "source $RC_DISPLAY")"
 echo ""
-echo "  $(dim "The 'claude' alias shadows the system binary so it's sandboxed by default.")"
-echo "  $(dim "Bypass with \\claude or 'command claude' when you need the unsandboxed binary.")"
+echo "  $(bold "Sandboxed claude")"
+echo "  $(dim "  The 'claude' alias shadows the system binary so it's sandboxed by default.")"
+echo "  $(dim "  Bypass with \\claude or 'command claude' when you need the unsandboxed binary.")"
+echo ""
+echo "  $(bold "Plugin (skills + agents)")"
+echo "  $(dim "  The 'claude' alias auto-loads the wmf-claude plugin via --plugin-dir.")"
+echo "  $(dim "  Inside Claude, run") $(bold "/wmf-claude:init-project") $(dim "in any git repo to drop")"
+echo "  $(dim "  a starter CLAUDE.md (add") $(bold "--mediawiki") $(dim "for MediaWiki conventions).")"
 echo ""

@@ -1,0 +1,14 @@
+{
+  "version": 2,
+  "plugins": {
+    "wmf-claude@wikimedia": [
+      {
+        "scope": "user",
+        "installPath": "$HOME/.claude/plugins/cache/wikimedia/wmf-claude/0.1.0",
+        "version": "0.1.0",
+        "installedAt": "$NOW",
+        "lastUpdated": "$NOW"
+      }
+    ]
+  }
+}

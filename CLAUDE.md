@@ -8,13 +8,26 @@ This repo contains [nono](https://github.com/always-further/nono) security sandb
 
 ## Structure
 
-- `profiles/` — nono profile JSON files
-- `profiles/wmf-engineer.json` — the primary profile, extending the built-in `claude-code` base profile
-- `bin/claude` — wrapper script that launches Claude Code inside the nono sandbox with MCP server access
-- `setup.sh` — installs the nono profile, MCP server dependencies, and registers MCP servers globally in Claude Code
-- `tests/test-profile.sh` — integration tests using `nono why`, `nono profile validate`, and `nono run`
-- `mcp-phabricator/` — Phabricator MCP server submodule (Node.js)
-- `gerrit-mcp-server/` — Gerrit MCP server submodule (Python)
+This repo is two artifacts in one tree:
+
+1. A **Claude Code plugin** (`.claude-plugin/plugin.json` plus top-level `skills/`, `agents/`, `hooks/`, `bin/`).
+2. A **nono pack** (`package.json` plus `wiring/`) that wraps the plugin and a security profile, signed at release time and installable via `nono pull`.
+
+- `profiles/wmf-engineer.json` — nono security profile, extends `claude-code` from the `always-further/claude` nono pack
+- `.claude-plugin/plugin.json` — Claude Code plugin manifest (name, version, description)
+- `package.json` — nono pack manifest (artifacts + wiring directives)
+- `skills/<name>/SKILL.md` — namespaced as `/wmf-claude:<name>`
+- `agents/*.md` — auto-invoked by description match
+- `hooks/hooks.json` — registers a `SessionStart` hook that emits WMF-environment context for Claude; references `bin/` via `${CLAUDE_PLUGIN_ROOT}`
+- `bin/claude` — wrapper that launches Claude Code inside the nono sandbox with `--plugin-dir` set
+- `bin/session-start.sh` — emits context for Claude at session start
+- `templates/CLAUDE.md` — starter dropped by the `init-project` skill
+- `templates/mediawiki/{CLAUDE.md,settings.json}` — MediaWiki conventions appended by `init-project --mediawiki`
+- `wiring/*.json` — patches the nono pack merges into `~/.claude/{settings.json,plugins/installed_plugins.json,plugins/known_marketplaces.json}` at install time. Includes `settings-merge.json` with the defense-in-depth deny rules.
+- `setup.sh` — installs the nono profile, MCP server dependencies, and the `claude` shell alias
+- `tests/test-profile.sh` — nono profile / sandbox behavior
+- `tests/test-templates.sh` — validates plugin + pack: skill/agent frontmatter, JSON validity (plugin manifest, hooks, wiring, package.json), package.json artifact paths exist, bin script syntax
+- `mcp-phabricator/`, `gerrit-mcp-server/` — MCP server submodules
 
 ## Profile Schema
 
@@ -30,10 +43,15 @@ Profiles are JSON files with these key sections:
 ## Running Tests
 
 ```bash
-./tests/test-profile.sh
+./tests/test-profile.sh    # nono profile / sandbox behavior
+./tests/test-templates.sh  # bundled skills, agents, settings.json, hooks
 ```
 
-Tests cannot run inside a nono sandbox (nested sandboxing doesn't work). Run directly or in CI.
+`test-profile.sh` cannot run inside a nono sandbox (nested sandboxing doesn't work). Run directly or in CI. `test-templates.sh` is filesystem-only and works anywhere `python3` and `jq` are available.
+
+## Repo location
+
+Currently lives at `gitlab.wikimedia.org/kharlan/wmf-claude` (personal namespace) and is referenced as such throughout the manifests, install instructions, and templates. The eventual home is `gitlab.wikimedia.org/repos/product-safety-and-integrity/wmf-claude`. When that move happens, search-and-replace `kharlan/wmf-claude` across the repo. The nono pack `wiring/` files use `"wikimedia"` as the Claude Code marketplace name, which doesn't have to match the GitLab path; revisit that name choice when the pack is actually published (the symlink path it generates assumes `$NS` matches `"wikimedia"`).
 
 ## Key Design Decisions
 

@@ -53,9 +53,12 @@ for arg in "${CLAUDE_ARGS[@]}"; do
   esac
 done
 
+# Launch claude inside the nono sandbox via launch-claude.sh, which prints
+# the WMF Claude banner after nono's capability table (so it lands right
+# before Claude Code's banner instead of getting scrolled past).
 exec nono run --profile wmf-engineer \
   --allow-cwd \
   --allow "$SCRIPT_DIR/mcp-phabricator" \
   --allow "$SCRIPT_DIR/gerrit-mcp-server" \
   "${NONO_ARGS[@]}" \
-  -- claude "${CLAUDE_ARGS[@]}"
+  -- "$SCRIPT_DIR/bin/launch-claude.sh" --plugin-dir "$SCRIPT_DIR" "${CLAUDE_ARGS[@]}"

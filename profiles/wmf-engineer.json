@@ -29,7 +29,21 @@
       "~/.config/composer/auth.json",
       "~/.docker/config.json",
       "~/.kube/config",
-      "~/.config/gh"
+      "~/.config/gh",
+      "~/.password-store",
+      "~/.config/bitwarden",
+      "~/.config/keepassxc",
+      "~/Library/Application Support/1Password",
+      "~/Library/Application Support/Bitwarden",
+      "~/Library/Application Support/Enpass",
+      "~/Library/Mail",
+      "~/Library/Messages",
+      "~/Library/Application Support/Slack",
+      "~/Library/Application Support/Discord",
+      "~/Library/Application Support/Signal",
+      "~/Library/Application Support/Telegram",
+      "~/.thunderbird",
+      "~/Library/Mobile Documents"
     ]
   },
   "filesystem": {

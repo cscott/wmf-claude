@@ -1,0 +1,10 @@
+{
+  "wikimedia": {
+    "source": {
+      "source": "directory",
+      "path": "$HOME/.claude/plugins/marketplaces/wikimedia"
+    },
+    "installLocation": "$HOME/.claude/plugins/marketplaces/wikimedia",
+    "lastUpdated": "$NOW"
+  }
+}

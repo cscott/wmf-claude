@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(vendor/bin/phpunit:*)",
+      "Bash(TMPDIR=* vendor/bin/phpunit:*)",
+      "Bash(MW_SKIP_EXTERNAL_DEPENDENCIES=* vendor/bin/phpunit:*)",
+      "Bash(TMPDIR=* MW_SKIP_EXTERNAL_DEPENDENCIES=* vendor/bin/phpunit:*)",
+      "Bash(composer phpcs:*)",
+      "Bash(composer lint:*)",
+      "Bash(composer phan:*)",
+      "Bash(composer fix:*)",
+      "Bash(composer phpunit:*)",
+      "Bash(npm run lint:*)",
+      "Bash(npm run lint:fix:*)",
+      "Bash(php -l:*)",
+      "Bash(php maintenance/run.php:*)",
+      "Bash(vendor/bin/phpcs:*)",
+      "Bash(vendor/bin/phpcbf:*)",
+      "Bash(GIT_SEQUENCE_EDITOR=* git rebase:*)"
+    ]
+  }
+}

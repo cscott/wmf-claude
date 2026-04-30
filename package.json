@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "name": "wmf-claude",
+  "description": "Wikimedia Foundation Claude Code plugin and matching nono profile. Ships skills, agents, hooks for WMF engineering workflows, and the wmf-engineer security profile.",
+  "license": "Apache-2.0",
+  "platforms": ["macos", "linux"],
+  "min_nono_version": "0.44.0",
+  "artifacts": [
+    { "type": "profile", "path": "profiles/wmf-engineer.json", "install_as": "wmf-engineer" },
+    { "type": "plugin", "path": ".claude-plugin/plugin.json" },
+    { "type": "plugin", "path": "hooks/hooks.json" },
+    { "type": "plugin", "path": "bin/session-start.sh" },
+    { "type": "plugin", "path": "bin/launch-claude.sh" },
+    { "type": "plugin", "path": "skills/write-commit-msg/SKILL.md" },
+    { "type": "plugin", "path": "skills/write-phab-task/SKILL.md" },
+    { "type": "plugin", "path": "skills/review-patch/SKILL.md" },
+    { "type": "plugin", "path": "skills/init-project/SKILL.md" },
+    { "type": "plugin", "path": "skills/run-tests/SKILL.md" },
+    { "type": "plugin", "path": "skills/test-coverage/SKILL.md" },
+    { "type": "plugin", "path": "skills/lint/SKILL.md" },
+    { "type": "plugin", "path": "skills/manual-test/SKILL.md" },
+    { "type": "plugin", "path": "skills/compare-rebase/SKILL.md" },
+    { "type": "plugin", "path": "agents/gerrit-reviewer.md" },
+    { "type": "plugin", "path": "agents/jupyter-notebook.md" },
+    { "type": "plugin", "path": "agents/mediawiki-dev.md" },
+    { "type": "plugin", "path": "agents/mediawiki-explore.md" },
+    { "type": "plugin", "path": "agents/test-writer.md" },
+    { "type": "plugin", "path": "templates/CLAUDE.md" },
+    { "type": "plugin", "path": "templates/mediawiki/CLAUDE.md" },
+    { "type": "plugin", "path": "templates/mediawiki/settings.json" },
+    { "type": "plugin", "path": "wiring/marketplace.json" },
+    { "type": "plugin", "path": "wiring/known-marketplaces.json" },
+    { "type": "plugin", "path": "wiring/installed-plugin.json" },
+    { "type": "plugin", "path": "wiring/enabled-plugin.json" },
+    { "type": "plugin", "path": "wiring/settings-merge.json" }
+  ],
+  "wiring": [
+    {
+      "type": "symlink",
+      "link": "$HOME/.claude/plugins/marketplaces/$NS/plugins/wmf-claude",
+      "target": "$PACK_DIR"
+    },
+    {
+      "type": "write_file",
+      "source": "wiring/marketplace.json",
+      "dest": "$HOME/.claude/plugins/marketplaces/$NS/.claude-plugin/marketplace.json"
+    },
+    {
+      "type": "symlink",
+      "link": "$HOME/.claude/plugins/cache/$NS/wmf-claude/0.1.0",
+      "target": "$PACK_DIR"
+    },
+    {
+      "type": "json_merge",
+      "file": "$HOME/.claude/plugins/known_marketplaces.json",
+      "patch": "wiring/known-marketplaces.json"
+    },
+    {
+      "type": "json_merge",
+      "file": "$HOME/.claude/plugins/installed_plugins.json",
+      "patch": "wiring/installed-plugin.json"
+    },
+    {
+      "type": "json_merge",
+      "file": "$HOME/.claude/settings.json",
+      "patch": "wiring/enabled-plugin.json"
+    },
+    {
+      "type": "json_merge",
+      "file": "$HOME/.claude/settings.json",
+      "patch": "wiring/settings-merge.json"
+    }
+  ]
+}

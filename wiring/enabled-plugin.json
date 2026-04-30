@@ -1,0 +1,5 @@
+{
+  "enabledPlugins": {
+    "wmf-claude@wikimedia": true
+  }
+}

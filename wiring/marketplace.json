@@ -1,0 +1,21 @@
+{
+  "$schema": "https://schemas.claude.com/plugin-marketplace.json",
+  "name": "wikimedia",
+  "description": "Wikimedia Foundation Claude Code plugin marketplace",
+  "owner": { "name": "Wikimedia Foundation" },
+  "plugins": [
+    {
+      "name": "wmf-claude",
+      "description": "Skills and agents for WMF engineers using Claude Code.",
+      "version": "0.1.0",
+      "author": { "name": "Wikimedia Foundation" },
+      "source": "./plugins/wmf-claude",
+      "category": "developer-tools",
+      "strict": false,
+      "homepage": "https://gitlab.wikimedia.org/kharlan/wmf-claude",
+      "repository": "https://gitlab.wikimedia.org/kharlan/wmf-claude",
+      "license": "Apache-2.0",
+      "keywords": ["wikimedia", "wmf", "mediawiki", "gerrit", "phabricator"]
+    }
+  ]
+}

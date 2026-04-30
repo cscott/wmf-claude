@@ -1,0 +1,12 @@
+{
+  "name": "wmf-claude",
+  "version": "0.1.0",
+  "description": "Claude Code plugin for Wikimedia Foundation engineers: skills for commit messages, Phabricator tasks, and Gerrit patch review; agents for code review, MediaWiki development, and analytics notebooks.",
+  "author": {
+    "name": "Wikimedia Foundation"
+  },
+  "homepage": "https://gitlab.wikimedia.org/kharlan/wmf-claude",
+  "repository": "https://gitlab.wikimedia.org/kharlan/wmf-claude",
+  "license": "Apache-2.0",
+  "keywords": ["wikimedia", "wmf", "mediawiki", "gerrit", "phabricator"]
+}

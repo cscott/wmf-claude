@@ -1,0 +1,4 @@
+# Override global ~/.gitignore_global which excludes CLAUDE.md.
+# These template files are intentionally tracked.
+!templates/CLAUDE.md
+!templates/mediawiki/CLAUDE.md

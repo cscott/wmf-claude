@@ -95,6 +95,21 @@ assert_status "~/.docker/config.json read denied" "denied" "$(why_path "$HOME/.d
 assert_status "~/.kube/config read denied" "denied" "$(why_path "$HOME/.kube/config" read)"
 assert_status "~/.config/gh read denied" "denied" "$(why_path "$HOME/.config/gh" read)"
 
+# Password managers and secret stores not covered by claude-code's deny_credentials group.
+assert_status "~/.password-store read denied" "denied" "$(why_path "$HOME/.password-store" read)"
+assert_status "~/.config/bitwarden read denied" "denied" "$(why_path "$HOME/.config/bitwarden" read)"
+assert_status "~/.config/keepassxc read denied" "denied" "$(why_path "$HOME/.config/keepassxc" read)"
+assert_status "~/Library/Application Support/1Password read denied" "denied" "$(why_path "$HOME/Library/Application Support/1Password" read)"
+
+# Mail and messaging clients (info-leak class).
+assert_status "~/Library/Mail read denied" "denied" "$(why_path "$HOME/Library/Mail" read)"
+assert_status "~/Library/Messages read denied" "denied" "$(why_path "$HOME/Library/Messages" read)"
+assert_status "~/Library/Application Support/Slack read denied" "denied" "$(why_path "$HOME/Library/Application Support/Slack" read)"
+assert_status "~/Library/Application Support/Signal read denied" "denied" "$(why_path "$HOME/Library/Application Support/Signal" read)"
+
+# iCloud Drive sync.
+assert_status "~/Library/Mobile Documents read denied" "denied" "$(why_path "$HOME/Library/Mobile Documents" read)"
+
 # --- Filesystem: working directory (via nono run, since workdir grants are runtime-only) ---
 echo ""
 echo "--- Filesystem: working directory access ---"

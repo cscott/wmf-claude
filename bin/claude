@@ -56,8 +56,14 @@ done
 # Launch claude inside the nono sandbox via launch-claude.sh, which prints
 # the WMF Claude banner after nono's capability table (so it lands right
 # before Claude Code's banner instead of getting scrolled past).
+#
+# --read on the wmf-claude root grants Claude (and its hook subprocesses)
+# read access to the plugin's bin/, skills/, agents/, hooks/, templates/,
+# and wiring/. The two MCP submodule grants below override that with r+w
+# for the npm/venv directories that actually need to write.
 exec nono run --profile wmf-engineer \
   --allow-cwd \
+  --read "$SCRIPT_DIR" \
   --allow "$SCRIPT_DIR/mcp-phabricator" \
   --allow "$SCRIPT_DIR/gerrit-mcp-server" \
   "${NONO_ARGS[@]}" \

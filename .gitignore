@@ -2,3 +2,9 @@
 # These template files are intentionally tracked.
 !templates/CLAUDE.md
 !templates/mediawiki/CLAUDE.md
+
+# chrome-devtools-mcp install: package.json + package-lock.json are tracked
+# so `npm ci` is reproducible across engineers. node_modules and the
+# runtime-generated MCP config are not.
+chrome-devtools-mcp/node_modules/
+chrome-devtools-mcp/mcp-config.json

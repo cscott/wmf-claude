@@ -23,7 +23,10 @@ When changing one layer, consider whether the other should change too.
   domains, `codesearch{,-backend}.wmcloud.org`, language doc sites
   (`php.net`, MDN, `docs.python.org`, `docs.rs`, `doc.rust-lang.org`,
   `nodejs.org`, `pkg.go.dev`), `api.minimax.io`.
-- `network.open_port: [3306]` — local MariaDB connections allowed.
+- `network.open_port: [3306]` — local MariaDB connections allowed. Port 9222
+  (chrome-devtools CDP) is **not** in the static profile; `bin/claude --chrome`
+  passes `--open-port 9222` per-invocation so plain `bin/claude` sessions
+  cannot reach a leftover test Chrome.
 - SSH push (port 22, including Gerrit's 29418) is unreachable. HTTPS push to
   Wikimedia hosts is reachable but requires a Gerrit HTTP password most
   engineers don't have. GitHub push is unreachable (`github.com` not
@@ -36,6 +39,7 @@ When changing one layer, consider whether the other should change too.
 - Password managers: `~/.password-store`, `~/.config/{bitwarden,keepassxc}`, `~/Library/Application Support/{1Password,Bitwarden,Enpass}`.
 - Private comms: `~/Library/{Mail,Messages}`, `~/.thunderbird`, `~/Library/Application Support/{Slack,Discord,Signal,Telegram}`.
 - iCloud Drive: `~/Library/Mobile Documents`.
+- Additional Chromium-based browser profile dirs: `~/Library/Application Support/{Chromium,BraveSoftware,Vivaldi,com.operasoftware.Opera}`. Defense in depth for the optional `chrome-devtools` MCP — the sandboxed MCP server could in principle read those paths directly off disk, and these denies remove that vector. The base `claude-code` profile we extend already inherits the `deny_browser_data_macos` group, which covers Chrome, Firefox, Edge, Arc, Brave Browser, and Safari; we add only the Chromium derivatives that group misses. (Note: `BraveSoftware` is also a path correction — the upstream group denies `~/Library/Application Support/Brave Browser`, but the actual macOS storage path is `BraveSoftware/Brave-Browser`. Both are listed for belt-and-suspenders coverage of older and current Brave installs.)
 
 ## Tool-level denies (`wiring/settings-merge.json`)
 
@@ -118,6 +122,108 @@ stored for Wikimedia services. Mitigations are layered, not absolute:
   `--allow`/`--read` flags for other paths.
 - `bin/claude` rejects `--capability-elevation`, `--trust-override`, and
   `--dangerously-skip-permissions` to prevent runtime sandbox weakening.
+
+## chrome-devtools MCP — attach mode
+
+> **Local-dev only.** chrome-devtools support is wired up by `setup.sh`, not
+> by the signed nono pack — `wiring/` does not install `bin/launch-test-chrome`,
+> the `chrome-devtools-mcp/` install dir, or any chrome-related Claude Code
+> settings. Engineers who installed via `nono pull` will see the `manual-test`
+> skill listed but neither `bin/claude --chrome` nor the MCP itself; the
+> SessionStart hook is conditional on `mcp__chrome-devtools__*` tools being
+> present so it stays quiet for those sessions. If/when the pack ships
+> chrome-devtools support, revisit this section and the wiring directives.
+
+The optional `chrome-devtools` MCP runs the *server* inside the sandbox but
+its *Chrome* outside. Chrome cannot run inside the wmf-engineer profile —
+it calls `IONotificationPortCreate(kIOMainPortDefault)` during early init,
+and when IOKit is denied at the Mach layer (which the base `claude-code`
+profile does, since LLM API talkers don't need driver access) the call
+returns NULL and Chrome segfaults before it ever paints a pixel. Allowing
+IOKit broadly to fix this would hand any prompt-injected agent driver-
+level capability — too big a grant for one MCP.
+
+Instead: `bin/launch-test-chrome` starts Chrome unsandboxed with a fresh
+`mktemp -d` user-data-dir and `--remote-debugging-port=9222
+--remote-debugging-address=127.0.0.1`. The address pin matters: with the
+port flag alone, some Chrome builds bound the CDP listener on 0.0.0.0,
+which would expose the unauthenticated debugging socket to the LAN.
+
+**Per-session opt-in.** The MCP is **not** registered globally with `claude
+mcp add`. Instead, `bin/claude --chrome`:
+
+- adds `--open-port 9222` to the nono invocation so the sandbox can reach
+  the CDP socket only for this session
+- passes `--mcp-config` so the chrome-devtools tools are only present when
+  asked for
+- grants the sandbox read+write on the install dir
+
+Sessions launched without `--chrome` have no chrome-devtools MCP loaded
+*and* cannot reach 127.0.0.1:9222 even via raw `Bash(curl:*)`. The CDP-
+controlled-browser attack surface is present only when an engineer is
+actively running a manual test in *this* session.
+
+**Supply-chain pinning.** `chrome-devtools-mcp` is pinned to a single
+version in `chrome-devtools-mcp/package.json` and `package-lock.json`
+(both tracked in git). `setup.sh` runs `npm ci --ignore-scripts`, which
+reproduces node_modules from the lockfile and refuses any `postinstall`
+hook from the package or its deps. The package currently bundles its
+runtime dependencies (puppeteer-core, etc.) into the published tarball,
+so pinning the one version pins the whole tree. `setup.sh` enforces
+this as a checked invariant: after `npm ci`, it asserts exactly one
+top-level package directory under `node_modules/` and fails the install
+if upstream ever stops bundling — review the new tree before bumping
+the pin.
+
+**What this preserves:**
+
+- Fresh per-launch `mktemp -d` user-data-dir at mode 0700 — the testing
+  Chrome has no cookies, saved passwords, or history from the engineer's
+  regular browsing. The dir is removed when Chrome exits via the cleanup
+  trap, so cookies / Service Workers / localStorage / IndexedDB set
+  during one session don't carry into the next. (SIGKILL bypasses the
+  trap and leaks the dir; `setup.sh` sweeps stale `wmf-claude-chrome.*`
+  dirs older than a day at install time as a safety net.)
+- The MCP server is still sandboxed. Anything *it* tries to do (reading
+  files, hitting the network, spawning processes) is bounded by the same
+  rules as the rest of the agent.
+
+**What this gives up — and what's left as residual risk:**
+
+- Pages loaded in the attached Chrome have **unrestricted outbound
+  network**. The nono network allowlist applies to the MCP server, not to
+  the externally-launched Chrome. A page loaded by Chrome (or arbitrary
+  JS run via `mcp__chrome-devtools__evaluate_script`) can fetch from any
+  domain. Mitigations: prompt discipline (the `manual-test` skill says to
+  only navigate to authorized URLs), per-session opt-in (the MCP is gone
+  in the next session), and Chrome hardening flags
+  (`--disable-background-networking`, `--no-pings`, `--disable-sync`,
+  `--disable-component-update`) that disable Chrome's own background
+  chatter even if the agent isn't navigating anywhere yet.
+- The CDP endpoint on `127.0.0.1:9222` is **unauthenticated**. Any
+  process running as the engineer can connect and drive the test Chrome
+  (run JS, exfiltrate cookies, navigate). Chrome's `--remote-debugging-
+  port` does enforce a `Host:` header check that mitigates DNS rebinding
+  from a page in the engineer's *other* browser, but this is a hardening
+  layer rather than an absolute boundary. `chrome-devtools-mcp` doesn't
+  expose a pipe transport (`--browserUrl`/`--wsEndpoint`/`--autoConnect`
+  only), so we can't move CDP off a listening socket without changing
+  upstream. Rationale for accepting the risk: the local-process trust
+  boundary here is roughly the same as for the rest of the sandbox
+  (anything running as the engineer can already do a lot).
+- Chrome itself runs with the engineer's normal user privileges and full
+  Mach/IOKit access. nono no longer adds a layer on top while Chrome is
+  running. Chrome's own renderer sandbox still bounds malicious *page*
+  content from escaping the renderer, but it does **not** bound the
+  agent — CDP gives the agent more authority over the browser than any
+  renderer ever has.
+
+The trade is deliberate: the network restriction we lose was a defense
+against a malicious *page* exfiltrating; the fresh-per-launch user-data-
+dir we keep is a defense against a malicious *agent* using the browser
+to read the engineer's authenticated sessions. The latter is the bigger
+threat in the wmf-claude threat model. Per-session opt-in further bounds
+the window during which any of these costs are paid.
 
 ## Open hardening follow-ups
 

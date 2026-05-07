@@ -1,61 +1,56 @@
 ---
-description: Walk Claude through manually testing a feature on the engineer's local MediaWiki instance via a browser-automation CLI. Use when the user wants screenshots, accessibility snapshots, or click-through verification of changes. Requires the user to have a browser-automation tool installed and a local wiki running.
+description: Drive a real Chrome instance against the engineer's local MediaWiki dev wiki via the chrome-devtools MCP. Use when the user wants screenshots, accessibility snapshots, console errors, network traces, or click-through verification of changes. Requires the chrome-devtools MCP installed (via setup.sh) and the session launched with `bin/claude --chrome`, plus a local wiki running.
 argument-hint: "[feature-description or url-path]"
 allowed-tools:
-  - Bash(agent-browser *)
-  - Bash(playwright *)
-  - Bash(npx playwright *)
+  - mcp__chrome-devtools__*
 ---
 
 # Manual Test on a Local Wiki
 
-Drive a browser against the engineer's local MediaWiki dev instance to test a feature. The skill is intentionally generic about the local URL, the wiki credentials, and the browser-automation tool — those vary by setup.
+Drive Chrome against the engineer's local MediaWiki dev instance via the chrome-devtools MCP. The skill is intentionally generic about the local URL and credentials — those vary by setup.
 
-## Inputs the engineer must supply
+## Prerequisites
 
-Before invoking, the engineer should have set up:
+1. **chrome-devtools MCP loaded for this session.** The MCP is opt-in per session — it loads only when the engineer launches with `bin/claude --chrome`. If `mcp__chrome-devtools__*` tools aren't available in the current session, stop and tell the engineer to relaunch with `bin/claude --chrome`. (If they haven't run setup.sh's chrome-devtools step yet, they need to do that first.)
+2. **Chrome running in attach mode.** Chrome can't run inside the sandbox (IOKit is denied — it segfaults at startup). Before driving the browser, the engineer must run `bin/launch-test-chrome` in another terminal — that starts a dedicated Chrome with a fresh `mktemp -d` user-data-dir on `--remote-debugging-port=9222`. If the MCP can't connect, stop and ask the engineer to start it.
+3. **A running local wiki.** MediaWiki-Docker, MWDD, MediaWiki-Vagrant, bare-metal Apache, or a remote dev wiki. Base URL varies — common patterns: `http://localhost:8080`, `https://default.mediawiki.mwdd.localhost`, `http://dev.wiki.local.wmftest.net:8080`.
+4. **Base URL and credentials in the project's `CLAUDE.md`.** Look for a "Local development" or "Manual testing" section. If absent, ask before proceeding.
 
-1. **A browser-automation CLI in PATH.** Common choices: `agent-browser`, `playwright` / `npx playwright`. The skill assumes one of these is installed; if not, ask which tool the engineer uses.
-2. **A running local wiki.** Could be MediaWiki-Docker, MWDD, MediaWiki-Vagrant, a bare-metal Apache/PHP setup, or a remote dev wiki. The base URL varies — common patterns include `http://localhost:8080`, `https://default.mediawiki.mwdd.localhost`, `http://dev.wiki.local.wmftest.net:8080`, or a custom domain like `https://en.mediawiki.localhost`.
-3. **Credentials and the base URL recorded in the project's `CLAUDE.md`.** Look for a "Local development" or "Manual testing" section. If those aren't documented, ask the engineer for the URL and any login details before proceeding.
+## Important
+
+- **The attached Chrome is dedicated to testing and ephemeral.** It uses a fresh per-launch `mktemp -d` user-data-dir that is removed when Chrome exits. There are no cookies, saved logins, or history from the engineer's regular browsing. Don't suggest the engineer log into personal accounts in this Chrome — keep it for the local wiki under test.
+- **Use throwaway / dev-only credentials.** CDP traffic over `127.0.0.1:9222` is unencrypted and unauthenticated — any local process can observe it. Anything you submit through `fill_form` or `evaluate_script` (passwords, tokens) is in the clear on localhost. Never reuse a real Wikimedia password here; use a dev-wiki test account.
+- **Chrome's network is NOT sandboxed.** Pages loaded by this Chrome can fetch from anywhere — the nono network allowlist applies only to the MCP server, not to the externally-launched Chrome. So: only navigate to URLs the engineer has authorized (their local wiki, Wikimedia domains). Don't navigate to arbitrary external sites you encountered in conversation, and don't `evaluate_script` an outbound `fetch()` to a URL the engineer didn't ask for.
 
 ## Workflow
 
-1. **Find the local wiki URL and credentials.** Check the project's `CLAUDE.md` first. If not documented, ask the engineer:
+1. **Find the local wiki URL and credentials.** Check the project's `CLAUDE.md` first. If not documented, ask:
    - "What's the base URL of your local MediaWiki dev instance?"
-   - "Which browser-automation tool do you use (agent-browser / playwright / other)?"
    - If authenticated testing is needed: "What username and password should I log in with?"
 
-2. **Open the target page.** Combine the base URL with the path from `$ARGUMENTS` (or use `/wiki/Main_Page` as a default). Example with agent-browser:
-   ```
-   agent-browser open "<BASE_URL><path>"
-   ```
+2. **Open the target page.** Combine the base URL with the path from `$ARGUMENTS` (default `/wiki/Main_Page`). Use `mcp__chrome-devtools__new_page` (first navigation in a session) or `mcp__chrome-devtools__navigate_page` (subsequent navigations within the same tab).
 
-3. **Capture state.** Take a screenshot, an accessibility snapshot, or page text — whichever is most useful for the feature being tested:
-   ```
-   agent-browser screenshot
-   agent-browser snapshot          # accessibility tree with ref IDs
-   agent-browser get text
-   ```
+3. **Capture state.** Pick whichever is most informative:
+   - `mcp__chrome-devtools__take_snapshot` — accessibility tree with element refs (use these refs to target clicks/fills)
+   - `mcp__chrome-devtools__take_screenshot` — pixel-perfect visual
+   - `mcp__chrome-devtools__list_console_messages` — JS errors and warnings
+   - `mcp__chrome-devtools__list_network_requests` — XHRs, asset loads, status codes
 
-4. **Authenticate if needed.** If the test requires a logged-in user:
-   ```
-   agent-browser open "<BASE_URL>/wiki/Special:UserLogin"
-   agent-browser fill "Username" "<USER>"
-   agent-browser fill "Password" "<PASS>"
-   agent-browser click "Log in"
-   ```
+4. **Authenticate if needed.**
+   - Navigate to `<BASE_URL>/wiki/Special:UserLogin`
+   - `take_snapshot` to get refs for the username and password fields
+   - `mcp__chrome-devtools__fill_form` with both fields, then `mcp__chrome-devtools__click` the submit button by ref
 
-5. **Interact and verify.** Use `click`, `fill`, `hover`, `scroll`, `find role/text/label` etc. to drive the test. After each meaningful step, capture state so the engineer can see what happened.
+5. **Interact and verify.** Use `click`, `hover`, `fill`, `fill_form`, `wait_for` (text or selector), and `evaluate_script` for assertions that need JS. After each meaningful step, re-snapshot or screenshot so the engineer can see what happened.
 
-6. **Report.** Summarize what was tested, what passed, what failed, and link to screenshots or HTML snippets. Note any unexpected behavior.
+6. **Report.** Summarize what was tested, what passed, what failed. Quote relevant console errors or failed network requests. Note any unexpected behavior.
 
 ## Notes
 
-- The browser-automation command surface (`agent-browser`, `playwright`, etc.) varies across tools. The examples above use `agent-browser` syntax; adapt the verbs to whatever the engineer's tool actually supports.
-- If the engineer's local wiki uses a self-signed cert, they will have configured cert trust at the system level (`mkcert` is common). Don't pass `-k`/`--insecure` blindly — ask if a cert error appears.
-- Some setups expose the API at `/w/api.php` (typical) but a few use `/api.php` (containerized). Don't assume.
-- For headless runs, prefer the tool's headless flag rather than starting a visible browser.
+- The MCP refreshes element refs on each `take_snapshot` — refs from one snapshot are not stable across navigations or DOM mutations. Re-snapshot before clicking if the page may have changed.
+- If the local wiki uses a self-signed cert, the engineer should have set up `mkcert` or equivalent system-level trust. The MCP doesn't expose an `--insecure` toggle — if Chrome blocks the page, surface that to the engineer rather than working around it.
+- For complex JS state checks, `evaluate_script` is more reliable than scraping the snapshot (e.g. `() => mw.config.get('wgUserName')`).
+- API endpoint convention: most setups expose `/w/api.php`, some containerized setups use `/api.php`. Don't assume.
 
 ## Input
 

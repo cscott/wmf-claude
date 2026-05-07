@@ -170,6 +170,112 @@ claude mcp add --scope user gerrit \
   "$SCRIPT_DIR/gerrit-mcp-server/gerrit_mcp_server/main.py" stdio >/dev/null 2>&1
 ok "gerrit registered"
 
+# Optional: chrome-devtools MCP for browser-based testing.
+#
+# Per-session opt-in by design. We install the MCP under chrome-devtools-mcp/
+# (pinned via package-lock.json, reproducible with `npm ci --ignore-scripts`)
+# and write an mcp-config.json with absolute paths. The MCP is NOT registered
+# globally with `claude mcp add` — `bin/claude --chrome` passes the config
+# via `--mcp-config` only when the engineer asks for it. That keeps the
+# CDP-controlled-browser attack surface out of every other claude session.
+echo ""
+dim "    The chrome-devtools MCP drives Chrome for browser-based testing"; echo ""
+dim "    (DOM inspection, screenshots, console errors, network traces)."; echo ""
+echo ""
+dim "    Chrome runs OUTSIDE the sandbox via bin/launch-test-chrome —"; echo ""
+dim "    Chrome itself can't run inside (IOKit denied). The launcher creates"; echo ""
+dim "    a fresh --user-data-dir per launch so your real Chrome profile is"; echo ""
+dim "    untouched. The sandboxed MCP attaches over 127.0.0.1:9222."; echo ""
+echo ""
+dim "    Opt-in per session: launch with 'bin/claude --chrome' to enable;"; echo ""
+dim "    plain 'bin/claude' sessions do not load the MCP."; echo ""
+echo ""
+# Remove only a user-scope registration that points at *this repo's* MCP
+# binary — leftovers from earlier setup.sh versions when the per-session
+# opt-in model didn't exist yet. We don't touch unrelated chrome-devtools
+# registrations the engineer may have configured for non-WMF projects.
+EXISTING_CDP="$(claude mcp get --scope user chrome-devtools 2>/dev/null || true)"
+if [[ -n "$EXISTING_CDP" ]] && grep -qF "$SCRIPT_DIR/chrome-devtools-mcp" <<<"$EXISTING_CDP"; then
+  claude mcp remove --scope user chrome-devtools >/dev/null 2>&1 || true
+fi
+
+# Sweep stale per-launch user-data dirs from earlier `bin/launch-test-chrome`
+# runs that exited via SIGKILL (which bypasses the cleanup trap). Bounded to
+# the dedicated mktemp prefix so we never touch unrelated tmp dirs.
+find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'wmf-claude-chrome.*' -type d -mtime +1 -print 2>/dev/null \
+  | while read -r d; do rm -rf "$d"; done
+
+read -rp "    Install chrome-devtools MCP? [y/N] " REG_CDP
+case "$REG_CDP" in
+  y|Y|yes|Yes|YES)
+    CDP_DIR="$SCRIPT_DIR/chrome-devtools-mcp"
+    CDP_BIN="$CDP_DIR/node_modules/.bin/chrome-devtools-mcp"
+    PINNED_VERSION="$(jq -r '.dependencies["chrome-devtools-mcp"]' "$CDP_DIR/package.json")"
+
+    # Reproducible install from the tracked lockfile. --ignore-scripts blocks
+    # any postinstall hook from running with the engineer's full privileges
+    # (an npm-supply-chain mitigation; chrome-devtools-mcp itself does not
+    # need install scripts to function).
+    INSTALLED_VERSION=""
+    if [[ -f "$CDP_DIR/node_modules/chrome-devtools-mcp/package.json" ]]; then
+      INSTALLED_VERSION="$(jq -r .version "$CDP_DIR/node_modules/chrome-devtools-mcp/package.json")"
+    fi
+    if [[ "$INSTALLED_VERSION" == "$PINNED_VERSION" && -x "$CDP_BIN" ]]; then
+      ok "chrome-devtools-mcp@$INSTALLED_VERSION (already installed)"
+    else
+      (cd "$CDP_DIR" && npm ci --ignore-scripts --silent)
+      if [[ ! -x "$CDP_BIN" ]]; then
+        fail "npm ci did not produce $CDP_BIN"
+        exit 1
+      fi
+      ok "chrome-devtools-mcp@$PINNED_VERSION installed"
+    fi
+
+    # Supply-chain invariant: chrome-devtools-mcp ships as a self-contained
+    # tarball that bundles its runtime deps (puppeteer-core, etc.). The
+    # tracked package-lock.json reflects that — only one top-level entry.
+    # If a future upstream version stops bundling, npm ci will populate
+    # transitive deps that nono / Claude permission settings have never
+    # reviewed. Catch that drift here rather than silently letting it ship.
+    TOP_LEVEL_PKGS="$(find "$CDP_DIR/node_modules" -mindepth 1 -maxdepth 1 -type d \
+                       -not -name '.*' | wc -l | tr -d ' ')"
+    if [[ "$TOP_LEVEL_PKGS" != "1" ]]; then
+      fail "expected 1 top-level package under node_modules/, got $TOP_LEVEL_PKGS"
+      fail "  upstream may have stopped bundling deps — review the new tree before bumping the pin"
+      exit 1
+    fi
+    ok "supply-chain invariant: 1 top-level package"
+
+    # Write the MCP config pointing at the installed binary. bin/claude --chrome
+    # passes this via --mcp-config so the MCP is only active for that session.
+    # Flags chosen for the sandboxed/attach-mode setup:
+    #   --browserUrl       attach to the Chrome started by bin/launch-test-chrome
+    #   --no-usage-statistics  don't phone home to Google with usage data
+    #   --no-performance-crux  don't send URLs to Google's CrUX field-data API
+    #   --redactNetworkHeaders redact sensitive headers from MCP responses
+    # jq does the JSON quoting so a SCRIPT_DIR with spaces/backslashes is safe.
+    jq -n --arg cmd "$CDP_BIN" '{
+      mcpServers: {
+        "chrome-devtools": {
+          command: $cmd,
+          args: [
+            "--browserUrl", "http://127.0.0.1:9222",
+            "--no-usage-statistics",
+            "--no-performance-crux",
+            "--redactNetworkHeaders"
+          ]
+        }
+      }
+    }' > "$CDP_DIR/mcp-config.json"
+    ok "wrote $CDP_DIR/mcp-config.json"
+    dim "      Use 'bin/claude --chrome' to launch with chrome-devtools enabled."; echo ""
+    dim "      Run 'bin/launch-test-chrome' in another terminal first."; echo ""
+    ;;
+  *)
+    ok "chrome-devtools skipped"
+    ;;
+esac
+
 # Install shell alias
 step "Installing shell alias"
 SHELL_NAME="$(basename "$SHELL")"

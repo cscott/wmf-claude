@@ -3,11 +3,15 @@
 # with MCP server access pre-configured.
 #
 # Usage:
-#   bin/claude                           # launch in current directory
-#   bin/claude --allow ~/src/other-repo  # grant access to additional paths
+#   bin/claude                              # launch in current directory
+#   bin/claude --chrome                     # also enable chrome-devtools MCP for this session
+#   bin/claude --allow ~/src/other-repo --  # grant nono access to additional paths
 #
 # All flags before "--" are passed to nono. All flags after are passed to claude.
-# If no "--" is given, all arguments are passed to claude.
+# If no "--" is given, all arguments are passed to claude — so nono flags like
+# `--allow`/`--read` need an explicit `--` after them or they'll route to claude.
+# `--chrome` is the one exception: a wmf-claude wrapper flag, consumed here
+# regardless of where the separator is.
 set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -27,6 +31,23 @@ for arg in "$@"; do
     NONO_ARGS+=("$arg")
   fi
 done
+
+# Extract --chrome from the nono segment. Must run before the no-separator
+# swap below — otherwise `bin/claude --chrome` (the documented form, no
+# explicit `--`) silently moves --chrome into CLAUDE_ARGS before extraction
+# and the wrapper flag is forwarded to claude as an unknown option.
+# Restricted to the pre-`--` segment so any future `claude --chrome` flag
+# (post-`--`) wouldn't be accidentally consumed.
+WANT_CHROME=false
+FILTERED_NONO_ARGS=()
+for arg in "${NONO_ARGS[@]}"; do
+  if [[ "$arg" == "--chrome" ]]; then
+    WANT_CHROME=true
+  else
+    FILTERED_NONO_ARGS+=("$arg")
+  fi
+done
+NONO_ARGS=("${FILTERED_NONO_ARGS[@]}")
 
 # If no separator was used, treat all args as claude args
 if ! $SEEN_SEPARATOR; then
@@ -56,6 +77,46 @@ for arg in "${CLAUDE_ARGS[@]}"; do
   esac
 done
 
+# chrome-devtools MCP is opt-in per session via --chrome. This keeps its
+# attack surface (CDP-controlled browser, unrestricted page-side network)
+# off when the engineer isn't actively running a manual test. When --chrome
+# is set we:
+#   - grant the sandbox r+w on the MCP install dir (it writes log/cache files)
+#   - open localhost TCP port 9222 so the sandboxed MCP can reach the
+#     externally-launched Chrome (kept off the static profile so plain
+#     `bin/claude` sessions can't reach a leftover test Chrome)
+#   - load the MCP via --mcp-config for this single session
+# TODO: the --allow on $CDP_DIR currently covers node_modules/ too — a
+# prompt-injected agent could overwrite the MCP binary for the next session.
+# Narrow once chrome-devtools-mcp exposes flags for an out-of-tree log/cache dir.
+CHROME_DEVTOOLS_ALLOWS=()
+CHROME_DEVTOOLS_NONO_ARGS=()
+CHROME_DEVTOOLS_CLAUDE_ARGS=()
+if $WANT_CHROME; then
+  CDP_DIR="$SCRIPT_DIR/chrome-devtools-mcp"
+  CDP_CONFIG="$CDP_DIR/mcp-config.json"
+  if [[ ! -f "$CDP_CONFIG" ]]; then
+    echo "error: --chrome was passed but $CDP_CONFIG is missing" >&2
+    echo "       run ./setup.sh and answer 'y' at the chrome-devtools prompt" >&2
+    exit 1
+  fi
+  if [[ ! -x "$CDP_DIR/node_modules/.bin/chrome-devtools-mcp" ]]; then
+    echo "error: --chrome was passed but the MCP binary is missing under $CDP_DIR" >&2
+    echo "       run ./setup.sh and answer 'y' at the chrome-devtools prompt" >&2
+    exit 1
+  fi
+  # Soft warning if Chrome doesn't appear to be running yet — the MCP will
+  # still launch, the engineer just needs to start Chrome before driving it.
+  if command -v lsof >/dev/null 2>&1 \
+     && ! lsof -nP -iTCP:9222 -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "note: nothing listening on 127.0.0.1:9222 yet — start Chrome with" >&2
+    echo "      bin/launch-test-chrome in another terminal before driving it" >&2
+  fi
+  CHROME_DEVTOOLS_ALLOWS+=(--allow "$CDP_DIR")
+  CHROME_DEVTOOLS_NONO_ARGS+=(--open-port 9222)
+  CHROME_DEVTOOLS_CLAUDE_ARGS+=(--mcp-config "$CDP_CONFIG")
+fi
+
 # Launch claude inside the nono sandbox via launch-claude.sh, which prints
 # the WMF Claude banner after nono's capability table (so it lands right
 # before Claude Code's banner instead of getting scrolled past).
@@ -69,5 +130,9 @@ exec nono run --profile wmf-engineer \
   --read "$SCRIPT_DIR" \
   --allow "$SCRIPT_DIR/mcp-phabricator" \
   --allow "$SCRIPT_DIR/gerrit-mcp-server" \
+  "${CHROME_DEVTOOLS_ALLOWS[@]}" \
+  "${CHROME_DEVTOOLS_NONO_ARGS[@]}" \
   "${NONO_ARGS[@]}" \
-  -- "$SCRIPT_DIR/bin/launch-claude.sh" --plugin-dir "$SCRIPT_DIR" "${CLAUDE_ARGS[@]}"
+  -- "$SCRIPT_DIR/bin/launch-claude.sh" --plugin-dir "$SCRIPT_DIR" \
+  "${CHROME_DEVTOOLS_CLAUDE_ARGS[@]}" \
+  "${CLAUDE_ARGS[@]}"

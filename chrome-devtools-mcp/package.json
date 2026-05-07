@@ -1,0 +1,10 @@
+{
+  "name": "wmf-claude-chrome-devtools-mcp",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pinned install of chrome-devtools-mcp for the wmf-claude plugin. Reproducible from package-lock.json with `npm ci --ignore-scripts`.",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "chrome-devtools-mcp": "0.23.0"
+  }
+}

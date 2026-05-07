@@ -151,7 +151,23 @@ dim "    anonymously — no auth token, no API key, public data only."; echo ""
 dim "    Your username is used as the default subscriber filter, so"; echo ""
 dim "    queries like \"show my tasks\" return yours by default."; echo ""
 echo ""
-read -rp "    Phabricator username: " PHAB_USER
+
+# Recall the previous username from the existing registration, if any, so
+# upgrades don't force the engineer to retype it. Greps the public `mcp get`
+# output rather than parsing ~/.claude.json (whose schema isn't a contract).
+DEFAULT_PHAB_USER=""
+if EXISTING_MCP=$(claude mcp get phabricator 2>/dev/null); then
+  DEFAULT_PHAB_USER=$(printf '%s\n' "$EXISTING_MCP" \
+    | grep -o 'PHABRICATOR_USERNAME=[^[:space:]"]*' \
+    | head -n1 | cut -d= -f2-)
+fi
+
+if [[ -n "$DEFAULT_PHAB_USER" ]]; then
+  read -rp "    Phabricator username [$DEFAULT_PHAB_USER]: " PHAB_USER
+  PHAB_USER="${PHAB_USER:-$DEFAULT_PHAB_USER}"
+else
+  read -rp "    Phabricator username: " PHAB_USER
+fi
 if [[ -z "$PHAB_USER" ]]; then
   fail "Phabricator username is required."
   exit 1

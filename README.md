@@ -42,9 +42,11 @@ cd wmf-claude
 ./setup.sh
 ```
 
-`setup.sh` will append a `claude` alias to your shell
-config (`~/.zshrc` or `~/.bashrc`) — reload your shell to
-pick it up:
+`setup.sh` installs the nono profile, sets up both MCP
+servers (npm + pip/uv), registers them globally in Claude
+Code, and appends a `claude` alias to your shell config
+(`~/.zshrc` or `~/.bashrc`). Reload your shell to pick it
+up:
 
 ```bash
 source ~/.zshrc   # or ~/.bashrc
@@ -72,32 +74,16 @@ Confirm the MCP servers registered:
 claude mcp list
 ```
 
-You should see both `phabricator` and `gerrit`. Optionally
-run the profile tests (requires `jq`):
-
-```bash
-./tests/test-profile.sh
-```
+You should see both `phabricator` and `gerrit`.
 
 ## Plugin (skills + agents)
 
-The repo is a **Claude Code plugin** — when loaded, you get
-WMF-specific skills and agents. The wrapper `bin/claude`
-auto-loads it via `--plugin-dir`, so plain `claude` (the
-alias) gives you everything.
-
-You'll see a startup banner immediately before Claude Code's
-own banner (it fires *after* nono's capability table so it
-doesn't get scrolled past):
-
-```
-  ╭─ WMF Claude ─────────────────────────────────────────╮
-  │  sandboxed by nono · plugin: wmf-claude              │
-  │  Use /wmf-claude:init-project in a repo to bootstrap │
-  ╰──────────────────────────────────────────────────────╯
-```
-
-(Suppress with `WMF_CLAUDE_QUIET=1`.)
+The repo is a **Claude Code plugin** — when loaded, you
+get WMF-specific skills and agents. The `bin/claude`
+wrapper auto-loads it via `--plugin-dir`, so plain
+`claude` (the alias) gives you everything. A short banner
+prints at session start (suppress with
+`WMF_CLAUDE_QUIET=1`).
 
 **Skills** (namespaced as `/wmf-claude:<name>`):
 
@@ -122,67 +108,48 @@ short context block into Claude's prompt so it knows it's
 running inside the WMF environment regardless of how the
 plugin was loaded.
 
-### Three install paths
+### Install paths
 
 1. **Local dev (default for setup.sh)** — the `claude`
    alias passes `--plugin-dir <wmf-claude>` to load this
    checkout directly. `git pull` to update.
-2. **Claude Code marketplace via git** *(future)* — once
-   the marketplace JSON is reachable from your projects,
-   `/plugin marketplace add <repo-url>` then
-   `/plugin install wmf-claude@wikimedia` will work.
-3. **Signed nono pack** *(future)* — `package.json` is
-   in the repo; once GitLab CI signing is supported, a
-   tagged release will publish to the nono registry and
-   engineers can `nono pull kharlan/wmf-claude` to install
-   with cryptographic verification.
-
-### Per-project CLAUDE.md
-
-CLAUDE.md is inherently per-project. Run
-`/wmf-claude:init-project` (optionally `--mediawiki`)
-inside a repo to drop a starter `CLAUDE.md` you can
-customize. It refuses to overwrite an existing one.
+2. **Signed nono pack** *(future)* — once GitLab CI
+   signing is supported, a tagged release will publish to
+   the nono registry and engineers can
+   `nono pull kharlan/wmf-claude` to install with
+   cryptographic verification. The pack carries the
+   marketplace JSON and tool-level deny rules that
+   `setup.sh` doesn't apply.
 
 ### Defense-in-depth settings
 
-The signed nono pack will merge the following into
-`~/.claude/settings.json` at install time. Until then,
-the same JSON lives in `wiring/settings-merge.json` for
-reference — copy fragments manually if you want them
-applied today.
+The nono pack merges
+[`wiring/settings-merge.json`](wiring/settings-merge.json)
+into `~/.claude/settings.json` at install time, layering
+Claude-Code-tool-level denies on top of the OS-level nono
+profile. Until the pack is published, `setup.sh` does
+**not** apply these — copy fragments by hand if you want
+them today. Highlights:
 
-- **`WebFetch` is in `ask`** (not `allow`) — Claude
-  prompts the engineer for each new domain. nono doesn't
-  gate `WebFetch` because it's fetched server-side by
-  Claude's API rather than from the laptop, so this is the
-  primary barrier on egress to attacker URLs and the most
-  important rule in this list.
-- **`sandbox.enabled: false`** — nono is the OS-level
-  security boundary; Claude Code's softer in-process
-  `sandbox` would add friction without restricting an
-  already sandboxed session.
-- **`Edit/Write` blocked on per-project `.claude/hooks/**`
-  and `.claude/settings.json`** — Claude can't tamper with
-  engineer-defined per-project hooks or broaden its own
-  allowlist mid-session.
-- **`Edit/Write` blocked on user-global `~/.claude/`
-  configuration** (`settings.json`, `settings.local.json`,
-  `hooks/`, `plugins/`, `agents/`, `skills/`) — a
-  prompt-injected Claude can't install/disable plugins,
-  rewrite the user-global allowlist, or replace shipped
-  agent/skill definitions for future sessions. The nono
-  pack itself writes to these paths at install time via the
-  nono CLI, which runs outside Claude's tool surface.
-- **`Bash(find:* -exec*)`, `-execdir`, `-delete`, `-ok`,
-  `-okdir`, `-fprint*` blocked** — `find` only allows
-  read-only traversal forms; `-exec` is otherwise
-  effectively shell escape.
-- **`Bash(git config core.hooksPath:*)` blocked** — no
-  redirecting commit hooks to attacker-controlled paths.
-- **`Read(.git/config)` and `Read(.git/credentials*)`
-  blocked** — credentials embedded in remote URLs aren't
-  leaked into context.
+- `WebFetch` is in `ask` (not `allow`) — Claude prompts
+  per new domain. The most important rule, since nono
+  can't gate `WebFetch` server-side.
+- `Edit`/`Write` blocked on per-project `.claude/` and
+  user-global `~/.claude/` — Claude can't tamper with
+  hooks, plugins, agents, skills, or its own allowlist.
+- `Read(**/*.{env,key,secret,credential,pem})` and
+  `Read(.git/{config,credentials*})` blocked — credential
+  files don't leak into context.
+- `Bash(ssh:*)` and destructive `find` forms (`-exec*`,
+  `-delete`, `-ok*`, `-fprint*`) blocked.
+- `Bash(git config core.hooksPath:*)` blocked — no
+  redirecting commit hooks.
+- `sandbox.enabled: false` — nono is the OS boundary;
+  Claude's softer in-process sandbox would just add
+  friction.
+
+See [`SECURITY.md`](SECURITY.md) for the full threat
+model and rationale.
 
 ## What you get
 
@@ -190,25 +157,31 @@ applied today.
   comments directly from Claude
 - **Gerrit MCP** — query changes and reviews
 - **Wikimedia network access** — all `*.wikimedia.org`,
-  `*.mediawiki.org`, `*.wikipedia.org`, codesearch, and
-  the rest of the wiki family
+  `*.mediawiki.org`, the wiki family
+  (`wikipedia.org`/`wikidata.org`/`wiktionary.org`/etc.),
+  and `codesearch.wmcloud.org`
 - **Documentation sites** — php.net, MDN, docs.python.org,
   docs.rs, doc.rust-lang.org, nodejs.org, pkg.go.dev
+- **LLM API endpoints** — Anthropic (the base profile)
+  plus `api.minimax.io` for engineers using MiniMax models
+- **Local MariaDB** — TCP port 3306 is open for local
+  database connections
 - **Working directory read+write** — Claude can edit your
   code, run tests, use git (but not push)
 
 ## What's blocked
 
-- `git remote`, `ssh`, `scp`, `sftp` — no remote URL
-  tampering or remote access
-- SSH-based `git push` (including Gerrit on port 29418
-  and GitHub) — blocked at the network layer
+- SSH-based push (Gerrit on port 29418, GitHub on port
+  22) — blocked at the network layer. `Bash(ssh:*)` is
+  also denied at the Claude-tool layer. `git remote add`
+  isn't denied directly, but pushes through any new
+  remote still hit the network policy.
 - `~/.ssh`, `~/.gnupg`, `~/.netrc`, `~/.npmrc`,
   `~/.pypirc`, `~/.composer/auth.json`, `~/.docker/config.json`,
   `~/.kube/config`, `~/.config/gh/` — credentials stay
   private
-- `~/.password-store`, `~/.config/bitwarden`,
-  `~/.config/keepassxc`, `~/Library/Application Support/{1Password,Bitwarden,Enpass}`
+- `~/.password-store`, `~/.config/{bitwarden,keepassxc}`,
+  `~/Library/Application Support/{1Password,Bitwarden,Enpass}`
   — password managers and secret stores
 - `~/Library/Mail`, `~/Library/Messages`, `~/.thunderbird`,
   Slack/Discord/Signal/Telegram app data — private
@@ -226,11 +199,6 @@ applied today.
 token stored in your macOS keychain — the keychain is
 reachable inside the sandbox. The standard WMF Gerrit
 SSH workflow is fully blocked.
-
-**Note:** Claude can make HTTP requests to allowlisted
-Wikimedia domains. While credential files are blocked,
-be aware that Wikimedia APIs are reachable within the
-sandbox.
 
 ## Granting additional access
 
@@ -276,23 +244,13 @@ the sandbox with the Claude Code extension:
 }
 ```
 
-## How it works
+## Per-project CLAUDE.md
 
-This repo uses [nono](https://github.com/always-further/nono),
-a capability-based sandbox, to run Claude Code with
-restricted filesystem, network, and command access.
-
-`setup.sh` installs the nono profile, sets up both MCP
-servers (npm + pip/uv), registers them globally in Claude
-Code, and appends a shell alias to `~/.zshrc` or
-`~/.bashrc`. `bin/claude` is a thin
-wrapper that launches `nono run` with the right profile
-and grants access to the bundled MCP server submodules.
+Run `/wmf-claude:init-project` (optionally `--mediawiki`)
+inside a repo to drop a starter `CLAUDE.md` you can
+customize. It refuses to overwrite an existing one.
 
 ## Keeping it up to date
-
-Pull the latest changes and re-run setup to pick up new
-profile rules or MCP server updates:
 
 ```bash
 git pull
@@ -310,14 +268,14 @@ claude mcp remove gerrit -s local
 claude mcp remove phabricator -s local
 ```
 
-## Running tests
+## Tests
 
 ```bash
 ./tests/test-profile.sh    # nono profile / sandbox behaviour (requires nono, jq)
 ./tests/test-templates.sh  # plugin manifest, skill/agent frontmatter, JSON validity
 ```
 
-`test-profile.sh` cannot run inside a nono sandbox (nested
-sandboxing doesn't work) — run directly or in CI.
+`test-profile.sh` cannot run inside a nono sandbox
+(nested sandboxing doesn't work) — run directly or in CI.
 `test-templates.sh` is filesystem-only and works anywhere
 `python3` and `jq` are available.

@@ -34,10 +34,13 @@ if ! $SEEN_SEPARATOR; then
   NONO_ARGS=()
 fi
 
-# Reject flags that broadly weaken the sandbox
+# Reject flags that broadly weaken the sandbox.
+# Patterns include the `=value` form because clap accepts both `--flag value`
+# and `--flag=value` — matching only the bare flag name would let
+# `--capability-elevation=true` slip through.
 for arg in "${NONO_ARGS[@]}"; do
   case "$arg" in
-    --capability-elevation|--trust-override)
+    --capability-elevation|--capability-elevation=*|--trust-override|--trust-override=*)
       echo "error: $arg is not allowed — it would weaken the sandbox" >&2
       exit 1
       ;;
@@ -46,7 +49,7 @@ done
 
 for arg in "${CLAUDE_ARGS[@]}"; do
   case "$arg" in
-    --dangerously-skip-permissions)
+    --dangerously-skip-permissions|--dangerously-skip-permissions=*)
       echo "error: $arg is not allowed — it would bypass permission checks" >&2
       exit 1
       ;;

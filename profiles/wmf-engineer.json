@@ -2,17 +2,18 @@
   "extends": "claude-code",
   "meta": {
     "name": "wmf-engineer",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "description": "Wikimedia Foundation engineer profile for Claude Code with WMF-specific domain access and destructive action prevention",
     "author": "Kosta Harlan <kharlan@wikimedia.org>"
   },
   "security": {
-    "groups": [],
     "signal_mode": "isolated",
+    "process_info_mode": "isolated",
+    "ipc_mode": "shared_memory_only",
     "capability_elevation": false
   },
-  "policy": {
-    "add_deny_access": [
+  "filesystem": {
+    "deny": [
       "~/.ssh",
       "~/.env",
       "~/.bashrc",
@@ -46,9 +47,17 @@
       "~/Library/Mobile Documents"
     ]
   },
-  "filesystem": {
-    "read": [],
-    "allow": []
+  "environment": {
+    "allow_vars": [
+      "PATH", "HOME",
+      "TERM",
+      "LANG", "LC_*",
+      "CLAUDE_*", "CLAUDECODE", "ANTHROPIC_*",
+      "NONO_*",
+      "PHABRICATOR_URL", "PHABRICATOR_USERNAME",
+      "PHABRICATOR_CONTACT_NAME", "PHABRICATOR_CONTACT_EMAIL",
+      "GERRIT_BASE_URL", "GERRIT_CONFIG_PATH"
+    ]
   },
   "network": {
     "block": false,
@@ -80,8 +89,10 @@
       "codesearch-backend.wmcloud.org",
       "api.minimax.io"
     ],
-    "port_allow": [3306]
+    "open_port": [3306]
   },
   "workdir": { "access": "readwrite" },
-  "interactive": true
+  "unsafe_macos_seatbelt_rules": [
+    "(deny mach-lookup (global-name \"com.apple.metadata.mds\"))"
+  ]
 }

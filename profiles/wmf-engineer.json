@@ -13,6 +13,9 @@
     "capability_elevation": false
   },
   "filesystem": {
+    "read": [
+      "~/.local/state/fnm_multishells"
+    ],
     "deny": [
       "~/.ssh",
       "~/.env",

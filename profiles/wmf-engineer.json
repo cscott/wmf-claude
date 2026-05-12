@@ -13,6 +13,9 @@
     "capability_elevation": false
   },
   "filesystem": {
+    "allow": [
+      "$WORKDIR"
+    ],
     "read": [
       "~/.local/state/fnm_multishells"
     ],
@@ -100,6 +103,6 @@
   },
   "workdir": { "access": "readwrite" },
   "unsafe_macos_seatbelt_rules": [
-    "(deny mach-lookup (global-name \"com.apple.metadata.mds\"))"
+    "(deny mach-lookup (global-name-prefix \"com.apple.metadata.\"))"
   ]
 }

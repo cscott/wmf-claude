@@ -125,8 +125,12 @@ fi
 # read access to the plugin's bin/, skills/, agents/, hooks/, templates/,
 # and wiring/. The two MCP submodule grants below override that with r+w
 # for the npm/venv directories that actually need to write.
+# The user's CWD is granted via the profile's filesystem.allow on $WORKDIR
+# (the --workdir flag is implicit — nono resolves it to the launch cwd).
+# We don't pass --allow-cwd: it's broken on Linux 0.51-0.53 (the runtime
+# grant silently fails and breaks cat/ls/env), and the profile grant
+# covers it. Drop this note once upstream lands a fix.
 exec nono run --profile wmf-engineer \
-  --allow-cwd \
   --read "$SCRIPT_DIR" \
   --allow "$SCRIPT_DIR/mcp-phabricator" \
   --allow "$SCRIPT_DIR/gerrit-mcp-server" \

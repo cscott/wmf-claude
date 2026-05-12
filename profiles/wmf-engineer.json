@@ -66,7 +66,9 @@
       "~/Library/Application Support/Arc",
       "~/Library/Application Support/Vivaldi",
       "~/Library/Application Support/com.operasoftware.Opera",
-      "/home"
+      "/home",
+      "~/.local/state/claude/locks",
+      "~/.CFUserTextEncoding"
     ]
   },
   "environment": {

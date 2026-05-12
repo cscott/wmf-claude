@@ -1,7 +1,7 @@
 # wmf-claude
 
-Use [Claude Code](https://claude.ai/code) safely as a
-Wikimedia Foundation engineer. Claude runs inside a
+Reduce the risk of using [Claude Code](https://claude.ai/code)
+as a Wikimedia Foundation engineer. Claude runs inside a
 [nono](https://github.com/always-further/nono) sandbox
 with Phabricator and Gerrit MCP integration, scoped
 network access (Wikimedia + language docs), and

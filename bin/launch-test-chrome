@@ -1,0 +1,106 @@
+#!/bin/bash
+# Launch a dedicated Chrome instance for the chrome-devtools MCP in attach mode.
+#
+# Why this exists: Chrome cannot run inside the wmf-engineer sandbox — it
+# calls IOKit at startup (IONotificationPortCreate) and segfaults when the
+# Mach service is denied. So we run Chrome outside the sandbox; the MCP
+# server (still sandboxed) attaches via the DevTools Protocol over a
+# localhost socket.
+#
+# A fresh per-launch --user-data-dir (mktemp) keeps your real Chrome
+# profile (cookies, passwords, history) out of reach of anything the MCP
+# drives, AND prevents persistent state (Service Workers, localStorage,
+# IndexedDB, cookies set during testing) from carrying across sessions.
+# The dir is removed on normal exit and on SIGINT/SIGTERM. SIGKILL bypasses
+# the trap and leaks the dir; setup.sh sweeps stale wmf-claude-chrome.* dirs
+# at install time as a safety net.
+#
+# The CDP port (9222) is hardcoded — bin/claude --chrome and the generated
+# mcp-config.json both bake it in, so making it configurable would require
+# regenerating the MCP config too. Keep them in lockstep.
+#
+# Usage:
+#   bin/launch-test-chrome              # foreground; close window or Ctrl-C to quit
+
+set -euo pipefail
+
+PORT=9222
+
+CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+if [[ ! -x "$CHROME" ]]; then
+  CHROME="$(command -v google-chrome \
+            || command -v google-chrome-stable \
+            || command -v chromium \
+            || command -v chromium-browser \
+            || true)"
+fi
+if [[ -z "$CHROME" || ! -x "$CHROME" ]]; then
+  echo "error: Chrome not found at /Applications/Google Chrome.app or in PATH" >&2
+  exit 1
+fi
+
+if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "error: port $PORT is already in use — another Chrome (or service) is bound to it" >&2
+  echo "  close the conflicting process before launching" >&2
+  exit 1
+fi
+
+# Fresh, unpredictable user-data-dir per launch. mktemp -d creates the
+# directory at mode 0700 owned by the current user — no other users on the
+# host can read cookies/sessions Chrome stores here.
+USER_DATA_DIR="$(mktemp -d -t wmf-claude-chrome.XXXXXX)"
+
+cleanup() {
+  if [[ -n "${USER_DATA_DIR:-}" && -d "$USER_DATA_DIR" ]]; then
+    rm -rf "$USER_DATA_DIR"
+  fi
+}
+trap cleanup EXIT INT TERM
+
+echo "Launching Chrome for chrome-devtools MCP (attach mode)"
+echo "  binary:    $CHROME"
+echo "  data dir:  $USER_DATA_DIR    (fresh per launch; removed on exit)"
+echo "  debug:     http://127.0.0.1:$PORT"
+echo ""
+echo "Leave this terminal open while testing. Ctrl-C or close the Chrome window to exit."
+echo ""
+
+# Hardening flags layered on top of the per-launch fresh data dir:
+#   --remote-debugging-address=127.0.0.1
+#       Pin the CDP listener to loopback. --remote-debugging-port alone has
+#       historically bound 0.0.0.0 on some Chrome builds, which would expose
+#       the unauthenticated CDP endpoint to the LAN.
+#   --password-store=basic / --use-mock-keychain
+#       Chrome must not touch the macOS login keychain. With a fresh data
+#       dir there's nothing there to ask for, but explicit > implicit and
+#       this avoids any keychain-prompt UX surprise too.
+#   --no-pings
+#       Disables hyperlink auditing pings (<a ping="...">).
+#   --disable-background-networking
+#       Turns off Chrome's background services (sync, extension updates,
+#       SafeBrowsing list updates, Translate language list, etc.). Page
+#       network is unaffected — only Chrome's own background chatter.
+#   --disable-sync / --disable-default-apps / --disable-component-update
+#       Belt-and-suspenders for the same goal: no background traffic, no
+#       installed default apps, no auto-updates of Chrome components that
+#       could change behavior between sessions.
+#
+# Run Chrome in the foreground and `wait` for it so the EXIT trap fires
+# and the user-data-dir is removed when Chrome quits or this script gets
+# interrupted. Using `exec` here would replace bash and skip cleanup.
+"$CHROME" \
+  --user-data-dir="$USER_DATA_DIR" \
+  --remote-debugging-port="$PORT" \
+  --remote-debugging-address=127.0.0.1 \
+  --no-default-browser-check \
+  --no-first-run \
+  --password-store=basic \
+  --use-mock-keychain \
+  --no-pings \
+  --disable-background-networking \
+  --disable-sync \
+  --disable-default-apps \
+  --disable-component-update \
+  about:blank &
+CHROME_PID=$!
+wait "$CHROME_PID"

@@ -72,9 +72,48 @@ for f in \
   "$REPO_ROOT/wiring/enabled-plugin.json" \
   "$REPO_ROOT/wiring/settings-merge.json" \
   "$REPO_ROOT/templates/mediawiki/settings.json" \
-  "$REPO_ROOT/profiles/wmf-engineer.json"; do
+  "$REPO_ROOT/profiles/wmf-engineer.json" \
+  "$REPO_ROOT/chrome-devtools-mcp/package.json" \
+  "$REPO_ROOT/chrome-devtools-mcp/package-lock.json"; do
   if jq -e . "$f" >/dev/null 2>&1; then pass "$(rel "$f")"; else fail "$(rel "$f")"; fi
 done
+
+echo ""
+echo "--- chrome-devtools-mcp pin consistency ---"
+# package.json must pin an exact version (no caret/tilde) so engineers
+# get the reviewed code; package-lock.json must list the same version.
+CDP_PIN="$(jq -r '.dependencies["chrome-devtools-mcp"]' "$REPO_ROOT/chrome-devtools-mcp/package.json")"
+CDP_LOCKED="$(jq -r '.packages["node_modules/chrome-devtools-mcp"].version' "$REPO_ROOT/chrome-devtools-mcp/package-lock.json")"
+if [[ "$CDP_PIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  pass "package.json pins exact version: $CDP_PIN"
+else
+  fail "package.json must pin an exact version (no ^/~), got: $CDP_PIN"
+fi
+if [[ "$CDP_PIN" == "$CDP_LOCKED" ]]; then
+  pass "package-lock.json matches: $CDP_LOCKED"
+else
+  fail "package-lock.json version ($CDP_LOCKED) != package.json pin ($CDP_PIN)"
+fi
+
+echo ""
+echo "--- chrome-devtools-mcp tracked-files allowlist ---"
+# Only package.json and package-lock.json should be tracked under
+# chrome-devtools-mcp/. mcp-config.json contains absolute $HOME paths from
+# the maintainer's machine and must never be force-added; node_modules is
+# big and reproducible from the lockfile.
+if [[ -d "$REPO_ROOT/.git" || -f "$REPO_ROOT/.git" ]]; then
+  UNEXPECTED="$(cd "$REPO_ROOT" && git ls-files chrome-devtools-mcp/ \
+                | grep -Ev '^chrome-devtools-mcp/(package\.json|package-lock\.json)$' \
+                || true)"
+  if [[ -z "$UNEXPECTED" ]]; then
+    pass "chrome-devtools-mcp/ tracks only package.json + package-lock.json"
+  else
+    fail "unexpected tracked files under chrome-devtools-mcp/:"
+    while IFS= read -r line; do echo "        $line"; done <<<"$UNEXPECTED"
+  fi
+else
+  pass "chrome-devtools-mcp/ tracked-files check skipped (not a git checkout)"
+fi
 
 echo ""
 echo "--- nono pack ↔ filesystem consistency ---"
@@ -85,9 +124,50 @@ done < <(jq -r '.artifacts[].path' "$REPO_ROOT/package.json")
 
 echo ""
 echo "--- bin/ script syntax ---"
-for f in "$REPO_ROOT/bin/session-start.sh" "$REPO_ROOT/bin/launch-claude.sh" "$REPO_ROOT/bin/claude"; do
+for f in "$REPO_ROOT/bin/session-start.sh" "$REPO_ROOT/bin/launch-claude.sh" "$REPO_ROOT/bin/claude" "$REPO_ROOT/bin/launch-test-chrome"; do
   if bash -n "$f" 2>/dev/null; then pass "$(rel "$f")"; else fail "$(rel "$f")"; fi
 done
+
+echo ""
+echo "--- bin/claude --chrome arg routing ---"
+# Run bin/claude in a fake repo with a stubbed `nono` that prints args and
+# exits, so we can assert that --chrome is correctly recognized as a wrapper
+# flag (and that --open-port 9222 is added to the nono invocation only when
+# --chrome is set). Regression test: previously `bin/claude --chrome` (no
+# `--` separator) was silently forwarded to claude as an unknown flag.
+FAKE_REPO="$(mktemp -d)"
+trap 'rm -rf "$FAKE_REPO"' EXIT
+mkdir -p "$FAKE_REPO/bin" \
+         "$FAKE_REPO/chrome-devtools-mcp/node_modules/.bin" \
+         "$FAKE_REPO/mcp-phabricator" \
+         "$FAKE_REPO/gerrit-mcp-server"
+cp "$REPO_ROOT/bin/claude" "$FAKE_REPO/bin/claude"
+touch "$FAKE_REPO/chrome-devtools-mcp/mcp-config.json"
+touch "$FAKE_REPO/chrome-devtools-mcp/node_modules/.bin/chrome-devtools-mcp"
+chmod +x "$FAKE_REPO/chrome-devtools-mcp/node_modules/.bin/chrome-devtools-mcp"
+cat > "$FAKE_REPO/bin/nono" <<'STUB'
+#!/bin/bash
+printf 'NONO_ARG: %s\n' "$@"
+STUB
+chmod +x "$FAKE_REPO/bin/nono"
+
+run_fake_claude() {
+  PATH="$FAKE_REPO/bin:$PATH" bash "$FAKE_REPO/bin/claude" "$@" 2>&1
+}
+has_open_port() { grep -qx 'NONO_ARG: --open-port' <<<"$1" && grep -qx 'NONO_ARG: 9222' <<<"$1"; }
+
+out="$(run_fake_claude --chrome)"
+if has_open_port "$out"; then pass "bin/claude --chrome opens port 9222"; else fail "bin/claude --chrome did not open port 9222"; fi
+
+out="$(run_fake_claude --chrome --)"
+if has_open_port "$out"; then pass "bin/claude --chrome -- opens port 9222"; else fail "bin/claude --chrome -- did not open port 9222"; fi
+
+out="$(run_fake_claude)"
+if ! has_open_port "$out"; then pass "plain bin/claude does not open port 9222"; else fail "plain bin/claude leaked --open-port 9222"; fi
+
+# --chrome after `--` is a claude arg, not a wrapper flag — must NOT enable chrome.
+out="$(run_fake_claude -- --chrome)"
+if ! has_open_port "$out"; then pass "--chrome after -- does not enable chrome mode"; else fail "--chrome after -- incorrectly enabled chrome mode"; fi
 
 echo ""
 echo "========================="

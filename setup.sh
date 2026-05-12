@@ -56,7 +56,10 @@ fi
 
 # nono 0.44 moved the claude-code profile to a registry pack — older versions
 # can't pull packs and won't resolve the base profile our profile inherits from.
+# The recommended/tested version lives in .nono-version (bumped via the
+# /wmf-claude:check-nono-update skill).
 NONO_MIN="0.44.0"
+NONO_RECOMMENDED=$(tr -d '[:space:]' < "$SCRIPT_DIR/.nono-version" 2>/dev/null || echo "")
 NONO_VER=$(nono --version 2>/dev/null | awk '{print $2}')
 if [[ -z "$NONO_VER" ]]; then
   fail "Could not determine nono version from 'nono --version'"
@@ -68,6 +71,13 @@ if [[ "$(printf '%s\n%s\n' "$NONO_MIN" "$NONO_VER" | sort -V | head -n1)" != "$N
   exit 1
 fi
 ok "nono $NONO_VER (>= $NONO_MIN)"
+if [[ -n "$NONO_RECOMMENDED" && "$NONO_VER" != "$NONO_RECOMMENDED" ]]; then
+  if [[ "$(printf '%s\n%s\n' "$NONO_RECOMMENDED" "$NONO_VER" | sort -V | head -n1)" != "$NONO_RECOMMENDED" ]]; then
+    dim "    (running nono $NONO_VER; .nono-version recommends $NONO_RECOMMENDED — newer is usually fine)"; echo ""
+  else
+    dim "    (running nono $NONO_VER; .nono-version recommends $NONO_RECOMMENDED — consider upgrading)"; echo ""
+  fi
+fi
 
 # Initialize submodules — handles colleagues who cloned without --recurse-submodules
 step "Initializing submodules"

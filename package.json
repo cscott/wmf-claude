@@ -23,6 +23,7 @@
     { "type": "plugin", "path": "skills/lint/SKILL.md" },
     { "type": "plugin", "path": "skills/manual-test/SKILL.md" },
     { "type": "plugin", "path": "skills/compare-rebase/SKILL.md" },
+    { "type": "plugin", "path": "skills/check-nono-update/SKILL.md" },
     { "type": "plugin", "path": "agents/gerrit-reviewer.md" },
     { "type": "plugin", "path": "agents/jupyter-notebook.md" },
     { "type": "plugin", "path": "agents/mediawiki-dev.md" },

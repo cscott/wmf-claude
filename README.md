@@ -10,7 +10,7 @@ accidental pushes or credential exposure.
 
 ## Prerequisites
 
-- **[nono](https://github.com/always-further/nono)** 0.44+ — the sandbox runtime
+- **[nono](https://github.com/always-further/nono)** 0.44+ — the sandbox runtime (tested version is pinned in [`.nono-version`](./.nono-version); CI installs that version)
 - **[Claude Code](https://docs.claude.com/en/docs/claude-code/setup)**
 - **Node.js + npm** — Phabricator MCP server
 - **Python 3** (uv preferred, falls back to `venv`) — Gerrit MCP server

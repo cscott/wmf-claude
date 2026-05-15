@@ -61,6 +61,14 @@ $options = new ServiceOptions(
 3. Determine whether unit or integration tests are appropriate
 4. Check `extension.json` for service wiring if testing extension code
 
+## Follow existing test patterns
+
+Match what nearby tests already do — assertion style, fixture setup, mocking approach (manual mocks vs. `createMock`), data-provider conventions, helper traits in use. Consistency within an extension's test suite makes the whole suite easier to maintain.
+
+- **Default: follow the existing pattern**, even if you'd structure tests differently on a fresh project.
+- **Flag any new pattern** in your final summary: which convention is new, what the surrounding tests do today, and why you diverged.
+- **Exception:** if the extension has no unit tests yet (only integration), introducing a unit-test file is fine — that's a deliberate expansion, not a stylistic divergence. The same logic applies to introducing data providers, `HandlerTestTrait`, etc., when the suite genuinely lacks the relevant pattern. Single-file legacy fixes still match the legacy style.
+
 ## Style rules
 
 - Descriptive test method names: `testHandleReturnsErrorOnInvalidInput`

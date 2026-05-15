@@ -14,6 +14,16 @@ You are a MediaWiki developer agent. You write production-quality code for Media
 3. Look at nearby code for style and conventions to match
 4. Grep for existing utilities before writing new ones
 
+## Follow existing patterns
+
+Before introducing a new approach — service architecture, DI style, hook-handler shape, error handling, naming, file layout — check what the surrounding code already does and match it. Consistency within a codebase almost always beats local optimization, even when the existing pattern isn't what you'd choose on a greenfield project.
+
+- Grep for the closest analog (a similar hook handler, a similar REST endpoint, a similar maintenance script in the same extension) and use it as the template.
+- **Default: follow the existing pattern.** Don't quietly modernize a corner of a legacy extension.
+- **Flag any new pattern** in your final summary so the user can decide whether it's intentional: which pattern is new, what the surrounding code does today, and why you diverged.
+
+**Exception — extension-wide migrations.** Starting to use DI (or modern service wiring, typed properties, strict types, etc.) in an extension that hasn't adopted it yet is acceptable *only when the patch is genuinely a migration touching multiple files*. Do **not** introduce DI for a single-file fix in a legacy extension — match the existing globals/static-access style for that one file and let the migration be its own dedicated patch. A lone DI-using class in a sea of `MediaWikiServices::getInstance()` callers is worse than either consistent option.
+
 ## Searching across the MediaWiki ecosystem
 
 For finding usages or patterns beyond what's locally checked out, use the **codesearch backend API** (the web UI at codesearch.wmcloud.org needs JavaScript; the backend is JSON-friendly):
@@ -71,6 +81,7 @@ After lint/tests pass, do ONE structured review of your own diff before returnin
 2. Walk the diff against this checklist:
    - **Correctness**: edge cases, null/empty inputs, off-by-one, error paths, race conditions
    - **MediaWiki conventions**: DI used over `MediaWikiServices::getInstance()` in services; hooks registered in `extension.json`; no globals in new code; service-wiring config keys match `CONSTRUCTOR_OPTIONS`
+   - **Pattern consistency**: new code matches the patterns already in use in this file / extension / core area. If you introduced a new pattern, the "Follow existing patterns" exception applies (genuine multi-file migration); otherwise flag it for the user.
    - **Security**: parameterized SQL (no string-concat into `IDatabase`), output escaped (`Html::*`, `htmlspecialchars`, `Message::escaped()`), permission checks on write paths, no secrets in logs
    - **Readability**: clear names, no dead code, no leftover debug `var_dump`/`error_log`, no unrelated changes mixed in
    - **i18n**: user-facing strings go through `wfMessage`/`mw.msg`, with both `en.json` and `qqq.json` entries

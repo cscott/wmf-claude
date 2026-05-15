@@ -51,6 +51,7 @@ Bug: TXXXXX
 - `Bug:` goes directly above `Change-Id:` (which the Gerrit commit-msg hook adds automatically).
 - **Verifying the `Bug:` reference is mandatory** — see step 3 above. Do not infer the task ID from the branch name without calling `mcp__phabricator__phabricator_get_task`.
 - After an amend, the message should describe the current state vs. base — not the iteration history of how it got there.
+- **Stick to the facts.** Describe what the diff actually does and the verifiable reason for it. Do not speculate about future impact, downstream benefits, performance gains, or user satisfaction. Phab tasks and prior commits are evidence, not gospel — they can be wrong, outdated, or aspirational; weigh them against the diff itself and use best judgment across all available source material. If a claim isn't supported by the code in front of you, leave it out.
 - Output ONLY the commit message — no code fences, no commentary.
 
 ## Input

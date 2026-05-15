@@ -62,3 +62,19 @@ Run these checks and fix any failures before considering work done:
 3. **phpunit** — Run relevant tests for changed code (use `/wmf-claude:run-tests`)
 4. **npm test** — `npm test` for JS/CSS linting and any frontend tests
 5. Check the project's log directory (`logs/` for typical MW core checkouts; container-specific paths otherwise — see `CLAUDE.md`) for PHP errors/warnings and slow MySQL queries
+
+## Self-review pass
+
+After lint/tests pass, do ONE structured review of your own diff before returning. This is the code-review step — treat it as if a senior reviewer were looking at the patch.
+
+1. Get the diff: `git diff` (plus `git diff --cached` for staged changes).
+2. Walk the diff against this checklist:
+   - **Correctness**: edge cases, null/empty inputs, off-by-one, error paths, race conditions
+   - **MediaWiki conventions**: DI used over `MediaWikiServices::getInstance()` in services; hooks registered in `extension.json`; no globals in new code; service-wiring config keys match `CONSTRUCTOR_OPTIONS`
+   - **Security**: parameterized SQL (no string-concat into `IDatabase`), output escaped (`Html::*`, `htmlspecialchars`, `Message::escaped()`), permission checks on write paths, no secrets in logs
+   - **Readability**: clear names, no dead code, no leftover debug `var_dump`/`error_log`, no unrelated changes mixed in
+   - **i18n**: user-facing strings go through `wfMessage`/`mw.msg`, with both `en.json` and `qqq.json` entries
+   - **Tests**: new logic has coverage; existing tests still relevant
+3. Fix anything clearly wrong. For judgment calls, surface them in your final summary instead of guessing.
+
+**Loop prevention — important.** Run this self-review pass **exactly once**. After applying fixes, do NOT re-run the full checklist on the fix diff. Trust the fixes; the human reviewer (or `/wmf-claude:review-patch` post-push) is the next layer. If a fix is non-trivial enough that you genuinely want to re-verify it, narrow the second look to just that change — never re-walk the whole checklist.

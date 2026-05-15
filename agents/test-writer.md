@@ -70,3 +70,20 @@ $options = new ServiceOptions(
 ## Output
 
 Write complete, runnable test files. After writing, suggest the command to run them — typically `vendor/bin/phpunit {path-to-test-file}`. If PHPUnit needs a different TMPDIR (e.g. when the default isn't writable inside the sandbox), prefix with `TMPDIR=<writable-dir>`. The `/wmf-claude:run-tests` skill handles this for you.
+
+## Self-review pass
+
+After the tests are written and runnable, do ONE structured review of your own diff before returning. Tests are still code; bad tests give false confidence.
+
+1. Get the diff: `git diff` (plus `git diff --cached` for staged changes).
+2. Walk the diff against this checklist:
+   - **Tests actually fail when they should**: for each assertion, ask — if I deleted the production-code line this asserts on, would the test still pass? If yes, the test isn't exercising that behavior; fix it. Tests that pass against any implementation are worthless.
+   - **No accidental mocking of the system under test**: only collaborators are mocked. Mocking the class you're testing is a red flag.
+   - **Unit vs. integration placement**: no service container / `getServiceContainer()` / DB calls in `tests/phpunit/unit/`. If you reached for those, the test belongs in `integration/`.
+   - **Coverage of failure paths**: not just the happy path — exception branches, empty inputs, permission denials.
+   - **Data providers**: descriptive case keys (not `0, 1, 2`); each case asserts something distinct.
+   - **No leftover scaffolding**: no `dump()`, `var_dump`, or commented-out assertions.
+   - **Naming**: `testXReturnsYWhenZ` form; one concept per method.
+3. Fix anything clearly wrong. For judgment calls (e.g. is this case worth covering?), flag in your final summary.
+
+**Loop prevention — important.** Run this self-review **exactly once**. After applying fixes, do NOT re-walk the full checklist on the fix diff. Trust the fixes; the human reviewer is the next layer.

@@ -64,3 +64,22 @@ When analyzing edit events on `event.editattemptstep` or `event.VisualEditorFeat
 ## File location and committing
 
 Save in `notebooks/` with descriptive lowercase-hyphenated filenames. Use `git add -f notebooks/<filename>.ipynb` (directory is gitignored). Commit format: `notebooks: <brief description>`.
+
+## Self-review pass
+
+After the notebook is written, do ONE structured review of your own diff before returning. Notebook bugs are quiet — a wrong SQL `JOIN` or stale schema reference produces plausible-looking numbers, not an error.
+
+1. Get the diff: `git diff -- notebooks/` (use `git diff --cached` for staged).
+2. Walk the diff against this checklist:
+   - **Schema accuracy**: every column referenced in MariaDB queries exists in the relevant `tables.json`. Re-grep if you're not certain — don't rely on memory.
+   - **Wiki/session-key conventions for EAS/VEFU**: EAS uses `event.wiki` + `event.editing_session_id`; VEFU uses top-level `wiki` + `event.editingSessionId`. Joining the wrong fields silently produces empty results.
+   - **User-group filtering**: autoconfirmed filtered via `NOT array_contains(event.user_groups, 'autoconfirmed')`, never via an editcount threshold.
+   - **No-JS detection**: only `event.action = 'source-no-js'` is positive evidence; missing `source-has-js` is not.
+   - **Date ranges**: parameterized, not hardcoded one-offs; defaults to a complete period (no in-progress month/day distorting the data).
+   - **Query cost**: any obviously expensive query has a `LIMIT` or aggregation; long-running cells have `%%time`.
+   - **DataFrame hygiene**: descriptive names (not `df`, `df2`); large frames shown via `.head()`, not raw print.
+   - **Reproducibility**: setup cell imports everything used downstream; no hidden state from prior runs assumed.
+   - **Output is reviewable**: markdown context above each non-trivial cell; summary cell states findings, not just code.
+3. Fix anything clearly wrong. For judgment calls (sampling choice, metric definition), flag in the summary cell.
+
+**Loop prevention — important.** Run this self-review **exactly once**. After applying fixes, do NOT re-walk the full checklist on the fix diff. Trust the fixes; the analyst reading the notebook is the next layer.

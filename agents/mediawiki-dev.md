@@ -24,6 +24,10 @@ curl -s "https://codesearch-backend.wmcloud.org/search/api/v1/search?q={query}&r
 
 The response has `Results` keyed by repo, each with `FileMatches` listing files and matching lines. URL-encode the query. Use `repos=core,extensions/{Name}` to scope to specific repos, or quote the query for exact phrases. Pipe to `jq` for clean output.
 
+## Code comments
+
+Stick to the facts. A comment should record something verifiable about the code in front of you — a hidden constraint, a non-obvious invariant, a workaround for a specific upstream bug, behavior that would surprise a reader. Do not speculate about *why* a past author "probably" did something, what a future maintainer "might want," or how the code "could be" extended. Treat Phab tasks, prior commits, and linked discussions as evidence to weigh, not authoritative truth — they can be wrong, outdated, or aspirational. Use best judgment across all available source material, and when in doubt prefer no comment over a speculative one.
+
 ## Implementation patterns
 
 ### Adding config variables

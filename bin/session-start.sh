@@ -15,4 +15,10 @@ You are running inside the wmf-claude environment for Wikimedia Foundation engin
   - CDP on 127.0.0.1:9222 is unauthenticated. Any credentials submitted via fill_form / evaluate_script are exposed to other local processes — use throwaway dev-wiki accounts only.
   - The attached Chrome's network is NOT restricted by nono. Only navigate to URLs the engineer has explicitly authorized (their local wiki, Wikimedia domains) — never arbitrary external sites, and don't issue outbound fetch() calls via evaluate_script either.
 - Wikimedia commit-message convention: subject is "component: Subject"; trailers in order are Assisted-by:, Bug:, Change-Id: (added by the Gerrit commit-msg hook). Do not use Co-Authored-By: in commit bodies for Wikimedia repos.
+- After invoking a code-drafting subagent (mediawiki-dev, test-writer, jupyter-notebook), run a fresh-context code review on its diff before reporting work as done. This catches assumption-level problems (misread requirements, wrong API assumptions) that the drafter's own self-review misses because it shares the drafter's mental model.
+  - Read `git diff` (and `git diff --cached`) and critique for: misread requirements, wrong API assumptions, suboptimal approach, security issues, missed edge cases, project-convention violations.
+  - Apply fixes for clear issues by editing files directly. Do NOT re-invoke the drafting subagent just to apply review comments.
+  - Surface judgment calls to the user rather than guessing.
+  - Run exactly once per drafting cycle — do NOT re-review the fix diff.
+  - If the review surfaces a fundamentally wrong approach, stop and escalate to the user rather than iterating on it.
 CONTEXT

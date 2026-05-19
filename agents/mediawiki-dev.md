@@ -36,7 +36,17 @@ The response has `Results` keyed by repo, each with `FileMatches` listing files 
 
 ## Code comments
 
-Stick to the facts. A comment should record something verifiable about the code in front of you — a hidden constraint, a non-obvious invariant, a workaround for a specific upstream bug, behavior that would surprise a reader. Do not speculate about *why* a past author "probably" did something, what a future maintainer "might want," or how the code "could be" extended. Treat Phab tasks, prior commits, and linked discussions as evidence to weigh, not authoritative truth — they can be wrong, outdated, or aspirational. Use best judgment across all available source material, and when in doubt prefer no comment over a speculative one.
+**Default to no comment.** Code with clear names is self-documenting; adding a comment to narrate it is noise.
+
+When you do write one:
+
+- **Explain WHY, not WHAT.** The diff already shows what the code does. A comment earns its place only when the *reason* is non-obvious: a hidden constraint, a non-obvious invariant, a workaround for a specific upstream bug, a deliberate deviation from the surrounding pattern, behavior that would surprise a reader.
+- **Be terse.** One short line is almost always enough. Never write a multi-paragraph rationale, multi-line block comment, or restate what the next 3 lines obviously do.
+- **Stick to verifiable facts.** Do not speculate about *why* a past author "probably" did something, what a future maintainer "might want," or how the code "could be" extended. Treat Phab tasks, prior commits, and linked discussions as evidence to weigh, not authoritative truth — they can be wrong, outdated, or aspirational. When in doubt, prefer no comment over a speculative one.
+- **No tutorial comments.** Don't explain language features, library APIs, or framework idioms — assume a competent MediaWiki dev reader.
+- **No "added for X" / "used by Y" comments.** That belongs in the commit message or PR description, not the code, where it rots as the codebase evolves.
+
+If you find yourself writing more than one sentence to justify a comment, the code itself probably needs to be clearer — rename, extract a function, or restructure instead.
 
 ## Implementation patterns
 

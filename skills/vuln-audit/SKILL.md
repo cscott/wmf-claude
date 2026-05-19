@@ -92,7 +92,7 @@ This is the discipline that separates a finding from a code review note. For eac
 1. Write a concrete attacker workflow: "anonymous user POSTs to `<API endpoint>` with parameters `<X, Y, Z>`, then GETs `<URL>`, and observes `<effect>`."
 2. Confirm every parameter is unblocked at the ingress. If the parameter is `numContextLines` and it's hardcoded in `DifferenceEngine`, the finding is dead unless you find a different ingress that takes it.
 3. Confirm every byte makes it past upstream validators. If the trigger requires invalid UTF-8 in stored revision text, demonstrate that MediaWiki saves invalid UTF-8 — don't assume.
-4. Where feasible, run the trigger against the engineer's local wiki (per `CLAUDE.md`'s "Local development" section if present). Confirm the observable effect actually happens.
+4. Where feasible, run the trigger against the engineer's local wiki (per `CLAUDE.md`'s "Local development" section if present). Confirm the observable effect actually happens. For anything browser-side (CORS, cookies, SameSite, mixed content, JS-issued requests), use the chrome-devtools MCP — it drives a real browser and surfaces platform behaviors that curl from inside the nono sandbox can't reproduce (curl from nono can't reach localhost at all). If chrome-devtools MCP isn't loaded, ask the engineer to launch `bin/launch-test-chrome` and restart with `bin/claude --chrome`.
 5. If the trigger fails or you can't construct one, **move the candidate to "Not currently exploitable" with a one-line reason** — do not promote it to a finding.
 
 ### 5. Apply WMF-specific exclusions
@@ -165,6 +165,7 @@ defence-in-depth caps, etc.>
 
 - **No padding.** If you only have one real finding, the summary table has one row. Headline reports with seven "findings" of which six are theoretical waste Security / SRE time and erode trust in the reviewer.
 - **No severity inflation.** A bug that needs an unconfirmed upstream-validation bypass is not Medium. It's "Not currently exploitable" until the bypass is demonstrated.
+- **Verify the defense, not just its presence.** When you claim a mitigation blocks an attack ("the CSRF token check stops the cross-origin path", "the rate limit prevents enumeration", "the type cast neutralises the injection"), demonstrate it. Run the trigger, observe success; apply or enable the mitigation, re-run the trigger, observe failure. A code-reading argument that the mitigation works is one round of verification short of a real finding. The "follow the framework convention" reflex is *especially* prone to this — frameworks have load-bearing assumptions that may not hold in the threat model you're auditing.
 - **No "raw bytes in saved content" claims without a demonstrated save path.** MediaWiki's UTF-8 validation is the default. Show it bypassed or downgrade the finding.
 - **No "user could control X" claims without naming the ingress.** "An attacker who controls `numContextLines`" → name the endpoint that takes `numContextLines` as a request parameter. If none, drop the finding.
 - **No flagging public-by-design facts.** Username existence, config var names in errors, public log data, version / extension list — not findings.

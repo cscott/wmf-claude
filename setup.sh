@@ -248,9 +248,9 @@ fi
 find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'wmf-claude-chrome.*' -type d -mtime +1 -print 2>/dev/null \
   | while read -r d; do rm -rf "$d"; done
 
-read -rp "    Install chrome-devtools MCP? [y/N] " REG_CDP
+read -rp "    Install chrome-devtools MCP? [Y/n] " REG_CDP
 case "$REG_CDP" in
-  y|Y|yes|Yes|YES)
+  ""|y|Y|yes|Yes|YES)
     CDP_DIR="$SCRIPT_DIR/chrome-devtools-mcp"
     CDP_BIN="$CDP_DIR/node_modules/.bin/chrome-devtools-mcp"
     PINNED_VERSION="$(jq -r '.dependencies["chrome-devtools-mcp"]' "$CDP_DIR/package.json")"

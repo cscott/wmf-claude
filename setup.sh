@@ -54,6 +54,23 @@ if [[ ${#MISSING[@]} -gt 0 ]]; then
   exit 1
 fi
 
+# Update Claude Code itself. The sandboxed `claude` (the alias installed below)
+# runs with the wmf-engineer profile's "minimal" network, which deliberately
+# does not allow Claude's version-check/download endpoints — so its in-sandbox
+# auto-updater is disabled (see bin/launch-claude.sh) and reports nothing to
+# `claude doctor`. setup.sh runs UNSANDBOXED, so it's the right place to keep
+# the binary current: re-run ./setup.sh to update. Non-fatal — a failed or
+# offline update must never block the rest of setup. Skip with
+# WMF_CLAUDE_SKIP_UPDATE=1.
+step "Updating Claude Code"
+if [[ -n "${WMF_CLAUDE_SKIP_UPDATE:-}" ]]; then
+  dim "    Skipped (WMF_CLAUDE_SKIP_UPDATE set)"; echo ""
+elif claude update; then
+  ok "Claude Code is up to date"
+else
+  fail "Update check failed (offline?) — continuing with the installed version"
+fi
+
 # nono 0.44 moved the claude-code profile to a registry pack — older versions
 # can't pull packs and won't resolve the base profile our profile inherits from.
 # The recommended/tested version lives in .nono-version (bumped via the

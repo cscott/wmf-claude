@@ -2,7 +2,7 @@
   "extends": "claude-code",
   "meta": {
     "name": "wmf-engineer",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "description": "Wikimedia Foundation engineer profile for Claude Code with WMF-specific domain access and destructive action prevention",
     "author": "Kosta Harlan <kharlan@wikimedia.org>"
   },
@@ -28,6 +28,8 @@
       "~/.zshrc",
       "~/.zprofile",
       "~/.zsh_history",
+      "~/.config/fish/config.fish",
+      "~/.config/fish/fish_variables",
       "~/.profile",
       "~/.netrc",
       "~/.npmrc",
@@ -57,6 +59,12 @@
       "~/Library/Application Support/com.operasoftware.Opera"
     ],
     "suppress_save_prompt": [
+      "~/.zshrc",
+      "~/.zprofile",
+      "~/.bashrc",
+      "~/.bash_profile",
+      "~/.profile",
+      "~/.config/fish/config.fish",
       "~/Library/Application Support/Google/Chrome",
       "~/Library/Application Support/Google/Chrome Beta",
       "~/Library/Application Support/Google/Chrome Canary",

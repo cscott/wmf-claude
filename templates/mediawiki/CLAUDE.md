@@ -9,6 +9,7 @@
 | `/wmf-claude:lint` | Detect changed file types, run appropriate linters |
 | `/wmf-claude:manual-test [feature or url-path]` | Browser testing via an external browser-automation tool (you supply the local wiki URL and credentials) |
 | `/wmf-claude:compare-rebase [base-commit]` | Show what changed in each commit after a rebase |
+| `/wmf-claude:perf-audit [component] [backend\|frontend\|both]` | Audit against WMF performance practices and budgets, with measured findings |
 
 ## MediaWiki agents
 

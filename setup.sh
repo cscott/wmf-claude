@@ -115,6 +115,22 @@ else
   fail "Update check failed (offline?) — continuing with the installed version"
 fi
 
+# Claude Code on Linux silently ignores glob patterns in Read/Edit/Write deny
+# rules (e.g. Read(**/*.env)). The explicit non-glob entries in settings-merge.json
+# cover common sensitive files (.env, .env.local, ~/.ssh/id_rsa, etc.), but
+# deep-nested or unusually-named .key/.pem/.secret/.credential files within the
+# workdir are NOT blocked by the Claude Code permission layer on Linux. The nono
+# OS-level sandbox is the primary control for those.
+if [[ "$(uname -s)" == "Linux" ]]; then
+  step "Checking platform compatibility"
+  fail "Glob patterns in Claude Code permission deny rules are ignored on Linux."
+  dim "    The nono OS-level sandbox blocks ~/.ssh and other sensitive paths."; echo ""
+  dim "    Explicit deny rules cover common .env files (.env, .env.local, etc.)."; echo ""
+  dim "    However, deep-nested or unusually-named .key/.pem/.secret/.credential"; echo ""
+  dim "    files inside your workdir are NOT blocked by the Claude Code permission"; echo ""
+  dim "    layer — only by the nono sandbox. Avoid storing secrets in your workdir."; echo ""
+fi
+
 # nono 0.44 moved the claude-code profile to a registry pack — older versions
 # can't pull packs and won't resolve the base profile our profile inherits from.
 # The recommended/tested version lives in .nono-version (bumped via the

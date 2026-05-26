@@ -39,7 +39,7 @@ read -rp "  Press Enter to continue, Ctrl-C to abort: " _
 # Check dependencies
 step "Checking dependencies"
 MISSING=()
-for cmd in nono node npm python3 claude git; do
+for cmd in nono node npm python3 claude git jq; do
   if command -v "$cmd" &>/dev/null; then
     ok "$cmd $(dim "($(command -v "$cmd"))")"
   else
@@ -61,6 +61,7 @@ if [[ ${#MISSING[@]} -gt 0 ]]; then
       node|npm) HINT="brew install node" ;;
       python3)  HINT="brew install python3" ;;
       git)      HINT="brew install git   (or xcode-select --install)" ;;
+      jq)       HINT="brew install jq" ;;
       *)        HINT="install $cmd" ;;
     esac
     # Dedupe: node + npm map to the same hint.
@@ -96,6 +97,46 @@ if ! command -v uv &>/dev/null; then
     dim "    and put it first on PATH, or install 'uv' (which fetches its own Python)."; echo ""
     exit 1
   fi
+fi
+
+# Claude Code's in-process sandbox (`sandbox.enabled: true`) uses Apple seatbelt
+# to restrict its own tool calls. bin/claude already runs Claude inside a nono
+# seatbelt sandbox, and nesting the two deadlocks tool calls — the inner
+# sandbox-exec fights the outer profile. The signed nono pack pins this to
+# false via wiring/settings-merge.json, but setup.sh doesn't apply that file,
+# so detect the conflict and warn. We don't auto-fix: the user may legitimately
+# want sandbox.enabled: true for unsandboxed claude sessions outside this repo.
+# settings.local.json takes precedence over settings.json; either can hold the
+# offending key. bin/claude has a matching runtime guard that hard-fails.
+step "Checking Claude sandbox config"
+# Read the raw value (true / false / null) from each file. We deliberately
+# don't use jq's `//` operator here: `// "null"` would coerce an explicit
+# `false` to "null", making an intentional override indistinguishable from a
+# missing key, and breaking precedence (a settings.local.json saying false
+# should override a settings.json saying true).
+SANDBOX_MAIN="null"
+SANDBOX_LOCAL="null"
+if [[ -f "$HOME/.claude/settings.json" ]]; then
+  SANDBOX_MAIN=$(jq -r '.sandbox.enabled' "$HOME/.claude/settings.json" 2>/dev/null || echo null)
+fi
+if [[ -f "$HOME/.claude/settings.local.json" ]]; then
+  SANDBOX_LOCAL=$(jq -r '.sandbox.enabled' "$HOME/.claude/settings.local.json" 2>/dev/null || echo null)
+fi
+SANDBOX_SOURCE=""
+if [[ "$SANDBOX_LOCAL" == "true" ]]; then
+  SANDBOX_SOURCE="~/.claude/settings.local.json"
+elif [[ "$SANDBOX_LOCAL" != "false" && "$SANDBOX_MAIN" == "true" ]]; then
+  SANDBOX_SOURCE="~/.claude/settings.json"
+fi
+if [[ -n "$SANDBOX_SOURCE" ]]; then
+  fail "sandbox.enabled is true in $SANDBOX_SOURCE"
+  dim "    Claude Code's in-process sandbox can't nest inside the nono sandbox"; echo ""
+  dim "    that bin/claude uses — tool calls will deadlock. Set sandbox.enabled"; echo ""
+  dim "    to false in $SANDBOX_SOURCE (or run /config inside an"; echo ""
+  dim "    unsandboxed claude session) before launching bin/claude."; echo ""
+  dim "    Setup will continue; bin/claude will refuse to launch until this is fixed."; echo ""
+else
+  ok "sandbox.enabled is unset or false"
 fi
 
 # Update Claude Code itself. The sandboxed `claude` (the alias installed below)

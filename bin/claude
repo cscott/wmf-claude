@@ -77,6 +77,40 @@ for arg in "${CLAUDE_ARGS[@]}"; do
   esac
 done
 
+# Claude Code's own sandbox (sandbox.enabled in ~/.claude/settings*.json) uses
+# Apple seatbelt — it can't nest inside the outer nono seatbelt we're about to
+# launch. The inner sandbox-exec deadlocks tool calls. Refuse to launch rather
+# than hand the engineer a frozen prompt. settings.local.json takes precedence;
+# missing files or jq are treated as "no conflict" (jq is a setup.sh hard dep,
+# so absence at runtime is anomalous and shouldn't block launches).
+if command -v jq >/dev/null 2>&1; then
+  # Read raw values (true/false/null). Don't use jq's `//` operator: `// "null"`
+  # would coerce an explicit `false` to "null", breaking precedence (a
+  # settings.local.json saying false must override a settings.json saying true).
+  SANDBOX_MAIN="null"
+  SANDBOX_LOCAL="null"
+  if [[ -f "$HOME/.claude/settings.json" ]]; then
+    SANDBOX_MAIN=$(jq -r '.sandbox.enabled' "$HOME/.claude/settings.json" 2>/dev/null || echo null)
+  fi
+  if [[ -f "$HOME/.claude/settings.local.json" ]]; then
+    SANDBOX_LOCAL=$(jq -r '.sandbox.enabled' "$HOME/.claude/settings.local.json" 2>/dev/null || echo null)
+  fi
+  SANDBOX_SOURCE=""
+  if [[ "$SANDBOX_LOCAL" == "true" ]]; then
+    SANDBOX_SOURCE="~/.claude/settings.local.json"
+  elif [[ "$SANDBOX_LOCAL" != "false" && "$SANDBOX_MAIN" == "true" ]]; then
+    SANDBOX_SOURCE="~/.claude/settings.json"
+  fi
+  if [[ -n "$SANDBOX_SOURCE" ]]; then
+    echo "error: sandbox.enabled is true in $SANDBOX_SOURCE — Claude's in-process sandbox" >&2
+    echo "       can't nest inside the nono sandbox bin/claude uses (tool calls deadlock)." >&2
+    echo "       Set sandbox.enabled to false in $SANDBOX_SOURCE and retry." >&2
+    exit 1
+  fi
+else
+  echo "warning: jq not found on PATH; skipping sandbox.enabled conflict check" >&2
+fi
+
 # chrome-devtools MCP is opt-in per session via --chrome. This keeps its
 # attack surface (CDP-controlled browser, unrestricted page-side network)
 # off when the engineer isn't actively running a manual test. When --chrome

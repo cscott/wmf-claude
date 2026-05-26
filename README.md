@@ -33,7 +33,7 @@ with) — `setup.sh` prompts for it.
 
 ```bash
 git clone --recurse-submodules \
-  https://gitlab.wikimedia.org/kharlan/wmf-claude.git
+  https://gitlab.wikimedia.org/repos/product-safety-and-integrity/wmf-claude.git
 cd wmf-claude
 ./setup.sh
 source ~/.zshrc   # or ~/.bashrc, or restart your shell

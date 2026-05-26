@@ -139,6 +139,15 @@ stored for Wikimedia services. Mitigations are layered, not absolute:
   `--allow`/`--read` flags for other paths.
 - `bin/claude` rejects `--capability-elevation`, `--trust-override`, and
   `--dangerously-skip-permissions` to prevent runtime sandbox weakening.
+- `bin/claude` runs unsandboxed, so in an interactive terminal it does a
+  throttled (once/24h) background `git fetch origin` of the install checkout to
+  notify the engineer when wmf-claude (vs `origin/main`) or nono is out of date.
+  It is notify-only: it never pulls or updates, so no unreviewed code is fetched
+  and run. It is skipped for non-interactive runs (`claude -p`, the VS Code
+  extension) where stderr is not a terminal. The fetch uses
+  `ssh -o BatchMode=yes` (no credential prompts) and writes a single timestamp
+  under `${XDG_CACHE_HOME:-~/.cache}/wmf-claude`. Opt out with
+  `WMF_CLAUDE_SKIP_UPDATE=1`.
 
 ## chrome-devtools MCP — attach mode
 

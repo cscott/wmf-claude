@@ -151,6 +151,85 @@ if $WANT_CHROME; then
   CHROME_DEVTOOLS_CLAUDE_ARGS+=(--mcp-config "$CDP_CONFIG")
 fi
 
+# Update notices. bin/claude runs UNSANDBOXED (it's what launches nono), so
+# unlike the in-sandbox `claude` session it can reach the network and the
+# install repo's .git. We only *notify*, never auto-pull, since pulling and
+# then running the freshly-pulled launcher would execute unreviewed code,
+# which the threat model avoids. Two checks, shown only in an interactive
+# terminal (skipped for `claude -p` and embeddings like the VS Code extension):
+#   1. nono vs the .nono-version pin (local, instant).
+#   2. wmf-claude behind origin/main, measured from the local tracking ref
+#      (instant). A `git fetch origin` refreshes that ref in the background,
+#      throttled to once/24h, so it never blocks a launch and is offline-safe.
+# Opt out with WMF_CLAUDE_SKIP_UPDATE=1 (the same knob setup.sh honors).
+update_notices() {
+  [[ -n "${WMF_CLAUDE_SKIP_UPDATE:-}" ]] && return 0
+
+  # Only nag a human at an interactive terminal. `[[ -t 2 ]]` is false when
+  # stderr is captured (the VS Code extension run headless, piped output), so
+  # we stay silent and skip the background fetch there. The arg scan catches
+  # `claude -p` run from a terminal, where stderr is still a TTY.
+  [[ -t 2 ]] || return 0
+  local a
+  for a in "${CLAUDE_ARGS[@]}"; do
+    case "$a" in -p|--print|--print=*) return 0 ;; esac
+  done
+
+  # 1. Installed nono older than the pin.
+  if command -v nono >/dev/null 2>&1 && [[ -f "$SCRIPT_DIR/.nono-version" ]]; then
+    local pin have
+    pin=$(tr -d '[:space:]' < "$SCRIPT_DIR/.nono-version")
+    have=$(nono --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)
+    # Older = the smaller of the two under version sort, and they differ.
+    if [[ -n "$pin" && -n "$have" && "$have" != "$pin" \
+          && "$(printf '%s\n%s\n' "$pin" "$have" | sort -V | head -n1)" == "$have" ]]; then
+      echo "note: nono $have is older than the pinned $pin; run 'brew upgrade nono'" >&2
+    fi
+  fi
+
+  # 2. wmf-claude checkout behind origin/main (only inside a git checkout).
+  git -C "$SCRIPT_DIR" rev-parse --git-dir >/dev/null 2>&1 || return 0
+
+  # Measured against origin/main, the install's canonical branch, not the
+  # current branch's upstream. An engineer may have a feature branch checked
+  # out in their install, but "is my install stale?" is always a question about
+  # origin/main. Computed from the local tracking ref (no network), so it's
+  # instant and drops to 0 the moment they pull.
+  local behind
+  if git -C "$SCRIPT_DIR" rev-parse --verify --quiet refs/remotes/origin/main >/dev/null; then
+    behind=$(git -C "$SCRIPT_DIR" rev-list --count "HEAD..refs/remotes/origin/main" 2>/dev/null || echo 0)
+    if [[ "$behind" =~ ^[0-9]+$ ]] && (( behind > 0 )); then
+      echo "note: wmf-claude is $behind commit(s) behind origin/main; update with" >&2
+      echo "      'git -C $SCRIPT_DIR pull && $SCRIPT_DIR/setup.sh'" >&2
+    fi
+  fi
+
+  # Refresh the remote-tracking ref in the background so the count above stays
+  # current. Throttled to once/24h; never blocks or prompts (BatchMode ssh, no
+  # terminal prompt, short connect timeout); detached from stdin/tty. Offline
+  # or auth failures are ignored; the count just keeps using the last fetch.
+  local cache_dir stamp now last interval
+  cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/wmf-claude"
+  stamp="$cache_dir/last-fetch"
+  mkdir -p "$cache_dir" 2>/dev/null || return 0
+  interval=86400
+  now=$(date +%s)
+  last=0
+  [[ -f "$stamp" ]] && last=$(cat "$stamp" 2>/dev/null || echo 0)
+  [[ "$last" =~ ^[0-9]+$ ]] || last=0
+  if (( now - last < interval )); then
+    return 0
+  fi
+  echo "$now" > "$stamp" 2>/dev/null || true
+  (
+    cd "$SCRIPT_DIR" || exit 0
+    GIT_TERMINAL_PROMPT=0 \
+    GIT_SSH_COMMAND='ssh -o BatchMode=yes -o ConnectTimeout=5' \
+      git fetch --quiet origin 2>/dev/null || exit 0
+  ) </dev/null >/dev/null 2>&1 &
+}
+update_notices
+
 # Launch claude inside the nono sandbox via launch-claude.sh, which prints
 # the WMF Claude banner after nono's capability table (so it lands right
 # before Claude Code's banner instead of getting scrolled past).

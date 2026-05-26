@@ -4,7 +4,7 @@
   "description": "Wikimedia Foundation Claude Code plugin and matching nono profile. Ships skills, agents, hooks for WMF engineering workflows, and the wmf-engineer security profile.",
   "license": "Apache-2.0",
   "platforms": ["macos", "linux"],
-  "min_nono_version": "0.44.0",
+  "min_nono_version": "0.56.0",
   "artifacts": [
     { "type": "profile", "path": "profiles/wmf-engineer.json", "install_as": "wmf-engineer" },
     { "type": "plugin", "path": ".claude-plugin/plugin.json" },

@@ -34,7 +34,7 @@ When changing one layer, consider whether the other should change too.
 
 ## Filesystem denies (nono profile)
 
-- Shell configs: `~/.bashrc`, `~/.bash_profile`, `~/.bash_history`, `~/.zshrc`, `~/.zprofile`, `~/.zsh_history`, `~/.profile`.
+- Shell configs: `~/.bashrc`, `~/.bash_profile`, `~/.bash_history`, `~/.zshrc`, `~/.zprofile`, `~/.zsh_history`, `~/.profile`, `~/.config/fish/config.fish`, `~/.config/fish/fish_variables`.
 - Credentials: `~/.ssh`, `~/.netrc`, `~/.npmrc`, `~/.pypirc`, `~/.composer/auth.json`, `~/.config/composer/auth.json`, `~/.docker/config.json`, `~/.kube/config`, `~/.config/gh`, `~/.env`.
 - Password managers: `~/.password-store`, `~/.config/{bitwarden,keepassxc}`, `~/Library/Application Support/{1Password,Bitwarden,Enpass}`.
 - Private comms: `~/Library/{Mail,Messages}`, `~/.thunderbird`, `~/Library/Application Support/{Slack,Discord,Signal,Telegram}`.
@@ -72,6 +72,17 @@ Claude Code itself probes `Library/Application Support/{Google/Chrome,Google/Chr
 - `sandbox.enabled: false` — nono is the OS boundary; Claude Code's softer
   in-process sandbox would add friction without restricting an already
   sandboxed session.
+
+**Linux caveat.** Claude Code silently ignores glob patterns in permission
+deny rules on Linux, so the `Read(**/*.{env,key,secret,credential,pem})`
+rules above do not fire there. The explicit non-glob `.env*` entries still
+apply, and the nono OS-level sandbox still denies `~/.ssh` and the other
+credential paths regardless of platform. The gap is workdir-local: an
+unusually-named or deep-nested `.key`/`.pem`/`.secret`/`.credential` file
+inside the workdir is blocked by neither layer on Linux (the tool glob is
+ignored, and nono grants the workdir read+write), whereas on macOS the tool
+glob blocks it. Avoid keeping secrets in the workdir on Linux; `setup.sh`
+prints this warning on Linux hosts.
 
 ## Environment variables
 

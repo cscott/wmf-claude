@@ -26,6 +26,13 @@ time to update; it's safe to re-run.
 
 ### Before you run setup
 
+wmf-claude is developed and tested on macOS, and the install hints
+below use Homebrew. It also runs on Linux, with one caveat: Claude Code
+ignores glob patterns in its permission deny rules on Linux, so there
+the nono sandbox (not the Claude Code permission layer) is what blocks
+sensitive files inside your workdir. Avoid keeping secrets in your
+workdir on Linux.
+
 `setup.sh` checks for these and exits with install hints if any are
 missing. Install them up front:
 
@@ -72,6 +79,45 @@ claude mcp list   # should list phabricator and gerrit
 ```
 
 Then run `claude` from any project directory.
+
+## Recommended workspace layout
+
+The sandbox grants read-write access to the directory you launch
+`claude` from, and everything beneath it. Parents and siblings stay
+out of reach unless you grant them explicitly, so where you start
+`claude` decides what it can touch.
+
+For work that spans repos, keep all your clones under one root (for
+example `~/src`) and launch `claude` from that root:
+
+```bash
+cd ~/src
+claude
+```
+
+Claude can then read and edit any repo in the tree within a single
+session, rather than one repo per launch.
+
+Clone each repo to a path that mirrors its Gerrit or GitLab project
+path, so a project name maps to a predictable location:
+
+```
+~/src/
+  mediawiki/core
+  mediawiki/extensions/GrowthExperiments
+  operations/puppet
+  repos/product-safety-and-integrity/wmf-claude
+```
+
+This avoids duplicate clones and lets Claude resolve a project name to
+its checkout without guessing.
+
+To keep launching `claude` from inside a single repo instead, grant the
+shared root explicitly:
+
+```bash
+claude --allow ~/src --
+```
 
 ## Skills and agents
 
@@ -137,6 +183,27 @@ Run `/wmf-claude:init-project` (optionally `--mediawiki`)
 inside a repo to drop a starter `CLAUDE.md`. It refuses
 to overwrite an existing one.
 
+## Browser testing
+
+The `manual-test` skill drives a real Chrome against your local dev
+wiki for screenshots, console errors, accessibility snapshots, and
+click-through checks. It is opt-in per session because it widens the
+attack surface.
+
+Enable it once by answering `y` at the chrome-devtools prompt in
+`./setup.sh`, then launch with the `--chrome` flag. Chrome runs outside
+the sandbox (it calls IOKit at startup and can't run inside), so start
+it in a separate terminal first:
+
+```bash
+bin/launch-test-chrome   # one terminal: Chrome outside the sandbox, throwaway profile
+claude --chrome          # another: attaches the chrome-devtools MCP
+```
+
+The MCP attaches over `127.0.0.1:9222`. That port is unauthenticated
+and reachable by other local processes, so use throwaway dev-wiki
+accounts only, never real credentials.
+
 ## Updating
 
 ```bash
@@ -144,6 +211,22 @@ git pull
 git submodule update --init --recursive
 ./setup.sh
 ```
+
+## Submitting patches
+
+The sandbox blocks SSH (Gerrit port 29418, GitHub port 22), so the
+standard `git review` push does not work from inside a `claude`
+session. Claude can stage commits and write commit messages, but the
+push itself runs in your normal terminal, outside the sandbox:
+
+```bash
+git review        # or your usual Gerrit push, from a regular shell
+```
+
+HTTPS push to Wikimedia hosts is reachable from inside the sandbox, but
+only with a Gerrit HTTP password configured, which most engineers on
+the SSH workflow do not have. See [`SECURITY.md`](SECURITY.md) for the
+reasoning behind blocking SSH.
 
 ## Security model
 

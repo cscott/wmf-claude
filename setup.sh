@@ -172,11 +172,9 @@ if [[ "$(uname -s)" == "Linux" ]]; then
   dim "    layer — only by the nono sandbox. Avoid storing secrets in your workdir."; echo ""
 fi
 
-# nono 0.44 moved the claude-code profile to a registry pack — older versions
-# can't pull packs and won't resolve the base profile our profile inherits from.
-# The recommended/tested version lives in .nono-version (bumped via the
-# /wmf-claude:check-nono-update skill).
-NONO_MIN="0.44.0"
+# Floor tracks the previous .nono-version pin. Keep in sync with package.json
+# `min_nono_version`. Recommended version lives in .nono-version.
+NONO_MIN="0.56.0"
 NONO_RECOMMENDED=$(tr -d '[:space:]' < "$SCRIPT_DIR/.nono-version" 2>/dev/null || echo "")
 NONO_VER=$(nono --version 2>/dev/null | awk '{print $2}')
 if [[ -z "$NONO_VER" ]]; then

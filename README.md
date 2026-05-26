@@ -8,12 +8,28 @@ network access (Wikimedia + language docs), and
 defense-in-depth permission rules to reduce the risk of
 accidental pushes or credential exposure.
 
-## Prerequisites
+## Quick start
 
-Install these first — `setup.sh` checks for them and exits
-with install hints if any are missing:
+```bash
+git clone https://gitlab.wikimedia.org/kharlan/wmf-claude.git
+cd wmf-claude
+./setup.sh
+source ~/.zshrc   # or ~/.bashrc, to pick up the new `claude` alias
+```
 
-- **[nono](https://github.com/always-further/nono)** 0.44+ — the sandbox runtime (tested version is pinned in [`.nono-version`](./.nono-version); CI installs that version)
+Then run `claude` from any project directory and it runs inside the
+sandbox.
+
+`./setup.sh` is interactive: it shows you what it's about to do and
+waits for you to press Enter before touching anything. Re-run it any
+time to update; it's safe to re-run.
+
+### Before you run setup
+
+`setup.sh` checks for these and exits with install hints if any are
+missing. Install them up front:
+
+- **[nono](https://github.com/always-further/nono)** 0.44+, the sandbox runtime (tested version is pinned in [`.nono-version`](./.nono-version); CI installs that version)
   ```bash
   brew install nono
   ```
@@ -21,38 +37,35 @@ with install hints if any are missing:
   ```bash
   curl -fsSL https://claude.ai/install.sh | bash
   ```
-- **Node.js + npm** — Phabricator MCP server (`brew install node`)
-- **Python 3** (uv preferred, falls back to `venv`) — Gerrit MCP server (`brew install python3`)
-- **git** — `brew install git`, or `xcode-select --install`
+- **Node.js + npm**, for the Phabricator MCP server (`brew install node`)
+- **Python 3** (uv preferred, falls back to `venv`), for the Gerrit MCP server (`brew install python3`)
+- **[uv](https://docs.astral.sh/uv/)** (optional but recommended), builds the Gerrit MCP server and fetches its own Python (`brew install uv`)
+- **jq**, for parsing JSON config during setup (`brew install jq`)
+- **git**: `brew install git`, or `xcode-select --install`
 
-You'll also need your Phabricator username (the one you
-log into [phabricator.wikimedia.org](https://phabricator.wikimedia.org)
-with) — `setup.sh` prompts for it.
+Have your **Phabricator username** handy too (the one you log into
+[phabricator.wikimedia.org](https://phabricator.wikimedia.org) with);
+`setup.sh` prompts for it.
 
-## Install
+### What `./setup.sh` does
 
-```bash
-git clone --recurse-submodules \
-  https://gitlab.wikimedia.org/repos/product-safety-and-integrity/wmf-claude.git
-cd wmf-claude
-./setup.sh
-source ~/.zshrc   # or ~/.bashrc, or restart your shell
-```
+After you press Enter, it:
 
-`setup.sh` installs the nono profile, builds both MCP
-servers, registers them globally with Claude Code, and
-adds a `claude` shell alias that runs sandboxed by
-default. To bypass the sandbox for a single invocation,
-use `\claude` or `command claude`.
+1. Updates Claude Code to the current version.
+2. Copies the nono profile to `~/.config/nono/profiles/`.
+3. Builds both MCP servers (npm + pip/uv) in this checkout.
+4. Registers the phabricator + gerrit MCP servers globally with Claude Code.
+5. Appends a `claude` shell alias to `~/.zshrc` or `~/.bashrc` that runs sandboxed by default.
 
 Fish users get an `abbr` in `~/.config/fish/conf.d/wmf-claude.fish`
 that expands inline so the sandbox path is visible.
 
-If you already have a different `claude` alias (`alias claude=`
-for bash/zsh, `abbr -a claude` for fish), setup leaves it alone
-and prints the line for you to install manually.
+If you already have a different `claude` alias (`alias claude=` for
+bash/zsh, `abbr -a claude` for fish), setup leaves it alone and prints
+the line for you to install manually. To bypass the sandbox for a
+single invocation, use `\claude` or `command claude`.
 
-Verify the MCP servers registered:
+### Verify it worked
 
 ```bash
 claude mcp list   # should list phabricator and gerrit

@@ -51,6 +51,25 @@ done
 if [[ ${#MISSING[@]} -gt 0 ]]; then
   echo ""
   fail "Missing: ${MISSING[*]}"
+  echo ""
+  dim "    Install the missing dependencies, then re-run ./setup.sh:"; echo ""
+  HINTS=""
+  for cmd in "${MISSING[@]}"; do
+    case "$cmd" in
+      nono)     HINT="brew install nono" ;;
+      claude)   HINT="curl -fsSL https://claude.ai/install.sh | bash" ;;
+      node|npm) HINT="brew install node" ;;
+      python3)  HINT="brew install python3" ;;
+      git)      HINT="brew install git   (or xcode-select --install)" ;;
+      *)        HINT="install $cmd" ;;
+    esac
+    # Dedupe: node + npm map to the same hint.
+    case $'\n'"$HINTS"$'\n' in
+      *$'\n'"$HINT"$'\n'*) ;;
+      *) HINTS+="$HINT"$'\n'; printf '      %s\n' "$HINT" ;;
+    esac
+  done
+  echo ""
   exit 1
 fi
 

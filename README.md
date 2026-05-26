@@ -10,10 +10,20 @@ accidental pushes or credential exposure.
 
 ## Prerequisites
 
+Install these first — `setup.sh` checks for them and exits
+with install hints if any are missing:
+
 - **[nono](https://github.com/always-further/nono)** 0.44+ — the sandbox runtime (tested version is pinned in [`.nono-version`](./.nono-version); CI installs that version)
+  ```bash
+  brew install nono
+  ```
 - **[Claude Code](https://docs.claude.com/en/docs/claude-code/setup)**
-- **Node.js + npm** — Phabricator MCP server
-- **Python 3** (uv preferred, falls back to `venv`) — Gerrit MCP server
+  ```bash
+  curl -fsSL https://claude.ai/install.sh | bash
+  ```
+- **Node.js + npm** — Phabricator MCP server (`brew install node`)
+- **Python 3** (uv preferred, falls back to `venv`) — Gerrit MCP server (`brew install python3`)
+- **git** — `brew install git`, or `xcode-select --install`
 
 You'll also need your Phabricator username (the one you
 log into [phabricator.wikimedia.org](https://phabricator.wikimedia.org)

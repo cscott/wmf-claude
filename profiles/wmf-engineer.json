@@ -17,7 +17,8 @@
       "$WORKDIR"
     ],
     "read": [
-      "~/.local/state/fnm_multishells"
+      "~/.local/state/fnm_multishells",
+      "~/.agents/skills"
     ],
     "deny": [
       "~/.ssh",
@@ -75,6 +76,7 @@
       "~/Library/Application Support/Vivaldi",
       "~/Library/Application Support/com.operasoftware.Opera",
       "/home",
+      "~",
       "~/.local/state/claude/locks",
       "~/.CFUserTextEncoding"
     ]

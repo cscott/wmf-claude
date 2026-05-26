@@ -85,6 +85,30 @@ When creating or modifying any database query (via `IDatabase` methods like `sel
 3. Check for full table scans, missing indexes, filesort/temporary tables, large row estimates
 4. If issues found, add indexes or restructure the query
 
+## Performance — write-time rules
+
+The performance rules live at:
+
+- [Performance budgeting](https://www.mediawiki.org/wiki/Performance_budgeting) — canonical source for current numeric budgets
+- [Backend performance practices](https://wikitech.wikimedia.org/wiki/MediaWiki_Engineering/Guides/Backend_performance_practices)
+- [Frontend performance practices](https://wikitech.wikimedia.org/wiki/MediaWiki_Engineering/Guides/Frontend_performance_practices)
+
+Read them when writing anything on a hot path. The [Architectural principles](https://www.mediawiki.org/wiki/Wikimedia_Engineering_Architecture_Principles) and [Architecture guidelines](https://www.mediawiki.org/wiki/Architecture_guidelines) pages are useful design context but are not perf-rule sources — treat design-quality concerns as a separate review, not a perf write-time concern.
+
+The non-negotiables to keep in mind every time:
+
+- **No synchronous HTTP in the request path.** External calls go in a job (`JobQueueGroup::push`) or a deferred update (`DeferredUpdates::addCallableUpdate`).
+- **No N+1 queries.** A `Database::select` inside a `foreach` is a bug — batch with `IN ( ... )` / `newSelectQueryBuilder()->where( [ 'col' => $ids ] )`.
+- **Every query needs an index.** Run `EXPLAIN` (see above) and verify before committing. `LIKE '%foo%'` is a full table scan.
+- **Read from `DB_REPLICA`** for everything that isn't a write; `DB_PRIMARY` only for writes and read-after-write coherence.
+- **Cache with `WANObjectCache::getWithSetCallback`**, not manual `get` + `set` (race-prone). Include a version segment in the key.
+- **Hot hooks are charged per request.** Handlers on `BeforePageDisplay`, `OutputPageBeforeHTML`, `GetPreferences`, parser hooks, etc. must do the minimum work and bail fast.
+- **A new ResourceLoader module is a universal tax** on every page view everywhere — adding one needs an explicit rationale. Default: extend an existing module via `packageFiles` / `dependencies`, or inline into the consumer. Never add a new RL module just because it "feels cleaner".
+- **`addModules` for CSS-only payloads is wrong** — use `addModuleStyles` so the CSS lands in `<head>` without blocking on JS.
+- **`OutputPage::addInlineScript` disables ResourceLoader caching** for the snippet — avoid unless it's tiny and must execute before first paint.
+
+For a focused performance review of a larger change (cross-cutting refactor, new feature, anything touching a parser-hot or render-hot path), run `/wmf-claude:perf-audit [component] [backend|frontend|both]` after the self-review pass.
+
 ## After writing code
 
 Run these checks and fix any failures before considering work done:
@@ -105,6 +129,7 @@ After lint/tests pass, do ONE structured review of your own diff before returnin
    - **MediaWiki conventions**: DI used over `MediaWikiServices::getInstance()` in services; hooks registered in `extension.json`; no globals in new code; service-wiring config keys match `CONSTRUCTOR_OPTIONS`
    - **Pattern consistency**: new code matches the patterns already in use in this file / extension / core area. If you introduced a new pattern, the "Follow existing patterns" exception applies (genuine multi-file migration); otherwise flag it for the user.
    - **Security**: parameterized SQL (no string-concat into `IDatabase`), output escaped (`Html::*`, `htmlspecialchars`, `Message::escaped()`), permission checks on write paths, no secrets in logs
+   - **Performance**: every new query has an index (EXPLAIN-verified), no N+1 (no `select*` inside a loop), no sync HTTP in the request path, `WANObjectCache::getWithSetCallback` used over manual get/set, hot-hook handlers bail fast, no unjustified new ResourceLoader module (extend an existing one or inline), CSS-only payloads use `addModuleStyles` not `addModules`
    - **Readability**: clear names, no dead code, no leftover debug `var_dump`/`error_log`, no unrelated changes mixed in
    - **i18n**: user-facing strings go through `wfMessage`/`mw.msg`, with both `en.json` and `qqq.json` entries
    - **Tests**: new logic has coverage; existing tests still relevant

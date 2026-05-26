@@ -18,6 +18,7 @@
     { "type": "plugin", "path": "skills/write-phab-task/SKILL.md" },
     { "type": "plugin", "path": "skills/review-patch/SKILL.md" },
     { "type": "plugin", "path": "skills/vuln-audit/SKILL.md" },
+    { "type": "plugin", "path": "skills/perf-audit/SKILL.md" },
     { "type": "plugin", "path": "skills/init-project/SKILL.md" },
     { "type": "plugin", "path": "skills/run-tests/SKILL.md" },
     { "type": "plugin", "path": "skills/test-coverage/SKILL.md" },

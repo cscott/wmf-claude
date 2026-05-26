@@ -29,7 +29,7 @@ time to update; it's safe to re-run.
 `setup.sh` checks for these and exits with install hints if any are
 missing. Install them up front:
 
-- **[nono](https://github.com/always-further/nono)** 0.44+, the sandbox runtime (tested version is pinned in [`.nono-version`](./.nono-version); CI installs that version)
+- **[nono](https://github.com/always-further/nono)** 0.56+, the sandbox runtime (tested version is pinned in [`.nono-version`](./.nono-version); CI installs that version)
   ```bash
   brew install nono
   ```

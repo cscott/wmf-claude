@@ -73,6 +73,31 @@ if [[ ${#MISSING[@]} -gt 0 ]]; then
   exit 1
 fi
 
+# gerrit-mcp-server requires a recent Python (see requires-python in its
+# pyproject.toml). An older python3 silently builds an incompatible venv and only
+# fails deep in a pip resolve (e.g. "Could not find a version that satisfies
+# click==8.3.1"), so check the version up front. uv fetches its own Python, so
+# this only matters for the python3 -m venv fallback below.
+if ! command -v uv &>/dev/null; then
+  PY_REQ="$(sed -n 's/^requires-python *= *"[^0-9]*\([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' "$SCRIPT_DIR/gerrit-mcp-server/pyproject.toml")"
+  if [[ -z "$PY_REQ" ]]; then
+    fail "Could not read requires-python from gerrit-mcp-server/pyproject.toml"
+    exit 1
+  fi
+  PY_REQ_MAJOR="${PY_REQ%%.*}"
+  PY_REQ_MINOR="${PY_REQ##*.}"
+  PY_VER="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
+  PY_MAJOR="${PY_VER%%.*}"
+  PY_MINOR="${PY_VER##*.}"
+  if (( PY_MAJOR < PY_REQ_MAJOR || (PY_MAJOR == PY_REQ_MAJOR && PY_MINOR < PY_REQ_MINOR) )); then
+    echo ""
+    fail "python3 is $PY_VER, but gerrit-mcp-server needs >= ${PY_REQ}."
+    dim "    Install a newer Python (e.g. 'brew install python@${PY_REQ}')"; echo ""
+    dim "    and put it first on PATH, or install 'uv' (which fetches its own Python)."; echo ""
+    exit 1
+  fi
+fi
+
 # Update Claude Code itself. The sandboxed `claude` (the alias installed below)
 # runs with the wmf-engineer profile's "minimal" network, which deliberately
 # does not allow Claude's version-check/download endpoints — so its in-sandbox

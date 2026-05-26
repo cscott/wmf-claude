@@ -36,7 +36,7 @@ git clone --recurse-submodules \
   https://gitlab.wikimedia.org/kharlan/wmf-claude.git
 cd wmf-claude
 ./setup.sh
-source ~/.zshrc   # or ~/.bashrc
+source ~/.zshrc   # or ~/.bashrc, or restart your shell
 ```
 
 `setup.sh` installs the nono profile, builds both MCP
@@ -45,9 +45,12 @@ adds a `claude` shell alias that runs sandboxed by
 default. To bypass the sandbox for a single invocation,
 use `\claude` or `command claude`.
 
-If you already have a different `alias claude=` in your
-rc file, setup leaves it alone and prints the line for
-you to install manually.
+Fish users get an `abbr` in `~/.config/fish/conf.d/wmf-claude.fish`
+that expands inline so the sandbox path is visible.
+
+If you already have a different `claude` alias (`alias claude=`
+for bash/zsh, `abbr -a claude` for fish), setup leaves it alone
+and prints the line for you to install manually.
 
 Verify the MCP servers registered:
 

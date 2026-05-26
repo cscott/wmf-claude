@@ -32,7 +32,7 @@ dim "    - Pull the always-further/claude nono pack (Claude Code integration)"; 
 dim "    - Copy the nono profile to ~/.config/nono/profiles/"; echo ""
 dim "    - Install MCP server dependencies (npm + pip/uv) in this checkout"; echo ""
 dim "    - Register phabricator + gerrit MCP servers globally in Claude Code"; echo ""
-dim "    - Append a 'claude' alias to ~/.zshrc or ~/.bashrc (skipped if present)"; echo ""
+dim "    - Install a 'claude' alias (~/.zshrc, ~/.bashrc, or fish conf.d)"; echo ""
 echo ""
 read -rp "  Press Enter to continue, Ctrl-C to abort: " _
 
@@ -366,24 +366,27 @@ esac
 # Install shell alias
 step "Installing shell alias"
 SHELL_NAME="$(basename "$SHELL")"
+# Fish uses an `abbr` in its own conf.d file (expands inline so the sandbox
+# path is visible). For zsh/bash we append a plain `alias` to the user's rc.
 case "$SHELL_NAME" in
-  zsh)  RC_PATH="$HOME/.zshrc"  ; RC_DISPLAY="~/.zshrc"  ;;
-  bash) RC_PATH="$HOME/.bashrc" ; RC_DISPLAY="~/.bashrc" ;;
-  *)    RC_PATH=""              ; RC_DISPLAY="your shell config" ;;
+  zsh)  RC_PATH="$HOME/.zshrc"  ; RC_DISPLAY="~/.zshrc"  ; ALIAS_LINE="alias claude='$SCRIPT_DIR/bin/claude'" ;;
+  bash) RC_PATH="$HOME/.bashrc" ; RC_DISPLAY="~/.bashrc" ; ALIAS_LINE="alias claude='$SCRIPT_DIR/bin/claude'" ;;
+  fish) RC_PATH="$HOME/.config/fish/conf.d/wmf-claude.fish" ; RC_DISPLAY="~/.config/fish/conf.d/wmf-claude.fish" ; ALIAS_LINE="abbr -a claude $SCRIPT_DIR/bin/claude" ;;
+  *)    RC_PATH=""              ; RC_DISPLAY="your shell config" ; ALIAS_LINE="alias claude='$SCRIPT_DIR/bin/claude'" ;;
 esac
-
-ALIAS_LINE="alias claude='$SCRIPT_DIR/bin/claude'"
 
 if [[ -z "$RC_PATH" ]]; then
   fail "Unsupported shell ($SHELL_NAME). Add this to $RC_DISPLAY:"
   echo "      $ALIAS_LINE"
 elif [[ -f "$RC_PATH" ]] && grep -Fxq "$ALIAS_LINE" "$RC_PATH"; then
   ok "Alias already present in $RC_DISPLAY"
-elif [[ -f "$RC_PATH" ]] && grep -Eq "^[[:space:]]*alias[[:space:]]+claude=" "$RC_PATH"; then
-  fail "A different 'alias claude=' is already in $RC_DISPLAY — leaving it alone."
+elif [[ -f "$RC_PATH" ]] && grep -Eq "^[[:space:]]*(alias[[:space:]]+claude=|abbr[[:space:]]+-a[[:space:]]+claude([[:space:]]|$))" "$RC_PATH"; then
+  fail "A different 'claude' alias is already in $RC_DISPLAY — leaving it alone."
   fail "Replace it manually with:"
   echo "      $ALIAS_LINE"
 else
+  # mkdir -p handles fish's conf.d not existing yet; no-op for ~/.zshrc, ~/.bashrc.
+  mkdir -p "$(dirname "$RC_PATH")"
   printf '\n# wmf-claude: sandbox claude by default (bypass with \\claude or `command claude`)\n%s\n' "$ALIAS_LINE" >> "$RC_PATH"
   ok "Added 'claude' alias to $RC_DISPLAY"
 fi

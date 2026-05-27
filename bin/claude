@@ -210,6 +210,18 @@ update_notices() {
     case "$a" in -p|--print|--print=*) return 0 ;; esac
   done
 
+  # Colorize the notices so they stand out against nono's colored capability
+  # table; an uncolored note at the top is easy to miss. Only reached when
+  # stderr is a TTY (checked above); also honors NO_COLOR. Bold yellow labels
+  # the "note:"; bold magenta marks the copy-paste command, matching the
+  # banner's convention (launch-claude.sh) of magenta for things you act on.
+  local c_note='' c_cmd='' c_off=''
+  if [[ -z "${NO_COLOR:-}" ]]; then
+    c_note=$'\033[1;33m'
+    c_cmd=$'\033[1;35m'
+    c_off=$'\033[0m'
+  fi
+
   # 1. Installed nono older than the pin.
   if command -v nono >/dev/null 2>&1 && [[ -f "$SCRIPT_DIR/.nono-version" ]]; then
     local pin have
@@ -218,7 +230,8 @@ update_notices() {
     # Older = the smaller of the two under version sort, and they differ.
     if [[ -n "$pin" && -n "$have" && "$have" != "$pin" \
           && "$(printf '%s\n%s\n' "$pin" "$have" | sort -V | head -n1)" == "$have" ]]; then
-      echo "note: nono $have is older than the pinned $pin; run 'brew upgrade nono'" >&2
+      printf '%snote:%s nono %s is older than the pinned %s; run %sbrew upgrade nono%s\n' \
+        "$c_note" "$c_off" "$have" "$pin" "$c_cmd" "$c_off" >&2
     fi
   fi
 
@@ -234,8 +247,10 @@ update_notices() {
   if git -C "$SCRIPT_DIR" rev-parse --verify --quiet refs/remotes/origin/main >/dev/null; then
     behind=$(git -C "$SCRIPT_DIR" rev-list --count "HEAD..refs/remotes/origin/main" 2>/dev/null || echo 0)
     if [[ "$behind" =~ ^[0-9]+$ ]] && (( behind > 0 )); then
-      echo "note: wmf-claude is $behind commit(s) behind origin/main; update with" >&2
-      echo "      'git -C $SCRIPT_DIR pull && $SCRIPT_DIR/setup.sh'" >&2
+      printf '%snote:%s wmf-claude is %s commit(s) behind origin/main; update with\n' \
+        "$c_note" "$c_off" "$behind" >&2
+      printf '      %sgit -C %s pull && %s/setup.sh%s\n' \
+        "$c_cmd" "$SCRIPT_DIR" "$SCRIPT_DIR" "$c_off" >&2
     fi
   fi
 

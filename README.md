@@ -26,29 +26,69 @@ time to update; it's safe to re-run.
 
 ### Before you run setup
 
-wmf-claude is developed and tested on macOS, and the install hints
-below use Homebrew. It also runs on Linux, with one caveat: Claude Code
-ignores glob patterns in its permission deny rules on Linux, so there
-the nono sandbox (not the Claude Code permission layer) is what blocks
-sensitive files inside your workdir. Avoid keeping secrets in your
-workdir on Linux.
+wmf-claude is developed and tested on macOS. It also runs on Linux, with
+one caveat: Claude Code ignores glob patterns in its permission deny rules
+on Linux, so the nono sandbox (not the Claude Code permission layer) is what
+blocks sensitive files inside your workdir. Avoid keeping secrets in your
+workdir on Linux!
+
+Installation hints below cover macOS (Homebrew) and Debian-like Linuxes (apt).
 
 `setup.sh` checks for these and exits with install hints if any are
 missing. Install them up front:
 
 - **[nono](https://github.com/always-further/nono)** 0.56+, the sandbox runtime (tested version is pinned in [`.nono-version`](./.nono-version); CI installs that version)
+
+  macOS:
+
   ```bash
   brew install nono
   ```
+
+  Debian / Ubuntu (download the `.deb` from
+  [GitHub Releases](https://github.com/always-further/nono/releases)):
+
+  ```bash
+  NONO_VERSION=$(cat .nono-version)
+  wget "https://github.com/always-further/nono/releases/download/v${NONO_VERSION}/nono-cli_${NONO_VERSION}_$(dpkg --print-architecture).deb"
+  sudo dpkg -i "nono-cli_${NONO_VERSION}_$(dpkg --print-architecture).deb"
+  ```
+
 - **[Claude Code](https://docs.claude.com/en/docs/claude-code/setup)**
+
   ```bash
   curl -fsSL https://claude.ai/install.sh | bash
   ```
-- **Node.js + npm**, for the Phabricator MCP server (`brew install node`)
-- **Python 3** (uv preferred, falls back to `venv`), for the Gerrit MCP server (`brew install python3`)
-- **[uv](https://docs.astral.sh/uv/)** (optional but recommended), builds the Gerrit MCP server and fetches its own Python (`brew install uv`)
-- **jq**, for parsing JSON config during setup (`brew install jq`)
-- **git**: `brew install git`, or `xcode-select --install`
+
+- **Node.js + npm**, for the Phabricator MCP server
+
+  macOS: `brew install node`
+  Debian: `sudo apt install nodejs npm`
+
+- **Python 3** (uv preferred, falls back to `venv`), for the Gerrit MCP server
+
+  macOS: `brew install python3`
+  Debian: `sudo apt install python3` (already included on most systems)
+
+- **[uv](https://docs.astral.sh/uv/)** (optional but recommended), builds the
+  Gerrit MCP server and fetches its own Python
+
+  ```bash
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  ```
+
+  Or follow the [official install instructions](https://docs.astral.sh/uv/getting-started/installation/)
+  for alternative methods.
+
+- **jq**, for parsing JSON config during setup
+
+  macOS: `brew install jq`
+  Debian: `sudo apt install jq`
+
+- **git**
+
+  macOS: `brew install git`, or `xcode-select --install`
+  Debian: `sudo apt install git`
 
 Have your **Phabricator username** handy too (the one you log into
 [phabricator.wikimedia.org](https://phabricator.wikimedia.org) with);

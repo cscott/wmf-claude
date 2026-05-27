@@ -127,6 +127,23 @@ assert_status "~/Library/Application Support/Signal read denied" "denied" "$(why
 # iCloud Drive sync.
 assert_status "~/Library/Mobile Documents read denied" "denied" "$(why_path "$HOME/Library/Mobile Documents" read)"
 
+# --- Filesystem: every denied path is also save-prompt suppressed ---
+# A path in deny but absent from suppress_save_prompt produces a one-keystroke
+# [g] grant prompt at runtime that bakes filesystem.bypass_protection into the
+# user's profile, defeating the deny. Anything we deliberately deny must also be
+# suppressed so nono never offers to grant it.
+echo ""
+echo "--- Filesystem: denies are save-prompt suppressed ---"
+unsuppressed=$(jq -r '(.filesystem.deny // []) - (.filesystem.suppress_save_prompt // []) | .[]' "$PROFILE" 2>/dev/null)
+if [[ -z "$unsuppressed" ]]; then
+  green "PASS: every filesystem.deny path is in suppress_save_prompt"
+  ((PASS++))
+else
+  red "FAIL: deny paths missing from suppress_save_prompt (grantable at runtime):"
+  printf '  %s\n' $unsuppressed
+  ((FAIL++))
+fi
+
 # --- Filesystem: working directory (via nono run, since workdir grants are runtime-only) ---
 echo ""
 echo "--- Filesystem: working directory access ---"

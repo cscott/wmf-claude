@@ -27,6 +27,21 @@ When changing one layer, consider whether the other should change too.
   (chrome-devtools CDP) is **not** in the static profile; `bin/claude --chrome`
   passes `--open-port 9222` per-invocation so plain `bin/claude` sessions
   cannot reach a leftover test Chrome.
+- `bin/claude --local-web` passes `--open-port` for 80/443/8080 per-invocation for
+  curl-based testing against a local dev wiki (the cheap "Tier 1" path that the
+  `manual-test` skill prefers over the chrome-devtools MCP). `--local-web=PORT`
+  (comma-separated for several) narrows to just the ports a given setup needs;
+  values are validated as TCP ports before reaching the nono command. `--chrome`
+  implies the default set. `--open-port` is **localhost-only** (`nono run --help`: "Allow
+  bidirectional localhost TCP on a port"), so this does **not** widen external
+  egress — outbound to the internet stays gated by the allow_domain proxy.
+  Verified with 80/443 open: a raw-IP connect to an external host on those
+  ports still fails, and a non-allowlisted domain is still rejected with a
+  CONNECT-tunnel `403`.
+  Residual risk: while set, the sandboxed agent can reach *any* local service on
+  80/443/8080, not just the wiki. Because `--chrome` implies `--local-web`,
+  browser sessions carry this same local-service reach on top of the CDP port.
+  Bounded, and kept off the static profile so it applies only to opt-in sessions.
 - SSH push (port 22, including Gerrit's 29418) is unreachable. HTTPS push to
   Wikimedia hosts is reachable but requires a Gerrit HTTP password most
   engineers don't have. GitHub push is unreachable (`github.com` not

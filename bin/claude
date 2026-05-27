@@ -4,14 +4,16 @@
 #
 # Usage:
 #   bin/claude                              # launch in current directory
-#   bin/claude --chrome                     # also enable chrome-devtools MCP for this session
+#   bin/claude --local-web                  # open localhost web ports (default 80/443/8080) for curl-based testing
+#   bin/claude --local-web=8080             # narrow to specific port(s); comma-separated for several
+#   bin/claude --chrome                     # also enable chrome-devtools MCP (implies --local-web)
 #   bin/claude --allow ~/src/other-repo --  # grant nono access to additional paths
 #
 # All flags before "--" are passed to nono. All flags after are passed to claude.
 # If no "--" is given, all arguments are passed to claude — so nono flags like
 # `--allow`/`--read` need an explicit `--` after them or they'll route to claude.
-# `--chrome` is the one exception: a wmf-claude wrapper flag, consumed here
-# regardless of where the separator is.
+# `--chrome` and `--local-web` are the exceptions: wmf-claude wrapper flags,
+# consumed here regardless of where the separator is.
 set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -32,22 +34,37 @@ for arg in "$@"; do
   fi
 done
 
-# Extract --chrome from the nono segment. Must run before the no-separator
-# swap below — otherwise `bin/claude --chrome` (the documented form, no
-# explicit `--`) silently moves --chrome into CLAUDE_ARGS before extraction
-# and the wrapper flag is forwarded to claude as an unknown option.
+# Extract --chrome and --local-web from the nono segment. Must run before the
+# no-separator swap below — otherwise `bin/claude --chrome` (the documented
+# form, no explicit `--`) silently moves the flag into CLAUDE_ARGS before
+# extraction and the wrapper flag is forwarded to claude as an unknown option.
 # Restricted to the pre-`--` segment so any future `claude --chrome` flag
 # (post-`--`) wouldn't be accidentally consumed.
 WANT_CHROME=false
+WANT_LOCAL_WEB=false
+LOCAL_WEB_PORTS=""  # empty -> default set below; --local-web=80,443 narrows it
 FILTERED_NONO_ARGS=()
 for arg in "${NONO_ARGS[@]}"; do
   if [[ "$arg" == "--chrome" ]]; then
     WANT_CHROME=true
+  elif [[ "$arg" == "--local-web" ]]; then
+    WANT_LOCAL_WEB=true
+  elif [[ "$arg" == --local-web=* ]]; then
+    WANT_LOCAL_WEB=true
+    LOCAL_WEB_PORTS="${arg#--local-web=}"
   else
     FILTERED_NONO_ARGS+=("$arg")
   fi
 done
 NONO_ARGS=("${FILTERED_NONO_ARGS[@]}")
+
+# --chrome implies --local-web: a browser session still wants the cheap
+# curl-first tier available (hit the local wiki / api.php without driving
+# Chrome or paying the MCP's context cost), escalating to the browser only
+# when pixels or interaction are actually needed.
+if $WANT_CHROME; then
+  WANT_LOCAL_WEB=true
+fi
 
 # If no separator was used, treat all args as claude args
 if ! $SEEN_SEPARATOR; then
@@ -151,6 +168,24 @@ if $WANT_CHROME; then
   CHROME_DEVTOOLS_CLAUDE_ARGS+=(--mcp-config "$CDP_CONFIG")
 fi
 
+# --local-web opens localhost TCP on dev-wiki web ports for curl-based testing
+# without loading the MCP. `--open-port` is localhost-only (see `nono run
+# --help`), so external egress stays gated by the profile's allow_domain proxy.
+# Kept off the static profile so plain sessions can't reach local web services.
+# Bare --local-web opens the common set; --local-web=80,443 narrows it. Each
+# value is validated as a TCP port before it reaches the nono command line.
+LOCAL_WEB_NONO_ARGS=()
+if $WANT_LOCAL_WEB; then
+  IFS=',' read -ra _LOCAL_WEB_PORTS <<<"${LOCAL_WEB_PORTS:-80,443,8080}"
+  for port in "${_LOCAL_WEB_PORTS[@]}"; do
+    if [[ ! "$port" =~ ^[0-9]{1,5}$ ]] || (( 10#$port < 1 || 10#$port > 65535 )); then
+      echo "error: --local-web port '$port' is not a valid TCP port (1-65535)" >&2
+      exit 1
+    fi
+    LOCAL_WEB_NONO_ARGS+=(--open-port "$port")
+  done
+fi
+
 # Update notices. bin/claude runs UNSANDBOXED (it's what launches nono), so
 # unlike the in-sandbox `claude` session it can reach the network and the
 # install repo's .git. We only *notify*, never auto-pull, since pulling and
@@ -249,6 +284,7 @@ exec nono run --profile wmf-engineer \
   --allow "$SCRIPT_DIR/gerrit-mcp-server" \
   "${CHROME_DEVTOOLS_ALLOWS[@]}" \
   "${CHROME_DEVTOOLS_NONO_ARGS[@]}" \
+  "${LOCAL_WEB_NONO_ARGS[@]}" \
   "${NONO_ARGS[@]}" \
   -- "$SCRIPT_DIR/bin/launch-claude.sh" --plugin-dir "$SCRIPT_DIR" \
   "${CHROME_DEVTOOLS_CLAUDE_ARGS[@]}" \

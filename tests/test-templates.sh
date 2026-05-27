@@ -169,6 +169,38 @@ if ! has_open_port "$out"; then pass "plain bin/claude does not open port 9222";
 out="$(run_fake_claude -- --chrome)"
 if ! has_open_port "$out"; then pass "--chrome after -- does not enable chrome mode"; else fail "--chrome after -- incorrectly enabled chrome mode"; fi
 
+echo "--- bin/claude --local-web arg routing ---"
+has_web_ports() {
+  grep -qx 'NONO_ARG: 80' <<<"$1" && grep -qx 'NONO_ARG: 443' <<<"$1" && grep -qx 'NONO_ARG: 8080' <<<"$1"
+}
+
+out="$(run_fake_claude --local-web)"
+if has_web_ports "$out"; then pass "bin/claude --local-web opens 80/443/8080"; else fail "bin/claude --local-web did not open web ports"; fi
+
+out="$(run_fake_claude)"
+if ! has_web_ports "$out"; then pass "plain bin/claude does not open web ports"; else fail "plain bin/claude leaked web ports"; fi
+
+# --chrome implies --local-web.
+out="$(run_fake_claude --chrome)"
+if has_web_ports "$out"; then pass "bin/claude --chrome implies --local-web"; else fail "bin/claude --chrome did not open web ports"; fi
+
+# --local-web after `--` is a claude arg, not a wrapper flag.
+out="$(run_fake_claude -- --local-web)"
+if ! has_web_ports "$out"; then pass "--local-web after -- does not open web ports"; else fail "--local-web after -- incorrectly opened web ports"; fi
+
+# --local-web=PORT narrows to the given port(s) only.
+out="$(run_fake_claude --local-web=8080)"
+if grep -qx 'NONO_ARG: 8080' <<<"$out" && ! grep -qx 'NONO_ARG: 443' <<<"$out"; then
+  pass "--local-web=8080 opens only 8080"; else fail "--local-web=8080 did not narrow ports"; fi
+
+out="$(run_fake_claude --local-web=80,443)"
+if grep -qx 'NONO_ARG: 80' <<<"$out" && grep -qx 'NONO_ARG: 443' <<<"$out" && ! grep -qx 'NONO_ARG: 8080' <<<"$out"; then
+  pass "--local-web=80,443 opens 80 and 443 only"; else fail "--local-web=80,443 did not open the listed ports"; fi
+
+# An invalid port value is rejected before reaching nono.
+if PATH="$FAKE_REPO/bin:$PATH" bash "$FAKE_REPO/bin/claude" --local-web=abc >/dev/null 2>&1; then
+  fail "--local-web=abc was not rejected"; else pass "--local-web=abc is rejected"; fi
+
 echo ""
 echo "========================="
 echo "Results: $PASS passed, $FAIL failed"

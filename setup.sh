@@ -74,6 +74,21 @@ if [[ ${#MISSING[@]} -gt 0 ]]; then
   exit 1
 fi
 
+# Initialize submodules — handles colleagues who cloned without --recurse-submodules.
+# Must run before the Python-version check below, which reads a file from the
+# gerrit-mcp-server submodule.
+step "Initializing submodules"
+if [[ -f "$SCRIPT_DIR/mcp-phabricator/package.json" && -f "$SCRIPT_DIR/gerrit-mcp-server/requirements.txt" ]]; then
+  ok "Submodules present"
+elif [[ -e "$SCRIPT_DIR/.git" ]]; then
+  (cd "$SCRIPT_DIR" && git submodule update --init --recursive --quiet)
+  ok "Submodules ready"
+else
+  fail "Submodules missing and this isn't a git checkout."
+  fail "Re-clone with: git clone --recurse-submodules <url>"
+  exit 1
+fi
+
 # gerrit-mcp-server requires a recent Python (see requires-python in its
 # pyproject.toml). An older python3 silently builds an incompatible venv and only
 # fails deep in a pip resolve (e.g. "Could not find a version that satisfies
@@ -195,19 +210,6 @@ if [[ -n "$NONO_RECOMMENDED" && "$NONO_VER" != "$NONO_RECOMMENDED" ]]; then
   fi
 fi
 
-# Initialize submodules — handles colleagues who cloned without --recurse-submodules
-step "Initializing submodules"
-if [[ -f "$SCRIPT_DIR/mcp-phabricator/package.json" && -f "$SCRIPT_DIR/gerrit-mcp-server/requirements.txt" ]]; then
-  ok "Submodules present"
-elif [[ -e "$SCRIPT_DIR/.git" ]]; then
-  (cd "$SCRIPT_DIR" && git submodule update --init --recursive --quiet)
-  ok "Submodules ready"
-else
-  fail "Submodules missing and this isn't a git checkout."
-  fail "Re-clone with: git clone --recurse-submodules <url>"
-  exit 1
-fi
-
 # Pull the claude nono pack (provides Claude Code integration: hooks, base policies)
 step "Pulling always-further/claude nono pack"
 if nono list --installed --silent --json 2>/dev/null | grep -q '"always-further/claude":'; then
@@ -226,6 +228,16 @@ step "Installing nono profile"
 mkdir -p ~/.config/nono/profiles
 cp "$SCRIPT_DIR/profiles/"*.json ~/.config/nono/profiles/
 ok "Copied to ~/.config/nono/profiles/"
+
+# nono refuses to launch if ~/.nono/sessions is group/world accessible
+# ("must not be group/world accessible; chmod 700 and retry") — session
+# state can be sensitive. A umask of 002 (common on Linux) makes nono create
+# it group-writable on first run, so pre-create it 700 here. chmod also
+# repairs a dir an earlier run already created with loose perms.
+step "Securing nono sessions directory"
+mkdir -p ~/.nono/sessions
+chmod 700 ~/.nono/sessions
+ok "~/.nono/sessions is owner-only (700)"
 
 # Install mcp-phabricator dependencies
 step "Setting up mcp-phabricator"
@@ -283,9 +295,13 @@ echo ""
 # output rather than parsing ~/.claude.json (whose schema isn't a contract).
 DEFAULT_PHAB_USER=""
 if EXISTING_MCP=$(claude mcp get phabricator 2>/dev/null); then
+  # `|| true`: grep exits 1 when no PHABRICATOR_USERNAME is present (e.g. a
+  # server registered without it). Under `set -e`/`pipefail` that failed
+  # pipeline in an assignment would kill the script silently, before the
+  # username prompt below ever prints. A missing default is expected, not fatal.
   DEFAULT_PHAB_USER=$(printf '%s\n' "$EXISTING_MCP" \
     | grep -o 'PHABRICATOR_USERNAME=[^[:space:]"]*' \
-    | head -n1 | cut -d= -f2-)
+    | head -n1 | cut -d= -f2- || true)
 fi
 
 if [[ -n "$DEFAULT_PHAB_USER" ]]; then

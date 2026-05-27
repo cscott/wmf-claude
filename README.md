@@ -183,21 +183,31 @@ Run `/wmf-claude:init-project` (optionally `--mediawiki`)
 inside a repo to drop a starter `CLAUDE.md`. It refuses
 to overwrite an existing one.
 
-## Browser testing
+## Local-wiki testing
 
-The `manual-test` skill drives a real Chrome against your local dev
-wiki for screenshots, console errors, accessibility snapshots, and
-click-through checks. It is opt-in per session because it widens the
-attack surface.
+The `manual-test` skill verifies changes against your local dev wiki,
+cheapest tier first, so a full browser session isn't spent on checks a
+request can answer. Both tiers are opt-in per session because they open
+localhost ports the sandbox otherwise denies.
 
-Enable it once by answering `y` at the chrome-devtools prompt in
-`./setup.sh`, then launch with the `--chrome` flag. Chrome runs outside
-the sandbox (it calls IOKit at startup and can't run inside), so start
-it in a separate terminal first:
+**Tier 1 — curl + the API.** `claude --local-web` opens the localhost
+web ports (default 80/443/8080) so the session can curl your wiki and
+hit `/w/api.php` for HTTP status, redirects, rendered HTML, and API
+responses. Narrow to your own setup with `--local-web=443` (or a
+comma-separated list). No browser, no MCP loaded, and the output is
+plain text you can `/compact` away. `--open-port` is localhost-only, so
+this does not widen external network access.
+
+**Tier 2 — chrome-devtools MCP.** For screenshots, console errors,
+accessibility snapshots, and click-through checks. Enable it once by
+answering `y` at the chrome-devtools prompt in `./setup.sh`, then launch
+with `--chrome` (which implies `--local-web`). Chrome runs outside the
+sandbox (it calls IOKit at startup and can't run inside), so start it in
+a separate terminal first:
 
 ```bash
 bin/launch-test-chrome   # one terminal: Chrome outside the sandbox, throwaway profile
-claude --chrome          # another: attaches the chrome-devtools MCP
+claude --chrome          # another: curl tier + the chrome-devtools MCP
 ```
 
 The MCP attaches over `127.0.0.1:9222`. That port is unauthenticated

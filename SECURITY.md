@@ -22,7 +22,8 @@ When changing one layer, consider whether the other should change too.
 - Allowlisted: `console.anthropic.com`, `claude.ai`, Wikimedia + wiki-family
   domains, `codesearch{,-backend}.wmcloud.org`, language doc sites
   (`php.net`, MDN, `docs.python.org`, `docs.rs`, `doc.rust-lang.org`,
-  `nodejs.org`, `pkg.go.dev`), `api.minimax.io`.
+  `nodejs.org`, `pkg.go.dev`; read-only, see "Method-restricted domains" below),
+  `api.minimax.io`.
 - `network.open_port: [3306]` — local MariaDB connections allowed. Port 9222
   (chrome-devtools CDP) is **not** in the static profile; `bin/claude --chrome`
   passes `--open-port 9222` per-invocation so plain `bin/claude` sessions
@@ -46,6 +47,93 @@ When changing one layer, consider whether the other should change too.
   Wikimedia hosts is reachable but requires a Gerrit HTTP password most
   engineers don't have. GitHub push is unreachable (`github.com` not
   allowlisted).
+
+## Method-restricted domains (read-only)
+
+The static documentation hosts are allow-listed for read methods (`GET` and
+`HEAD`) only, not as plain CONNECT tunnels. Each is an object entry in
+`allow_domain` carrying endpoint rules:
+
+```json
+{ "domain": "www.php.net", "endpoints": [
+  { "method": "GET", "path": "/**" },
+  { "method": "HEAD", "path": "/**" }
+] }
+```
+
+Any write or body-carrying request (POST/PUT/PATCH/DELETE), plus OPTIONS, is
+rejected with `403` by nono's proxy before it leaves the sandbox, so a
+proxy-routed agent cannot POST to these hosts (data exfiltration, unexpected
+writes) while still reading them. GET and HEAD are both permitted because HEAD
+is a safe read (no body, strictly less capable than GET), so denying it would
+break `curl -I` and link-checkers without adding any security. OPTIONS stays
+blocked because non-browser clients never need it. Scope is deliberately narrow:
+`docs.python.org`, `docs.rs`, `doc.rust-lang.org`, `developer.mozilla.org`,
+`nodejs.org`, `pkg.go.dev`, `www.php.net`, `php.net`.
+
+Important scoping caveat: the rule only covers egress that transits the nono
+proxy, i.e. Bash-driven `curl`/`wget`/Node/Python. `WebFetch` egresses from
+Anthropic's servers, not the laptop (see "Tool-level denies"), so it never
+reaches these endpoint rules. That opens no POST hole, because `WebFetch` only
+issues GETs and runs in `ask` mode, but it does mean the read-only guarantee is
+specific to in-sandbox proxy traffic, not a blanket no-POST property of the
+agent.
+
+Trade-off: endpoint rules force TLS interception. To read the method and path
+of an HTTPS request nono must terminate TLS itself (any entry with endpoint
+rules takes the `requires_intercept` path). It mints a cert from an ephemeral
+CA and injects that CA into the child's trust env
+(`SSL_CERT_FILE`/`NODE_EXTRA_CA_CERTS`/`CURL_CA_BUNDLE`), so curl, Node, and
+Python trust it with no flag and no prompt. Two consequences: nono sees the
+plaintext of traffic to these hosts, and Go tools that use the macOS system
+trust store (`gh`, `terraform`) reject the minted cert unless launched with
+`--trust-proxy-ca`. We don't fetch docs with Go tools, so no flag is needed
+today.
+
+Left as plain tunnels on purpose (no endpoint rules, no interception):
+
+- `console.anthropic.com`, `claude.ai`: the model API is POST, so intercepting
+  would `403` every model call and route Claude's own conversation and tokens
+  through nono in plaintext.
+- `*.wiki*`: legitimate POST reads (batched API queries, login) and the
+  `manual-test` Tier-1 flow. Needs a separate review before any lockdown.
+- `codesearch{,-backend}.wmcloud.org`, `api.minimax.io`.
+
+`tests/test-profile.sh` asserts the structure (each docs host is an
+endpoint-restricted read-only object, and the model API domains stay plain). To
+verify live behaviour, run **outside** the sandbox (nested nono cannot write its
+audit dir):
+
+```bash
+URL='https://www.php.net/manual/en/function.array-keys.php'
+PROFILE=./profiles/wmf-engineer.json
+
+# Reads: expect 200 (allowed; served by php.net through nono's interception).
+nono run --profile "$PROFILE" --allow-cwd -- \
+  curl -sS -o /dev/null -w 'GET  -> %{http_code}\n' "$URL"
+nono run --profile "$PROFILE" --allow-cwd -- \
+  curl -sS -o /dev/null -w 'HEAD -> %{http_code}\n' -I "$URL"
+
+# Write: expect 403 (nono rejects before the request reaches php.net).
+nono run --profile "$PROFILE" --allow-cwd -- \
+  curl -sS -o /dev/null -w 'POST -> %{http_code}\n' -X POST "$URL"
+
+# Negative control: the same POST to a plain-tunnel domain is NOT a nono 403.
+# It tunnels through and returns whatever the upstream replies, proving the
+# 403 above is rule-specific (method filtering), not a blanket POST block.
+nono run --profile "$PROFILE" --allow-cwd -- \
+  curl -sS -o /dev/null -w 'POST(plain) -> %{http_code}\n' \
+  -X POST https://www.mediawiki.org/w/api.php
+```
+
+Expected: `GET -> 200`, `HEAD -> 200`, `POST -> 403`, `POST(plain) -> ` a
+non-403 upstream code. A `403` on the read paths means interception broke (CA
+not trusted, or the rule too narrow); a `403` on the negative control means the
+block is broader than intended.
+
+A `403` here is nono's signature (php.net would answer a real POST with `405`),
+emitted with a `tls_intercept: endpoint rules denied POST ... no rule matched`
+log line and recorded in `~/.nono/audit/<session>/`.
 
 ## Filesystem denies (nono profile)
 

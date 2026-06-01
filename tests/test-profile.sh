@@ -202,6 +202,56 @@ for port in 22 29418; do
   fi
 done
 
+# --- Network: read-only docs domains (allow_domain endpoint rules) ---
+# Static documentation hosts are allow-listed as endpoint-restricted objects
+# that permit only read methods (GET, HEAD). Any endpoint rule forces nono TLS
+# interception, so a write request (POST/PUT/...) is rejected with 403 before it
+# leaves the sandbox. We assert the structure here; the live GET=200 / POST=403
+# check is in SECURITY.md (needs external egress, cannot run nested in a sandbox).
+echo ""
+echo "--- Network: docs domains are read-only (GET/HEAD) ---"
+DOCS_READ_ONLY=(docs.python.org docs.rs doc.rust-lang.org developer.mozilla.org \
+                nodejs.org pkg.go.dev www.php.net php.net)
+for d in "${DOCS_READ_ONLY[@]}"; do
+  # Object entry whose endpoints are non-empty, all read methods (GET/HEAD), and
+  # include at least one GET (so write verbs 403 while reads still resolve).
+  if jq -e --arg d "$d" '
+        .network.allow_domain
+        | map(select(type=="object" and .domain==$d))[0] as $e
+        | ($e != null)
+          and (($e.endpoints | length) > 0)
+          and (all($e.endpoints[]; .method=="GET" or .method=="HEAD"))
+          and (any($e.endpoints[]; .method=="GET"))
+      ' "$PROFILE" >/dev/null 2>&1; then
+    green "PASS: $d is read-only (GET/HEAD; no write method permitted)"
+    ((PASS++))
+  else
+    red "FAIL: $d should be an endpoint-restricted read-only (GET/HEAD) entry"
+    ((FAIL++))
+  fi
+  # Must not ALSO appear as a plain string, which would re-open every method.
+  if jq -e --arg d "$d" '.network.allow_domain | index($d)' "$PROFILE" >/dev/null 2>&1; then
+    red "FAIL: $d also present as a plain all-methods entry (read-only bypassed)"
+    ((FAIL++))
+  else
+    green "PASS: $d not duplicated as a plain all-methods entry"
+    ((PASS++))
+  fi
+done
+
+# The model API must stay a plain tunnel: endpoint rules would intercept its
+# TLS, which 403s the POST-based model calls and routes Claude's own traffic
+# through nono in plaintext. Guard against anyone adding rules there.
+for d in console.anthropic.com claude.ai; do
+  if jq -e --arg d "$d" '.network.allow_domain | index($d)' "$PROFILE" >/dev/null 2>&1; then
+    green "PASS: $d stays a plain tunnel (not intercepted)"
+    ((PASS++))
+  else
+    red "FAIL: $d must remain a plain allow_domain entry (endpoint rules would break the API)"
+    ((FAIL++))
+  fi
+done
+
 # --- Allowed commands ---
 echo ""
 echo "--- Allowed commands ---"

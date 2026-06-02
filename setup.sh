@@ -187,10 +187,10 @@ if [[ "$(uname -s)" == "Linux" ]]; then
 fi
 
 # Floor normally tracks the previous .nono-version pin, but here it matches the
-# pin: the always-further/claude base pack hard-requires 0.59.0, so an older
+# pin: the always-further/claude base pack hard-requires 0.61.0, so an older
 # nono can't `nono pull` it. Keep in sync with package.json `min_nono_version`.
 # Recommended version lives in .nono-version.
-NONO_MIN="0.59.0"
+NONO_MIN="0.61.0"
 NONO_RECOMMENDED=$(tr -d '[:space:]' < "$SCRIPT_DIR/.nono-version" 2>/dev/null || echo "")
 NONO_VER=$(nono --version 2>/dev/null | awk '{print $2}')
 if [[ -z "$NONO_VER" ]]; then

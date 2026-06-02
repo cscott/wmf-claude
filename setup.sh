@@ -56,7 +56,7 @@ if [[ ${#MISSING[@]} -gt 0 ]]; then
   HINTS=""
   for cmd in "${MISSING[@]}"; do
     case "$cmd" in
-      nono)     HINT="brew install nono   (or .deb from https://github.com/always-further/nono/releases)" ;;
+      nono)     HINT="brew install nono   (or .deb / .rpm from https://github.com/always-further/nono/releases)" ;;
       claude)   HINT="curl -fsSL https://claude.ai/install.sh | bash" ;;
       node|npm) HINT="brew install node   (or: sudo apt install nodejs npm)" ;;
       python3)  HINT="brew install python3   (or: sudo apt install python3)" ;;

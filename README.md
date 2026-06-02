@@ -32,7 +32,8 @@ on Linux, so the nono sandbox (not the Claude Code permission layer) is what
 blocks sensitive files inside your workdir. Avoid keeping secrets in your
 workdir on Linux!
 
-Installation hints below cover macOS (Homebrew) and Debian-like Linuxes (apt).
+Installation hints below cover macOS (Homebrew), Debian-like Linuxes (apt),
+and Fedora / RHEL (dnf).
 
 `setup.sh` checks for these and exits with install hints if any are
 missing. Install them up front:
@@ -52,6 +53,15 @@ missing. Install them up front:
   NONO_VERSION=$(cat .nono-version)
   wget "https://github.com/always-further/nono/releases/download/v${NONO_VERSION}/nono-cli_${NONO_VERSION}_$(dpkg --print-architecture).deb"
   sudo dpkg -i "nono-cli_${NONO_VERSION}_$(dpkg --print-architecture).deb"
+  ```
+
+  Fedora / RHEL (download the `.rpm` from
+  [GitHub Releases](https://github.com/always-further/nono/releases)):
+
+  ```bash
+  NONO_VERSION=$(cat .nono-version)
+  wget "https://github.com/always-further/nono/releases/download/v${NONO_VERSION}/nono-cli-${NONO_VERSION}-1.$(rpm -E %_arch).rpm"
+  sudo dnf install "./nono-cli-${NONO_VERSION}-1.$(rpm -E %_arch).rpm"
   ```
 
 - **[Claude Code](https://docs.claude.com/en/docs/claude-code/setup)**

@@ -11,7 +11,7 @@ accidental pushes or credential exposure.
 ## Quick start
 
 ```bash
-git clone https://gitlab.wikimedia.org/kharlan/wmf-claude.git
+git clone https://gitlab.wikimedia.org/repos/product-safety-and-integrity/wmf-claude.git
 cd wmf-claude
 ./setup.sh
 source ~/.zshrc   # or ~/.bashrc, to pick up the new `claude` alias

@@ -5,8 +5,8 @@
   "author": {
     "name": "Wikimedia Foundation"
   },
-  "homepage": "https://gitlab.wikimedia.org/kharlan/wmf-claude",
-  "repository": "https://gitlab.wikimedia.org/kharlan/wmf-claude",
-  "license": "Apache-2.0",
+  "homepage": "https://gitlab.wikimedia.org/repos/product-safety-and-integrity/wmf-claude",
+  "repository": "https://gitlab.wikimedia.org/repos/product-safety-and-integrity/wmf-claude",
+  "license": "MIT",
   "keywords": ["wikimedia", "wmf", "mediawiki", "gerrit", "phabricator"]
 }

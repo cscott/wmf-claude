@@ -3,7 +3,7 @@
 This file provides guidance to Claude Code when working with code in this repository.
 
 > **Sandboxing**: Claude Code is launched via the `claude` alias from
-> [wmf-claude](https://gitlab.wikimedia.org/kharlan/wmf-claude), which
+> [wmf-claude](https://gitlab.wikimedia.org/repos/product-safety-and-integrity/wmf-claude), which
 > runs it inside a [nono](https://github.com/always-further/nono) sandbox.
 > The sandbox is the security boundary; Claude Code's built-in `sandbox`
 > setting is intentionally disabled in `.claude/settings.json` to avoid
@@ -15,7 +15,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 ## Available skills
 
-These come from the [wmf-claude](https://gitlab.wikimedia.org/kharlan/wmf-claude) plugin, namespaced as `/wmf-claude:<name>`:
+These come from the [wmf-claude](https://gitlab.wikimedia.org/repos/product-safety-and-integrity/wmf-claude) plugin, namespaced as `/wmf-claude:<name>`:
 
 | Skill | Purpose |
 |-------|---------|

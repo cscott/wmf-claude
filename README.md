@@ -266,20 +266,27 @@ accounts only, never real credentials.
 
 ## Updating
 
+Pull and re-run setup. It is safe to re-run any time:
+
 ```bash
-git pull
-git submodule update --init --recursive
+git pull && git submodule update --init --recursive && ./setup.sh
+```
+
+If `setup.sh` reports that nono is too old, upgrade it first, then re-run:
+
+```bash
+brew upgrade nono     # or a fresh .deb / .rpm from the nono releases page
 ./setup.sh
 ```
 
 In an interactive terminal, the `claude` wrapper reminds you when an update
-is available: it prints a one-line notice if your installed nono is older
-than the pinned version, or if your wmf-claude checkout is behind
-`origin/main`. It only notifies, it never pulls for you. The remote check
-runs as a background `git fetch origin` at most once a day, so it never
-slows a launch, and the behind-count clears as soon as you pull. The check
-is skipped for non-interactive runs such as `claude -p` and the VS Code
-extension. Silence it anywhere with `WMF_CLAUDE_SKIP_UPDATE=1`.
+is available: it prints a one-line notice (with the exact command to run) if
+your installed nono is older than the pinned version, or if your wmf-claude
+checkout is behind `origin/main`. It only notifies, it never pulls for you.
+The remote check runs as a background `git fetch origin` at most once a day,
+so it never slows a launch, and the behind-count clears as soon as you pull.
+The check is skipped for non-interactive runs such as `claude -p` and the
+VS Code extension. Silence it anywhere with `WMF_CLAUDE_SKIP_UPDATE=1`.
 
 ## Submitting patches
 

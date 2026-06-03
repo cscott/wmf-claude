@@ -38,7 +38,7 @@ and Fedora / RHEL (dnf).
 `setup.sh` checks for these and exits with install hints if any are
 missing. Install them up front:
 
-- **[nono](https://github.com/always-further/nono)** 0.56+, the sandbox runtime (tested version is pinned in [`.nono-version`](./.nono-version); CI installs that version)
+- **[nono](https://github.com/always-further/nono)** 0.61+, the sandbox runtime (tested version is pinned in [`.nono-version`](./.nono-version); CI installs that version)
 
   macOS:
 
@@ -108,8 +108,8 @@ Have your **Phabricator username** handy too (the one you log into
 
 After you press Enter, it:
 
-1. Updates Claude Code to the current version.
-2. Copies the nono profile to `~/.config/nono/profiles/`.
+1. Pulls the always-further/claude nono pack (the base profile + hooks).
+2. Updates Claude Code to the current version.
 3. Builds both MCP servers (npm + pip/uv) in this checkout.
 4. Registers the phabricator + gerrit MCP servers globally with Claude Code.
 5. Appends a `claude` shell alias to `~/.zshrc` or `~/.bashrc` that runs sandboxed by default.
@@ -249,9 +249,9 @@ plain text you can `/compact` away. `--open-port` is localhost-only, so
 this does not widen external network access.
 
 **Tier 2 — chrome-devtools MCP.** For screenshots, console errors,
-accessibility snapshots, and click-through checks. Enable it once by
-answering `y` at the chrome-devtools prompt in `./setup.sh`, then launch
-with `--chrome` (which implies `--local-web`). Chrome runs outside the
+accessibility snapshots, and click-through checks. `./setup.sh` builds
+it (unless `WMF_CLAUDE_SKIP_CHROME` is set); launch with `--chrome`
+(which implies `--local-web`). Chrome runs outside the
 sandbox (it calls IOKit at startup and can't run inside), so start it in
 a separate terminal first:
 

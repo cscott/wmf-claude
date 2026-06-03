@@ -1,0 +1,128 @@
+#!/bin/bash
+# Vendor the MCP server dependencies into the checkout. Non-interactive and
+# idempotent. Run by bin/wmf-claude-setup.
+#
+#   WMF_CLAUDE_SKIP_CHROME=1   skip the chrome-devtools MCP
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=bin/lib-output.sh
+source "$ROOT/bin/lib-output.sh"
+
+# Init submodules if a colleague cloned without --recurse-submodules.
+step "Locating submodule source"
+if [[ -f "$ROOT/mcp-phabricator/package.json" && -f "$ROOT/gerrit-mcp-server/requirements.txt" ]]; then
+  ok "Submodules present"
+elif [[ -e "$ROOT/.git" ]]; then
+  (cd "$ROOT" && git submodule update --init --recursive --quiet)
+  ok "Submodules ready"
+else
+  fail "Submodule source missing; re-clone with: git clone --recurse-submodules <url>"
+  exit 1
+fi
+
+# An old python3 builds an incompatible venv and only fails deep in pip, so
+# gate up front. uv fetches its own Python, so this is the no-uv path only.
+if ! command -v uv &>/dev/null; then
+  PY_REQ="$(sed -n 's/^requires-python *= *"[^0-9]*\([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' "$ROOT/gerrit-mcp-server/pyproject.toml")"
+  if [[ -z "$PY_REQ" ]]; then
+    fail "Could not read requires-python from gerrit-mcp-server/pyproject.toml"
+    exit 1
+  fi
+  PY_REQ_MAJOR="${PY_REQ%%.*}"
+  PY_REQ_MINOR="${PY_REQ##*.}"
+  PY_VER="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
+  PY_MAJOR="${PY_VER%%.*}"
+  PY_MINOR="${PY_VER##*.}"
+  if (( PY_MAJOR < PY_REQ_MAJOR || (PY_MAJOR == PY_REQ_MAJOR && PY_MINOR < PY_REQ_MINOR) )); then
+    echo ""
+    fail "python3 is $PY_VER, but gerrit-mcp-server needs >= ${PY_REQ}."
+    dim "    Install a newer Python (e.g. 'brew install python@${PY_REQ}')"; echo ""
+    dim "    and put it first on PATH, or install 'uv' (which fetches its own Python)."; echo ""
+    exit 1
+  fi
+fi
+
+# Install mcp-phabricator dependencies
+step "Setting up mcp-phabricator"
+(cd "$ROOT/mcp-phabricator" && npm install --silent --ignore-scripts)
+ok "Dependencies installed"
+
+# Native wheels (cryptography, pydantic-core, ...) come prebuilt from PyPI, so
+# no compiler is needed. requirements.txt is hash-locked; --require-hashes enforces it.
+step "Setting up gerrit-mcp-server"
+if command -v uv &>/dev/null; then
+  (cd "$ROOT/gerrit-mcp-server" && uv venv -q --allow-existing && uv pip install -q --require-hashes -r requirements.txt)
+else
+  (cd "$ROOT/gerrit-mcp-server" && python3 -m venv .venv && .venv/bin/pip install -q --no-deps --require-hashes -r requirements.txt)
+fi
+ok "Dependencies installed"
+
+# Static config, but it lives in the submodule (which the parent can't commit
+# into), so generate it if absent rather than tracking it.
+GERRIT_CONFIG="$ROOT/gerrit-mcp-server/gerrit_mcp_server/gerrit_config.json"
+if [[ ! -f "$GERRIT_CONFIG" ]]; then
+  cat > "$GERRIT_CONFIG" <<'CONF'
+{
+  "default_gerrit_base_url": "https://gerrit.wikimedia.org/r/",
+  "gerrit_hosts": [
+    {
+      "name": "Wikimedia",
+      "external_url": "https://gerrit.wikimedia.org/r/",
+      "authentication": {
+        "type": "none"
+      }
+    },
+    {
+      "name": "Wikimedia (without /r/)",
+      "external_url": "https://gerrit.wikimedia.org/",
+      "authentication": {
+        "type": "none"
+      }
+    }
+  ]
+}
+CONF
+  ok "Created gerrit_config.json for Wikimedia Gerrit"
+else
+  ok "gerrit_config.json already exists"
+fi
+
+# chrome-devtools MCP. Built unless WMF_CLAUDE_SKIP_CHROME; it stays opt-in at
+# runtime via `bin/claude --chrome`. Attaches to an external Chrome, no download.
+if [[ -n "${WMF_CLAUDE_SKIP_CHROME:-}" ]]; then
+  step "chrome-devtools MCP"
+  ok "Skipped (WMF_CLAUDE_SKIP_CHROME set)"
+else
+  step "Setting up chrome-devtools MCP"
+  CDP_DIR="$ROOT/chrome-devtools-mcp"
+  CDP_BIN="$CDP_DIR/node_modules/.bin/chrome-devtools-mcp"
+  PINNED_VERSION="$(jq -r '.dependencies["chrome-devtools-mcp"]' "$CDP_DIR/package.json")"
+
+  # --ignore-scripts blocks postinstall hooks (npm-supply-chain mitigation).
+  INSTALLED_VERSION=""
+  if [[ -f "$CDP_DIR/node_modules/chrome-devtools-mcp/package.json" ]]; then
+    INSTALLED_VERSION="$(jq -r .version "$CDP_DIR/node_modules/chrome-devtools-mcp/package.json")"
+  fi
+  if [[ "$INSTALLED_VERSION" == "$PINNED_VERSION" && -x "$CDP_BIN" ]]; then
+    ok "chrome-devtools-mcp@$INSTALLED_VERSION (already installed)"
+  else
+    (cd "$CDP_DIR" && npm ci --ignore-scripts --silent)
+    if [[ ! -x "$CDP_BIN" ]]; then
+      fail "npm ci did not produce $CDP_BIN"
+      exit 1
+    fi
+    ok "chrome-devtools-mcp@$PINNED_VERSION installed"
+  fi
+
+  # Supply-chain invariant: chrome-devtools-mcp bundles its deps (one top-level
+  # entry). If a future version stops, catch the unreviewed drift here.
+  TOP_LEVEL_PKGS="$(find "$CDP_DIR/node_modules" -mindepth 1 -maxdepth 1 -type d \
+                     -not -name '.*' | wc -l | tr -d ' ')"
+  if [[ "$TOP_LEVEL_PKGS" != "1" ]]; then
+    fail "expected 1 top-level package under node_modules/, got $TOP_LEVEL_PKGS"
+    fail "  upstream may have stopped bundling deps — review the new tree before bumping the pin"
+    exit 1
+  fi
+  ok "supply-chain invariant: 1 top-level package"
+fi

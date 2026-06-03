@@ -8,6 +8,7 @@
 #   bin/claude --local-web=8080             # narrow to specific port(s); comma-separated for several
 #   bin/claude --chrome                     # also enable chrome-devtools MCP (implies --local-web)
 #   bin/claude --allow ~/src/other-repo --  # grant nono access to additional paths
+#   WMF_CLAUDE_PROFILE=wmf-data-scientist bin/claude   # load profiles/<name>.json (default wmf-engineer)
 #
 # All flags before "--" are passed to nono. All flags after are passed to claude.
 # If no "--" is given, all arguments are passed to claude — so nono flags like
@@ -17,6 +18,15 @@
 set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+
+# Which profiles/<name>.json to load; defaults to wmf-engineer. Lets additional
+# profiles (e.g. wmf-data-scientist) be selected without changing this script.
+PROFILE="${WMF_CLAUDE_PROFILE:-wmf-engineer}"
+PROFILE_PATH="$SCRIPT_DIR/profiles/$PROFILE.json"
+if [[ ! -f "$PROFILE_PATH" ]]; then
+  echo "error: profile '$PROFILE' not found at $PROFILE_PATH" >&2
+  exit 1
+fi
 
 NONO_ARGS=()
 CLAUDE_ARGS=()
@@ -148,12 +158,12 @@ if $WANT_CHROME; then
   CDP_CONFIG="$CDP_DIR/mcp-config.json"
   if [[ ! -f "$CDP_CONFIG" ]]; then
     echo "error: --chrome was passed but $CDP_CONFIG is missing" >&2
-    echo "       run ./setup.sh and answer 'y' at the chrome-devtools prompt" >&2
+    echo "       run ./setup.sh with WMF_CLAUDE_SKIP_CHROME unset" >&2
     exit 1
   fi
   if [[ ! -x "$CDP_DIR/node_modules/.bin/chrome-devtools-mcp" ]]; then
     echo "error: --chrome was passed but the MCP binary is missing under $CDP_DIR" >&2
-    echo "       run ./setup.sh and answer 'y' at the chrome-devtools prompt" >&2
+    echo "       run ./setup.sh with WMF_CLAUDE_SKIP_CHROME unset" >&2
     exit 1
   fi
   # Soft warning if Chrome doesn't appear to be running yet — the MCP will
@@ -284,16 +294,16 @@ update_notices
 # the WMF Claude banner after nono's capability table (so it lands right
 # before Claude Code's banner instead of getting scrolled past).
 #
-# --read on the wmf-claude root grants Claude (and its hook subprocesses)
-# read access to the plugin's bin/, skills/, agents/, hooks/, templates/,
-# and wiring/. The two MCP submodule grants below override that with r+w
-# for the npm/venv directories that actually need to write.
-# The user's CWD is granted via the profile's filesystem.allow on $WORKDIR
-# (the --workdir flag is implicit — nono resolves it to the launch cwd).
-# We don't pass --allow-cwd: it's broken on Linux 0.51-0.53 (the runtime
-# grant silently fails and breaks cat/ls/env), and the profile grant
-# covers it. Drop this note once upstream lands a fix.
-exec nono run --profile wmf-engineer \
+# --read grants the plugin code + MCP submodule dirs under the repo. The user's
+# CWD is granted via the profile's filesystem.allow on $WORKDIR (--workdir is
+# implicit — nono resolves it to the launch cwd). We don't pass --allow-cwd:
+# it's broken on Linux 0.51-0.53 (the runtime grant silently fails and breaks
+# cat/ls/env), and the profile grant covers it. Drop this note once upstream
+# lands a fix.
+#
+# --profile loads $PROFILE by path (nono accepts NAME_OR_PATH); `extends:
+# claude-code` still resolves. No copy into ~/.config/nono/profiles to drift.
+exec nono run --profile "$PROFILE_PATH" \
   --read "$SCRIPT_DIR" \
   --allow "$SCRIPT_DIR/mcp-phabricator" \
   --allow "$SCRIPT_DIR/gerrit-mcp-server" \

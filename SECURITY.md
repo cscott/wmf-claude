@@ -184,8 +184,8 @@ credential paths regardless of platform. The gap is workdir-local: an
 unusually-named or deep-nested `.key`/`.pem`/`.secret`/`.credential` file
 inside the workdir is blocked by neither layer on Linux (the tool glob is
 ignored, and nono grants the workdir read+write), whereas on macOS the tool
-glob blocks it. Avoid keeping secrets in the workdir on Linux; `setup.sh`
-prints this warning on Linux hosts.
+glob blocks it. Avoid keeping secrets in the workdir on Linux;
+`bin/wmf-claude-setup` prints this warning on Linux hosts.
 
 ## Environment variables
 
@@ -294,11 +294,11 @@ actively running a manual test in *this* session.
 
 **Supply-chain pinning.** `chrome-devtools-mcp` is pinned to a single
 version in `chrome-devtools-mcp/package.json` and `package-lock.json`
-(both tracked in git). `setup.sh` runs `npm ci --ignore-scripts`, which
-reproduces node_modules from the lockfile and refuses any `postinstall`
+(both tracked in git). `bin/wmf-claude-build` runs `npm ci --ignore-scripts`,
+which reproduces node_modules from the lockfile and refuses any `postinstall`
 hook from the package or its deps. The package currently bundles its
 runtime dependencies (puppeteer-core, etc.) into the published tarball,
-so pinning the one version pins the whole tree. `setup.sh` enforces
+so pinning the one version pins the whole tree. `bin/wmf-claude-build` enforces
 this as a checked invariant: after `npm ci`, it asserts exactly one
 top-level package directory under `node_modules/` and fails the install
 if upstream ever stops bundling — review the new tree before bumping
@@ -311,7 +311,7 @@ the pin.
   regular browsing. The dir is removed when Chrome exits via the cleanup
   trap, so cookies / Service Workers / localStorage / IndexedDB set
   during one session don't carry into the next. (SIGKILL bypasses the
-  trap and leaks the dir; `setup.sh` sweeps stale `wmf-claude-chrome.*`
+  trap and leaks the dir; `bin/wmf-claude-setup` sweeps stale `wmf-claude-chrome.*`
   dirs older than a day at install time as a safety net.)
 - The MCP server is still sandboxed. Anything *it* tries to do (reading
   files, hitting the network, spawning processes) is bounded by the same

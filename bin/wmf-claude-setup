@@ -1,0 +1,226 @@
+#!/bin/bash
+# Per-user config, invoked by ./setup.sh: build deps, pull the base nono pack,
+# register MCP servers, write the chrome config, install the `claude` alias.
+# The profile loads by path, so it is not copied anywhere.
+#
+#   WMF_CLAUDE_SKIP_UPDATE=1   skip the `claude update` step
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=bin/lib-output.sh
+source "$ROOT/bin/lib-output.sh"
+
+# Runtime + build deps (this script also runs wmf-claude-build).
+step "Checking dependencies"
+MISSING=()
+for cmd in nono node npm python3 claude git jq; do
+  if command -v "$cmd" &>/dev/null; then
+    ok "$cmd $(dim "($(command -v "$cmd"))")"
+  else
+    fail "$cmd not found"
+    MISSING+=("$cmd")
+  fi
+done
+if [[ ${#MISSING[@]} -gt 0 ]]; then
+  echo ""
+  fail "Missing: ${MISSING[*]}"
+  exit 1
+fi
+
+# Floor (keep in sync with package.json min_nono_version); the base pack
+# requires it. .nono-version holds the recommended version CI installs.
+NONO_MIN="0.61.0"
+NONO_RECOMMENDED=$(tr -d '[:space:]' < "$ROOT/.nono-version" 2>/dev/null || echo "")
+NONO_VER=$(nono --version 2>/dev/null | awk '{print $2}')
+if [[ -z "$NONO_VER" ]]; then
+  fail "Could not determine nono version from 'nono --version'"
+  exit 1
+fi
+if [[ "$(printf '%s\n%s\n' "$NONO_MIN" "$NONO_VER" | sort -V | head -n1)" != "$NONO_MIN" ]]; then
+  fail "nono $NONO_VER is too old; this requires nono $NONO_MIN or newer."
+  exit 1
+fi
+ok "nono $NONO_VER (>= $NONO_MIN)"
+if [[ -n "$NONO_RECOMMENDED" && "$NONO_VER" != "$NONO_RECOMMENDED" ]]; then
+  if [[ "$(printf '%s\n%s\n' "$NONO_RECOMMENDED" "$NONO_VER" | sort -V | head -n1)" != "$NONO_RECOMMENDED" ]]; then
+    dim "    (running nono $NONO_VER; .nono-version recommends $NONO_RECOMMENDED — newer is usually fine)"; echo ""
+  else
+    dim "    (running nono $NONO_VER; .nono-version recommends $NONO_RECOMMENDED — consider upgrading)"; echo ""
+  fi
+fi
+
+# Base pack the wmf-engineer profile extends (Claude Code hooks, base policies).
+step "Pulling always-further/claude nono pack"
+if nono list --installed --silent --json 2>/dev/null | grep -q '"always-further/claude":'; then
+  ok "Already installed"
+else
+  if nono pull always-further/claude --silent; then
+    ok "Pulled always-further/claude"
+  else
+    fail "Failed to pull always-further/claude — check network access to the nono registry"
+    exit 1
+  fi
+fi
+
+# nono refuses to launch if ~/.nono/sessions is group/world-accessible; force 700.
+step "Securing nono sessions directory"
+mkdir -p ~/.nono/sessions
+chmod 700 ~/.nono/sessions
+ok "~/.nono/sessions is owner-only (700)"
+
+# Claude's own sandbox (sandbox.enabled) can't nest inside nono's — tool calls
+# deadlock. Warn only; bin/claude hard-fails on launch if it's set.
+step "Checking Claude sandbox config"
+SANDBOX_MAIN="null"; SANDBOX_LOCAL="null"
+if [[ -f "$HOME/.claude/settings.json" ]]; then
+  SANDBOX_MAIN=$(jq -r '.sandbox.enabled' "$HOME/.claude/settings.json" 2>/dev/null || echo null)
+fi
+if [[ -f "$HOME/.claude/settings.local.json" ]]; then
+  SANDBOX_LOCAL=$(jq -r '.sandbox.enabled' "$HOME/.claude/settings.local.json" 2>/dev/null || echo null)
+fi
+SANDBOX_SOURCE=""
+if [[ "$SANDBOX_LOCAL" == "true" ]]; then
+  SANDBOX_SOURCE="~/.claude/settings.local.json"
+elif [[ "$SANDBOX_LOCAL" != "false" && "$SANDBOX_MAIN" == "true" ]]; then
+  SANDBOX_SOURCE="~/.claude/settings.json"
+fi
+if [[ -n "$SANDBOX_SOURCE" ]]; then
+  fail "sandbox.enabled is true in $SANDBOX_SOURCE"
+  dim "    Set it to false before launching bin/claude (tool calls deadlock otherwise)."; echo ""
+else
+  ok "sandbox.enabled is unset or false"
+fi
+
+# On Linux, Claude Code ignores glob deny rules; nono is the only control for
+# workdir secrets there.
+if [[ "$(uname -s)" == "Linux" ]]; then
+  step "Checking platform compatibility"
+  fail "Glob patterns in Claude Code permission deny rules are ignored on Linux."
+  dim "    The nono OS-level sandbox blocks ~/.ssh and other sensitive paths,"; echo ""
+  dim "    but deep-nested or unusually-named secret files in your workdir are"; echo ""
+  dim "    NOT blocked by the Claude Code permission layer. Avoid storing secrets there."; echo ""
+fi
+
+# The sandboxed claude can't self-update (minimal network); do it here
+# (unsandboxed). Non-fatal so an offline run still completes.
+step "Updating Claude Code"
+if [[ -n "${WMF_CLAUDE_SKIP_UPDATE:-}" ]]; then
+  dim "    Skipped (WMF_CLAUDE_SKIP_UPDATE set)"; echo ""
+elif claude update; then
+  ok "Claude Code is up to date"
+else
+  fail "Update check failed (offline?) — continuing with the installed version"
+fi
+
+# Build the MCP server dependencies in this checkout.
+"$ROOT/bin/wmf-claude-build"
+
+step "Registering MCP servers"
+echo ""
+dim "    The Phabricator MCP server reads phabricator.wikimedia.org"; echo ""
+dim "    anonymously — no auth token, public data only. Your username is the"; echo ""
+dim "    default subscriber filter, so \"show my tasks\" returns yours."; echo ""
+echo ""
+
+# Recall the previous username so upgrades don't force a retype (from the public
+# `mcp get` output, not ~/.claude.json).
+DEFAULT_PHAB_USER=""
+if EXISTING_MCP=$(claude mcp get phabricator 2>/dev/null); then
+  DEFAULT_PHAB_USER=$(printf '%s\n' "$EXISTING_MCP" \
+    | grep -o 'PHABRICATOR_USERNAME=[^[:space:]"]*' \
+    | head -n1 | cut -d= -f2- || true)
+fi
+if [[ -n "$DEFAULT_PHAB_USER" ]]; then
+  read -rp "    Phabricator username [$DEFAULT_PHAB_USER]: " PHAB_USER
+  PHAB_USER="${PHAB_USER:-$DEFAULT_PHAB_USER}"
+else
+  read -rp "    Phabricator username: " PHAB_USER
+fi
+if [[ -z "$PHAB_USER" ]]; then
+  fail "Phabricator username is required."
+  exit 1
+fi
+
+claude mcp remove --scope user phabricator >/dev/null 2>&1 || true
+claude mcp add --scope user phabricator \
+  -e "PHABRICATOR_USERNAME=$PHAB_USER" \
+  -- node "$ROOT/mcp-phabricator/src/index.js" >/dev/null 2>&1
+ok "phabricator registered"
+
+# PYTHONDONTWRITEBYTECODE: don't scatter .pyc through the venv.
+claude mcp remove --scope user gerrit >/dev/null 2>&1 || true
+claude mcp add --scope user gerrit \
+  -e "PYTHONPATH=$ROOT/gerrit-mcp-server/" \
+  -e "PYTHONDONTWRITEBYTECODE=1" \
+  -- "$ROOT/gerrit-mcp-server/.venv/bin/python" \
+  "$ROOT/gerrit-mcp-server/gerrit_mcp_server/main.py" stdio >/dev/null 2>&1
+ok "gerrit registered"
+
+# Write the config bin/claude --chrome passes via --mcp-config. Never registered
+# globally, so the CDP-controlled-browser surface stays off other sessions.
+step "Configuring chrome-devtools MCP"
+CDP_DIR="$ROOT/chrome-devtools-mcp"
+CDP_BIN="$CDP_DIR/node_modules/.bin/chrome-devtools-mcp"
+if [[ -x "$CDP_BIN" ]]; then
+  # Drop a stale global registration left by older setup.sh versions.
+  EXISTING_CDP="$(claude mcp get --scope user chrome-devtools 2>/dev/null || true)"
+  if [[ -n "$EXISTING_CDP" ]] && grep -qF "$CDP_DIR" <<<"$EXISTING_CDP"; then
+    claude mcp remove --scope user chrome-devtools >/dev/null 2>&1 || true
+  fi
+  # Sweep per-launch user-data dirs leaked by SIGKILL'd test-chrome runs.
+  find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'wmf-claude-chrome.*' -type d -mtime +1 -print 2>/dev/null \
+    | while read -r d; do rm -rf "$d"; done
+
+  # jq quotes safely. Flags: attach to the external Chrome, no telemetry/CrUX,
+  # redact sensitive response headers.
+  jq -n --arg cmd "$CDP_BIN" '{
+    mcpServers: {
+      "chrome-devtools": {
+        command: $cmd,
+        args: [
+          "--browserUrl", "http://127.0.0.1:9222",
+          "--no-usage-statistics",
+          "--no-performance-crux",
+          "--redactNetworkHeaders"
+        ]
+      }
+    }
+  }' > "$CDP_DIR/mcp-config.json"
+  ok "wrote $CDP_DIR/mcp-config.json"
+  dim "      Launch with 'bin/claude --chrome'; run 'bin/launch-test-chrome' first."; echo ""
+else
+  ok "chrome-devtools MCP not built — skipping (set WMF_CLAUDE_SKIP_CHROME unset and rebuild to enable)"
+fi
+
+# Sandboxed `claude` alias pointing at this checkout's launcher.
+step "Installing shell alias"
+LAUNCHER="$ROOT/bin/claude"
+SHELL_NAME="$(basename "${SHELL:-}")"
+case "$SHELL_NAME" in
+  zsh)  RC_PATH="$HOME/.zshrc"  ; RC_DISPLAY="~/.zshrc"  ; ALIAS_LINE="alias claude='$LAUNCHER'" ;;
+  bash) RC_PATH="$HOME/.bashrc" ; RC_DISPLAY="~/.bashrc" ; ALIAS_LINE="alias claude='$LAUNCHER'" ;;
+  fish) RC_PATH="$HOME/.config/fish/conf.d/wmf-claude.fish" ; RC_DISPLAY="~/.config/fish/conf.d/wmf-claude.fish" ; ALIAS_LINE="abbr -a claude $LAUNCHER" ;;
+  *)    RC_PATH=""              ; RC_DISPLAY="your shell config" ; ALIAS_LINE="alias claude='$LAUNCHER'" ;;
+esac
+if [[ -z "$RC_PATH" ]]; then
+  fail "Unsupported shell ($SHELL_NAME). Add this to $RC_DISPLAY:"
+  echo "      $ALIAS_LINE"
+elif [[ -f "$RC_PATH" ]] && grep -Fxq "$ALIAS_LINE" "$RC_PATH"; then
+  ok "Alias already present in $RC_DISPLAY"
+elif [[ -f "$RC_PATH" ]] && grep -Eq "^[[:space:]]*(alias[[:space:]]+claude=|abbr[[:space:]]+-a[[:space:]]+claude([[:space:]]|$))" "$RC_PATH"; then
+  fail "A different 'claude' alias is already in $RC_DISPLAY — leaving it alone."
+  fail "Replace it manually with:"
+  echo "      $ALIAS_LINE"
+else
+  mkdir -p "$(dirname "$RC_PATH")"
+  printf '\n# wmf-claude: sandbox claude by default (bypass with \\claude or `command claude`)\n%s\n' "$ALIAS_LINE" >> "$RC_PATH"
+  ok "Added 'claude' alias to $RC_DISPLAY"
+fi
+
+echo ""
+echo "  $(green "Done.") Restart your shell or run: $(bold "source $RC_DISPLAY")"
+echo ""
+echo "  $(dim "The 'claude' alias shadows the system binary so it's sandboxed by default.")"
+echo "  $(dim "Bypass with \\claude or 'command claude' for the unsandboxed binary.")"
+echo "  $(dim "Inside Claude, run") $(bold "/wmf-claude:init-project") $(dim "to bootstrap a repo.")"
+echo ""

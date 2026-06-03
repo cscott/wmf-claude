@@ -124,7 +124,10 @@ done < <(jq -r '.artifacts[].path' "$REPO_ROOT/package.json")
 
 echo ""
 echo "--- bin/ script syntax ---"
-for f in "$REPO_ROOT/bin/session-start.sh" "$REPO_ROOT/bin/launch-claude.sh" "$REPO_ROOT/bin/claude" "$REPO_ROOT/bin/launch-test-chrome"; do
+# Every shell script under bin/ (launchers, the build/configure scripts, and
+# the sourced lib-output.sh) must parse. Glob so new scripts are covered too.
+for f in "$REPO_ROOT"/bin/*; do
+  [[ -f "$f" ]] || continue
   if bash -n "$f" 2>/dev/null; then pass "$(rel "$f")"; else fail "$(rel "$f")"; fi
 done
 
@@ -140,8 +143,11 @@ trap 'rm -rf "$FAKE_REPO"' EXIT
 mkdir -p "$FAKE_REPO/bin" \
          "$FAKE_REPO/chrome-devtools-mcp/node_modules/.bin" \
          "$FAKE_REPO/mcp-phabricator" \
-         "$FAKE_REPO/gerrit-mcp-server"
+         "$FAKE_REPO/gerrit-mcp-server" \
+         "$FAKE_REPO/profiles"
 cp "$REPO_ROOT/bin/claude" "$FAKE_REPO/bin/claude"
+# bin/claude checks the profile file exists before launching.
+touch "$FAKE_REPO/profiles/wmf-engineer.json"
 touch "$FAKE_REPO/chrome-devtools-mcp/mcp-config.json"
 touch "$FAKE_REPO/chrome-devtools-mcp/node_modules/.bin/chrome-devtools-mcp"
 chmod +x "$FAKE_REPO/chrome-devtools-mcp/node_modules/.bin/chrome-devtools-mcp"
@@ -200,6 +206,24 @@ if grep -qx 'NONO_ARG: 80' <<<"$out" && grep -qx 'NONO_ARG: 443' <<<"$out" && ! 
 # An invalid port value is rejected before reaching nono.
 if PATH="$FAKE_REPO/bin:$PATH" bash "$FAKE_REPO/bin/claude" --local-web=abc >/dev/null 2>&1; then
   fail "--local-web=abc was not rejected"; else pass "--local-web=abc is rejected"; fi
+
+echo "--- bin/claude MCP + profile grants ---"
+# MCP grants resolve under the repo; the profile loads by path.
+out="$(run_fake_claude)"
+if grep -qx "NONO_ARG: $FAKE_REPO/mcp-phabricator" <<<"$out"; then
+  pass "MCP grants point at the repo"; else fail "MCP grant not under the repo"; fi
+if grep -qx "NONO_ARG: $FAKE_REPO/profiles/wmf-engineer.json" <<<"$out"; then
+  pass "profile loaded by path (default wmf-engineer)"; else fail "profile not loaded by path"; fi
+
+# WMF_CLAUDE_PROFILE selects a different profiles/<name>.json.
+touch "$FAKE_REPO/profiles/wmf-data-scientist.json"
+out="$(WMF_CLAUDE_PROFILE=wmf-data-scientist run_fake_claude)"
+if grep -qx "NONO_ARG: $FAKE_REPO/profiles/wmf-data-scientist.json" <<<"$out"; then
+  pass "WMF_CLAUDE_PROFILE selects an alternate profile"; else fail "WMF_CLAUDE_PROFILE not honored"; fi
+# An unknown profile is rejected before launching.
+out="$(WMF_CLAUDE_PROFILE=nope run_fake_claude || true)"
+if grep -q "profile 'nope' not found" <<<"$out"; then
+  pass "unknown profile is rejected"; else fail "unknown profile not rejected"; fi
 
 echo ""
 echo "========================="

@@ -225,6 +225,16 @@ out="$(WMF_CLAUDE_PROFILE=nope run_fake_claude || true)"
 if grep -q "profile 'nope' not found" <<<"$out"; then
   pass "unknown profile is rejected"; else fail "unknown profile not rejected"; fi
 
+echo "--- bin/claude --help ---"
+# --help prints wrapper usage and never reaches nono.
+out="$(run_fake_claude --help)"
+if grep -q 'Wrapper flags:' <<<"$out" && ! grep -q '^NONO_ARG:' <<<"$out"; then
+  pass "--help prints wrapper usage without launching"; else fail "--help did not short-circuit"; fi
+# `claude -- --help` is passed through to Claude Code, not intercepted.
+out="$(run_fake_claude -- --help)"
+if grep -qx 'NONO_ARG: --help' <<<"$out" && ! grep -q 'Wrapper flags:' <<<"$out"; then
+  pass "claude -- --help passes through"; else fail "-- --help was wrongly intercepted"; fi
+
 echo ""
 echo "========================="
 echo "Results: $PASS passed, $FAIL failed"

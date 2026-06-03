@@ -15,6 +15,14 @@
 # it can't be overridden from the host environment.
 export DISABLE_AUTOUPDATER=1
 
+# The sandbox grants write but not read on bare /tmp; /tmp/claude-$UID is
+# r+w. Route tempfiles there so read-after-write (heredocs, mktemp, ...)
+# doesn't trip. TMPPREFIX is zsh-specific and not derived from TMPDIR.
+TMPDIR="/tmp/claude-$(id -u)"
+mkdir -p "$TMPDIR"
+export TMPDIR
+export TMPPREFIX="$TMPDIR/zsh"
+
 if [[ -z "${WMF_CLAUDE_QUIET:-}" ]] && [[ -t 2 ]]; then
   slack_url='https://wikimedia.enterprise.slack.com/archives/C0ATKE72JG6'
   printf '\n' >&2

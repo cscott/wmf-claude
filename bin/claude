@@ -8,6 +8,7 @@
 #   bin/claude --local-web=8080             # narrow to specific port(s); comma-separated for several
 #   bin/claude --chrome                     # also enable chrome-devtools MCP (implies --local-web)
 #   bin/claude --allow ~/src/other-repo --  # grant nono access to additional paths
+#   bin/claude --help                       # show wrapper options and exit
 #   WMF_CLAUDE_PROFILE=wmf-data-scientist bin/claude   # load profiles/<name>.json (default wmf-engineer)
 #
 # All flags before "--" are passed to nono. All flags after are passed to claude.
@@ -18,6 +19,35 @@
 set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+
+# `-h`/`--help` as the first arg prints wrapper usage and exits before launching
+# (claude's own help is still reachable via `claude -- --help`).
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  cat <<'EOF'
+wmf-claude — launch Claude Code inside the wmf-engineer nono sandbox.
+
+Usage: claude [wrapper flags] [nono flags --] [claude args]
+
+Wrapper flags:
+  --chrome             enable the chrome-devtools MCP (opens 127.0.0.1:9222; implies --local-web)
+  --local-web[=PORTS]  open localhost web ports for curl-based local-wiki testing
+                       (default 80,443,8080; comma-separated list to narrow)
+  -h, --help           show this help
+
+Passthrough (split at --):
+  before --   passed to `nono run`  (e.g. --allow DIR, --read DIR)
+  after --    passed to Claude Code (with no --, all args go to Claude Code)
+
+Environment:
+  WMF_CLAUDE_PROFILE=<name>   load profiles/<name>.json (default: wmf-engineer)
+  WMF_CLAUDE_QUIET=1          suppress the WMF banner
+  WMF_CLAUDE_SKIP_UPDATE=1    skip update-staleness notices
+
+Refuses --capability-elevation, --trust-override, --dangerously-skip-permissions.
+For Claude Code's own flags: claude -- --help
+EOF
+  exit 0
+fi
 
 # Which profiles/<name>.json to load; defaults to wmf-engineer. Lets additional
 # profiles (e.g. wmf-data-scientist) be selected without changing this script.

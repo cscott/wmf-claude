@@ -132,41 +132,46 @@ Then run `claude` from any project directory.
 
 ## Recommended workspace layout
 
-The sandbox grants read-write access to the directory you launch
-`claude` from, and everything beneath it. Parents and siblings stay
-out of reach unless you grant them explicitly, so where you start
-`claude` decides what it can touch.
+Where you launch `claude` matters for two reasons:
 
-For work that spans repos, keep all your clones under one root (for
-example `~/src`) and launch `claude` from that root:
+- **Sandbox** — it grants read-write to that directory and everything
+  beneath; parents and siblings stay out of reach unless you grant them. The
+  launch dir is your write blast radius.
+- **Memory and `CLAUDE.md`** — both are keyed to it. Claude accumulates
+  per-project memory and loads that project's `CLAUDE.md` from where you
+  launch, so a stable entrypoint builds up context over time; a broad root
+  like `~/src` dumps every project into one store and grants write to
+  everything.
+
+So keep a deliberate entrypoint per area you work in, and widen access with
+flags rather than by launching higher up. MediaWiki work, from core:
 
 ```bash
-cd ~/src
+cd ~/src/mediawiki/core
+claude --read ~/src --              # read other repos for context; writes stay in core
+claude --allow ~/src/mediawiki --   # or read-write across the MediaWiki repos, when you need it
+```
+
+A separate area gets its own entrypoint (and its own memory):
+
+```bash
+cd ~/src/integration/quibble
 claude
 ```
 
-Claude can then read and edit any repo in the tree within a single
-session, rather than one repo per launch.
+Prefer `--read` for context you only need to read; reach for `--allow`,
+scoped as tightly as the task allows, when you need to write across repos.
 
-Clone each repo to a path that mirrors its Gerrit or GitLab project
-path, so a project name maps to a predictable location:
+Clone each repo to a path mirroring its Gerrit/GitLab project path, so a name
+maps to a predictable location:
 
 ```
 ~/src/
   mediawiki/core
   mediawiki/extensions/GrowthExperiments
+  integration/quibble
   operations/puppet
   repos/product-safety-and-integrity/wmf-claude
-```
-
-This avoids duplicate clones and lets Claude resolve a project name to
-its checkout without guessing.
-
-To keep launching `claude` from inside a single repo instead, grant the
-shared root explicitly:
-
-```bash
-claude --allow ~/src --
 ```
 
 ## Skills and agents

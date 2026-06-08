@@ -42,7 +42,7 @@ if [[ "$(printf '%s\n%s\n' "$NONO_MIN" "$NONO_VER" | sort -V | head -n1)" != "$N
 fi
 ok "nono $NONO_VER (>= $NONO_MIN)"
 if [[ -n "$NONO_RECOMMENDED" && "$NONO_VER" != "$NONO_RECOMMENDED" ]]; then
-  if [[ "$(printf '%s\n%s\n' "$NONO_RECOMMENDED" "$NONO_VER" | sort -V | head -n1)" != "$NONO_RECOMMENDED" ]]; then
+  if [[ "$(printf '%s\n%s\n' "$NONO_RECOMMENDED" "$NONO_VER" | sort -V | head -n1)" == "$NONO_RECOMMENDED" ]]; then
     dim "    (running nono $NONO_VER; .nono-version recommends $NONO_RECOMMENDED — newer is usually fine)"; echo ""
   else
     dim "    (running nono $NONO_VER; .nono-version recommends $NONO_RECOMMENDED — consider upgrading)"; echo ""

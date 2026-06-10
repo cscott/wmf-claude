@@ -33,7 +33,7 @@ blocks sensitive files inside your workdir. Avoid keeping secrets in your
 workdir on Linux!
 
 Installation hints below cover macOS (Homebrew), Debian-like Linuxes (apt),
-and Fedora / RHEL (dnf).
+and Fedora / RHEL (dnf/COPR).
 
 `setup.sh` checks for these and exits with install hints if any are
 missing. Install them up front:
@@ -55,7 +55,15 @@ missing. Install them up front:
   sudo dpkg -i "nono-cli_${NONO_VERSION}_$(dpkg --print-architecture).deb"
   ```
 
-  Fedora / RHEL (download the `.rpm` from
+  Fedora (official COPR repository):
+
+  ```bash
+  sudo dnf install 'dnf-command(copr)'
+  sudo dnf copr enable always-further/nono
+  sudo dnf install nono-cli
+  ```
+
+  Fedora / RHEL manual RPM fallback (download the `.rpm` from
   [GitHub Releases](https://github.com/always-further/nono/releases)):
 
   ```bash

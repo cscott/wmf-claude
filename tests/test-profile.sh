@@ -52,14 +52,6 @@ why_path() {
   echo "$output" | jq -r '.status' 2>/dev/null || echo "error"
 }
 
-why_host() {
-  local host="$1"
-  local output
-  output=$(nono why --silent --profile "$PROFILE" --workdir "$WORKDIR" --host "$host" --json 2>/dev/null \
-    | sed -n '/^{/,/^}/p') || true
-  echo "$output" | jq -r '.status' 2>/dev/null || echo "error"
-}
-
 # Run a command inside the sandbox, return 0 if it succeeds, 1 if blocked.
 # Note: no --allow-cwd. nono 0.51-0.53 break that flag on Linux (cat/ls/touch
 # all exit non-zero even though the profile says workdir.access:readwrite).
@@ -284,11 +276,45 @@ else
   ((FAIL++))
 fi
 
-# --- Network: blocked hosts ---
+# --- Network: arbitrary hosts denied ---
+# Structural, not `nono why --host`: since nono 0.62 the domain filter is applied
+# at runtime, so `nono why` reports every host "allowed" and no longer reflects
+# allow_domain (job 882901). allow_domain is non-empty (asserted above), so the
+# proxy denies any unlisted host; a host absent from allow_domain matches no entry
+# — not an exact host (plain or object .domain) nor a *.suffix wildcard.
 echo ""
 echo "--- Network: arbitrary hosts denied ---"
-assert_status "example.com denied" "denied" "$(why_host example.com)"
-assert_status "google.com denied" "denied" "$(why_host google.com)"
+for host in example.com google.com; do
+  if jq -e --arg h "$host" '
+        [.network.allow_domain[] | if type=="object" then .domain else . end]
+        | any(.[]; . as $e | $e == $h or (($e|startswith("*.")) and ($h|endswith($e[1:]))))
+      ' "$PROFILE" >/dev/null 2>&1; then
+    red "FAIL: $host is covered by allow_domain (should be denied)"; ((FAIL++))
+  else
+    green "PASS: $host not in allow_domain (denied by proxy)"; ((PASS++))
+  fi
+done
+
+# --- Network: live egress enforcement (runtime) ---
+# Behavioural check the structural one can't do: egress through a fresh sandbox
+# must be refused for a non-allowlisted host and succeed for an allowlisted one.
+# Runtime-only — skipped on Linux CI (SKIP_RUNTIME), unrunnable nested in a sandbox.
+echo ""
+echo "--- Network: live egress enforcement (runtime) ---"
+if $SKIP_RUNTIME; then
+  echo "SKIP: nono sandbox-command regression on Linux (see SKIP_RUNTIME note)"
+else
+  if run_sandboxed curl -sS -m 15 -o /dev/null https://example.com; then
+    red "FAIL: egress to non-allowlisted example.com should be denied"; ((FAIL++))
+  else
+    green "PASS: egress to non-allowlisted example.com denied"; ((PASS++))
+  fi
+  if run_sandboxed curl -sS -m 15 -o /dev/null https://en.wikipedia.org; then
+    green "PASS: egress to allowlisted en.wikipedia.org allowed"; ((PASS++))
+  else
+    red "FAIL: egress to allowlisted en.wikipedia.org should be allowed"; ((FAIL++))
+  fi
+fi
 
 # --- Security: process isolation modes ---
 echo ""

@@ -48,6 +48,12 @@ Direct invocation (run from MediaWiki root, no `MW_INSTALL_PATH=` prefix, no spe
 
 As part of writing a patch, check that code coverage levels do not drop. Sometimes it is OK for the coverage levels to drop when there's no easy way to test the code.
 
+## Maintenance and CLI scripts
+
+Run maintenance scripts via `php maintenance/run.php ScriptName` from the MediaWiki root.
+
+The sandbox opens only local port `3306` (the MariaDB/MySQL primary). A dev wiki that puts a DB **replica** on another port, or **memcached** on `:11211`, is unreachable from inside the sandbox — a CLI/maintenance script that tries to reach them trips a `DBConnectionError` ("Database servers ... overloaded") circuit-breaker. Run such scripts in a primary-only, no-memcached mode. The override is setup-specific — some local setups expose an env var or a `LocalSettings.claude.php` toggle for this; check your own settings for how to force primary-only.
+
 ## Linting
 
 Use `/wmf-claude:lint` to automatically detect changed file types and run the appropriate linters. Available linters:
@@ -74,6 +80,13 @@ Always run phpcs on changed PHP files before handing back. Don't leave lint to C
 - Closures that don't reference `$this` must be declared `static` (e.g. `static function () { ... }`). The `MediaWiki.Usage.StaticClosure` sniff enforces this.
 - Never vertically align `=`, `=>`, or trailing comments by padding with spaces. One space around `=` and `=>`, one space before `//`. Applies to PHP, JS, JSON, YAML, shell — every language. PHPCS will flag aligned tab-indented blocks.
 - JS top-of-file description comments use `/**`, not `/*!`. The `/*!` "preserve through minification" syntax is non-standard in MediaWiki.
+
+## Comments and diff hygiene
+
+- **Default to no comment.** Clear names are self-documenting; a comment that narrates the code is noise. A comment earns its place only for a non-obvious *why* — a hidden constraint, a workaround for a specific bug, a deliberate deviation from the surrounding pattern. Never restate what the code does, and don't speculate about why a past author "probably" did something or what a future maintainer "might want". No tutorial comments (language features, framework idioms) and no "added for X" / "used by Y" notes — those belong in the commit message.
+- **One short line.** Never a multi-paragraph rationale or multi-line block. If you need more than a sentence to justify a comment, make the code clearer instead (rename, extract a function).
+- **Plain language, in comments and commit messages.** Everyday words over jargon: "temporary" not "transient"; state the actual risk ("could re-send mail to people who already got it") rather than naming the concept ("mail() is not idempotent"). Keep real proper nouns (SMTP, ResourceLoader); cut jargon that has a plain equivalent and trivia the linked bug already records.
+- **Smallest diff that does the job.** Touch only what the change needs — no unrelated reformatting, whitespace churn, or drive-by cleanups (a refactor that isn't required for the fix goes in its own commit ahead of the feature, per General guidance). Before handing a patch back, re-read the diff: confirm it's the minimal change and that every comment in it still earns its place.
 
 ## Dependency injection and services
 
@@ -143,6 +156,8 @@ Use `/wmf-claude:manual-test [feature or url-path]` to manually test features on
 ## Logs
 
 Application logs live in `logs/` (relative to the repo root). After manual testing or when debugging a change, check the logs for non-visible errors (PHP warnings/exceptions, deprecation notices) and slow MySQL queries. Use `tail` or `grep` to scan recent log entries.
+
+When adding structured log context (the array passed to a PSR-3 logger, e.g. `LoggerFactory::getInstance( ... )->warning( $msg, [ ... ] )`), name each field for what it holds — a count should read as a count (`recipient_count`, not `recipients`). Default to snake_case keys, but mirror the existing keys in the same log call when they follow a different style.
 
 ## Schemas
 

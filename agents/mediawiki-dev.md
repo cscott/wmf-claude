@@ -25,6 +25,7 @@ Use `mcp__phabricator__phabricator_get_task` to pull the task body *and* comment
 2. Check `extension.json` or `ServiceWiring.php` for how similar things are wired
 3. Look at nearby code for style and conventions to match
 4. Grep for existing utilities before writing new ones
+5. Before calling an unfamiliar function or method, read its docblock — not just the signature. The method's own note often dictates correct use: e.g. `TimingMetric::observeSeconds()` (reached via `StatsFactory::getTiming()`) documents that in-process timings should use `hrtime()` + `observeNanoseconds()` for monotonic time, not wall-clock seconds.
 
 ## Follow existing patterns
 
@@ -130,7 +131,7 @@ After lint/tests pass, do ONE structured review of your own diff before returnin
    - **Pattern consistency**: new code matches the patterns already in use in this file / extension / core area. If you introduced a new pattern, the "Follow existing patterns" exception applies (genuine multi-file migration); otherwise flag it for the user.
    - **Security**: parameterized SQL (no string-concat into `IDatabase`), output escaped (`Html::*`, `htmlspecialchars`, `Message::escaped()`), permission checks on write paths, no secrets in logs
    - **Performance**: every new query has an index (EXPLAIN-verified), no N+1 (no `select*` inside a loop), no sync HTTP in the request path, `WANObjectCache::getWithSetCallback` used over manual get/set, hot-hook handlers bail fast, no unjustified new ResourceLoader module (extend an existing one or inline), CSS-only payloads use `addModuleStyles` not `addModules`
-   - **Readability**: clear names, no dead code, no leftover debug `var_dump`/`error_log`, no unrelated changes mixed in
+   - **Comments & diff hygiene**: walk every comment — delete any that restate the code; each survivor states a non-obvious *why* in one plain-language line (no jargon where an everyday word works). Clear names, no dead code, no leftover debug `var_dump`/`error_log`. Diff is minimal — no unrelated reformatting, whitespace churn, or drive-by edits mixed in.
    - **i18n**: user-facing strings go through `wfMessage`/`mw.msg`, with both `en.json` and `qqq.json` entries
    - **Tests**: new logic has coverage; existing tests still relevant
 3. Fix anything clearly wrong. For judgment calls, surface them in your final summary instead of guessing.

@@ -65,6 +65,8 @@ $options = new ServiceOptions(
 
 Match what nearby tests already do — assertion style, fixture setup, mocking approach (manual mocks vs. `createMock`), data-provider conventions, helper traits in use. Consistency within an extension's test suite makes the whole suite easier to maintain.
 
+When a test file already has a `@dataProvider`-backed test that asks the same question of the same unit, add a case to its provider rather than writing a parallel test method that duplicates the setup. PHPUnit dispatches string-keyed data sets as named arguments, so you can append new parameters to the test signature *with defaults* — only the new rows need the new keys, and existing rows stay untouched.
+
 - **Default: follow the existing pattern**, even if you'd structure tests differently on a fresh project.
 - **Flag any new pattern** in your final summary: which convention is new, what the surrounding tests do today, and why you diverged.
 - **Exception:** if the extension has no unit tests yet (only integration), introducing a unit-test file is fine — that's a deliberate expansion, not a stylistic divergence. The same logic applies to introducing data providers, `HandlerTestTrait`, etc., when the suite genuinely lacks the relevant pattern. Single-file legacy fixes still match the legacy style.
@@ -90,7 +92,8 @@ After the tests are written and runnable, do ONE structured review of your own d
    - **Unit vs. integration placement**: no service container / `getServiceContainer()` / DB calls in `tests/phpunit/unit/`. If you reached for those, the test belongs in `integration/`.
    - **Coverage of failure paths**: not just the happy path — exception branches, empty inputs, permission denials.
    - **Data providers**: descriptive case keys (not `0, 1, 2`); each case asserts something distinct.
-   - **No leftover scaffolding**: no `dump()`, `var_dump`, or commented-out assertions.
+   - **No dead setup lines**: remove any setup line whose deletion still lets the test pass — a stray `setRequest`/`setTitle`, a redundant factory call, a config `overrideConfigValue()` that just re-sets the existing default. Keep only what the asserted behavior depends on.
+   - **No leftover scaffolding**: no `dump()`, `var_dump`, or commented-out assertions. Comments follow the same rule as production code — none that just restate what the assertion obviously does.
    - **Naming**: `testXReturnsYWhenZ` form; one concept per method.
 3. Fix anything clearly wrong. For judgment calls (e.g. is this case worth covering?), flag in your final summary.
 

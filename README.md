@@ -198,6 +198,7 @@ agents out of the box. (Suppress the session banner with
 | `review-patch` | Fetches and reviews a Gerrit change |
 | `init-project [--mediawiki]` | Drops a starter `CLAUDE.md` into the current repo |
 | `run-tests`, `test-coverage`, `lint`, `manual-test`, `compare-rebase` | MediaWiki workflows |
+| `standalone-vuln-audit` | Runs a security review tuned to microservice and standalone apps | 
 
 **Agents** auto-invoke by description match:
 `gerrit-reviewer`, `mediawiki-dev`, `mediawiki-explore`,

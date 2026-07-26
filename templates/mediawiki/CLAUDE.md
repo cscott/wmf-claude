@@ -143,7 +143,9 @@ Never post review comments on Gerrit — the user handles all replies.
 
 When making changes to an existing patch, stage your changes (`git add`) but do NOT commit until the user has approved. For multi-patch stacks in Gerrit, use the same approach: patch 1 on branch-1 with staged changes, patch 2 on branch-2 with staged changes — all staged but uncommitted. This lets the user review exactly what will change before pushing to Gerrit.
 
-When revising commits with an interactive rebase, use reflog to show what changed between commits, so the user can understand the changes before running `git review`. Always update the commit message after amending (don't use `--no-edit`).
+When revising commits with an interactive rebase, use reflog to show what changed between commits, so the user can understand the changes before running `git review`.
+
+The message already on a commit is the source of truth — the user may have edited what you originally wrote. Don't regenerate a message from scratch, don't restore an earlier version you remember writing, and don't `--no-edit` past a message the new diff has made inaccurate. If the user has modified it from what you remember then start from the existing text, keep it verbatim by default, and propose wording changes for the user to approve rather than applying them. If the user hasn't modified it from your memory of a message you wrote, feel free to adjust it without asking.
 
 **MANDATORY: Preserve `Change-Id:` when amending commits during interactive rebases.** Before amending any commit that has been pushed to Gerrit, fetch the original `Change-Id` using `mcp__gerrit__get_commit_message` and include it verbatim in the amended message. After the rebase, verify via `mcp__gerrit__get_commit_message` that the Change-Ids in the local commits still match Gerrit. Using the wrong Change-Id creates a new Gerrit change and breaks the patch stack — this is extremely costly to fix.
 

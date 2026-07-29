@@ -15,6 +15,7 @@
     { "type": "plugin", "path": "chrome-devtools-mcp/package.json" },
     { "type": "plugin", "path": "chrome-devtools-mcp/package-lock.json" },
     { "type": "plugin", "path": "skills/write-commit-msg/SKILL.md" },
+    { "type": "plugin", "path": "skills/stage-hunks/SKILL.md" },
     { "type": "plugin", "path": "skills/write-phab-task/SKILL.md" },
     { "type": "plugin", "path": "skills/review-patch/SKILL.md" },
     { "type": "plugin", "path": "skills/vuln-audit/SKILL.md" },

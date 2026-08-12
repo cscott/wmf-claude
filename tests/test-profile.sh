@@ -234,7 +234,7 @@ done
 # The model API must stay a plain tunnel: endpoint rules would intercept its
 # TLS, which 403s the POST-based model calls and routes Claude's own traffic
 # through nono in plaintext. Guard against anyone adding rules there.
-for d in console.anthropic.com claude.ai; do
+for d in api.anthropic.com claude.ai platform.claude.com; do
   if jq -e --arg d "$d" '.network.allow_domain | index($d)' "$PROFILE" >/dev/null 2>&1; then
     green "PASS: $d stays a plain tunnel (not intercepted)"
     ((PASS++))

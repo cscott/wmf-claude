@@ -1,0 +1,36 @@
+# wmf-claude egress flavor: NONE. The PHP containers get no network route out.
+#
+# Why: with `bin/claude --docker`, agent code runs in the mediawiki (php-fpm)
+# and jobrunner containers, and their network is not restricted by nono. This
+# override puts them on an internal network (no gateway), so they cannot make
+# any outbound connection. Lint, tests, and maintenance scripts work; what
+# does not work, by design: `composer install` / `npm install` (use the
+# allowlist flavor for those).
+#
+# mediawiki-web (apache) runs no agent code. It stays on the default network
+# too, because an internal-only service cannot publish port 8080 to the host.
+#
+# Setup: copy this file to a directory the agent cannot write, for example
+# ~/.config/wmf-claude/. Do NOT keep the copy in the checkout — the agent can
+# edit files there. Then create the containers with both files:
+#
+#   docker compose -f docker-compose.yml \
+#     -f ~/.config/wmf-claude/egress-none.yml up -d
+#
+# Launch sessions with `bin/claude --docker=mediawiki --egress=none` so the
+# broker verifies the isolation and refuses to start when it is not applied.
+#
+# Service names match the stock mediawiki/core docker-compose.yml. If your
+# compose file adds services that run code (e.g. mariadb is fine; a custom
+# php service is not), put them on the isolated network as well.
+services:
+  mediawiki:
+    networks: [isolated]
+  mediawiki-jobrunner:
+    networks: [isolated]
+  mediawiki-web:
+    networks: [isolated, default]
+networks:
+  isolated:
+    internal: true
+  default: {}

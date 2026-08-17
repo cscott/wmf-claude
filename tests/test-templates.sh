@@ -79,6 +79,34 @@ for f in \
 done
 
 echo ""
+echo "--- docker-egress templates ---"
+# Structural checks (no YAML parser is guaranteed on the host): each override
+# must isolate the PHP services and must not put them back on a routed
+# network; the squid config must end in a deny.
+for f in egress-none.yml egress-allowlist.yml; do
+  t="$REPO_ROOT/templates/docker-egress/$f"
+  if [[ -f "$t" ]] && grep -q 'internal: true' "$t"; then
+    pass "$f defines an internal network"
+  else
+    fail "$f missing or lacks an internal network"
+  fi
+  # The exec-target and jobrunner services must list ONLY [isolated]; putting
+  # them on default too would give the agent's code a route out.
+  if awk '/^  (mediawiki|mediawiki-jobrunner):$/{svc=1;next} svc&&/networks:/{print;svc=0}' "$t" \
+      | grep -qv '\[isolated\]$'; then
+    fail "$f gives a PHP service a non-isolated network"
+  else
+    pass "$f keeps PHP services on the isolated network only"
+  fi
+done
+SQUID_CONF="$REPO_ROOT/templates/docker-egress/squid-allowlist.conf"
+if [[ "$(grep '^http_access' "$SQUID_CONF" | tail -n1)" == "http_access deny all" ]]; then
+  pass "squid-allowlist.conf ends with deny all"
+else
+  fail "squid-allowlist.conf must end with 'http_access deny all'"
+fi
+
+echo ""
 echo "--- chrome-devtools-mcp pin consistency ---"
 # package.json must pin an exact version (no caret/tilde) so engineers
 # get the reviewed code; package-lock.json must list the same version.
@@ -267,13 +295,21 @@ cat > "$FAKE_REPO/bin/docker" <<'STUB'
 case "$*" in
   *"config --services"*) printf 'mediawiki\nmariadb\n' ;;
   *"ps -q"*) echo fakecontainerid ;;
+  *"network inspect"*)
+    # STUB_DOCKER_NET_OPEN=1 reports a network with a route out, so the
+    # --egress refusal path can be tested.
+    if [[ -n "${STUB_DOCKER_NET_OPEN:-}" ]]; then
+      echo '[{"Internal": false}]'
+    else
+      echo '[{"Internal": true}]'
+    fi ;;
   *inspect*)
     if [[ -n "${STUB_DOCKER_PRIVILEGED:-}" ]]; then
       echo '[{"HostConfig":{"Privileged":true,"Binds":[]},"Mounts":[]}]'
     elif [[ -n "${STUB_DOCKER_CAP:-}" ]]; then
       echo '[{"HostConfig":{"Privileged":false,"CapAdd":["CAP_SYS_ADMIN"],"Binds":[]},"Mounts":[]}]'
     else
-      echo '[{"HostConfig":{"Privileged":false,"Binds":[]},"Mounts":[]}]'
+      echo '[{"HostConfig":{"Privileged":false,"Binds":[]},"Mounts":[],"NetworkSettings":{"Networks":{"isolated":{}}}}]'
     fi ;;
 esac
 exit 0
@@ -348,6 +384,33 @@ out="$(cd "$DOCKER_CWD" && STUB_DOCKER_CAP=1 PATH="$FAKE_REPO/bin:$PATH" \
   bash "$FAKE_REPO/bin/claude" --docker=mediawiki 2>&1 || true)"
 if grep -qi 'SYS_ADMIN' <<<"$out"; then
   pass "broker refuses a container with dangerous capabilities"; else fail "broker did not refuse a SYS_ADMIN container"; fi
+
+# --egress verifies real container state. A non-internal network is refused;
+# an internal-only container starts and the launcher reports the posture.
+out="$(cd "$DOCKER_CWD" && STUB_DOCKER_NET_OPEN=1 PATH="$FAKE_REPO/bin:$PATH" \
+  bash "$FAKE_REPO/bin/claude" --docker=mediawiki --egress=none 2>&1 || true)"
+if grep -q 'not network-isolated' <<<"$out"; then
+  pass "--egress=none refuses a container with a route out"
+else
+  fail "--egress=none did not refuse a non-isolated container"
+fi
+out="$(cd "$DOCKER_CWD" && PATH="$FAKE_REPO/bin:$PATH" \
+  bash "$FAKE_REPO/bin/claude" --docker=mediawiki --egress=none 2>&1)"
+if grep -q 'egress=none verified' <<<"$out" && ! grep -q 'NOT sandbox-restricted' <<<"$out"; then
+  pass "--egress=none starts against an isolated container and reports it"
+else
+  fail "--egress=none did not verify an isolated container (got: $out)"
+fi
+
+# --egress argument validation happens before anything starts.
+out="$(cd "$DOCKER_CWD" && PATH="$FAKE_REPO/bin:$PATH" \
+  bash "$FAKE_REPO/bin/claude" --docker=mediawiki --egress=nope 2>&1 || true)"
+if grep -q "takes 'none' or 'allowlist'" <<<"$out"; then
+  pass "--egress rejects an unknown mode"; else fail "--egress accepted an unknown mode"; fi
+out="$(cd "$DOCKER_CWD" && PATH="$FAKE_REPO/bin:$PATH" \
+  bash "$FAKE_REPO/bin/claude" --egress=none 2>&1 || true)"
+if grep -q 'requires --docker=SERVICE' <<<"$out"; then
+  pass "--egress without --docker=SERVICE errors clearly"; else fail "--egress without --docker did not error"; fi
 
 # mwdocker against an unreachable broker fails with a diagnostic, not a silent
 # set -e abort. (Points at a dead localhost port; curl fails fast.)

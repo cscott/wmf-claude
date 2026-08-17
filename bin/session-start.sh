@@ -24,3 +24,15 @@ You are running inside the wmf-claude environment for Wikimedia Foundation engin
   - Run exactly once per drafting cycle — do NOT re-review the fix diff.
   - If the review surfaces a fundamentally wrong approach, stop and escalate to the user rather than iterating on it.
 CONTEXT
+
+# Emitted only when this session is attached to a Docker dev container (the
+# broker exports WMF_DOCKER_BROKER_URL into the sandbox). This is the reliable,
+# always-present signal that routes PHP/composer/npm through the container — it
+# applies to ad-hoc commands, not just the run-tests/lint skills, and on every
+# machine regardless of whether the project's CLAUDE.md mentions it.
+if [[ -n "${WMF_DOCKER_BROKER_URL:-}" ]]; then
+  cat <<'DOCKER'
+
+- This wiki runs inside Docker: PHP, composer, npm, and vendor/bin/* are NOT on the host — they live in a container reached through a broker. ALWAYS run those commands by prefixing them with `mwdocker`, whether or not you go through a skill. Examples: `mwdocker composer phpcs`, `mwdocker vendor/bin/phpunit <path>`, `mwdocker php maintenance/run.php update.php`, `mwdocker npm run lint`. Running them without the prefix hits the host, where they are absent and will fail. git, file reads/edits, grep, and other host-side work stay unprefixed as usual. Only the allowlisted binaries (composer, php, npm, vendor/bin/phpunit|phpcs|phpcbf|phan) are permitted through the broker.
+DOCKER
+fi

@@ -7,6 +7,12 @@
 #   bin/claude --local-web                  # open localhost web ports (default 80/443/8080) for curl-based testing
 #   bin/claude --local-web=8080             # narrow to specific port(s); comma-separated for several
 #   bin/claude --chrome                     # also enable chrome-devtools MCP (implies --local-web)
+#   bin/claude --docker=mediawiki           # auto-start a Docker exec broker for that compose service,
+#                                           # stopped automatically when the session exits
+#   bin/claude --docker=auto                # ...detect the service from the compose file
+#   bin/claude --docker=mediawiki:/var/www/html/w   # ...and run commands from that in-container dir
+#   bin/claude --docker                     # attach to a broker you started yourself
+#                                           # (bin/launch-docker-broker, for custom compose-file/workdir)
 #   bin/claude --allow ~/src/other-repo --  # grant nono access to additional paths
 #   bin/claude --help                       # show wrapper options and exit
 #   WMF_CLAUDE_PROFILE=wmf-data-scientist bin/claude   # load profiles/<name>.json (default wmf-engineer)
@@ -32,6 +38,11 @@ Wrapper flags:
   --chrome             enable the chrome-devtools MCP (opens 127.0.0.1:9222; implies --local-web)
   --local-web[=PORTS]  open localhost web ports for curl-based local-wiki testing
                        (default 80,443,8080; comma-separated list to narrow)
+  --docker[=SVC[:WD]]  run dev tools (composer/php/npm/vendor/bin/*) in a Docker
+                       compose service via the broker. =SVC starts and owns the
+                       broker (=auto detects the service); add :WD for the
+                       in-container workdir. Bare --docker attaches to one you
+                       started with bin/launch-docker-broker.
   -h, --help           show this help
 
 Passthrough (split at --):
@@ -82,6 +93,8 @@ done
 # (post-`--`) wouldn't be accidentally consumed.
 WANT_CHROME=false
 WANT_LOCAL_WEB=false
+WANT_DOCKER=false
+DOCKER_SERVICE=""   # set by --docker=SERVICE -> bin/claude manages the broker
 LOCAL_WEB_PORTS=""  # empty -> default set below; --local-web=80,443 narrows it
 FILTERED_NONO_ARGS=()
 for arg in "${NONO_ARGS[@]}"; do
@@ -92,6 +105,11 @@ for arg in "${NONO_ARGS[@]}"; do
   elif [[ "$arg" == --local-web=* ]]; then
     WANT_LOCAL_WEB=true
     LOCAL_WEB_PORTS="${arg#--local-web=}"
+  elif [[ "$arg" == "--docker" ]]; then
+    WANT_DOCKER=true
+  elif [[ "$arg" == --docker=* ]]; then
+    WANT_DOCKER=true
+    DOCKER_SERVICE="${arg#--docker=}"
   else
     FILTERED_NONO_ARGS+=("$arg")
   fi
@@ -226,6 +244,239 @@ if $WANT_LOCAL_WEB; then
   done
 fi
 
+# --docker opens a localhost port to the out-of-sandbox Docker exec broker
+# (bin/launch-docker-broker). The broker holds the Docker socket — which we must
+# NOT hand to the sandbox, since socket access is host root — and only runs
+# allowlisted dev-tool verbs inside a pinned container. Same shape as --chrome:
+# privileged process outside, port opened per-session (off the static profile),
+# in-sandbox client talks over loopback.
+#
+# Two modes:
+#   --docker=SERVICE[:WORKDIR]  managed: bin/claude starts the broker, owns it,
+#                     and kills it when the session exits (see cleanup_docker +
+#                     the no-exec launch at the bottom). No second terminal.
+#                     Optional :WORKDIR sets the in-container working directory
+#                     so relative commands (`vendor/bin/phpunit tests/...`) land
+#                     in the MediaWiki root rather than the container default.
+#   --docker          attach: use a broker you started yourself in another
+#                     terminal (for custom compose-file/workdir setups).
+#
+# Either way the broker writes a 0600 handshake file with {port, token}. We read
+# it here (unsandboxed), open exactly that port, and pass the coordinates into
+# the sandbox as WMF_DOCKER_* env vars (gated by the profile's allow_vars). The
+# sandbox never sees the handshake file, only the token value via env.
+#
+# We also drop a `mwdocker` symlink into a private dir and prepend it to PATH so
+# the in-sandbox shim is a bare command (skills call `mwdocker composer phpcs`,
+# matching their allowed-tools so it doesn't prompt). It can't go in
+# $SCRIPT_DIR/bin: that dir holds `claude`, and launch-claude.sh's `exec claude`
+# would then resolve to this wrapper instead of the real CLI.
+DOCKER_BROKER_NONO_ARGS=()
+BROKER_PID=""      # set only in managed mode; gates broker teardown in cleanup
+MANAGED_HS=""
+MANAGED_LOG=""
+SHIM_DIR=""
+DOCKER_WORKDIR=""
+_DOCKER_CLEANED=0
+cleanup_docker() {
+  [[ "$_DOCKER_CLEANED" == 1 ]] && return 0
+  _DOCKER_CLEANED=1
+  if [[ -n "${BROKER_PID:-}" ]]; then
+    kill "$BROKER_PID" 2>/dev/null || true
+    wait "$BROKER_PID" 2>/dev/null || true
+  fi
+  [[ -n "${MANAGED_HS:-}" ]] && rm -f "$MANAGED_HS"
+  [[ -n "${MANAGED_LOG:-}" ]] && rm -f "$MANAGED_LOG"
+  [[ -n "${SHIM_DIR:-}" && -d "${SHIM_DIR:-}" ]] && rm -rf "$SHIM_DIR"
+}
+
+# Reap artifacts a SIGKILLed session left behind (the EXIT trap can't run then).
+# Per-session files are named with the launcher PID; if that PID is gone, the
+# session is dead. We then kill the orphaned broker named inside the handshake
+# (guarding against PID reuse by checking it's really a launch-docker-broker)
+# and remove the handshake + shim dir. A reused launcher PID looks alive, so we
+# conservatively leave those files rather than risk killing an innocent process.
+sweep_stale_docker_artifacts() {
+  local rd="$1" f d pid bpid cmd
+  for f in "$rd"/wmf-docker-broker.*.json; do
+    [[ -e "$f" ]] || continue
+    pid="${f##*/wmf-docker-broker.}"; pid="${pid%.json}"
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    kill -0 "$pid" 2>/dev/null && continue
+    bpid=$(jq -r '.pid // empty' "$f" 2>/dev/null || true)
+    if [[ "$bpid" =~ ^[0-9]+$ ]] && kill -0 "$bpid" 2>/dev/null; then
+      cmd=$(ps -p "$bpid" -o command= 2>/dev/null || true)
+      [[ "$cmd" == *launch-docker-broker* ]] && kill "$bpid" 2>/dev/null || true
+    fi
+    rm -f "$f"
+    rm -rf "$rd/wmf-docker-shim.$pid"
+  done
+  for d in "$rd"/wmf-docker-shim.*; do
+    [[ -e "$d" ]] || continue
+    pid="${d##*/wmf-docker-shim.}"
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    kill -0 "$pid" 2>/dev/null && continue
+    rm -rf "$d"
+  done
+}
+
+if $WANT_DOCKER; then
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "error: --docker needs jq to read the broker handshake file" >&2
+    exit 1
+  fi
+  RUNTIME_DIR="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}"
+  sweep_stale_docker_artifacts "$RUNTIME_DIR"
+  # Both modes create the shim dir and need teardown, so trap early and don't
+  # exec at the bottom (the shell must outlive nono to run cleanup_docker).
+  trap cleanup_docker EXIT INT TERM
+  SHIM_DIR="$RUNTIME_DIR/wmf-docker-shim.$$"
+  mkdir -p "$SHIM_DIR"
+  chmod 700 "$SHIM_DIR"   # private even if RUNTIME_DIR fell back to world-writable /tmp
+  ln -sf "$SCRIPT_DIR/bin/mwdocker" "$SHIM_DIR/mwdocker"
+  DOCKER_BROKER_NONO_ARGS+=(--read "$SHIM_DIR")
+  export PATH="$SHIM_DIR:$PATH"
+
+  if [[ -n "$DOCKER_SERVICE" ]]; then
+    # Split SERVICE[:WORKDIR]. Service names can't contain ':'; an absolute
+    # in-container path can, but we only split on the first colon.
+    if [[ "$DOCKER_SERVICE" == *:* ]]; then
+      DOCKER_WORKDIR="${DOCKER_SERVICE#*:}"
+      DOCKER_SERVICE="${DOCKER_SERVICE%%:*}"
+    fi
+    # Managed broker: start it ourselves and tie its lifetime to this session.
+    if ! command -v python3 >/dev/null 2>&1; then
+      echo "error: --docker=$DOCKER_SERVICE needs python3 to run the broker" >&2
+      exit 1
+    fi
+    COMPOSE_FILE=""
+    for f in docker-compose.yml docker-compose.yaml compose.yml compose.yaml; do
+      if [[ -f "$PWD/$f" ]]; then COMPOSE_FILE="$PWD/$f"; break; fi
+    done
+    if [[ -z "$COMPOSE_FILE" ]]; then
+      echo "error: --docker=$DOCKER_SERVICE found no compose file in $PWD" >&2
+      echo "       (looked for docker-compose.yml/.yaml, compose.yml/.yaml)" >&2
+      echo "       for a custom layout, start the broker yourself and use bare --docker:" >&2
+      echo "         bin/launch-docker-broker --service $DOCKER_SERVICE --compose-file <path>" >&2
+      exit 1
+    fi
+    # Resolve the service name against the compose file (best-effort; needs
+    # docker to parse it). `--docker=auto` picks one; an explicit name is
+    # validated so a typo fails fast with the real list instead of a cryptic
+    # "no such service" mid-session.
+    DOCKER_SERVICES=""
+    if command -v docker >/dev/null 2>&1; then
+      DOCKER_SERVICES=$(docker compose -f "$COMPOSE_FILE" config --services 2>/dev/null || true)
+    fi
+    if [[ "$DOCKER_SERVICE" == "auto" ]]; then
+      if [[ -z "$DOCKER_SERVICES" ]]; then
+        echo "error: --docker=auto could not read services from $COMPOSE_FILE" >&2
+        echo "       (need docker on PATH to parse it); name the service explicitly: --docker=NAME" >&2
+        exit 1
+      fi
+      if printf '%s\n' "$DOCKER_SERVICES" | grep -qx mediawiki; then
+        DOCKER_SERVICE=mediawiki
+      elif [[ "$(printf '%s\n' "$DOCKER_SERVICES" | grep -c .)" == "1" ]]; then
+        DOCKER_SERVICE=$(printf '%s\n' "$DOCKER_SERVICES" | grep . | head -n1)
+      else
+        echo "error: --docker=auto found multiple services; pick one with --docker=NAME:" >&2
+        printf '%s\n' "$DOCKER_SERVICES" | grep . | sed 's/^/         /' >&2
+        exit 1
+      fi
+      echo "note: --docker=auto selected service '$DOCKER_SERVICE'" >&2
+    elif [[ -n "$DOCKER_SERVICES" ]] && ! printf '%s\n' "$DOCKER_SERVICES" | grep -qx "$DOCKER_SERVICE"; then
+      echo "error: '$DOCKER_SERVICE' is not a service in $COMPOSE_FILE. Available:" >&2
+      printf '%s\n' "$DOCKER_SERVICES" | grep . | sed 's/^/         /' >&2
+      exit 1
+    fi
+    BROKER_WORKDIR_ARGS=()
+    [[ -n "$DOCKER_WORKDIR" ]] && BROKER_WORKDIR_ARGS=(--workdir "$DOCKER_WORKDIR")
+    # Per-session handshake/log keyed on our PID so concurrent sessions don't
+    # clobber each other (the manual broker uses a single fixed path instead).
+    MANAGED_HS="$RUNTIME_DIR/wmf-docker-broker.$$.json"
+    MANAGED_LOG="$RUNTIME_DIR/wmf-docker-broker.$$.log"
+    rm -f "$MANAGED_HS"
+    python3 "$SCRIPT_DIR/bin/launch-docker-broker" \
+      --service "$DOCKER_SERVICE" \
+      --compose-file "$COMPOSE_FILE" \
+      "${BROKER_WORKDIR_ARGS[@]}" \
+      --handshake "$MANAGED_HS" \
+      >"$MANAGED_LOG" 2>&1 &
+    BROKER_PID=$!
+    # Wait for the broker to bind and write its handshake. It calls listen()
+    # (in the ThreadingHTTPServer constructor) before writing the file, so the
+    # file's presence means the port is already accepting connections.
+    HS_FILE="$MANAGED_HS"
+    waited=0
+    while [[ ! -f "$HS_FILE" ]]; do
+      if ! kill -0 "$BROKER_PID" 2>/dev/null; then
+        echo "error: the Docker broker exited during startup. Log:" >&2
+        sed 's/^/  /' "$MANAGED_LOG" >&2 2>/dev/null || true
+        exit 1
+      fi
+      if (( waited >= 50 )); then
+        echo "error: the Docker broker did not come up within 5s. Log:" >&2
+        sed 's/^/  /' "$MANAGED_LOG" >&2 2>/dev/null || true
+        exit 1
+      fi
+      sleep 0.1
+      (( waited++ )) || true
+    done
+    echo "note: started a managed Docker broker for '$DOCKER_SERVICE' (pid $BROKER_PID); it stops when this session exits" >&2
+  else
+    # Attach to a broker the engineer started manually in another terminal.
+    HS_FILE="$RUNTIME_DIR/wmf-docker-broker.json"
+    if [[ ! -f "$HS_FILE" ]]; then
+      echo "error: --docker was passed but no broker handshake at $HS_FILE" >&2
+      echo "       either let bin/claude manage it:  bin/claude --docker=mediawiki" >&2
+      echo "       or start one yourself in another terminal:" >&2
+      echo "         bin/launch-docker-broker --service mediawiki" >&2
+      exit 1
+    fi
+  fi
+
+  BROKER_PORT=$(jq -r '.port' "$HS_FILE" 2>/dev/null || echo "")
+  BROKER_TOKEN=$(jq -r '.token' "$HS_FILE" 2>/dev/null || echo "")
+  if [[ ! "$BROKER_PORT" =~ ^[0-9]+$ ]] || [[ -z "$BROKER_TOKEN" || "$BROKER_TOKEN" == "null" ]]; then
+    echo "error: broker handshake $HS_FILE is malformed (no port/token)" >&2
+    exit 1
+  fi
+  # Confirm the broker is actually up before we promise the session a working
+  # broker — a stale handshake file outlives a SIGKILLed broker. Prefer lsof;
+  # fall back to a /health probe where lsof is absent (common on Linux), so the
+  # check doesn't silently no-op and let a dead handshake through.
+  broker_dead=""
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iTCP:"$BROKER_PORT" -sTCP:LISTEN >/dev/null 2>&1 || broker_dead=1
+  elif command -v curl >/dev/null 2>&1; then
+    curl -fsS --max-time 2 -o /dev/null "http://127.0.0.1:$BROKER_PORT/health" 2>/dev/null || broker_dead=1
+  else
+    echo "warning: cannot verify the broker is alive (no lsof or curl on PATH)" >&2
+  fi
+  if [[ -n "$broker_dead" ]]; then
+    echo "error: broker handshake points at port $BROKER_PORT but it's not responding" >&2
+    echo "       the broker may have been killed; restart it" >&2
+    exit 1
+  fi
+  DOCKER_BROKER_NONO_ARGS+=(--open-port "$BROKER_PORT")
+  export WMF_DOCKER_BROKER_URL="http://127.0.0.1:$BROKER_PORT"
+  export WMF_DOCKER_BROKER_TOKEN="$BROKER_TOKEN"
+  # Surface the largest --docker caveat at the moment of opt-in, not only in
+  # the docs: the profile's network allowlist does not cover the container.
+  # The TUI clears the screen right after launch, so on the first use (no
+  # acknowledgment marker) wait for Enter — only on an interactive terminal,
+  # so scripts and tests never hang. Later launches print without a pause.
+  echo "warning: --docker: the container's network is NOT sandbox-restricted;" >&2
+  echo "         code run via mwdocker has full egress. Keep secrets out of the" >&2
+  echo "         dev checkout and dev DB. See SECURITY.md (Docker exec broker)." >&2
+  DOCKER_ACK_FILE="$HOME/.config/wmf-claude/docker-egress-ack"
+  if [[ ! -f "$DOCKER_ACK_FILE" && -t 0 && -t 1 ]]; then
+    read -r -p "Press Enter to acknowledge (asked once): "
+    mkdir -p "$(dirname "$DOCKER_ACK_FILE")"
+    touch "$DOCKER_ACK_FILE"
+  fi
+fi
+
 # Update notices. bin/claude runs UNSANDBOXED (it's what launches nono), so
 # unlike the in-sandbox `claude` session it can reach the network and the
 # install repo's .git. We only *notify*, never auto-pull, since pulling and
@@ -333,14 +584,26 @@ update_notices
 #
 # --profile loads $PROFILE by path (nono accepts NAME_OR_PATH); `extends:
 # claude-code` still resolves. No copy into ~/.config/nono/profiles to drift.
-exec nono run --profile "$PROFILE_PATH" \
+NONO_CMD=(nono run --profile "$PROFILE_PATH" \
   --read "$SCRIPT_DIR" \
   --allow "$SCRIPT_DIR/mcp-phabricator" \
   --allow "$SCRIPT_DIR/gerrit-mcp-server" \
   "${CHROME_DEVTOOLS_ALLOWS[@]}" \
   "${CHROME_DEVTOOLS_NONO_ARGS[@]}" \
   "${LOCAL_WEB_NONO_ARGS[@]}" \
+  "${DOCKER_BROKER_NONO_ARGS[@]}" \
   "${NONO_ARGS[@]}" \
   -- "$SCRIPT_DIR/bin/launch-claude.sh" --plugin-dir "$SCRIPT_DIR" \
   "${CHROME_DEVTOOLS_CLAUDE_ARGS[@]}" \
-  "${CLAUDE_ARGS[@]}"
+  "${CLAUDE_ARGS[@]}")
+
+# With --docker we must NOT exec: the shell has to outlive nono to run
+# cleanup_docker via the EXIT/INT/TERM trap (tear down a managed broker, remove
+# the shim dir). nono runs in the foreground so the interactive TUI keeps the
+# controlling terminal, then the trap fires. Every other path keeps exec — no
+# extra process in the tree, unchanged signal semantics.
+if $WANT_DOCKER; then
+  "${NONO_CMD[@]}"
+else
+  exec "${NONO_CMD[@]}"
+fi

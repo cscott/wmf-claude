@@ -354,6 +354,73 @@ to read the engineer's authenticated sessions. The latter is the bigger
 threat in the wmf-claude threat model. Per-session opt-in further bounds
 the window during which any of these costs are paid.
 
+## Docker exec broker
+
+Local-dev only. The broker ships with the checkout (`bin/launch-docker-broker`,
+`bin/mwdocker`, `bin/claude --docker`), not with the signed nono pack. Without
+`--docker` there is no broker, no open port, and `mwdocker` is not on `PATH`.
+
+A sandboxed session on a Docker-based wiki has no host PHP/composer/npm. The
+Docker socket can't go in the sandbox (it is root-equivalent on the host: `docker
+run -v /:/host` reads/writes the whole filesystem as root), so the socket stays
+outside the sandbox behind the broker. `bin/claude --docker=SERVICE[:WORKDIR]`
+starts the broker, opens only its ephemeral localhost port (not in the static
+profile), and stops it on exit. Bare `--docker` attaches to a manually started
+broker. `--docker=auto` resolves the service from the compose file.
+
+What the broker enforces:
+
+- No shell. argv is built as a list and run with `shell=False`.
+- Pinned docker flags: `<compose> -f <file> exec -T [-w <wd>] <service> <bin>
+  <args>`. The caller controls only `<bin>` (allowlisted) and its `<args>`. It
+  cannot set `-u`, `-v`, `--privileged`, `--entrypoint`, switch `exec` to `run`,
+  or choose the compose file or service.
+- A 256-bit per-session bearer token from a `0600` handshake file, compared
+  constant-time.
+- Refuses a container that is a path to host root: `--privileged`, host-root caps
+  (`SYS_ADMIN`, `SYS_PTRACE`, ...), device passthrough, host `PidMode`/`IpcMode`,
+  or a bind/mount of the socket or a host-root path (`/`, `/var/run`, `/run`,
+  `/var/lib/docker`, `/proc`, `/sys`). Also refuses a bind/mount of host
+  credentials — a `$HOME` dotfile/dotdir (`~/.ssh`, `~/.aws`, `~/.config/*`,
+  `~/.gitconfig`, ...) or the forwarded `$SSH_AUTH_SOCK` — which the agent could
+  read and exfiltrate over the container network. Inspects every replica.
+  Best-effort: it can't inspect a container that isn't up, and a container
+  recreated after the check is a TOCTOU gap.
+- Logs every exec and applies a per-command timeout (default 900s). Caps the
+  request body (1 MiB) and the output relayed per stream (8 MiB, spooled to
+  disk, truncation noted), so one command can't pin the broker's memory.
+
+The managed broker stops on session exit. A SIGKILL leaks the broker and its
+handshake/shim files; the next `--docker` launch sweeps artifacts whose launcher
+PID is gone and reaps the orphaned broker.
+
+Residual risk:
+
+- The container's network is not nono-restricted, and this can't be removed:
+  `composer`/`npm` fetch and run scripts over the network, and `php -r` is full
+  code execution, so running dev tools in the container means the agent has an
+  outbound channel. Enabling `--docker` is a go/no-go on that, not a tunable.
+- The allowlist (`composer`, `php`, `npm`, `vendor/bin/phpunit|phpcs|phpcbf|phan`)
+  is not an RCE boundary: `composer`/`npm` run agent-writable scripts and `php`
+  runs arbitrary code. It blocks reaching raw `docker`; it does not sandbox the
+  container from its own source. The boundary is the host.
+- The localhost port is shared with other processes running as the engineer; the
+  token keeps them out. It does not gate the sandboxed agent, which holds the
+  token by design.
+
+Stock MediaWiki-Docker (`docker-compose up -d` in the core checkout) mounts only
+the checkout (`.:/var/www/html/w`), runs as your UID, and mounts no socket, home
+dir, or privileged config. There a rogue agent can read and exfiltrate the
+checkout (dev `LocalSettings.php`, `.env`) over the container network and reach
+the dev database, but does not get host root, your home dir, SSH keys, or git
+credentials (not mounted). It cannot escape to the host short of a kernel
+exploit. The container-safety check refuses the common credential-widening
+mounts — a `$HOME` dotfile/dotdir (`~/.ssh`, `~/.aws`, `~/.composer`, ...) or
+`$SSH_AUTH_SOCK` — but it is a denylist, not an allowlist: a non-dot secret path
+mounted by name, a non-dot sibling dir it can't distinguish from a code mount,
+or a `user: root` container still slip through. Keep secrets out of dev checkouts
+and mounts limited to the checkout.
+
 ## Open hardening follow-ups
 
 - **Keychain access** is the largest residual exfil surface. Closing it

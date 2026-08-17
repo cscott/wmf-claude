@@ -1,0 +1,100 @@
+#!/bin/bash
+# In-sandbox client for the wmf-claude Docker exec broker.
+#
+# Runs INSIDE the nono sandbox. It does NOT touch Docker — it POSTs an
+# allowlisted command to the broker (started outside the sandbox by
+# bin/launch-docker-broker), which runs it inside the pinned dev container.
+#
+# Coordinates arrive via env vars that `bin/claude --docker` injects:
+#   WMF_DOCKER_BROKER_URL   e.g. http://127.0.0.1:54321
+#   WMF_DOCKER_BROKER_TOKEN per-session bearer token
+#
+# Usage (the first argument is the bin, the rest are its args):
+#   mwdocker composer phpcs
+#   mwdocker vendor/bin/phpunit tests/phpunit/unit/.../FooTest.php
+#   mwdocker npm run lint
+#
+# Exits with the in-container command's exit code so callers (and the
+# run-tests / lint skills) can branch on success/failure as usual.
+set -euo pipefail
+
+if [[ -z "${WMF_DOCKER_BROKER_URL:-}" || -z "${WMF_DOCKER_BROKER_TOKEN:-}" ]]; then
+  echo "mwdocker: broker not available — launch the session with 'bin/claude --docker'" >&2
+  echo "          and start 'bin/launch-docker-broker --service <svc>' in another terminal first." >&2
+  exit 2
+fi
+
+# jq and curl are used below to build the request and parse the response. They
+# run in-sandbox, which bin/claude's pre-launch check can't see, so verify here.
+for tool in jq curl; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "mwdocker: '$tool' is required but not on PATH inside the sandbox" >&2
+    exit 2
+  fi
+done
+
+if [[ $# -lt 1 ]]; then
+  echo "usage: mwdocker <bin> [args...]   e.g. mwdocker composer phpcs" >&2
+  exit 2
+fi
+
+bin="$1"
+shift
+
+# Build the request JSON with jq so args are escaped correctly (no manual
+# quoting). jq parses its own options among the positional args after --args
+# (jq 1.8 eats "-c" and "-r", so `mwdocker php -r 'code'` would lose the -r)
+# and eats the first bare "--" as its end-of-options marker (so `mwdocker npm
+# run lint -- --fix` would lose the "--"). An explicit `--args --` would fix
+# both, but jq 1.6 does not know the "--" terminator. So prefix each arg with
+# "x" — then no arg can start with "-" — and strip that byte in the filter.
+# The ${arr[@]+...} idiom keeps a zero-arg call safe under `set -u` on the
+# macOS system bash (3.2), where "${arr[@]}" on an empty array is an error.
+prefixed=()
+for a in "$@"; do prefixed+=("x$a"); done
+req=$(jq -n --arg bin "$bin" '{bin: $bin, args: [$ARGS.positional[] | .[1:]]}' \
+  --args ${prefixed[@]+"${prefixed[@]}"})
+
+# Transport backstop. The broker enforces the real per-command timeout and
+# returns a clean result (exit 124) when a command runs too long, so this only
+# needs to be larger than the broker's ceiling — it catches a wedged broker, not
+# a slow test suite. Override with WMF_DOCKER_BROKER_TIMEOUT (seconds).
+max_time="${WMF_DOCKER_BROKER_TIMEOUT:-1800}"
+
+# -sS: quiet but still show transport errors. --fail-with-body would swallow the
+# JSON body on HTTP errors, so we read the status separately and keep the body.
+# Handle a transport failure explicitly: under `set -e` the bare assignment would
+# otherwise abort with curl's exit code and no diagnostic (broker stopped, etc.).
+if ! resp=$(curl -sS \
+  --max-time "$max_time" \
+  -H "Authorization: Bearer ${WMF_DOCKER_BROKER_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -w $'\n%{http_code}' \
+  --data "$req" \
+  "${WMF_DOCKER_BROKER_URL}/exec"); then
+  rc=$?
+  echo "mwdocker: could not reach the Docker broker at ${WMF_DOCKER_BROKER_URL} (curl exit $rc)" >&2
+  echo "          it may have stopped; relaunch the session with 'bin/claude --docker'." >&2
+  exit 1
+fi
+
+code="${resp##*$'\n'}"
+body="${resp%$'\n'*}"
+
+if [[ "$code" != "200" ]]; then
+  # Broker-level error (401 bad token, 403 disallowed bin, 400 bad request).
+  echo "mwdocker: broker returned HTTP $code" >&2
+  printf '%s\n' "$body" | jq -r '.error // .' >&2 2>/dev/null || printf '%s\n' "$body" >&2
+  exit 1
+fi
+
+# Relay the in-container command's stdout/stderr verbatim and propagate its exit
+# code. `jq -j` writes the raw string with no added newline, so trailing newlines
+# in the tool's own output are preserved rather than swallowed by a command
+# substitution. `// empty` guards a missing/null field (prints nothing rather
+# than the literal "null").
+printf '%s' "$body" | jq -j '.stdout // empty'
+printf '%s' "$body" | jq -j '.stderr // empty' >&2
+ec=$(printf '%s' "$body" | jq -r '.exit_code // empty')
+[[ "$ec" =~ ^[0-9]+$ ]] || ec=1   # a malformed body shouldn't masquerade as exit 0
+exit "$ec"

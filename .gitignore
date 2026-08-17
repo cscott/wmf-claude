@@ -8,3 +8,7 @@
 # runtime-generated MCP config are not.
 chrome-devtools-mcp/node_modules/
 chrome-devtools-mcp/mcp-config.json
+
+# Python bytecode (e.g. if bin/launch-docker-broker is ever imported).
+__pycache__/
+*.pyc

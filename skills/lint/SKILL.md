@@ -7,6 +7,7 @@ allowed-tools:
   - Bash(git diff --name-only*)
   - Bash(vendor/bin/phpcs *)
   - Bash(vendor/bin/phpcbf *)
+  - Bash(mwdocker *)
 ---
 
 # Run Linters on Changed Files
@@ -14,6 +15,8 @@ allowed-tools:
 Detect changed files and run the linters that match.
 
 ## Steps
+
+0. **Docker-based wikis: route through the broker.** If `WMF_DOCKER_BROKER_URL` is set, the linters live inside a container, not on the host. Prefix the linter commands with `mwdocker` — `mwdocker composer phpcs`, `mwdocker npm run lint` — which runs them in the container and relays output and exit code. `git diff` stays on the host (run it directly). If the variable is unset, run everything directly.
 
 1. List changed files: `git diff --name-only HEAD` plus `git diff --name-only --cached` for staged changes.
 2. Decide what to run based on file extensions:

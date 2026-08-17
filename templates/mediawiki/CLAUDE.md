@@ -31,6 +31,20 @@ Never modify `LocalSettings.php` directly. Use `LocalSettings.claude.php` for te
 
 Extensions and skins live at `extensions/{extensionName}` and `skins/{skinName}` — each is its own git repository. When running git commands for them, use `git -C extensions/{extensionName}` instead of `cd extensions/{extensionName} && git ...`. The `-C` flag avoids compound `cd && git` commands that trigger unnecessary approval prompts.
 
+## Docker-based wikis (MediaWiki-Docker etc.)
+
+If this wiki runs inside Docker, the host has no PHP/composer/npm — those tools live in the container. Launch the session with `bin/claude --docker=SERVICE`, where `SERVICE` is the compose service for the MediaWiki container (commonly `mediawiki`). Add `:WORKDIR` when the container's default directory isn't the MediaWiki root, e.g. `bin/claude --docker=mediawiki:/var/www/html/w`, so relative commands resolve correctly.
+
+When launched this way, `WMF_DOCKER_BROKER_URL` is set in the environment. Run `composer`, `php`, `npm`, and `vendor/bin/*` commands by prefixing them with `mwdocker`:
+
+```bash
+mwdocker composer phpcs
+mwdocker vendor/bin/phpunit tests/phpunit/unit/.../FooTest.php
+mwdocker npm run lint
+```
+
+`mwdocker` forwards the command to a broker running outside the sandbox, which runs it inside the container and relays stdout/stderr and the exit code. Only an allowlisted set of binaries is permitted (`composer`, `php`, `npm`, `vendor/bin/phpunit|phpcs|phpcbf|phan`). `git`, file reads/edits, and other host-side work stay on the host as usual. The `/wmf-claude:run-tests` and `/wmf-claude:lint` skills detect the broker and add the `mwdocker` prefix automatically.
+
 ## Running tests
 
 Use `/wmf-claude:run-tests [path-or-extension]` to run PHPUnit tests. Use `/wmf-claude:test-coverage [extension]` to check code coverage.

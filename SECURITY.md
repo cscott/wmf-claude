@@ -396,10 +396,20 @@ PID is gone and reaps the orphaned broker.
 
 Residual risk:
 
-- The container's network is not nono-restricted, and this can't be removed:
-  `composer`/`npm` fetch and run scripts over the network, and `php -r` is full
-  code execution, so running dev tools in the container means the agent has an
-  outbound channel. Enabling `--docker` is a go/no-go on that, not a tunable.
+- The container's network is not nono-restricted: `composer`/`npm` fetch and
+  run scripts over the network, and `php -r` is full code execution, so by
+  default running dev tools in the container gives the agent an outbound
+  channel. nono cannot reach the container's network namespace; the restriction
+  has to happen at the compose layer. The `templates/docker-egress/` overrides
+  do that: `egress-none.yml` removes the PHP containers' route out entirely,
+  and `egress-allowlist.yml` funnels them through a squid sidecar that permits
+  only package-registry hosts (exfiltration to an allowed host remains
+  possible). Keep the override copies outside the checkout (the agent can edit
+  checkout files; it cannot apply them — containers must be recreated — but an
+  unwritable copy closes even the proposal vector). `--egress=none|allowlist`
+  makes the broker verify the running container's isolation at startup and
+  refuse to serve when the override is not applied; without `--egress` the
+  launcher prints an egress warning and asks for a one-time acknowledgment.
 - The allowlist (`composer`, `php`, `npm`, `vendor/bin/phpunit|phpcs|phpcbf|phan`)
   is not an RCE boundary: `composer`/`npm` run agent-writable scripts and `php`
   runs arbitrary code. It blocks reaching raw `docker`; it does not sandbox the

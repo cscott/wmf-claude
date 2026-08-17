@@ -311,6 +311,35 @@ bin/launch-docker-broker --service mediawiki --compose-file path/to/compose.yml
 claude --docker
 ```
 
+### Restricting the container's network
+
+By default the container's network is NOT restricted by the sandbox: code
+that Claude runs in it (composer scripts, `php -r`) can reach any host.
+Two compose overrides in `templates/docker-egress/` close that down:
+
+- `egress-none.yml` — the PHP containers get no route out at all. Lint,
+  tests, and maintenance scripts work; `composer install`/`npm install`
+  do not.
+- `egress-allowlist.yml` + `squid-allowlist.conf` — the PHP containers
+  reach only allowlisted package-registry hosts through a squid sidecar,
+  so installs work too.
+
+`setup.sh` installs the files to `~/.config/wmf-claude/`, which the
+sandboxed agent cannot write (it never overwrites your customized
+copies). Recreate your containers with the override:
+
+```bash
+docker compose -f docker-compose.yml \
+  -f ~/.config/wmf-claude/egress-none.yml up -d
+```
+
+Then launch with the matching mode so the broker verifies the isolation
+and refuses to start when the override is missing:
+
+```bash
+claude --docker=mediawiki --egress=none        # or --egress=allowlist
+```
+
 ## Updating
 
 Pull and re-run setup. It is safe to re-run any time:

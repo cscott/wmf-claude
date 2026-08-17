@@ -358,6 +358,72 @@ def check_container_safety(cfg):
     return reasons
 
 
+def check_egress_isolation(cfg):
+    """Verify the pinned service has no network route out of Docker.
+
+    Used by --egress. The egress flavors (templates/docker-egress/) put the
+    service on an internal network; this check reads the real container state,
+    so a container created without the override — or recreated later without
+    it — is caught at broker start.
+
+    Unlike check_container_safety, this check fails closed: the engineer asked
+    for isolation, so "cannot verify" is a refusal, not a pass. Returns a list
+    of reasons; empty means verified.
+    """
+    docker = "docker"
+    if shutil.which(docker) is None:
+        return ["docker not found; cannot verify egress isolation"]
+    try:
+        ps = subprocess.run(
+            cfg["compose_cmd"] + ["-f", cfg["compose_file"], "ps", "-q", cfg["service"]],
+            capture_output=True, text=True, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ["could not list containers; cannot verify egress isolation"]
+    cids = (ps.stdout or "").split()
+    if not cids:
+        return [f"service '{cfg['service']}' is not running; start it with the "
+                "egress override applied, then relaunch"]
+
+    reasons = []
+    internal_cache = {}
+
+    def network_internal(name):
+        # A network is safe only when Docker reports Internal: true.
+        if name not in internal_cache:
+            try:
+                ins = subprocess.run(
+                    [docker, "network", "inspect", name],
+                    capture_output=True, text=True, timeout=30,
+                )
+                internal_cache[name] = bool(json.loads(ins.stdout)[0].get("Internal"))
+            except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+                internal_cache[name] = False
+        return internal_cache[name]
+
+    for cid in cids:
+        short = cid[:12]
+        try:
+            ins = subprocess.run(
+                [docker, "inspect", cid], capture_output=True, text=True, timeout=30,
+            )
+            info = json.loads(ins.stdout)[0]
+        except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+            reasons.append(f"{short}: could not inspect; cannot verify egress isolation")
+            continue
+        mode = ((info.get("HostConfig") or {}).get("NetworkMode") or "")
+        if mode == "host" or mode.startswith("container:"):
+            reasons.append(f"{short}: NetworkMode={mode} bypasses network isolation")
+            continue
+        nets = ((info.get("NetworkSettings") or {}).get("Networks") or {})
+        if not nets:
+            reasons.append(f"{short}: no networks reported; cannot verify egress isolation")
+        for name in nets:
+            if not network_internal(name):
+                reasons.append(f"{short}: network '{name}' is not internal (has a route out)")
+    return reasons
+
+
 def main():
     ap = argparse.ArgumentParser(description="wmf-claude Docker exec broker")
     ap.add_argument("--service", required=True,
@@ -378,6 +444,10 @@ def main():
                     help="allowed bin (repeatable); if given, replaces the default set")
     ap.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT,
                     help=f"per-exec timeout in seconds (default {DEFAULT_TIMEOUT})")
+    ap.add_argument("--egress", choices=["none", "allowlist"], default=None,
+                    help="verify the service was created with the matching "
+                         "templates/docker-egress/ override (internal network, "
+                         "no route out); refuse to start when it was not")
     args = ap.parse_args()
 
     compose_file = os.path.abspath(args.compose_file)
@@ -410,6 +480,20 @@ def main():
             "       credentials, which defeats the point of the broker."
         )
 
+    # --egress promises the engineer an isolated container. Verify the real
+    # container state and fail closed when it does not match.
+    if args.egress:
+        leaks = check_egress_isolation(cfg)
+        if leaks:
+            sys.exit(
+                f"error: --egress={args.egress} requested, but service '"
+                + cfg["service"] + "' is not network-isolated: "
+                + "; ".join(leaks) + ".\n"
+                "       Recreate the containers with the matching override, e.g.:\n"
+                "         docker compose -f docker-compose.yml \\\n"
+                f"           -f ~/.config/wmf-claude/egress-{args.egress}.yml up -d"
+            )
+
     httpd = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(cfg))
     port = httpd.server_address[1]
 
@@ -420,7 +504,9 @@ def main():
     try:
         os.fchmod(fd, 0o600)
         with os.fdopen(fd, "w") as f:
-            json.dump({"port": port, "token": cfg["token"], "pid": os.getpid()}, f)
+            # egress lets an attaching bin/claude report the verified posture.
+            json.dump({"port": port, "token": cfg["token"], "pid": os.getpid(),
+                       "egress": args.egress}, f)
         os.replace(tmp, hs)
     except BaseException:
         os.path.exists(tmp) and os.unlink(tmp)
@@ -446,6 +532,8 @@ def main():
     print(f"  listening:    http://127.0.0.1:{port}")
     print(f"  handshake:    {hs}")
     print(f"  allowed bins: {', '.join(cfg['allowed_bins'])}")
+    if args.egress:
+        print(f"  egress:       {args.egress} (container isolation verified)")
     print()
     print("Leave this terminal open. Launch the session with `bin/claude --docker`.")
     print("Ctrl-C to stop (removes the handshake file).")

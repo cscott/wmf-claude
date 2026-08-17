@@ -192,6 +192,24 @@ else
   ok "chrome-devtools MCP not built — skipping (set WMF_CLAUDE_SKIP_CHROME unset and rebuild to enable)"
 fi
 
+# Install the docker-egress compose overrides where the sandboxed agent
+# cannot write them. Never overwrite: engineers customize these (service
+# names, the squid allowlist), and setup must not undo that. Updates are a
+# manual copy from templates/docker-egress/.
+step "Installing docker-egress overrides"
+EGRESS_DST="$HOME/.config/wmf-claude"
+mkdir -p "$EGRESS_DST"
+for f in egress-none.yml egress-allowlist.yml squid-allowlist.conf; do
+  if [[ -e "$EGRESS_DST/$f" ]]; then
+    ok "$f exists — kept $(dim "(update by copying from templates/docker-egress/)")"
+  else
+    cp "$ROOT/templates/docker-egress/$f" "$EGRESS_DST/$f"
+    ok "installed $EGRESS_DST/$f"
+  fi
+done
+dim "      Apply with: docker compose -f docker-compose.yml -f $EGRESS_DST/egress-none.yml up -d"
+dim "      Then launch: claude --docker=mediawiki --egress=none"; echo ""
+
 # Sandboxed `claude` alias pointing at this checkout's launcher.
 step "Installing shell alias"
 LAUNCHER="$ROOT/bin/claude"

@@ -43,6 +43,9 @@ Wrapper flags:
                        broker (=auto detects the service); add :WD for the
                        in-container workdir. Bare --docker attaches to one you
                        started with bin/launch-docker-broker.
+  --egress=MODE        with --docker=SVC: verify the container was created with
+                       the matching templates/docker-egress/ override (MODE is
+                       none or allowlist) and refuse to start when it was not.
   -h, --help           show this help
 
 Passthrough (split at --):
@@ -95,6 +98,7 @@ WANT_CHROME=false
 WANT_LOCAL_WEB=false
 WANT_DOCKER=false
 DOCKER_SERVICE=""   # set by --docker=SERVICE -> bin/claude manages the broker
+DOCKER_EGRESS=""    # set by --egress=none|allowlist -> broker verifies isolation
 LOCAL_WEB_PORTS=""  # empty -> default set below; --local-web=80,443 narrows it
 FILTERED_NONO_ARGS=()
 for arg in "${NONO_ARGS[@]}"; do
@@ -110,11 +114,27 @@ for arg in "${NONO_ARGS[@]}"; do
   elif [[ "$arg" == --docker=* ]]; then
     WANT_DOCKER=true
     DOCKER_SERVICE="${arg#--docker=}"
+  elif [[ "$arg" == --egress=* ]]; then
+    DOCKER_EGRESS="${arg#--egress=}"
   else
     FILTERED_NONO_ARGS+=("$arg")
   fi
 done
 NONO_ARGS=("${FILTERED_NONO_ARGS[@]}")
+
+if [[ -n "$DOCKER_EGRESS" ]]; then
+  if [[ "$DOCKER_EGRESS" != "none" && "$DOCKER_EGRESS" != "allowlist" ]]; then
+    echo "error: --egress takes 'none' or 'allowlist', got '$DOCKER_EGRESS'" >&2
+    exit 1
+  fi
+  # The verification runs in the broker, so it needs a broker this launcher
+  # starts. In attach mode, pass --egress to bin/launch-docker-broker instead.
+  if ! $WANT_DOCKER || [[ -z "$DOCKER_SERVICE" ]]; then
+    echo "error: --egress requires --docker=SERVICE (managed broker)." >&2
+    echo "       For a manually started broker, pass --egress to bin/launch-docker-broker." >&2
+    exit 1
+  fi
+fi
 
 # --chrome implies --local-web: a browser session still wants the cheap
 # curl-first tier available (hit the local wiki / api.php without driving
@@ -391,6 +411,8 @@ if $WANT_DOCKER; then
     fi
     BROKER_WORKDIR_ARGS=()
     [[ -n "$DOCKER_WORKDIR" ]] && BROKER_WORKDIR_ARGS=(--workdir "$DOCKER_WORKDIR")
+    BROKER_EGRESS_ARGS=()
+    [[ -n "$DOCKER_EGRESS" ]] && BROKER_EGRESS_ARGS=(--egress "$DOCKER_EGRESS")
     # Per-session handshake/log keyed on our PID so concurrent sessions don't
     # clobber each other (the manual broker uses a single fixed path instead).
     MANAGED_HS="$RUNTIME_DIR/wmf-docker-broker.$$.json"
@@ -400,6 +422,7 @@ if $WANT_DOCKER; then
       --service "$DOCKER_SERVICE" \
       --compose-file "$COMPOSE_FILE" \
       "${BROKER_WORKDIR_ARGS[@]}" \
+      ${BROKER_EGRESS_ARGS[@]+"${BROKER_EGRESS_ARGS[@]}"} \
       --handshake "$MANAGED_HS" \
       >"$MANAGED_LOG" 2>&1 &
     BROKER_PID=$!
@@ -437,6 +460,11 @@ if $WANT_DOCKER; then
 
   BROKER_PORT=$(jq -r '.port' "$HS_FILE" 2>/dev/null || echo "")
   BROKER_TOKEN=$(jq -r '.token' "$HS_FILE" 2>/dev/null || echo "")
+  # In attach mode the broker was started manually; its handshake records the
+  # verified egress mode (empty when the broker ran without --egress).
+  if [[ -z "$DOCKER_EGRESS" ]]; then
+    DOCKER_EGRESS=$(jq -r '.egress // empty' "$HS_FILE" 2>/dev/null || echo "")
+  fi
   if [[ ! "$BROKER_PORT" =~ ^[0-9]+$ ]] || [[ -z "$BROKER_TOKEN" || "$BROKER_TOKEN" == "null" ]]; then
     echo "error: broker handshake $HS_FILE is malformed (no port/token)" >&2
     exit 1
@@ -463,17 +491,27 @@ if $WANT_DOCKER; then
   export WMF_DOCKER_BROKER_TOKEN="$BROKER_TOKEN"
   # Surface the largest --docker caveat at the moment of opt-in, not only in
   # the docs: the profile's network allowlist does not cover the container.
-  # The TUI clears the screen right after launch, so on the first use (no
-  # acknowledgment marker) wait for Enter — only on an interactive terminal,
-  # so scripts and tests never hang. Later launches print without a pause.
-  echo "warning: --docker: the container's network is NOT sandbox-restricted;" >&2
-  echo "         code run via mwdocker has full egress. Keep secrets out of the" >&2
-  echo "         dev checkout and dev DB. See SECURITY.md (Docker exec broker)." >&2
-  DOCKER_ACK_FILE="$HOME/.config/wmf-claude/docker-egress-ack"
-  if [[ ! -f "$DOCKER_ACK_FILE" && -t 0 && -t 1 ]]; then
-    read -r -p "Press Enter to acknowledge (asked once): "
-    mkdir -p "$(dirname "$DOCKER_ACK_FILE")"
-    touch "$DOCKER_ACK_FILE"
+  # With --egress the broker verified the container's isolation, so print the
+  # verified posture instead. The TUI clears the screen right after launch, so
+  # on the first unrestricted use (no acknowledgment marker) wait for Enter —
+  # only on an interactive terminal, so scripts and tests never hang.
+  if [[ "$DOCKER_EGRESS" == "none" ]]; then
+    echo "note: --egress=none verified: the container has no network route out." >&2
+  elif [[ "$DOCKER_EGRESS" == "allowlist" ]]; then
+    echo "note: --egress=allowlist verified: the container reaches only the" >&2
+    echo "      hosts in your squid allowlist (exfil to those hosts remains)." >&2
+  else
+    echo "warning: --docker: the container's network is NOT sandbox-restricted;" >&2
+    echo "         code run via mwdocker has full egress. Keep secrets out of the" >&2
+    echo "         dev checkout and dev DB. See SECURITY.md (Docker exec broker)," >&2
+    echo "         or use --egress=none|allowlist with a templates/docker-egress/" >&2
+    echo "         compose override to restrict the container." >&2
+    DOCKER_ACK_FILE="$HOME/.config/wmf-claude/docker-egress-ack"
+    if [[ ! -f "$DOCKER_ACK_FILE" && -t 0 && -t 1 ]]; then
+      read -r -p "Press Enter to acknowledge (asked once): "
+      mkdir -p "$(dirname "$DOCKER_ACK_FILE")"
+      touch "$DOCKER_ACK_FILE"
+    fi
   fi
 fi
 

@@ -1,0 +1,50 @@
+# wmf-claude egress flavor: ALLOWLIST. The PHP containers can reach only the
+# hosts that squid-allowlist.conf permits (package registries), through a
+# squid proxy sidecar.
+#
+# Why: like egress-none.yml, the PHP containers sit on an internal network
+# with no route out. The one path out is the egress-proxy service, and squid
+# enforces a host allowlist there. The HTTP(S)_PROXY variables point composer
+# and npm at the proxy; code that ignores them still has no route, so the
+# proxy is the only exit either way.
+#
+# Residual risk: an agent can still send data to an ALLOWED host (for example
+# a GitHub repo). This flavor stops arbitrary-host exfiltration, not
+# exfiltration to the registries themselves.
+#
+# Setup: copy this file AND squid-allowlist.conf to a directory the agent
+# cannot write, for example ~/.config/wmf-claude/. Do NOT keep the copies in
+# the checkout. Then create the containers with both compose files:
+#
+#   docker compose -f docker-compose.yml \
+#     -f ~/.config/wmf-claude/egress-allowlist.yml up -d
+#
+# Launch sessions with `bin/claude --docker=mediawiki --egress=allowlist` so
+# the broker verifies the isolation and refuses to start when it is not
+# applied.
+#
+# Pin the squid image to a digest when you adopt this file.
+services:
+  mediawiki:
+    networks: [isolated]
+    environment: &egress-proxy-env
+      HTTP_PROXY: 'http://egress-proxy:3128'
+      HTTPS_PROXY: 'http://egress-proxy:3128'
+      http_proxy: 'http://egress-proxy:3128'
+      https_proxy: 'http://egress-proxy:3128'
+      NO_PROXY: 'localhost,127.0.0.1,mediawiki,mediawiki-web,mediawiki-jobrunner'
+      no_proxy: 'localhost,127.0.0.1,mediawiki,mediawiki-web,mediawiki-jobrunner'
+  mediawiki-jobrunner:
+    networks: [isolated]
+    environment: *egress-proxy-env
+  mediawiki-web:
+    networks: [isolated, default]
+  egress-proxy:
+    image: ubuntu/squid
+    networks: [isolated, default]
+    volumes:
+      - '${WMF_CLAUDE_SQUID_CONF:-~/.config/wmf-claude/squid-allowlist.conf}:/etc/squid/squid.conf:ro'
+networks:
+  isolated:
+    internal: true
+  default: {}

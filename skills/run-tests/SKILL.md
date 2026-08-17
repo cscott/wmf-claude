@@ -7,6 +7,7 @@ allowed-tools:
   - Bash(TMPDIR=* vendor/bin/phpunit *)
   - Bash(MW_SKIP_EXTERNAL_DEPENDENCIES=* vendor/bin/phpunit *)
   - Bash(TMPDIR=* MW_SKIP_EXTERNAL_DEPENDENCIES=* vendor/bin/phpunit *)
+  - Bash(mwdocker *)
 ---
 
 # Run PHPUnit Tests
@@ -15,7 +16,9 @@ Run PHPUnit tests for MediaWiki core or an extension from the project's MediaWik
 
 ## Steps
 
-1. **Locate the MediaWiki root.** Run from the project's MW root (where `vendor/bin/phpunit` lives). If you're not sure, `git rev-parse --show-toplevel` finds the repo root; it's typically the same as the MW root for core, or the parent of an extension's checkout.
+0. **Docker-based wikis: route through the broker.** If `WMF_DOCKER_BROKER_URL` is set in the environment, the wiki runs inside a container and the host has no PHP/composer. Prefix every test command with `mwdocker` — e.g. `mwdocker vendor/bin/phpunit <path>` instead of `vendor/bin/phpunit <path>`. The shim runs it inside the container and relays output and the exit code. Everything below works the same, just with the `mwdocker` prefix. If the variable is unset, run commands directly as shown.
+
+1. **Locate the MediaWiki root.** Run from the project's MW root (where `vendor/bin/phpunit` lives). If you're not sure, `git rev-parse --show-toplevel` finds the repo root; it's typically the same as the MW root for core, or the parent of an extension's checkout. (Under the broker, paths are relative to the container's working dir, set when the session was launched with `--docker=SERVICE:WORKDIR`.)
 
 2. **Parse `$ARGUMENTS` to determine the target:**
    - If it looks like an extension name (e.g. `CentralAuth`): `vendor/bin/phpunit extensions/{ext}/tests/phpunit`
@@ -34,6 +37,9 @@ Run PHPUnit tests for MediaWiki core or an extension from the project's MediaWik
 
    # All tests in an extension (integration-friendly env)
    MW_SKIP_EXTERNAL_DEPENDENCIES=1 vendor/bin/phpunit extensions/CentralAuth/tests/phpunit
+
+   # Same, inside a Docker-based wiki (WMF_DOCKER_BROKER_URL is set):
+   mwdocker vendor/bin/phpunit tests/phpunit/unit/includes/Foo/BarTest.php
    ```
 
 5. **Report results.** Surface test counts, failures, and the first few error lines. Don't paraphrase — quote PHPUnit's actual output for the failing assertions.

@@ -12,6 +12,8 @@
     { "type": "plugin", "path": "bin/session-start.sh" },
     { "type": "plugin", "path": "bin/launch-claude.sh" },
     { "type": "plugin", "path": "bin/launch-test-chrome" },
+    { "type": "plugin", "path": "bin/launch-docker-broker" },
+    { "type": "plugin", "path": "bin/mwdocker" },
     { "type": "plugin", "path": "chrome-devtools-mcp/package.json" },
     { "type": "plugin", "path": "chrome-devtools-mcp/package-lock.json" },
     { "type": "plugin", "path": "skills/write-commit-msg/SKILL.md" },

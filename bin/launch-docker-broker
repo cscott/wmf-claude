@@ -1,0 +1,459 @@
+#!/usr/bin/env python3
+"""Launch the wmf-claude Docker exec broker (runs OUTSIDE the nono sandbox).
+
+Why this exists: a sandboxed Claude session can't be given the Docker socket.
+The socket is root-equivalent on the host — anyone who can talk to the daemon
+can `docker run -v /:/host ...` and read/write the whole filesystem as root,
+which would bypass every deny in profiles/wmf-engineer.json. So the privileged
+handle (the socket) stays out here, and the sandboxed session can only ask this
+broker to run an allowlisted dev-tool verb inside an already-running container.
+
+This mirrors bin/launch-test-chrome: a helper the engineer starts in a separate
+terminal, listening on a localhost port that `bin/claude --docker` opens into
+the sandbox. The broker never lets the caller choose docker flags, the compose
+file, or the service — those are pinned here at launch. The caller controls
+only the trailing command run *inside* the pinned container.
+
+Security model (see SECURITY.md):
+  - No shell. argv is built as a list and spawned with shell=False. There is no
+    `sh -c`, so argument content can't break out into a new command.
+  - Fixed template: `<compose-cmd> -f <file> exec -T [-w <wd>] <service> <bin> <args...>`.
+    Everything up to and including <service> is pinned here; the caller supplies
+    only <bin> (checked against an allowlist) and <args> (the in-container
+    command's own args — they can't affect docker because they sit after SERVICE
+    and there's no shell).
+  - Per-session bearer token, written to a 0600 handshake file that
+    `bin/claude --docker` reads. Raises the bar past "any localhost process",
+    since `--open-port` exposes the port to every process on the host.
+
+Residual blast radius is the dev container, not the host: the allowlisted verbs
+run against the mounted source tree, which Claude can already write. Keeping
+host root unreachable is the line this holds.
+
+Usage (in a separate terminal, before launching `bin/claude --docker`):
+  bin/launch-docker-broker --service mediawiki
+  bin/launch-docker-broker --service mediawiki --workdir /var/www/html/w \
+      --compose-file ./docker-compose.yml
+"""
+
+import argparse
+import hmac
+import json
+import os
+import secrets
+import shlex
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+# Leading-token allowlist. The caller sends {"bin": "...", "args": [...]}; `bin`
+# must match one of these exactly. Args are passed through as the in-container
+# command's own arguments. Covers the MediaWiki run-tests / lint skills.
+#
+# Note this is NOT a strong RCE boundary: `composer`/`npm` run scripts from the
+# (agent-writable) composer.json/package.json, and `php` runs arbitrary code via
+# maintenance scripts or `-r`. The allowlist's job is to express intent and to
+# stop the caller reaching raw `docker` — not to sandbox the container from its
+# own source. `php` stays in the default set because MediaWiki maintenance
+# scripts (`php maintenance/run.php ...`) are a routine dev need; bare `node` is
+# dropped (the JS workflow goes through `npm`). Add more with --allow.
+DEFAULT_ALLOWED_BINS = [
+    "composer",
+    "php",
+    "npm",
+    "vendor/bin/phpunit",
+    "vendor/bin/phpcs",
+    "vendor/bin/phpcbf",
+    "vendor/bin/phan",
+]
+
+# Generous per-exec ceiling: a full extension test suite can run for minutes,
+# but an unbounded exec would let a stuck command pin a thread and hang the
+# caller's tool call forever. Override with --timeout.
+DEFAULT_TIMEOUT = 900
+
+# Size limits. The caller holds the token, so these are not an auth boundary.
+# They stop one request or one command from filling the broker's memory.
+# 1 MiB of argv JSON is more than any dev command needs.
+MAX_REQUEST_BYTES = 1 << 20
+# The command writes stdout/stderr to disk-backed temp files, and the broker
+# reads back at most this much of each stream. 8 MiB keeps full test-suite
+# output; the broker adds a note to stderr when it truncates a stream.
+MAX_STREAM_BYTES = 8 << 20
+
+
+def handshake_path():
+    # Prefer a per-user runtime dir; macOS TMPDIR is already user-private
+    # (0700 under /var/folders). The file itself is written 0600 regardless.
+    base = os.environ.get("XDG_RUNTIME_DIR") or os.environ.get("TMPDIR") or "/tmp"
+    return os.path.join(base, "wmf-docker-broker.json")
+
+
+def read_capped(f):
+    """Read an output temp file back, capped at MAX_STREAM_BYTES.
+
+    Returns (text, truncated). Decodes with errors="replace" so bytes that are
+    not valid UTF-8 become replacement characters instead of an exception.
+    """
+    f.seek(0)
+    data = f.read(MAX_STREAM_BYTES + 1)
+    truncated = len(data) > MAX_STREAM_BYTES
+    return data[:MAX_STREAM_BYTES].decode("utf-8", errors="replace"), truncated
+
+
+def make_handler(cfg):
+    class Handler(BaseHTTPRequestHandler):
+        # Quieter logging; one line per request to stderr.
+        def log_message(self, fmt, *args):
+            sys.stderr.write("broker: " + (fmt % args) + "\n")
+
+        def _send(self, code, payload):
+            body = json.dumps(payload).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _authed(self):
+            auth = self.headers.get("Authorization", "")
+            prefix = "Bearer "
+            if not auth.startswith(prefix):
+                return False
+            return hmac.compare_digest(auth[len(prefix):], cfg["token"])
+
+        def do_GET(self):
+            if self.path == "/health":
+                self._send(200, {"ok": True, "service": cfg["service"]})
+            else:
+                self._send(404, {"error": "not found"})
+
+        def do_POST(self):
+            if self.path != "/exec":
+                self._send(404, {"error": "not found"})
+                return
+            if not self._authed():
+                self._send(401, {"error": "bad or missing token"})
+                return
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+            except ValueError:
+                self._send(400, {"error": "invalid Content-Length"})
+                return
+            if not 0 <= length <= MAX_REQUEST_BYTES:
+                self._send(413, {"error": f"request larger than {MAX_REQUEST_BYTES} bytes"})
+                return
+            try:
+                req = json.loads(self.rfile.read(length) or b"{}")
+            except (ValueError, json.JSONDecodeError):
+                self._send(400, {"error": "invalid JSON body"})
+                return
+
+            bin_ = req.get("bin")
+            args = req.get("args", [])
+            if not isinstance(bin_, str) or not isinstance(args, list) \
+                    or not all(isinstance(a, str) for a in args):
+                self._send(400, {"error": "expected {bin: str, args: [str]}"})
+                return
+            if bin_ not in cfg["allowed_bins"]:
+                self._send(403, {
+                    "error": f"bin '{bin_}' not allowed",
+                    "allowed": cfg["allowed_bins"],
+                })
+                return
+            # Reject NUL bytes (never valid in argv). Args are otherwise safe to
+            # pass through unmodified: they sit after SERVICE, so docker reads
+            # them as the in-container command, and there is no shell.
+            if "\x00" in bin_ or any("\x00" in a for a in args):
+                self._send(400, {"error": "NUL byte in argument"})
+                return
+
+            argv = list(cfg["compose_cmd"]) + ["-f", cfg["compose_file"], "exec", "-T"]
+            if cfg["workdir"]:
+                argv += ["-w", cfg["workdir"]]
+            argv += [cfg["service"], bin_] + args
+
+            # Audit trail: the broker logs every command that runs in the
+            # container (in managed mode this goes to the per-session broker log
+            # file). The broker logs before it runs the command, so a hung
+            # command is still visible.
+            cmd_str = shlex.join([bin_] + args)
+            sys.stderr.write(f"broker: exec [{cfg['service']}] {cmd_str}\n")
+            sys.stderr.flush()
+            # The command writes its output to disk-backed temp files, not to
+            # in-memory pipes. This bounds broker memory for a command that
+            # writes much output. On a timeout the files hold the partial
+            # output, so the caller still sees what the command printed.
+            timed_out = False
+            with tempfile.TemporaryFile() as out_f, tempfile.TemporaryFile() as err_f:
+                try:
+                    rc = subprocess.run(
+                        argv, shell=False, stdout=out_f, stderr=err_f,
+                        timeout=cfg["timeout"],
+                    ).returncode
+                except FileNotFoundError:
+                    self._send(500, {"error": f"command not found: {cfg['compose_cmd'][0]}"})
+                    return
+                except subprocess.TimeoutExpired:
+                    # 124 is the same exit code that coreutils `timeout` uses.
+                    # Send 200 so the shim relays this as a normal failed
+                    # command result, not a transport error.
+                    rc = 124
+                    timed_out = True
+                stdout, out_trunc = read_capped(out_f)
+                stderr, err_trunc = read_capped(err_f)
+            if out_trunc:
+                stderr += f"\n[broker] stdout truncated at {MAX_STREAM_BYTES} bytes\n"
+            if err_trunc:
+                stderr += f"\n[broker] stderr truncated at {MAX_STREAM_BYTES} bytes\n"
+            if timed_out:
+                sys.stderr.write(f"broker: TIMEOUT after {cfg['timeout']}s: {cmd_str}\n")
+                stderr += f"\n[broker] command timed out after {cfg['timeout']}s\n"
+            else:
+                sys.stderr.write(f"broker: exit {rc}: {cmd_str}\n")
+            if rc < 0:
+                # A negative code means a signal killed the command. Map signal
+                # N to 128+N, the shell convention, so the shim can relay it.
+                rc = 128 - rc
+            self._send(200, {"exit_code": rc, "stdout": stdout, "stderr": stderr})
+
+    return Handler
+
+
+def check_container_safety(cfg):
+    """Refuse a container that gives access to host root or host secrets.
+
+    The broker keeps the host safe while the agent controls the container. This
+    protection fails in two cases. First, the container runs --privileged or
+    mounts the Docker socket; then code in the container (easy to run through
+    composer/npm/php) is host root again. Second, the container bind-mounts host
+    credentials (~/.ssh, ~/.aws, the SSH agent socket); then the agent reads them
+    and sends them out through the container network.
+
+    Best-effort: resolves the running container for the pinned service and
+    inspects it. Returns a list of human-readable reasons it's unsafe (empty if
+    safe or if we couldn't determine — e.g. the container isn't up yet, in which
+    case an exec would fail with a clear docker error anyway).
+    """
+    # `inspect` is a plain `docker` subcommand, not a compose one, so always use
+    # the docker CLI here even when compose_cmd is v1 `docker-compose` (which has
+    # no `inspect` — using it would make the safety check silently no-op).
+    docker = "docker"
+    if shutil.which(docker) is None:
+        return []
+    try:
+        ps = subprocess.run(
+            cfg["compose_cmd"] + ["-f", cfg["compose_file"], "ps", "-q", cfg["service"]],
+            capture_output=True, text=True, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    # A scaled service has several containers, and `docker compose exec` may
+    # target any replica, so inspect them all — a single privileged replica is
+    # enough to escape.
+    cids = (ps.stdout or "").split()
+    if not cids:
+        return []  # not running; nothing to inspect
+
+    # Capabilities that hand a process host-root-equivalent power without
+    # needing --privileged. Compared after stripping the CAP_ prefix.
+    DANGEROUS_CAPS = {
+        "ALL", "SYS_ADMIN", "SYS_PTRACE", "SYS_MODULE", "SYS_RAWIO",
+        "SYS_BOOT", "DAC_READ_SEARCH", "DAC_OVERRIDE", "MKNOD",
+    }
+    # Host paths that, bind-mounted in, give the container the Docker socket or
+    # the host filesystem. Compared after os.path.normpath.
+    DANGEROUS_SOURCES = {"/", "/var/run", "/run", "/var/lib/docker", "/proc", "/sys"}
+
+    def source_unsafe(source):
+        norm = os.path.normpath(source or "")
+        if norm in DANGEROUS_SOURCES:
+            return True
+        # Any path component named docker.sock (covers /var/run/docker.sock,
+        # /run/docker.sock, and rootless socket paths).
+        return norm.endswith("/docker.sock") or os.path.basename(norm) == "docker.sock"
+
+    # A dev container must bind-mount only the checkout (the directory that holds
+    # the compose file). A mount of a $HOME dotfile or dot-directory (~/.ssh,
+    # ~/.aws, ~/.config/*, ~/.gitconfig) gives the agent host credentials. The
+    # forwarded SSH agent socket does the same. Code in the container reads these
+    # files and sends them out through the container network.
+    #
+    # This is a denylist, not an allowlist. A secret path without a dot prefix,
+    # mounted by name, still gets through. The check also sees only a container
+    # that is already up. The check adds refusals; it never permits more.
+    home = os.path.realpath(os.path.expanduser("~"))
+    checkout = os.path.realpath(os.path.dirname(cfg["compose_file"]))
+    ssh_sock = os.environ.get("SSH_AUTH_SOCK")
+    ssh_sock = os.path.realpath(ssh_sock) if ssh_sock else None
+
+    def within(child, parent):
+        # True when child is parent or is below parent. Both are real paths.
+        # commonpath() prevents the "/home/bob" vs "/home/bobby" error that
+        # startswith() makes.
+        try:
+            return os.path.commonpath([child, parent]) == parent
+        except ValueError:  # different drives, or mixed absolute and relative
+            return False
+
+    def secret_source(source):
+        norm = os.path.realpath(source or "")
+        if not norm or norm == os.sep:
+            return False  # source_unsafe() handles host root
+        if within(norm, checkout):
+            return False  # the checkout and its contents are allowed
+        if ssh_sock and norm == ssh_sock:
+            return True   # the forwarded SSH agent socket
+        if within(norm, home):
+            if norm == home:
+                return True  # the full home directory
+            first = os.path.relpath(norm, home).split(os.sep, 1)[0]
+            return first.startswith(".")  # a dotfile or dot-directory: ~/.ssh
+        return False
+
+    reasons = []
+    for cid in cids:
+        short = cid[:12]
+        try:
+            ins = subprocess.run(
+                [docker, "inspect", cid], capture_output=True, text=True, timeout=30,
+            )
+            info = json.loads(ins.stdout)[0]
+        except (OSError, subprocess.SubprocessError, ValueError, IndexError, KeyError):
+            # The check stays best-effort, but a replica that it cannot inspect
+            # must not pass in silence.
+            sys.stderr.write(f"broker: warning: could not inspect {short}; "
+                             "the safety check skipped this replica\n")
+            continue
+        hc = info.get("HostConfig") or {}
+        if hc.get("Privileged"):
+            reasons.append(f"{short}: runs --privileged")
+        caps = {c.upper().replace("CAP_", "", 1) for c in (hc.get("CapAdd") or [])}
+        bad = sorted(caps & DANGEROUS_CAPS)
+        if bad:
+            reasons.append(f"{short}: dangerous capabilities ({', '.join(bad)})")
+        if hc.get("Devices"):
+            reasons.append(f"{short}: host device passthrough")
+        for key in ("PidMode", "IpcMode"):
+            if (hc.get(key) or "") == "host":
+                reasons.append(f"{short}: {key}=host")
+        for m in info.get("Mounts") or []:
+            src = m.get("Source")
+            if source_unsafe(src):
+                reasons.append(f"{short}: mounts host path {src}")
+            elif m.get("Type", "bind") == "bind" and secret_source(src):
+                reasons.append(f"{short}: mounts host secret path {src}")
+        for b in hc.get("Binds") or []:  # "src:dst[:opts]"
+            src = b.split(":", 1)[0]
+            if source_unsafe(src):
+                reasons.append(f"{short}: binds host path {b}")
+            elif src.startswith("/") and secret_source(src):
+                # The startswith guard skips named volumes ("myvol:/data"):
+                # their source is a volume name, not a host path, and realpath
+                # would wrongly resolve it against the broker's own directory.
+                reasons.append(f"{short}: binds host secret path {b}")
+    return reasons
+
+
+def main():
+    ap = argparse.ArgumentParser(description="wmf-claude Docker exec broker")
+    ap.add_argument("--service", required=True,
+                    help="pinned compose service to exec into (e.g. mediawiki)")
+    ap.add_argument("--compose-file", default="docker-compose.yml",
+                    help="path to the compose file (pinned; default ./docker-compose.yml)")
+    ap.add_argument("--workdir", default=None,
+                    help="in-container working directory (optional)")
+    ap.add_argument("--port", type=int, default=0,
+                    help="localhost port (default 0 = ephemeral, written to the handshake file)")
+    ap.add_argument("--compose-cmd", default="docker compose",
+                    help='compose command (default "docker compose"; use "docker-compose" for v1)')
+    ap.add_argument("--handshake", default=None, metavar="PATH",
+                    help="where to write the {port, token} handshake file "
+                         "(default: per-user runtime dir; bin/claude --docker=SVC overrides this "
+                         "with a per-session path it manages)")
+    ap.add_argument("--allow", action="append", default=None, metavar="BIN",
+                    help="allowed bin (repeatable); if given, replaces the default set")
+    ap.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT,
+                    help=f"per-exec timeout in seconds (default {DEFAULT_TIMEOUT})")
+    args = ap.parse_args()
+
+    compose_file = os.path.abspath(args.compose_file)
+    if not os.path.isfile(compose_file):
+        sys.exit(f"error: compose file not found: {compose_file}")
+    compose_bin = args.compose_cmd.split()[0]
+    if shutil.which(compose_bin) is None:
+        sys.exit(f"error: {compose_bin} not found on PATH (the broker runs outside the sandbox)")
+
+    cfg = {
+        "service": args.service,
+        "compose_file": compose_file,
+        "workdir": args.workdir,
+        "compose_cmd": args.compose_cmd.split(),
+        "allowed_bins": args.allow if args.allow else DEFAULT_ALLOWED_BINS,
+        "timeout": args.timeout,
+        "token": secrets.token_hex(32),
+    }
+
+    # Refuse a container that defeats the host boundary. No opt-out: code that
+    # runs in such a container gets host root or host credentials, which the
+    # broker exists to prevent. If you really need such a container, the broker
+    # is the wrong tool — do not sandbox.
+    unsafe = check_container_safety(cfg)
+    if unsafe:
+        sys.exit(
+            "error: refusing to serve container for service '"
+            + cfg["service"] + "': " + "; ".join(unsafe) + ".\n"
+            "       Code run in such a container can get host root or read host\n"
+            "       credentials, which defeats the point of the broker."
+        )
+
+    httpd = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(cfg))
+    port = httpd.server_address[1]
+
+    # Write the handshake file atomically at 0600 so only this user can read the
+    # token. `bin/claude --docker` reads {port, token} from here.
+    hs = args.handshake or handshake_path()
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(hs), prefix=".wmf-docker-broker.")
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump({"port": port, "token": cfg["token"], "pid": os.getpid()}, f)
+        os.replace(tmp, hs)
+    except BaseException:
+        os.path.exists(tmp) and os.unlink(tmp)
+        raise
+
+    def cleanup(*_):
+        try:
+            # Only remove the file if it's still ours (pid match).
+            with open(hs) as f:
+                if json.load(f).get("pid") == os.getpid():
+                    os.unlink(hs)
+        except (OSError, ValueError):
+            pass
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, cleanup)
+    signal.signal(signal.SIGTERM, cleanup)
+
+    print("wmf-claude Docker broker (runs OUTSIDE the sandbox)")
+    print(f"  service:      {cfg['service']}")
+    print(f"  compose file: {compose_file}")
+    print(f"  workdir:      {cfg['workdir'] or '(container default)'}")
+    print(f"  listening:    http://127.0.0.1:{port}")
+    print(f"  handshake:    {hs}")
+    print(f"  allowed bins: {', '.join(cfg['allowed_bins'])}")
+    print()
+    print("Leave this terminal open. Launch the session with `bin/claude --docker`.")
+    print("Ctrl-C to stop (removes the handshake file).")
+    try:
+        httpd.serve_forever()
+    finally:
+        cleanup()
+
+
+if __name__ == "__main__":
+    main()

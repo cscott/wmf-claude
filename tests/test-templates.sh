@@ -128,7 +128,19 @@ echo "--- bin/ script syntax ---"
 # the sourced lib-output.sh) must parse. Glob so new scripts are covered too.
 for f in "$REPO_ROOT"/bin/*; do
   [[ -f "$f" ]] || continue
-  if bash -n "$f" 2>/dev/null; then pass "$(rel "$f")"; else fail "$(rel "$f")"; fi
+  # Syntax-check by interpreter: bin/ holds both bash scripts and a Python
+  # script (launch-docker-broker), so pick the checker from the shebang.
+  shebang="$(head -n1 "$f")"
+  if [[ "$shebang" == *python* ]]; then
+    # ast.parse checks syntax without writing __pycache__ bytecode.
+    if python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$f" 2>/dev/null; then
+      pass "$(rel "$f")"
+    else
+      fail "$(rel "$f")"
+    fi
+  else
+    if bash -n "$f" 2>/dev/null; then pass "$(rel "$f")"; else fail "$(rel "$f")"; fi
+  fi
 done
 
 echo ""
@@ -230,10 +242,209 @@ echo "--- bin/claude --help ---"
 out="$(run_fake_claude --help)"
 if grep -q 'Wrapper flags:' <<<"$out" && ! grep -q '^NONO_ARG:' <<<"$out"; then
   pass "--help prints wrapper usage without launching"; else fail "--help did not short-circuit"; fi
+# Every wrapper flag must be documented in --help.
+if grep -q -- '--chrome' <<<"$out" && grep -q -- '--local-web' <<<"$out" && grep -q -- '--docker' <<<"$out"; then
+  pass "--help documents --chrome, --local-web, and --docker"; else fail "--help is missing a wrapper flag"; fi
 # `claude -- --help` is passed through to Claude Code, not intercepted.
 out="$(run_fake_claude -- --help)"
 if grep -qx 'NONO_ARG: --help' <<<"$out" && ! grep -q 'Wrapper flags:' <<<"$out"; then
   pass "claude -- --help passes through"; else fail "-- --help was wrongly intercepted"; fi
+
+echo "--- bin/claude --docker arg routing ---"
+# Managed mode (--docker=SERVICE) starts the real broker, so the fake repo needs
+# it on disk plus a stub `docker` (the broker checks `which docker` at startup)
+# and a compose file in the launch CWD. The broker binds an ephemeral port; we
+# assert bin/claude opened exactly that port and then tore the broker down.
+cp "$REPO_ROOT/bin/launch-docker-broker" "$FAKE_REPO/bin/launch-docker-broker"
+cp "$REPO_ROOT/bin/mwdocker" "$FAKE_REPO/bin/mwdocker"   # symlinked into the shim dir
+chmod +x "$FAKE_REPO/bin/launch-docker-broker" "$FAKE_REPO/bin/mwdocker"
+# Stub `docker`: answers the few subcommands bin/claude and the broker use —
+# service listing (autodetect/validation), container resolution + inspect
+# (privileged-container check). STUB_DOCKER_PRIVILEGED=1 makes inspect report a
+# privileged container so the refusal path can be tested.
+cat > "$FAKE_REPO/bin/docker" <<'STUB'
+#!/bin/bash
+case "$*" in
+  *"config --services"*) printf 'mediawiki\nmariadb\n' ;;
+  *"ps -q"*) echo fakecontainerid ;;
+  *inspect*)
+    if [[ -n "${STUB_DOCKER_PRIVILEGED:-}" ]]; then
+      echo '[{"HostConfig":{"Privileged":true,"Binds":[]},"Mounts":[]}]'
+    elif [[ -n "${STUB_DOCKER_CAP:-}" ]]; then
+      echo '[{"HostConfig":{"Privileged":false,"CapAdd":["CAP_SYS_ADMIN"],"Binds":[]},"Mounts":[]}]'
+    else
+      echo '[{"HostConfig":{"Privileged":false,"Binds":[]},"Mounts":[]}]'
+    fi ;;
+esac
+exit 0
+STUB
+chmod +x "$FAKE_REPO/bin/docker"
+DOCKER_CWD="$(mktemp -d)"
+printf 'services:\n  mediawiki:\n    image: x\n  mariadb:\n    image: y\n' > "$DOCKER_CWD/docker-compose.yml"
+
+out="$(cd "$DOCKER_CWD" && PATH="$FAKE_REPO/bin:$PATH" \
+  bash "$FAKE_REPO/bin/claude" --docker=mediawiki 2>&1)"
+# The broker's port is ephemeral, so assert --open-port is present with a
+# numeric value, and that the managed-broker note fired.
+broker_port="$(grep -A1 -x 'NONO_ARG: --open-port' <<<"$out" | grep -E '^NONO_ARG: [0-9]+$' | head -n1 | grep -oE '[0-9]+')"
+if [[ -n "$broker_port" ]] && grep -q 'started a managed Docker broker' <<<"$out"; then
+  pass "bin/claude --docker=SERVICE auto-starts a broker and opens its port"
+else
+  fail "bin/claude --docker=SERVICE did not start a managed broker"
+fi
+# The egress caveat must be surfaced at opt-in time, not only in SECURITY.md.
+if grep -q 'NOT sandbox-restricted' <<<"$out"; then
+  pass "--docker warns that the container network is not sandbox-restricted"
+else
+  fail "--docker did not print the container-egress warning"
+fi
+# The managed broker must not outlive the session: its per-PID handshake and the
+# shim dir are gone, and nothing is left listening on the port it used.
+leak=0
+for f in "${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}"/wmf-docker-broker.*.json \
+         "${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}"/wmf-docker-shim.*; do
+  [[ -e "$f" ]] && leak=1
+done
+if [[ -n "$broker_port" ]] && command -v lsof >/dev/null 2>&1 \
+   && lsof -nP -iTCP:"$broker_port" -sTCP:LISTEN >/dev/null 2>&1; then
+  leak=1
+fi
+if [[ "$leak" == 0 ]]; then
+  pass "managed broker + shim dir are torn down when the session exits"
+else
+  fail "managed broker or shim dir leaked after the session exited"
+fi
+
+# --docker=SERVICE:WORKDIR splits correctly: the broker is for 'mediawiki', not
+# 'mediawiki:/path' (the note prints the bare service name).
+out="$(cd "$DOCKER_CWD" && PATH="$FAKE_REPO/bin:$PATH" \
+  bash "$FAKE_REPO/bin/claude" --docker=mediawiki:/var/www/html/w 2>&1)"
+if grep -q "managed Docker broker for 'mediawiki'" <<<"$out"; then
+  pass "--docker=SERVICE:WORKDIR splits service from workdir"
+else
+  fail "--docker=SERVICE:WORKDIR did not split correctly"
+fi
+
+# --docker=auto detects the service from the compose file (prefers 'mediawiki').
+out="$(cd "$DOCKER_CWD" && PATH="$FAKE_REPO/bin:$PATH" \
+  bash "$FAKE_REPO/bin/claude" --docker=auto 2>&1)"
+if grep -q "auto selected service 'mediawiki'" <<<"$out"; then
+  pass "--docker=auto detects the service"; else fail "--docker=auto did not detect the service"; fi
+
+# An explicit service that isn't in the compose file fails fast with the list.
+out="$(cd "$DOCKER_CWD" && PATH="$FAKE_REPO/bin:$PATH" \
+  bash "$FAKE_REPO/bin/claude" --docker=nope 2>&1 || true)"
+if grep -q "not a service" <<<"$out"; then
+  pass "unknown --docker=SERVICE is rejected with the available list"; else fail "unknown service not rejected"; fi
+
+# A privileged / socket-mounting container is refused (no opt-out).
+out="$(cd "$DOCKER_CWD" && STUB_DOCKER_PRIVILEGED=1 PATH="$FAKE_REPO/bin:$PATH" \
+  bash "$FAKE_REPO/bin/claude" --docker=mediawiki 2>&1 || true)"
+if grep -qi 'privileged' <<<"$out"; then
+  pass "broker refuses a privileged container"; else fail "broker did not refuse a privileged container"; fi
+
+# The check catches host-root capabilities, not just --privileged.
+out="$(cd "$DOCKER_CWD" && STUB_DOCKER_CAP=1 PATH="$FAKE_REPO/bin:$PATH" \
+  bash "$FAKE_REPO/bin/claude" --docker=mediawiki 2>&1 || true)"
+if grep -qi 'SYS_ADMIN' <<<"$out"; then
+  pass "broker refuses a container with dangerous capabilities"; else fail "broker did not refuse a SYS_ADMIN container"; fi
+
+# mwdocker against an unreachable broker fails with a diagnostic, not a silent
+# set -e abort. (Points at a dead localhost port; curl fails fast.)
+out="$(WMF_DOCKER_BROKER_URL=http://127.0.0.1:1 WMF_DOCKER_BROKER_TOKEN=x \
+  bash "$FAKE_REPO/bin/mwdocker" composer phpcs 2>&1 || true)"
+if grep -q 'could not reach the Docker broker' <<<"$out"; then
+  pass "mwdocker reports an unreachable broker clearly"; else fail "mwdocker did not report an unreachable broker"; fi
+
+# mwdocker must forward dash args and a bare "--" without change. Regression
+# for two related jq faults: jq parses its own options among the positionals
+# after --args (jq 1.8 eats "-c" and "-r", so `mwdocker php -r CODE` lost the
+# -r), and jq eats the first bare "--" as its end-of-options marker (so
+# `mwdocker npm run lint -- --fix` lost the "--", see !98). Round-trip through
+# a real broker with a stub compose command that prints the in-container argv.
+BROKER_T="$(mktemp -d)"
+cat > "$BROKER_T/fakecompose" <<'STUB'
+#!/bin/bash
+[[ "$3" == ps ]] && exit 0    # no containers -> the safety check passes
+shift 4                       # -f FILE exec -T
+[[ "${1:-}" == -w ]] && shift 2
+shift                         # service
+printf '%s\n' "$@"            # print the in-container argv, one arg per line
+STUB
+chmod +x "$BROKER_T/fakecompose"
+touch "$BROKER_T/docker-compose.yml"
+python3 "$REPO_ROOT/bin/launch-docker-broker" \
+  --service mediawiki --compose-file "$BROKER_T/docker-compose.yml" \
+  --compose-cmd "$BROKER_T/fakecompose" --handshake "$BROKER_T/hs.json" \
+  --allow php >"$BROKER_T/broker.log" 2>&1 &
+BROKER_PID=$!
+for _ in $(seq 50); do [[ -f "$BROKER_T/hs.json" ]] && break; sleep 0.1; done
+if [[ -f "$BROKER_T/hs.json" ]]; then
+  BROKER_URL="http://127.0.0.1:$(jq -r .port "$BROKER_T/hs.json")"
+  # A sandboxed session cannot connect to an ephemeral localhost port, so this
+  # round-trip test can only run unsandboxed. Probe /health and skip if blocked.
+  if ! curl -fsS --max-time 2 -o /dev/null "$BROKER_URL/health" 2>/dev/null; then
+    echo "SKIP: mwdocker dash-arg round-trip (ephemeral localhost port blocked; run unsandboxed)"
+  else
+    out="$(WMF_DOCKER_BROKER_URL="$BROKER_URL" \
+      WMF_DOCKER_BROKER_TOKEN="$(jq -r .token "$BROKER_T/hs.json")" \
+      bash "$FAKE_REPO/bin/mwdocker" php -r 'echo "x";' -- --fix 2>&1)"
+    if [[ "$out" == php$'\n'-r$'\n''echo "x";'$'\n'--$'\n'--fix ]]; then
+      pass "mwdocker forwards dash args and a bare -- intact through a live broker"
+    else
+      fail "mwdocker mangled dash args or a bare -- (got: $out)"
+    fi
+  fi
+else
+  fail "regression-test broker did not start"
+  sed 's/^/  /' "$BROKER_T/broker.log" 2>/dev/null || true
+fi
+kill "$BROKER_PID" 2>/dev/null || true
+wait "$BROKER_PID" 2>/dev/null || true
+rm -rf "$BROKER_T"
+
+# Artifacts from a SIGKILLed session (launcher PID gone) are swept on next launch.
+SWEEP_DIR="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}"
+DEAD_PID=999999   # above macOS's default PID ceiling, so reliably not alive
+echo '{"port":1,"token":"x","pid":999998}' > "$SWEEP_DIR/wmf-docker-broker.$DEAD_PID.json"
+mkdir -p "$SWEEP_DIR/wmf-docker-shim.$DEAD_PID"
+out="$(cd "$DOCKER_CWD" && PATH="$FAKE_REPO/bin:$PATH" \
+  bash "$FAKE_REPO/bin/claude" --docker=mediawiki 2>&1)"
+if [[ ! -e "$SWEEP_DIR/wmf-docker-broker.$DEAD_PID.json" && ! -d "$SWEEP_DIR/wmf-docker-shim.$DEAD_PID" ]]; then
+  pass "stale artifacts from a dead session are swept on launch"
+else
+  fail "stale artifacts were not swept"
+  rm -rf "$SWEEP_DIR/wmf-docker-broker.$DEAD_PID.json" "$SWEEP_DIR/wmf-docker-shim.$DEAD_PID"
+fi
+
+# Bare --docker (attach mode) with no running broker must error, not hang.
+rm -f "${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/wmf-docker-broker.json"
+out="$(cd "$DOCKER_CWD" && PATH="$FAKE_REPO/bin:$PATH" \
+  bash "$FAKE_REPO/bin/claude" --docker 2>&1 || true)"
+if grep -q 'no broker handshake' <<<"$out"; then
+  pass "bare --docker with no broker errors clearly"; else fail "bare --docker did not error on missing broker"; fi
+
+# --docker after `--` is a claude arg, not a wrapper flag.
+out="$(cd "$DOCKER_CWD" && PATH="$FAKE_REPO/bin:$PATH" \
+  bash "$FAKE_REPO/bin/claude" -- --docker 2>&1)"
+if ! grep -q 'managed Docker broker' <<<"$out" && ! grep -q 'no broker handshake' <<<"$out"; then
+  pass "--docker after -- is not treated as a wrapper flag"; else fail "--docker after -- was wrongly consumed"; fi
+rm -rf "$DOCKER_CWD"
+
+echo "--- session-start hook: Docker broker routing ---"
+# The hook is the always-present, repo-agnostic signal that tells Claude to run
+# dev tools via mwdocker. It must stay silent unless the broker is attached.
+if [[ "$(WMF_DOCKER_BROKER_URL='' bash "$REPO_ROOT/bin/session-start.sh" | grep -c mwdocker)" == "0" ]]; then
+  pass "session-start says nothing about mwdocker without a broker"
+else
+  fail "session-start mentions mwdocker even without a broker"
+fi
+if WMF_DOCKER_BROKER_URL=http://127.0.0.1:5000 bash "$REPO_ROOT/bin/session-start.sh" \
+   | grep -q 'prefixing them with `mwdocker`'; then
+  pass "session-start tells Claude to use mwdocker when a broker is attached"
+else
+  fail "session-start does not route to mwdocker when a broker is attached"
+fi
 
 echo ""
 echo "========================="

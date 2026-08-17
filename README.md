@@ -278,6 +278,39 @@ The MCP attaches over `127.0.0.1:9222`. That port is unauthenticated
 and reachable by other local processes, so use throwaway dev-wiki
 accounts only, never real credentials.
 
+## Running dev tools in Docker
+
+If your wiki runs in Docker (MediaWiki-Docker, MWDD, …), the host has no
+PHP/composer/npm, so the sandboxed session can't run phpcs, phpunit, or
+composer directly. Handing the sandbox the Docker socket is not an option
+— socket access is root on the host and would defeat the sandbox. Instead
+the socket stays outside the sandbox behind a small, locked-down broker.
+
+Launch with the service name of your MediaWiki container:
+
+```bash
+claude --docker=mediawiki        # detect the compose file, start + own the broker
+claude --docker=auto             # let it pick the service from the compose file
+claude --docker=mediawiki:/var/www/html/w   # set the in-container working dir
+```
+
+The broker starts automatically and stops when the session exits. Claude
+then runs dev tools through the `mwdocker` shim — `mwdocker composer
+phpcs`, `mwdocker vendor/bin/phpunit <path>` — which the `run-tests` and
+`lint` skills do for you. Only an allowlisted set of binaries is
+permitted (`composer`, `php`, `npm`, `vendor/bin/phpunit|phpcs|phpcbf|phan`),
+the broker requires a per-session token, and it refuses to serve a
+`--privileged` or socket-mounting container. See `SECURITY.md` for the
+threat model and residual risks.
+
+For a custom layout (compose file elsewhere, custom workdir), start the
+broker yourself and attach with bare `--docker`:
+
+```bash
+bin/launch-docker-broker --service mediawiki --compose-file path/to/compose.yml
+claude --docker
+```
+
 ## Updating
 
 Pull and re-run setup. It is safe to re-run any time:

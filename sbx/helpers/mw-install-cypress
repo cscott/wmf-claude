@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# mw-install-cypress: install the Cypress binary for one repo in *this*
+# sandbox, and the system packages it needs. Runs INSIDE a sandbox, like
+# mw-install-browser.
+#
+# Why this exists: setup runs `npm ci` with CYPRESS_INSTALL_BINARY=0, so a
+# repo that lists cypress (Cite, and others) gets the npm package but not
+# the binary. The binary is about 800 MB unpacked, and most tasks are not
+# covered by a repo's Cypress specs, so the install is on demand. It comes
+# from download.cypress.io and cdn.cypress.io, which the kit allows. The
+# image also misses Xvfb and the GTK, NSS and ALSA libraries that the
+# bundled Electron needs, so apt supplies those.
+#
+#   mw-install-cypress [<repo>]     # default: the current directory
+#
+# The install is per repo. Each repo pins its own Cypress version, and many
+# pin their own cache folder in their npm scripts (Cite:
+# CYPRESS_CACHE_FOLDER=./tests/cypress/.cache). This script uses the same
+# folder, so the repo's own `npm run` scripts find the binary. Run it again
+# after a change to the repo's Cypress version.
+#
+# See sbx/NOTES.md §91 and ~/MEDIAWIKI-TESTING.md §5.6.
+set -uo pipefail
+
+# Measured on a bare ubuntu:26.04 against Cypress 15.20.1: with these, ldd
+# finds every library and the smoke test passes. GTK 3 brings the rest
+# (ATK, Pango, Cairo) as dependencies. See sbx/NOTES.md §92.
+PKGS=(xvfb xauth libgtk-3-0 libnss3 libasound2 libgbm1)
+
+die() { echo "mw-install-cypress: $*" >&2; exit 1; }
+step() { echo "mw-install-cypress: $*" >&2; }
+
+repo="${1:-.}"
+[ -d "$repo" ] || die "no directory '$repo'"
+repo=$(cd "$repo" && pwd) || die "cannot enter '$repo'"
+[ -f "$repo/package.json" ] || die "no package.json in $repo"
+cli="$repo/node_modules/.bin/cypress"
+[ -x "$cli" ] || die "no cypress in $repo/node_modules; this repo does not" \
+                     "use Cypress, or \`CYPRESS_INSTALL_BINARY=0 npm ci\` has not run"
+command -v node >/dev/null || die "need node on PATH"
+
+# 1. The cache folder that the repo's own scripts use. npm runs scripts in
+#    the repo, so a relative folder is relative to the repo.
+cache=$(cd "$repo" && node -e '
+  const scripts = require("./package.json").scripts || {};
+  for (const s of Object.values(scripts)) {
+    const m = /CYPRESS_CACHE_FOLDER=("[^"]*"|'"'"'[^'"'"']*'"'"'|\S+)/.exec(s);
+    if (m) { console.log(m[1].replace(/^["'"'"']|["'"'"']$/g, "")); break; }
+  }') || die "could not read the scripts in $repo/package.json"
+case "$cache" in
+  "") cache="${CYPRESS_CACHE_FOLDER:-$HOME/.cache/Cypress}" ;;
+  /*) ;;
+  *) cache="$repo/${cache#./}" ;;
+esac
+export CYPRESS_CACHE_FOLDER="$cache"
+unset CYPRESS_INSTALL_BINARY
+
+# 2. The system packages. Ubuntu 24.04 and later renamed some libraries for
+#    the 64-bit time_t transition and left the old name as a virtual
+#    package with no candidate, so retry such a name with a `t64` suffix.
+wanted=()
+for pkg in "${PKGS[@]}"; do
+  # Not a pipe: dpkg-query fails when one of the two names is unknown, and
+  # pipefail then fails the whole test.
+  status=$(dpkg-query -W -f '${Status}\n' "$pkg" "${pkg}t64" 2>/dev/null)
+  case "$status" in *"ok installed"*) continue ;; esac
+  candidate=$(apt-cache policy "$pkg" 2>/dev/null | sed -n 's/^  Candidate: //p')
+  if [ -n "$candidate" ] && [ "$candidate" != "(none)" ]; then
+    wanted+=("$pkg")
+  else
+    wanted+=("${pkg}t64")
+  fi
+done
+if [ ${#wanted[@]} -gt 0 ]; then
+  step "installing ${wanted[*]}"
+  sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends "${wanted[@]}" >/dev/null \
+    || die "apt-get install failed for: ${wanted[*]}"
+fi
+
+# 3. The binary. `cypress install` is a no-op when that version is already
+#    in the cache.
+version=$(node -p 'require(process.argv[1]).version' \
+            "$repo/node_modules/cypress/package.json") \
+  || die "cannot read the cypress version in $repo/node_modules"
+step "installing Cypress $version into $cache (about 800 MB)"
+start=$SECONDS
+#    Do not trust its exit status: when the proxy refuses the tunnel, it
+#    can stop at "Downloading Cypress" and still exit 0. Look for the
+#    binary instead.
+out=$(cd "$repo" && "$cli" install 2>&1)
+rc=$?
+if [ $rc -ne 0 ] || [ ! -x "$cache/$version/Cypress/Cypress" ]; then
+  echo "$out" >&2
+  die "the Cypress binary did not install. If the output above stops at" \
+      "the download or shows 403, this sandbox's network policy is narrower" \
+      "than the kit asks for (download.cypress.io, cdn.cypress.io). Only the" \
+      "engineer can widen it, on the host; report the message above and stop."
+fi
+
+# 4. Prove it starts: `verify` runs the binary under Xvfb.
+step "checking the binary"
+out=$(cd "$repo" && "$cli" verify 2>&1) || { echo "$out" >&2; die "cypress verify failed"; }
+
+size=$(du -sh "$cache/$version" 2>/dev/null | cut -f1)
+echo "mw-install-cypress: ready: Cypress $version in $cache (${size:-?}), $((SECONDS - start)) s."

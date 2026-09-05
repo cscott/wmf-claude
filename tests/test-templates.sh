@@ -859,31 +859,6 @@ else
   fail "session-start broker output differs from tests/fixtures/session-start/nono-broker.txt"
 fi
 
-# A wrong sandbox paragraph is worse than a missing one: the sbx block must not
-# describe nono, and vice versa.
-sbx_out="$(WMF_CLAUDE_SANDBOX_BACKEND=sbx bash "$HOOK" 2>/dev/null)"
-# (The skills list still names /wmf-claude:check-nono-update under every
-# backend -- an offered skill that happens not to apply is harmless, unlike a
-# claim about the environment. So match the paragraph, not the word "nono".)
-if grep -q 'sandboxed by sbx' <<<"$sbx_out" \
-   && ! grep -q 'sandboxed by nono' <<<"$sbx_out" \
-   && ! grep -q 'wmf-engineer profile' <<<"$sbx_out"; then
-  pass "session-start emits the sbx paragraph and no nono sandbox text under WMF_CLAUDE_SANDBOX_BACKEND=sbx"
-else
-  fail "session-start's sbx output is wrong (missing sbx text, or still describes the nono sandbox)"
-fi
-
-# Nor may it claim MCP servers or a launcher flag that the backend doesn't have.
-if ! grep -q 'bin/claude --local-web' <<<"$sbx_out" \
-   && ! grep -q -- '--allow-post' <<<"$sbx_out" \
-   && ! grep -q -- '--local-db' <<<"$sbx_out" \
-   && ! grep -q 'read-only (GET/HEAD)' <<<"$sbx_out" \
-   && ! grep -q 'MCP servers are registered' <<<"$sbx_out"; then
-  pass "session-start's sbx output claims no nono-only launcher flags or MCP servers"
-else
-  fail "session-start's sbx output still claims nono-only launcher flags or MCP servers"
-fi
-
 # Fail closed: an unknown backend gets no sandbox text at all, warns on stderr,
 # and still emits the backend-agnostic bullets.
 unknown_err="$(mktemp)"

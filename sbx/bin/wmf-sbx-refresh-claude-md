@@ -1,0 +1,16 @@
+#!/usr/bin/env python3
+"""Thin CLI entry point -- see ../src/wmf_sbx/refresh_claude_md.py for the actual logic."""
+
+import os
+import sys
+
+# realpath, not abspath: this script is reached through a symlink
+# (a ~/.local/bin entry, or a symlinked checkout), and abspath would
+# leave the link in place -- pointing ../src somewhere that does not
+# exist. See sbx/NOTES.md §66.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "src"))
+
+from wmf_sbx.refresh_claude_md import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main())

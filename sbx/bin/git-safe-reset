@@ -1,0 +1,77 @@
+#!/bin/bash
+# Reset the current checkout to an upstream branch, but only when nothing
+# would be lost: a dirty working tree, or (in a Gerrit repo) unsubmitted
+# local commits, stop it.
+#
+# Usage:
+#   git safe-reset [--force] [REMOTE [BRANCH] | REMOTE/BRANCH]
+#
+# REMOTE defaults to origin; BRANCH defaults to master, or main if the
+# remote has no master. `git safe-reset origin/master` is accepted as an
+# alias for `git safe-reset origin master` -- that slash form is how git
+# itself prints a remote-tracking branch, so it's the form you have in
+# your scrollback.
+#
+# --force proceeds past git-review-check's unsubmitted-commits warning.
+FORCE=0
+ARGS=()
+for arg in "$@"; do
+    if [ "$arg" = "--force" ]; then FORCE=1; else ARGS+=("$arg"); fi
+done
+UPSTREAM=${ARGS[0]:-origin}
+BRANCH=${ARGS[1]}
+
+# Split REMOTE/BRANCH, but only when no BRANCH argument followed it, and
+# only when the leading component really is a remote -- so a remote named
+# with a slash still wins over this convenience. First slash only: branch
+# names routinely contain slashes (feature/foo), remote names do not.
+if [ -z "$BRANCH" ] && [[ "$UPSTREAM" == */* ]]; then
+    maybe_remote=${UPSTREAM%%/*}
+    maybe_branch=${UPSTREAM#*/}
+    if git remote | grep -Fqx -- "$maybe_remote"; then
+        UPSTREAM=$maybe_remote
+        BRANCH=$maybe_branch
+    fi
+fi
+
+# Catch a typo (or a slash form whose remote half is wrong) here, where
+# it can be named. Left to git, it surfaces as a checkout failing on a
+# branch nobody asked for: `nosuch/master` becomes the remote, `main` the
+# fallback branch, and the error reads "pathspec 'main' did not match".
+if ! git remote | grep -Fqx -- "$UPSTREAM"; then
+    echo "No such remote '$UPSTREAM'. This repository has:" >&2
+    git remote | sed 's/^/  /' >&2
+    exit 1
+fi
+
+git remote update
+if [ -z "$BRANCH" ]; then
+    if git show-ref --verify --quiet "refs/remotes/$UPSTREAM/master"; then
+        MAIN=master
+    else
+        MAIN=main
+    fi
+else
+    MAIN=$BRANCH
+fi
+# Check that directory is clean:
+# from https://unix.stackexchange.com/questions/155046/determine-if-git-working-directory-is-clean-from-a-script
+if output=$(git status --porcelain --untracked-files=no) && [ -z "$output" ]; then
+    if [ -f "$(git rev-parse --show-toplevel 2>/dev/null)/.gitreview" ]; then
+        if ! git-review-check "$UPSTREAM"; then
+            if [ "$FORCE" -eq 0 ]; then
+                exit 1
+            fi
+            echo "Proceeding anyway due to --force."
+        fi
+    fi
+    echo "Resetting to $UPSTREAM/$MAIN"
+    set -e
+    git checkout $MAIN
+    git reset --hard $UPSTREAM/$MAIN
+    git pull $UPSTREAM $MAIN
+    git submodule update
+else
+    echo "Working directory not clean."
+    exit 1
+fi

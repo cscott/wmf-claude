@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "upstream": "sbx v0.43.0-rc3",
+  "about": "Edits that wmf-sbx-setup --claude-md applies to the CLAUDE.md sbx writes in the parent directory of the primary workspace. Each edit names a section by its exact heading line. A section runs to the next heading of the same or a higher level. 'contains' lists text that must be in the section, so a changed upstream section fails loudly. All edits apply, or none. See sbx/NOTES.md §95.",
+  "edits": [
+    {
+      "op": "replace",
+      "heading": "## Git workspace mode",
+      "contains": [
+        "/run/sandbox/source",
+        "Direct mode"
+      ],
+      "text": "## Git workspace mode\n\nThis sandbox is in **neither** of sbx's two workspace modes. wmf-sbx made\na private git clone of each repo and mounted it over the host's path, so\nthe paths are the same as on the host, but your edits and commits are\n**not** visible on the host. The engineer sees them only after they fetch\nfrom this sandbox, so commit before you stop. `~/.claude/CLAUDE.md` gives\nthe details and the fetch command.\n\nDo not use the `[ -d /run/sandbox/source ]` probe. It says \"direct mode\"\nhere, and that is wrong. The host's remote for this sandbox is named\n`$SANDBOX_NAME` exactly, with no `sandbox-` prefix.\n"
+    },
+    {
+      "op": "replace",
+      "heading": "## Git Authentication",
+      "contains": [
+        "github.com",
+        "Pushing to GitHub"
+      ],
+      "text": "## Git remotes and pushing\n\n`origin` is Gerrit, not GitHub, and `local` is the engineer's own checkout\non the host. There is no pull-request flow here. Your work reaches the\nengineer when you commit: they fetch it from this sandbox (see \"End your\nturn with a commit\" in `~/.claude/CLAUDE.md`). Do not push to Gerrit or\nanywhere else unless the engineer asks you to.\n"
+    },
+    {
+      "op": "remove",
+      "heading": "### .NET Aspire: IPv6 loopback (`[::1]`) and the proxy",
+      "contains": [
+        "Aspire"
+      ]
+    },
+    {
+      "op": "replace",
+      "heading": "## Claude Code: Environment Persistence",
+      "contains": [
+        "CLAUDE_ENV_FILE"
+      ],
+      "text": "## Claude Code: Environment Persistence\n\n`CLAUDE_ENV_FILE` is set to `/etc/sandbox-persistent.sh`, the file that\n\"Environment Persistence\" above describes. Claude Code sources it before\neach Bash tool call. The rules above apply: never add shell completion\nscripts to it.\n"
+    }
+  ]
+}

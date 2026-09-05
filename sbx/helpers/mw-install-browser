@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# mw-install-browser: install Chrome for Testing and chromedriver in *this*
+# sandbox, for the karma (`grunt karma:chrome`) and selenium (`wdio`) suites.
+# Runs INSIDE a sandbox, like wmf-sbx-gateway-tools.
+#
+# Why this exists: the sbx base image has no browser, and apt cannot supply
+# one -- `chromium` has no candidate, and `chromium-browser` and `firefox`
+# are snap stubs that fail without snapd. The browser therefore comes from
+# the Chrome for Testing CDN, through `@puppeteer/browsers`, which MediaWiki
+# core already has in `node_modules`. The image also misses ten shared
+# libraries that Chrome needs, so apt supplies those.
+#
+# The install is on demand, not at create time: it is about 420 MB, and most
+# sandboxes never run a browser test. It takes under a minute.
+#
+#   mw-install-browser          # install, link, and check
+#
+# Run it again to move to the current stable release.
+#
+# See sbx/DESIGN-testing-instructions.md §5.3 and ~/MEDIAWIKI-TESTING.md §5.
+set -uo pipefail
+
+CACHE="${PUPPETEER_CACHE_DIR:-$HOME/.cache/puppeteer}"
+CORE="${MW_INSTALL_PATH:-}"
+CLI="node_modules/@puppeteer/browsers/lib/cjs/main-cli.js"
+
+# The names Chrome's own docs give. Ubuntu 24.04 and later renamed four of
+# them for the 64-bit `time_t` transition and left the old name as a virtual
+# package with no candidate, so a name with no candidate is retried with a
+# `t64` suffix. See sbx/NOTES.md §86 for the measured list.
+LIBS=(libasound2 libatk-bridge2.0-0 libatk1.0-0 libatspi2.0-0 libgbm1
+      libxcomposite1 libxdamage1 libxfixes3 libxkbcommon0 libxrandr2)
+
+die() { echo "mw-install-browser: $*" >&2; exit 1; }
+# Progress goes to stderr: install_one writes the path it found to stdout.
+step() { echo "mw-install-browser: $*" >&2; }
+
+[ -n "$CORE" ] || die "MW_INSTALL_PATH is not set; run this in a sandbox that has a MediaWiki core checkout"
+[ -f "$CORE/$CLI" ] || die "no $CLI in $CORE; run \`npm ci\` in the core checkout first"
+command -v node >/dev/null || die "need node on PATH"
+
+# 1. The browser and the driver, from the Chrome for Testing CDN.
+#    `install` prints "<name>@<version> <path>" on the last line, and is a
+#    no-op when that version is already in the cache.
+install_one() {
+  local what="$1" out
+  step "downloading $what"
+  out=$(node "$CORE/$CLI" install "$what" --path "$CACHE" 2>&1)
+  if [ $? -ne 0 ]; then
+    echo "$out" >&2
+    case "$out" in
+      *403*) die "the Chrome download was refused with 403. This sandbox's" \
+                 "network policy is narrower than the kit asks for. Only the" \
+                 "engineer can widen it, on the host; report the message above" \
+                 "and stop." ;;
+      *) die "could not install $what" ;;
+    esac
+  fi
+  echo "$out" | awk 'NF { last = $NF } END { print last }'
+}
+
+chrome=$(install_one chrome@stable) || exit 1
+driver=$(install_one chromedriver@stable) || exit 1
+[ -x "$chrome" ] || die "the install did not leave an executable at '$chrome'"
+[ -x "$driver" ] || die "the install did not leave an executable at '$driver'"
+
+# 2. The shared libraries Chrome links against.
+step "installing the shared libraries Chrome needs"
+wanted=()
+for lib in "${LIBS[@]}"; do
+  # A virtual package prints "(none)". Do not pipe into `grep -q` here:
+  # it closes the pipe early, and pipefail then reports the whole test as
+  # a failure.
+  candidate=$(apt-cache policy "$lib" 2>/dev/null | sed -n 's/^  Candidate: //p')
+  if [ -n "$candidate" ] && [ "$candidate" != "(none)" ]; then
+    wanted+=("$lib")
+  else
+    wanted+=("${lib}t64")
+  fi
+done
+sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${wanted[@]}" >/dev/null \
+  || die "apt-get install failed for: ${wanted[*]}"
+
+# 3. The two paths WMF CI uses. CHROME_BIN names /usr/bin/chromium, and the
+#    selenium harness looks for chromedriver on PATH.
+step "linking /usr/bin/chromium and /usr/bin/chromedriver"
+sudo ln -sfn "$chrome" /usr/bin/chromium || die "could not link /usr/bin/chromium"
+sudo ln -sfn "$driver" /usr/bin/chromedriver || die "could not link /usr/bin/chromedriver"
+
+# 4. Prove it starts. Chrome writes D-Bus and network-manager errors to
+#    stderr in a container; they are noise, so show them only on a failure.
+step "checking the browser"
+log=$(mktemp) || die "mktemp failed"
+trap 'rm -f "$log"' EXIT
+dom=$(/usr/bin/chromium --headless --dump-dom about:blank 2>"$log")
+case "$dom" in
+  *"<html"*) ;;
+  *) cat "$log" >&2; die "/usr/bin/chromium did not render about:blank" ;;
+esac
+
+echo "mw-install-browser: ready."
+/usr/bin/chromium --version
+/usr/bin/chromedriver --version

@@ -1,0 +1,112 @@
+#!/bin/bash
+# Usage: git-review-check [REMOTE]
+#
+# REMOTE is the remote git-safe-reset is about to reset onto (its
+# UPSTREAM argument), passed through so this script can tell what kind of
+# "has this been safely preserved somewhere" question actually applies.
+# Omit it to get the original Gerrit-only check.
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+if [ -z "$REPO_ROOT" ]; then
+    echo "Not inside a git repository." >&2
+    exit 1
+fi
+
+REMOTE="$1"
+
+# `local` (sbx's own remote name for the host mirror, inside a sandbox)
+# and a sandbox remote (the host's remote into a sandbox's clone, added by
+# wmf_sbx_remotes.py) are never Gerrit -- neither side of that remote is
+# ever going to show up in a `commit:<hash>` search. But the question
+# git-review-check exists to answer -- "would resetting past HEAD destroy
+# work that only exists here" -- still applies, and for these remotes it
+# has an entirely local answer: has HEAD already reached the far side of
+# REMOTE? If so, a copy already lives wherever REMOTE points, and there is
+# nothing the reset would lose. cananian, 2026-09-08 (sbx/NOTES.md "Still
+# to do"): without this, `git safe-reset <name>` on the host and
+# `git safe-reset local` inside a sandbox both failed this gate outright,
+# because the Gerrit check is the wrong question for either direction.
+#
+# Which remotes qualify is deliberately *not* a name-prefix guess
+# (cananian, 2026-09-08, refining the first version of this fix): a host
+# repo could have an unrelated remote literally named `local`, or one a
+# person named `sandbox-something` themselves, and either would silently
+# get the (weaker, local-only) check instead of the real Gerrit one.
+#   - `local` only qualifies when we can tell we're actually running
+#     inside a sandbox, via $SANDBOX_NAME -- set by Docker Sandboxes
+#     itself (confirmed present in a live sandbox, sbx/NOTES.md #24-ish),
+#     not something a host repo's remote naming can spoof.
+#   - any other REMOTE qualifies only if wmf-sbx's own host-side state
+#     (~/.local/state/wmf-sbx/sandboxes/*.json, one file per sandbox --
+#     see wmf_sbx_state.py) actually lists REMOTE among the remotes it
+#     wired up for *this* repo. That state is written by
+#     wmf_sbx_remotes.py's sync_remotes() when `wmf-sbx-create` adds the
+#     remote, so it reflects what sbx actually did, not what the remote
+#     happens to be called. `wmf-sbx-ls-remotes` (sbx/bin/, same
+#     directory as this script when running from a checkout) is the
+#     standalone tool that does that state-file lookup; git-review-check
+#     just asks it whether REMOTE is in the list.
+is_local_check_target() {
+    if [ "$1" = "local" ]; then
+        [ -n "$SANDBOX_NAME" ] && return 0
+        return 1
+    fi
+    LS_REMOTES=""
+    SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+    if [ -x "$SCRIPT_DIR/wmf-sbx-ls-remotes" ]; then
+        LS_REMOTES="$SCRIPT_DIR/wmf-sbx-ls-remotes"
+    else
+        LS_REMOTES=$(command -v wmf-sbx-ls-remotes 2>/dev/null)
+    fi
+    [ -n "$LS_REMOTES" ] || return 1
+    "$LS_REMOTES" --path "$REPO_ROOT" 2>/dev/null | grep -Fqx -- "$1"
+}
+
+if [ -n "$REMOTE" ] && is_local_check_target "$REMOTE"; then
+    # Cheap and idempotent even when git-safe-reset already ran
+    # `git remote update` for every remote moments ago -- and it's
+    # what makes this correct when git-review-check is run by hand.
+    git remote update "$REMOTE" >/dev/null 2>&1
+    read -r HASH SUBJECT <<< "$(git log -1 --format="%H %s")"
+    MATCHES=$(git for-each-ref --contains=HEAD --format='%(refname)' \
+        "refs/remotes/$REMOTE/*" 2>/dev/null)
+    if [ -n "$MATCHES" ]; then
+        echo "HEAD already reachable from '$REMOTE'"
+        exit 0
+    else
+        echo "Not yet reachable from '$REMOTE':" >&2
+        echo "$HASH $SUBJECT" >&2
+        exit 1
+    fi
+fi
+
+GITREVIEW="$REPO_ROOT/.gitreview"
+if [ ! -f "$GITREVIEW" ]; then
+    echo "No .gitreview found; cannot check Gerrit." >&2
+    exit 1
+fi
+
+GERRIT_HOST=$(grep '^host=' "$GITREVIEW" | cut -d= -f2 | tr -d '[:space:]')
+if [ -z "$GERRIT_HOST" ]; then
+    echo "Could not parse host from $GITREVIEW." >&2
+    exit 1
+fi
+
+read -r HASH SUBJECT <<< "$(git log -1 --format="%H %s")"
+
+RESPONSE=$(curl -sf "https://${GERRIT_HOST}/r/changes/?q=commit:${HASH}&n=1" 2>/dev/null)
+if [ $? -ne 0 ]; then
+    echo "Could not reach Gerrit at $GERRIT_HOST." >&2
+    exit 1
+fi
+
+# Gerrit prefixes JSON responses with )]}' on the first line
+RESPONSE=$(echo "$RESPONSE" | tail -n +2)
+
+if echo "$RESPONSE" | grep -q '"change_id"'; then
+    echo "All changes uploaded"
+    exit 0
+else
+    echo "Not uploaded to Gerrit:" >&2
+    echo "$HASH $SUBJECT" >&2
+    exit 1
+fi

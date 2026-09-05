@@ -14,8 +14,6 @@
     { "type": "plugin", "path": "hooks/context/nono/environment.txt" },
     { "type": "plugin", "path": "hooks/context/nono/chrome.txt" },
     { "type": "plugin", "path": "hooks/context/nono/chrome-vm.txt" },
-    { "type": "plugin", "path": "hooks/context/sbx/sandbox.txt" },
-    { "type": "plugin", "path": "hooks/context/sbx/environment.txt" },
     { "type": "plugin", "path": "bin/launch-claude.sh" },
     { "type": "plugin", "path": "bin/statusline.sh" },
     { "type": "plugin", "path": "bin/launch-test-chrome" },

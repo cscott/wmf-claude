@@ -1,0 +1,84 @@
+== Purpose ==
+The use of AI tools has become widespread, and is being used today at WMF to assist in software development, security research, and data analysis.
+
+To ensure that its use at WMF is safe and consistent, P&T department leadership is publishing this policy, following our [[Generative AI Usage/Organizational Principles for AI Use|organizational principles on AI use]], to support the use of AI code assistants for technical work for department staff.
+
+Staff should feel confident – and supported with guidance – when they are using AI-based coding assistants for their work.
+
+'''Please note:'''
+
+* '''This is not a policy for volunteer technical contributors, nor is it a general contribution policy for the open source software projects that are managed by the Foundation.'''
+* '''This policy does not address the use of AI to assist in on-wiki content and discussions, which is governed by community policies where they exist.'''
+* '''This document is guidance for Foundation staff only and is subject to change. As this is a rapidly evolving area of technology and of applicable law and regulation, our guidance may also evolve quickly.'''
+* '''If Wikimedia communities establish policies covering AI for technical contribution, we will engage in conversation with communities about our experience with AI, and will consider changes to this policy as appropriate.'''
+
+Our default stance is '''enablement with accountability''': AI coding assistants may be used, but humans continue to be responsible for outcomes.
+
+== Using AI Coding Assistants at the WMF ==
+'''All use of AI coding assistants (whether proprietary or open) must be appropriately constrained through a sandbox, and must not be given access to elevated privileges''', as [[Product & Technology/AI Code Assistants/Secure use guidelines|described in the secure use requirements]].
+
+'''Only [[Product & Technology/AI Code Assistants/Approved assistants|reviewed and documented AI coding assistants]] can be used for non-public data'''. Non-public data is data that can’t be accessed by the general public, and is generally described in our [[foundation:Legal:Wikimedia Foundation Data Retention Guidelines|data retention policy]].
+
+For security, privacy, or other considerations, P&T may introduce further rules around what tools may be used, or how they may be used, as our department gets more experience with AI coding assistants. These will be conveyed clearly to staff and will be documented [[Product & Technology/AI Code Assistants/Secure use guidelines|in the secure use requirements]].
+
+== Your responsibilities as staff ==
+
+=== Accountability ===
+
+* You are accountable for your work. That responsibility does not change when you have used an AI coding assistant. AI-generated outputs must be reviewed, validated, and owned by a human. AI is an assistant, not an authority.
+* You are accountable for ensuring that generated artifacts meet the standards of the Foundation and of your respective teams, and are compatible with the codebase or repository in which you are working. This includes standards of correctness, testability, safety, security, accessibility, and inclusion.
+* You are accountable for the impacts of your use of AI coding assistants, whether intended or unintended. Engineering teams may establish expectations concerning patch volume and review time, whether or not AI is used, that you will need to work within.
+
+=== Transparency ===
+
+* You must not represent AI-generated work as fully human-authored when that distinction matters (e.g., research conclusions, public-facing analysis, or governance decisions).
+* This is especially critical when your work may also include on-wiki participation, where that wiki’s policies might not permit the use of AI assistance for content and discussions.
+* You must disclose when an AI coding assistant has generated a substantial portion of non-trivial code by adding appropriate metadata to the commit. For example, by adding an <code>Assisted-By</code> git trailer (e.g. <code>Assisted-by: Claude Opus 4.7</code>) to the commit message.
+
+=== Security ===
+
+* '''You must use appropriate constraints on AI coding assistants''', as described in the [[Product & Technology/AI Code Assistants/Secure use guidelines|secure use requirements]], on all Wikimedia Foundation systems, as well as '''any''' laptop you use for development of code in a work capacity.
+* If you are unsure what to do in a high-risk situation, consult the [[Product & Technology/AI Code Assistants/Secure use guidelines|secure use requirements]] and ask for advice from colleagues in the #ai-coding Slack channel. We are all learning about this new and rapidly changing technology at the same time, and our security and privacy guidelines will never be able to predict every situation.
+* You are accountable for keeping your API keys and credentials secure, just as you are for other secrets. If you suspect your keys or credentials have been compromised or exposed, you must notify ITS immediately at [mailto:techsupport@wikimedia.org techsupport@wikimedia.org].
+* The vast majority of software developed at WMF is open-source. If you are developing private software, you may use AI coding assistants, but only services [[Product & Technology/AI Code Assistants/Approved assistants|from the approved list]].
+
+=== Privacy and Legal ===
+
+* You must not knowingly introduce proprietary or copyrighted material into Foundation repositories, unless we have express written permission from rights-holders to do so, and such use has been approved by Legal.
+* You must not submit [[Security/Policy/Data Classification|confidential or restricted information]] to AI coding assistants. This includes personally identifiable information about Wikimedia users. Exceptions must be expressly approved by Legal.
+* In general, you should assume that input prompts and generated outputs are logged by service providers.
+
+== Questions & Answers ==
+
+==== Will all software engineers be required to adopt AI coding assistants? ====
+No. Adoption of these tools is based on user demand we see within P&T. This policy is meant to support staff who wish to use AI tools in doing so in a safe and consistent way.
+
+==== Will AI usage be considered in performance reviews? ====
+We evaluate outcomes, not the specific workflow or tools used to achieve them. Whether you use AI or not, your review will continue to be based not only on the quality of your code, but also on your problem-solving skills, ability to collaborate with others, and overall impact. If you have questions about this, please speak with your manager.
+
+==== Will there be different expectations for reviewing AI-generated code? ====
+Engineers should expect to review code that is submitted by their peers, just as they have been. If there are problems with the quality or quantity of code for review submitted, whether or not AI-generated code is used, those problems can be handled through normal managerial and team feedback processes.
+
+==== How do we prevent our review process from being bogged down by an influx of AI-generated code? ====
+This policy regards staff use of AI coding assistants. If staff are engaged in disruptive behavior of any sort, whether intended or not, that is a matter for their manager to address and correct.
+
+==== How do these guidelines align with Wikimedia values and [[foundation:Resolution:Wikimedia Foundation Guiding Principles|guiding principles]]? ====
+These guidelines are meant to align with Foundation values and with the guiding principles, particularly transparency and accountability. Among other things, our values include solving problems better through collaboration, balance individual priorities with our shared collective responsibilities, supporting colleagues, listening with curiosity and candor, and communicating with honesty, clarity, and empathy – all skills we will need to apply if we are to use these tools effectively as an organization.
+
+==== Can contractors get access to these tools? ====
+Contractors can get access to Foundation-licensed software if it is required for their work. Managers can specify the need for specific software in the contractor onboarding request form. Please [[ITS/Policies/Accounts|see this page]] for more details.
+
+==== Does this policy apply to the work of other departments? ====
+This policy applies to all work of the Product and Technology Department, and to any work that affects WMF-deployed wiki production environments.
+
+== Foundation Resources ==
+
+* Legal guidance on [[Generative AI Usage]]
+* [[How to get software]]
+* [[mw:Development guidelines|MediaWiki – Development guidelines]]
+* [[mw:Security for developers|MediaWiki – Security for developers]]
+* [[wikitech:MediaWiki Engineering/Guides/Backend performance practices|MediaWiki – Backend performance practices]]
+* [https://groups.google.com/a/wikimedia.org/g/product-tech-all/c/TYapXbWJBrM Selena’s recommendations for AI-generated code]
+* [https://docs.google.com/spreadsheets/d/1URazs98cozFdnNDAVItp8INwRBFghmRXD8TYmDz-UJY/edit?gid=0#gid=0 The Foundation software catalog with approved tools]
+
+[[Category:AI]]

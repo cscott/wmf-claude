@@ -1,0 +1,51 @@
+This page contains:
+
+# a few specific requirements for secure use of AI coding assistants, and 
+# related tools and recommendations for Product and Technology Department staff. 
+
+This document is referenced by the [[Product & Technology/AI Code Assistants|P&T AI coding assistant policy]], and the requirements section below is mandatory for department staff.
+
+'''We expect this page to be updated regularly''' with additional guidance and to answer staff questions, as WMF use of these tools grows.
+
+== Department-wide secure use requirements ==
+
+In short:
+
+* You must only use [[Product & Technology/AI Code Assistants/Approved assistants|approved AI coding assistants]] for non-public data.
+* You must not transmit PII to third-party AI services without approval from Legal.
+* You must run AI coding assistants in a secure sandbox, which must not be granted access to staff accounts and/or elevated privileges (e.g. on-wiki rights, enterprise collaboration tools, phab/gerrit accounts, SSH access).
+
+=== Approved AI coding assistants ===
+When working with public data, WMF is flexible on allowing staff to use a variety of alternative (including open-source) AI coding assistants. However, '''only''' the AI coding assistants [[Product & Technology/AI Code Assistants/Approved assistants|listed on this page]] may be used with non-public data.
+
+=== Personally identifiable information about Wikimedia users ===
+You must not transmit [[foundation:Policy:Privacy_policy#Definitions|personally identifiable information]] about Wikimedia users into any third-party hosted AI services – including otherwise approved tools  – without specific, explicit approval from Legal.
+
+=== AI sandboxing and elevated privileges ===
+AI coding assistants must be run inside of an independent secure sandbox that constrains the assistant from general-purpose network access, directory traversal, and other privileges.
+
+Elevated WMF privileges must not be made available to this AI sandbox. This includes staff accounts on wikis, enterprise collaboration tools (e.g. Google/Slack/Asana), Phabricator, Gerrit, and SSH/server access.
+
+== Tools and Recommendations ==
+
+=== wmf-claude, a kernel-mediated sandbox ===
+
+To make this straightforward for WMF staff, P&T engineers have initiated the [[gitlab:repos/product-safety-and-integrity/wmf-claude|wmf-claude]] project, which is currently a WMF-optimized wrapper around the [[github:always-further/nono|nono sandbox]]. This project is new, but is designed to provide a simple documented interface to run Claude in a way that makes mistakes by staff less likely and less severe. It is the current recommended path for P&T engineers, and will see the most consistent support and investment.
+
+This sandbox uses kernel-level constraints to restrict access to computing privileges, and is configured to support common WMF engineer needs, like MCP-managed unauthenticated access to Phabricator tasks and patches in Gerrit. It also restricts access to the filesystem and limits network addresses that can be accessed by Claude. It also adds an <code>Assisted-by</code> git trailer to commit messages by default when using Claude to commit changes. More details about wmf-claude are in the [[gitlab:repos/product-safety-and-integrity/wmf-claude|README]].
+
+=== Using Phabricator, Gerrit, and other WMF dev services ===
+
+AI coding assistants are '''not currently approved for''' '''authenticated''' access to Phabricator, Gerrit, Gitlab, GitHub, Google, Slack, Asana, or other WMF-managed services and accounts. 
+
+wmf-claude is designed to enforce this directly, though it also has some dedicated support for '''unauthenticated''' use of developer tools like Phabricator and Gerrit.
+
+If you use other sandboxing tools or want to configure your own approach, you are responsible for ensuring that they do not have access to account credentials.
+
+=== Other tools ===
+
+* The Fundraising Technology team has developed a [[gitlab:repos/fundraising-tech/safe-assistant|secure sandbox wrapper for Claude]].
+* Daniel Kinzler has created a [https://gitlab.wikimedia.org/daniel/claudebox Docker-based sandbox for running Claude].
+* <code>[https://docs.docker.com/ai/sandboxes/ docker sbx]</code> is a kernel-level sandbox for running Claude, which can interact with your filesystem as a git remote.
+
+[[Category:AI]]

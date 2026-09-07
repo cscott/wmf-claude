@@ -1,0 +1,11 @@
+- [sbx redesign project](project_wmf_claude_sbx_redesign.md) — designing an sbx-based replacement for wmf-claude's nono sandboxing; read sbx/NOTES.md §0 first
+- [cananian's workflow](user_cananian_workflow.md) — WMF engineer, multi-repo MediaWiki work, Gerrit-as-WIP-source-of-truth habits
+- [docker docs fetching](feedback_docker_docs_fetching.md) — try `.md` URL suffix, then ask user to `wget -r -p -np -x -k` mirror docs.docker.com
+- [commit proactively in sbx](feedback_commit_proactively_in_sbx.md) — commit finished work without being asked; host reviews via the sbx git daemon/remote
+- [test the image yourself](feedback_test_image_yourself_in_sandbox.md) — I'm in an sbx sandbox; check packages/versions here, only lifecycle questions need the host
+- [verify security by bypass](feedback_verify_security_by_bypass.md) — attempt the bypass; `touch`/`mount` output isn't evidence a restriction holds
+- [negative findings name the surface](feedback_negative_findings_name_the_surface.md) — "not found" ≠ "not there"; say what you searched (GitHub comments need the API, not the page)
+- [stdin=DEVNULL for non-interactive subprocess](feedback_stdin_devnull_for_noninteractive_subprocess.md) — sbx/bin/*.py: fail fast on a stray prompt, don't hang invisibly
+- [agent cwd is load-bearing](project_agent_cwd_is_load_bearing.md) — never move the sandboxed agent's start directory off the real project path; cananian deferred a design over it
+- [Host extension layout](host-extension-layout.md) — `Wikimedia/Extensions/` plus a lowercase `extensions` symlink so phan's relative paths resolve; some repos live elsewhere and break it.
+- [Install missing test tools](install-missing-test-tools.md) — install a missing runner (npm install --no-save) and run the suite; never skip it

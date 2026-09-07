@@ -1,0 +1,37 @@
+schemaVersion: "1"
+kind: mixin
+name: mediawiki-kit
+displayName: MediaWiki Kit
+description: Docker sandbox kit with MediaWiki dependencies
+
+environment:
+  variables:
+    CLAUDE_CODE_DISABLE_1M_CONTEXT: 1
+    MW_INSTALL_PATHX: /home/cananian/Projects/Wikimedia/core
+    MW_INSTALL_PATH: /home/cananian/Projects/Wikimedia/mediawiki-core-clean
+    PARSOID: /home/cananian/Projects/Wikimedia/Parsoid
+    MW_VENDOR_REPO: /home/cananian/Projects/Wikimedia/mediawiki-vendor
+    MW_CORE_REPO: /home/cananian/Projects/Wikimedia/core
+    GERRITUA: "MW-CI-Tools/1.0 (https://wikitech.wikimedia.org/wiki/Gerrit; sre-collaboration-services@wikimedia.org; purpose=gitiles queries) script-requests/1.0"
+
+network:
+  allowedDomains:
+    - "*.wikipedia.org"
+    - "*.wikivoyage.org"
+    - "*.wikibooks.org"
+    - "*.wikiquote.org"
+    - "*.wikidata.org"
+    - "*.wikifunctions.org"
+    - "*.wiktionary.org"
+    - "*.wikiversity.org"
+    - "*.wikisource.org"
+    - "*.mediawiki.org"
+    - "*.wikimedia.org"
+    - "github.com"
+
+commands:
+  install:
+    - command: |
+        apt-get update
+        apt-get install -y php php-intl php-mbstring php-xml php-apcu php-curl php-sqlite3 php-zip php-gd php-imagick php-ast php-mysql composer imagemagick librsvg2-bin diffutils git-review php-wikidiff2
+        apt-get install -y nano

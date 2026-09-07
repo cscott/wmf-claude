@@ -1,0 +1,54 @@
+# Example ~/.config/wmf-sbx/repos.yaml, matching the walkthrough in
+# sbx/DESIGN-repo-resolution.md. Copy to ~/.config/wmf-sbx/repos.yaml and
+# adjust paths for your own layout -- this file has no special status,
+# it's just a starting point (and a test fixture for wmf_sbx_resolve.py).
+
+rules:
+  # Exact, one-off mappings (no wildcard) always win over any wildcard rule
+  # for the same path.
+  - match: "gerrit:mediawiki/core"
+    path: "~/Wikimedia/core"
+  - match: "gerrit:mediawiki/services/parsoid"
+    path: "~/Wikimedia/Parsoid"
+
+  # {name} captures the final path segment.
+  - match: "gerrit:mediawiki/extensions/{name}"
+    path: "~/Wikimedia/Extensions/{name}"
+  - match: "gerrit:mediawiki/skins/{name}"
+    path: "~/Wikimedia/Skins/{name}"
+
+  # A more specific rule for a prefix that would otherwise collide with the
+  # catch-all below (a bare "{name}" directory for an analytics project once
+  # collided with something already checked out under that generic name).
+  - match: "gerrit:analytics/{name}"
+    path: "~/Wikimedia/analytics-{name}"
+
+  # ** matches zero or more leading segments. This is the fallback: any
+  # project not covered above lands flat in ~/Wikimedia/<final-name>.
+  - match: "gerrit:**/{name}"
+    path: "~/Wikimedia/{name}"
+
+  # gitlab: is a separate namespace so a future GitLab-hosted project never
+  # collides with a Gerrit one under the same rule set.
+  - match: "gitlab:**/{name}"
+    path: "~/Wikimedia/{name}"
+
+# Dependencies not captured by extension.json's `requires` field -- the few
+# CI-only oddballs tracked by integration/config's utils/mw-requires.py (see
+# sbx/NOTES.md), or an in-progress dependency a user is adding to an
+# extension.json that hasn't landed yet. Keyed by canonical path. Not yet
+# consumed by any tooling (Layer C future work) -- shown here only to
+# document the shape.
+extra_dependencies: {}
+  # gerrit:mediawiki/extensions/Example:
+  #   - gerrit:mediawiki/extensions/OtherThing
+
+# Personal additions to the auto-generated MediaWiki kit (see
+# sbx/DESIGN-kit-generation.md) -- for anything that's a preference, not a
+# shared MediaWiki dependency, so it doesn't belong in wmf-claude's
+# upstreamed defaults. Applied after the auto-wired MW_CORE_REPO-style
+# variables and the base package list, respectively.
+extra_environment: {}
+  # GERRITUA: "MW-CI-Tools/1.0 (https://wikitech.wikimedia.org/wiki/Gerrit; you@example.org; purpose=gitiles queries) script-requests/1.0"
+extra_packages: []
+  # - nano

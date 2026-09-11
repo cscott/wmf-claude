@@ -833,20 +833,138 @@ if ! grep -q 'managed Docker broker' <<<"$out" && ! grep -q 'no broker handshake
   pass "--docker after -- is not treated as a wrapper flag"; else fail "--docker after -- was wrongly consumed"; fi
 rm -rf "$DOCKER_CWD"
 
-echo "--- session-start hook: Docker broker routing ---"
+echo "--- session-start hook: backend-aware context ---"
+HOOK="$REPO_ROOT/bin/session-start.sh"
+
+# The default backend is nono, and its text is the text this hook used to
+# hardcode. If this regresses, every existing nono user's SessionStart block
+# silently changes.
+# Compare the whole output, byte for byte, with a stored copy. The copies are
+# the output of the hook before the backend seam, plus the skills that were
+# missing from its list. Unset both selectors, so that the test does not
+# depend on the environment of the engineer who runs it.
+FIXTURES="$REPO_ROOT/tests/fixtures/session-start"
+if diff -u "$FIXTURES/nono.txt" \
+     <(env -u WMF_CLAUDE_SANDBOX_BACKEND -u WMF_CLAUDE_DOCKER_MODE -u WMF_DOCKER_BROKER_URL \
+         bash "$HOOK" 2>/dev/null) >/dev/null; then
+  pass "session-start default output is byte-identical to the nono fixture"
+else
+  fail "session-start default output differs from tests/fixtures/session-start/nono.txt"
+fi
+if diff -u "$FIXTURES/nono-broker.txt" \
+     <(env -u WMF_CLAUDE_SANDBOX_BACKEND -u WMF_CLAUDE_DOCKER_MODE \
+         WMF_DOCKER_BROKER_URL=http://127.0.0.1:5000 bash "$HOOK" 2>/dev/null) >/dev/null; then
+  pass "session-start default output with a broker is byte-identical to the nono-broker fixture"
+else
+  fail "session-start broker output differs from tests/fixtures/session-start/nono-broker.txt"
+fi
+
+# A wrong sandbox paragraph is worse than a missing one: the sbx block must not
+# describe nono, and vice versa.
+sbx_out="$(WMF_CLAUDE_SANDBOX_BACKEND=sbx bash "$HOOK" 2>/dev/null)"
+# (The skills list still names /wmf-claude:check-nono-update under every
+# backend -- an offered skill that happens not to apply is harmless, unlike a
+# claim about the environment. So match the paragraph, not the word "nono".)
+if grep -q 'sandboxed by sbx' <<<"$sbx_out" \
+   && ! grep -q 'sandboxed by nono' <<<"$sbx_out" \
+   && ! grep -q 'wmf-engineer profile' <<<"$sbx_out"; then
+  pass "session-start emits the sbx paragraph and no nono sandbox text under WMF_CLAUDE_SANDBOX_BACKEND=sbx"
+else
+  fail "session-start's sbx output is wrong (missing sbx text, or still describes the nono sandbox)"
+fi
+
+# Nor may it claim MCP servers or a launcher flag that the backend doesn't have.
+if ! grep -q 'bin/claude --local-web' <<<"$sbx_out" \
+   && ! grep -q -- '--allow-post' <<<"$sbx_out" \
+   && ! grep -q -- '--local-db' <<<"$sbx_out" \
+   && ! grep -q 'read-only (GET/HEAD)' <<<"$sbx_out" \
+   && ! grep -q 'MCP servers are registered' <<<"$sbx_out"; then
+  pass "session-start's sbx output claims no nono-only launcher flags or MCP servers"
+else
+  fail "session-start's sbx output still claims nono-only launcher flags or MCP servers"
+fi
+
+# Fail closed: an unknown backend gets no sandbox text at all, warns on stderr,
+# and still emits the backend-agnostic bullets.
+unknown_err="$(mktemp)"
+unknown_out="$(WMF_CLAUDE_SANDBOX_BACKEND=definitely-not-a-backend bash "$HOOK" 2>"$unknown_err")"
+if ! grep -q 'sandboxed by' <<<"$unknown_out" && grep -q 'stage-hunks' <<<"$unknown_out"; then
+  pass "session-start omits the sandbox paragraph for an unknown backend, keeping the rest"
+else
+  fail "session-start emitted sandbox text for an unknown backend, or dropped the shared bullets"
+fi
+if grep -q "no sandbox context for backend 'definitely-not-a-backend'" "$unknown_err"; then
+  pass "session-start warns on stderr about an unknown backend"
+else
+  fail "session-start is silent about an unknown backend"
+fi
+rm -f "$unknown_err"
+
+# Adding a backend must not half-land: both files or neither.
+for d in "$REPO_ROOT"/hooks/context/*/; do
+  [[ -d "$d" ]] || continue
+  if [[ -r "$d/sandbox.txt" && -r "$d/environment.txt" ]]; then
+    pass "backend context complete: $(basename "$d")"
+  else
+    fail "backend context incomplete: $(basename "$d") is missing sandbox.txt or environment.txt"
+  fi
+done
+
+echo "--- session-start hook: container-tooling routing ---"
 # The hook is the always-present, repo-agnostic signal that tells Claude to run
-# dev tools via mwdocker. It must stay silent unless the broker is attached.
-if [[ "$(WMF_DOCKER_BROKER_URL='' bash "$REPO_ROOT/bin/session-start.sh" | grep -c mwdocker)" == "0" ]]; then
+# dev tools via mwdocker. It must stay silent unless the tooling really is in a
+# container.
+if [[ "$(WMF_DOCKER_BROKER_URL='' bash "$HOOK" 2>/dev/null | grep -c mwdocker)" == "0" ]]; then
   pass "session-start says nothing about mwdocker without a broker"
 else
   fail "session-start mentions mwdocker even without a broker"
 fi
-if WMF_DOCKER_BROKER_URL=http://127.0.0.1:5000 bash "$REPO_ROOT/bin/session-start.sh" \
+if WMF_DOCKER_BROKER_URL=http://127.0.0.1:5000 bash "$HOOK" 2>/dev/null \
    | grep -q 'prefixing them with `mwdocker`'; then
   pass "session-start tells Claude to use mwdocker when a broker is attached"
 else
   fail "session-start does not route to mwdocker when a broker is attached"
 fi
+# `native` is the broker-less container case: the skills still call mwdocker.
+if WMF_CLAUDE_DOCKER_MODE=native bash "$HOOK" 2>/dev/null | grep -q mwdocker; then
+  pass "session-start routes to mwdocker in native mode with no broker URL"
+else
+  fail "session-start does not route to mwdocker in native mode"
+fi
+# An explicit mode overrides the broker-URL inference, so a backend that runs
+# PHP natively can say so even if a stale broker URL is in the environment.
+if [[ "$(WMF_CLAUDE_DOCKER_MODE=none WMF_DOCKER_BROKER_URL=http://127.0.0.1:5000 \
+         bash "$HOOK" 2>/dev/null | grep -c mwdocker)" == "0" ]]; then
+  pass "an explicit WMF_CLAUDE_DOCKER_MODE=none beats a set broker URL"
+else
+  fail "WMF_CLAUDE_DOCKER_MODE=none did not override the broker URL"
+fi
+mode_err="$(mktemp)"
+if [[ "$(WMF_CLAUDE_DOCKER_MODE=sideways bash "$HOOK" 2>"$mode_err" | grep -c mwdocker)" == "0" ]] \
+   && grep -q 'unknown WMF_CLAUDE_DOCKER_MODE' "$mode_err"; then
+  pass "an unknown docker mode emits no block and warns"
+else
+  fail "an unknown docker mode was not handled safely"
+fi
+rm -f "$mode_err"
+
+echo ""
+echo "--- skill list consistency ---"
+# The skill list lives in three places (skills/, package.json artifacts, and
+# the session-start hook). It has drifted before; assert all three agree.
+hook_out="$(bash "$HOOK" 2>/dev/null)"
+for d in "$REPO_ROOT"/skills/*/; do
+  name="$(basename "$d")"
+  [[ -f "$d/SKILL.md" ]] || continue
+  listed=1
+  jq -e --arg p "skills/$name/SKILL.md" \
+     'any(.artifacts[]; .path == $p)' "$REPO_ROOT/package.json" >/dev/null || listed=0
+  if [[ "$listed" == 1 ]] && grep -q "/wmf-claude:$name" <<<"$hook_out"; then
+    pass "skill listed in package.json and session-start: $name"
+  else
+    fail "skill missing from package.json artifacts or session-start: $name"
+  fi
+done
 
 echo ""
 echo "--- bin/claude update prompt ---"

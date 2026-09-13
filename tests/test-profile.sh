@@ -203,7 +203,7 @@ done
 echo ""
 echo "--- Network: docs domains are read-only (GET/HEAD) ---"
 DOCS_READ_ONLY=(docs.python.org docs.rs doc.rust-lang.org developer.mozilla.org \
-                nodejs.org pkg.go.dev www.php.net php.net)
+                nodejs.org pkg.go.dev www.php.net php.net vuejs.org "*.vuejs.org")
 for d in "${DOCS_READ_ONLY[@]}"; do
   # Object entry whose endpoints are non-empty, all read methods (GET/HEAD), and
   # include at least one GET (so write verbs 403 while reads still resolve).

@@ -13,7 +13,7 @@ bold "  wmf-claude setup"; echo ""
 dim "  Security sandbox for Claude Code at WMF"; echo ""
 echo ""
 dim "  This will:"; echo ""
-dim "    - Pull the always-further/claude nono pack (Claude Code integration)"; echo ""
+dim "    - Pull the nolabs-ai/claude nono pack (Claude Code integration)"; echo ""
 dim "    - Vendor MCP server dependencies (npm + pip/uv) in this checkout"; echo ""
 dim "    - Register phabricator + gerrit MCP servers globally in Claude Code"; echo ""
 dim "    - Install a 'claude' alias (~/.zshrc, ~/.bashrc, or fish conf.d)"; echo ""
@@ -81,7 +81,7 @@ if [[ ${#MISSING[@]} -gt 0 ]]; then
     HINTS=""
     for cmd in "${MISSING[@]}"; do
       case "$cmd" in
-        nono)     HINT="brew install nono   (or .deb / .rpm from https://github.com/always-further/nono/releases)" ;;
+        nono)     HINT="brew install nono   (or .deb / .rpm from https://github.com/nolabs-ai/nono/releases)" ;;
         claude)   HINT="brew install --cask claude-code   (or: curl -fsSL https://claude.ai/install.sh | bash)" ;;
         node|npm) HINT="brew install node   (or: sudo apt install nodejs npm)" ;;
         python3)  HINT="brew install python3   (or: sudo apt install python3)" ;;

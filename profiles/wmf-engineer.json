@@ -148,6 +148,8 @@
       { "domain": "pkg.go.dev", "endpoints": [ { "method": "GET", "path": "/**" }, { "method": "HEAD", "path": "/**" } ] },
       { "domain": "www.php.net", "endpoints": [ { "method": "GET", "path": "/**" }, { "method": "HEAD", "path": "/**" } ] },
       { "domain": "php.net", "endpoints": [ { "method": "GET", "path": "/**" }, { "method": "HEAD", "path": "/**" } ] },
+      { "domain": "vuejs.org", "endpoints": [ { "method": "GET", "path": "/**" }, { "method": "HEAD", "path": "/**" } ] },
+      { "domain": "*.vuejs.org", "endpoints": [ { "method": "GET", "path": "/**" }, { "method": "HEAD", "path": "/**" } ] },
       "*.wikibooks.org",
       "*.wikiquote.org",
       "*.wikivoyage.org",

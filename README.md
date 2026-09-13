@@ -2,7 +2,7 @@
 
 Reduce the risk of using [Claude Code](https://claude.ai/code)
 as a Wikimedia Foundation engineer. Claude runs inside a
-[nono](https://github.com/always-further/nono) sandbox
+[nono](https://github.com/nolabs-ai/nono) sandbox
 with Phabricator and Gerrit MCP integration, scoped
 network access (Wikimedia + language docs), and
 defense-in-depth permission rules to reduce the risk of
@@ -38,7 +38,7 @@ and Fedora / RHEL (dnf/COPR).
 `setup.sh` checks for these and exits with install hints if any are
 missing. Install them up front:
 
-- **[nono](https://github.com/always-further/nono)** 0.61+, the sandbox runtime (tested version is pinned in [`.nono-version`](./.nono-version); CI installs that version)
+- **[nono](https://github.com/nolabs-ai/nono)** 0.63+, the sandbox runtime (tested version is pinned in [`.nono-version`](./.nono-version); CI installs that version)
 
   macOS:
 
@@ -47,15 +47,16 @@ missing. Install them up front:
   ```
 
   Debian / Ubuntu (download the `.deb` from
-  [GitHub Releases](https://github.com/always-further/nono/releases)):
+  [GitHub Releases](https://github.com/nolabs-ai/nono/releases)):
 
   ```bash
   NONO_VERSION=$(cat .nono-version)
-  wget "https://github.com/always-further/nono/releases/download/v${NONO_VERSION}/nono-cli_${NONO_VERSION}_$(dpkg --print-architecture).deb"
+  wget "https://github.com/nolabs-ai/nono/releases/download/v${NONO_VERSION}/nono-cli_${NONO_VERSION}_$(dpkg --print-architecture).deb"
   sudo dpkg -i "nono-cli_${NONO_VERSION}_$(dpkg --print-architecture).deb"
   ```
 
-  Fedora (official COPR repository):
+  Fedora (official COPR repository — still under the upstream project's former
+  `always-further` name, unlike the GitHub links above):
 
   ```bash
   sudo dnf install 'dnf-command(copr)'
@@ -64,11 +65,11 @@ missing. Install them up front:
   ```
 
   Fedora / RHEL manual RPM fallback (download the `.rpm` from
-  [GitHub Releases](https://github.com/always-further/nono/releases)):
+  [GitHub Releases](https://github.com/nolabs-ai/nono/releases)):
 
   ```bash
   NONO_VERSION=$(cat .nono-version)
-  wget "https://github.com/always-further/nono/releases/download/v${NONO_VERSION}/nono-cli-${NONO_VERSION}-1.$(rpm -E %_arch).rpm"
+  wget "https://github.com/nolabs-ai/nono/releases/download/v${NONO_VERSION}/nono-cli-${NONO_VERSION}-1.$(rpm -E %_arch).rpm"
   sudo dnf install "./nono-cli-${NONO_VERSION}-1.$(rpm -E %_arch).rpm"
   ```
 
@@ -116,7 +117,8 @@ Have your **Phabricator username** handy too (the one you log into
 
 After you press Enter, it:
 
-1. Pulls the always-further/claude nono pack (the base profile + hooks).
+1. Pulls the nolabs-ai/claude nono pack (the base profile + hooks), removing the
+   superseded always-further/claude pack first if it is still installed.
 2. Updates Claude Code to the current version.
 3. Builds both MCP servers (npm + pip/uv) in this checkout.
 4. Registers the phabricator + gerrit MCP servers globally with Claude Code.

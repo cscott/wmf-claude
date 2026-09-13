@@ -29,7 +29,7 @@ fi
 
 # Floor (keep in sync with package.json min_nono_version); the base pack
 # requires it. .nono-version holds the recommended version CI installs.
-NONO_MIN="0.61.0"
+NONO_MIN="0.63.0"
 NONO_RECOMMENDED=$(tr -d '[:space:]' < "$ROOT/.nono-version" 2>/dev/null || echo "")
 NONO_VER=$(nono --version 2>/dev/null | awk '{print $2}')
 if [[ -z "$NONO_VER" ]]; then
@@ -50,14 +50,31 @@ if [[ -n "$NONO_RECOMMENDED" && "$NONO_VER" != "$NONO_RECOMMENDED" ]]; then
 fi
 
 # Base pack the wmf-engineer profile extends (Claude Code hooks, base policies).
-step "Pulling always-further/claude nono pack"
+# Upstream renamed the org always-further -> nolabs-ai. The old pack is frozen
+# at 0.0.16, whose profile still uses the `undo` key that nono 0.77 removed, so
+# every run fails to parse. Remove it before pulling: it also owns
+# ~/.config/nono/profile-drafts/.nono-claude-pack-marker, and the new pack
+# refuses to overwrite a file another pack wrote.
+step "Pulling nolabs-ai/claude nono pack"
 if nono list --installed --silent --json 2>/dev/null | grep -q '"always-further/claude":'; then
+  dim "    (removing the superseded always-further/claude pack)"; echo ""
+  if ! nono remove always-further/claude --silent; then
+    fail "Failed to remove always-further/claude — remove it manually, then re-run setup"
+    exit 1
+  fi
+fi
+# Left behind if the old pack was removed by hand; blocks the new pull.
+STALE_MARKER="${XDG_CONFIG_HOME:-$HOME/.config}/nono/profile-drafts/.nono-claude-pack-marker"
+if [[ -e "$STALE_MARKER" ]] && ! nono list --installed --silent --json 2>/dev/null | grep -q '"nolabs-ai/claude":'; then
+  rm -f "$STALE_MARKER"
+fi
+if nono list --installed --silent --json 2>/dev/null | grep -q '"nolabs-ai/claude":'; then
   ok "Already installed"
 else
-  if nono pull always-further/claude --silent; then
-    ok "Pulled always-further/claude"
+  if nono pull nolabs-ai/claude --silent; then
+    ok "Pulled nolabs-ai/claude"
   else
-    fail "Failed to pull always-further/claude — check network access to the nono registry"
+    fail "Failed to pull nolabs-ai/claude — check network access to the nono registry"
     exit 1
   fi
 fi

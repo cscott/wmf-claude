@@ -13,10 +13,12 @@ test:
     # setup.sh). Bump that file via the /wmf-claude:check-nono-update skill.
     - VERSION=$(tr -d '[:space:]' < .nono-version)
     - ARCH=$(dpkg --print-architecture)
-    - wget -q "https://github.com/always-further/nono/releases/download/v${VERSION}/nono-cli_${VERSION}_${ARCH}.deb"
+    - wget -q "https://github.com/nolabs-ai/nono/releases/download/v${VERSION}/nono-cli_${VERSION}_${ARCH}.deb"
     - dpkg -i "nono-cli_${VERSION}_${ARCH}.deb"
-    # The claude-code base profile lives in the always-further/claude pack as of nono 0.44.
-    - nono pull always-further/claude --silent
+    # The claude-code base profile lives in the nolabs-ai/claude pack. It was
+    # always-further/claude until the upstream org renamed; that pack is frozen
+    # at a pre-0.77 schema and no longer parses.
+    - nono pull nolabs-ai/claude --silent
   script:
     - ./tests/test-templates.sh
     - ./tests/test-profile.sh

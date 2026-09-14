@@ -10,6 +10,49 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=bin/lib-output.sh
 source "$ROOT/bin/lib-output.sh"
 
+# Answers this script asks for that should survive a re-run, a reinstall,
+# or a `claude mcp remove`. Until now the only copy of the Phabricator
+# username was the Claude Code registration we write it into, which makes
+# a tool's internal state double as our config: anything else that needs
+# the answer has to scrape `claude mcp get`, and the answer disappears if
+# the registration is ever dropped. Same directory setup.sh already uses
+# for the docker-egress overrides.
+#
+# Not a secret store. Nothing here is a credential -- the Phabricator MCP
+# server reads public data anonymously and the username is only a default
+# filter -- so this is plain JSON with ordinary permissions.
+WMF_CLAUDE_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/wmf-claude"
+WMF_CLAUDE_CONFIG="$WMF_CLAUDE_CONFIG_DIR/config.json"
+
+# config_get KEY -- the stored string value, or nothing. Never fails: a
+# missing or unreadable file is simply "no answer stored".
+config_get() {
+  [[ -f "$WMF_CLAUDE_CONFIG" ]] || return 0
+  jq -r --arg k "$1" \
+    'if (.[$k] | type) == "string" then .[$k] else empty end' \
+    "$WMF_CLAUDE_CONFIG" 2>/dev/null || true
+}
+
+# config_set KEY VALUE -- store one key, preserving every other key.
+# Refuses to write over a file that is not valid JSON rather than
+# silently discarding whatever a future version of this put there.
+config_set() {
+  local key="$1" value="$2" existing='{}' tmp
+  if [[ -f "$WMF_CLAUDE_CONFIG" ]] && ! existing=$(jq -c . "$WMF_CLAUDE_CONFIG" 2>/dev/null); then
+    fail "$WMF_CLAUDE_CONFIG is not valid JSON — leaving it alone"
+    return 1
+  fi
+  mkdir -p "$WMF_CLAUDE_CONFIG_DIR" || return 1
+  tmp=$(mktemp "$WMF_CLAUDE_CONFIG.XXXXXX") || return 1
+  if printf '%s' "$existing" \
+     | jq --arg k "$key" --arg v "$value" '.[$k] = $v' >"$tmp"; then
+    mv -f "$tmp" "$WMF_CLAUDE_CONFIG"
+  else
+    rm -f "$tmp"
+    return 1
+  fi
+}
+
 # Runtime + build deps (this script also runs wmf-claude-build).
 step "Checking dependencies"
 MISSING=()
@@ -145,10 +188,13 @@ dim "    anonymously — no auth token, public data only. Your username is the";
 dim "    default subscriber filter, so \"show my tasks\" returns yours."; echo ""
 echo ""
 
-# Recall the previous username so upgrades don't force a retype (from the public
-# `mcp get` output, not ~/.claude.json).
-DEFAULT_PHAB_USER=""
-if EXISTING_MCP=$(claude mcp get phabricator 2>/dev/null); then
+# Recall the previous username so upgrades don't force a retype: from our
+# own config first, then -- for an install made before that file existed --
+# from the public `mcp get` output, which is where this answer used to
+# live. The fallback is what stops this change from making every existing
+# user retype once.
+DEFAULT_PHAB_USER=$(config_get phabricatorUsername)
+if [[ -z "$DEFAULT_PHAB_USER" ]] && EXISTING_MCP=$(claude mcp get phabricator 2>/dev/null); then
   DEFAULT_PHAB_USER=$(printf '%s\n' "$EXISTING_MCP" \
     | grep -o 'PHABRICATOR_USERNAME=[^[:space:]"]*' \
     | head -n1 | cut -d= -f2- || true)
@@ -162,6 +208,16 @@ fi
 if [[ -z "$PHAB_USER" ]]; then
   fail "Phabricator username is required."
   exit 1
+fi
+
+# Store it before registering: the whole point is that the answer outlives
+# the registration. Not fatal -- an unwritable config directory should not
+# stop a setup that is otherwise fine, it just means the next run asks
+# again.
+if config_set phabricatorUsername "$PHAB_USER"; then
+  ok "saved to $WMF_CLAUDE_CONFIG"
+else
+  fail "Could not save to $WMF_CLAUDE_CONFIG — continuing; the next run will ask again"
 fi
 
 claude mcp remove --scope user phabricator >/dev/null 2>&1 || true

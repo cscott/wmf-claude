@@ -159,6 +159,7 @@
       "*.wikifunctions.org",
       "codesearch.wmcloud.org",
       "codesearch-backend.wmcloud.org",
+      "*.local.wmftest.net",
       "api.minimax.io"
     ],
     "open_port": [3306]

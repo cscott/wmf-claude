@@ -199,7 +199,8 @@ done
 # that permit only read methods (GET, HEAD). Any endpoint rule forces nono TLS
 # interception, so a write request (POST/PUT/...) is rejected with 403 before it
 # leaves the sandbox. We assert the structure here; the live GET=200 / POST=403
-# check is in SECURITY.md (needs external egress, cannot run nested in a sandbox).
+# check is in docs/security-rationale.md (needs external egress, cannot run
+# nested in a sandbox).
 echo ""
 echo "--- Network: docs domains are read-only (GET/HEAD) ---"
 DOCS_READ_ONLY=(docs.python.org docs.rs doc.rust-lang.org developer.mozilla.org \

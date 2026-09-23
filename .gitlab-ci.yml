@@ -8,7 +8,7 @@ test:
   stage: test
   image: debian:bookworm-slim
   before_script:
-    - apt-get update -qq && apt-get install -y -qq wget curl jq python3 >/dev/null 2>&1
+    - apt-get update -qq && apt-get install -y -qq wget curl jq python3 git >/dev/null 2>&1
     # Pinned via .nono-version (the single source of truth, also consumed by
     # setup.sh). Bump that file via the /wmf-claude:check-nono-update skill.
     - VERSION=$(tr -d '[:space:]' < .nono-version)

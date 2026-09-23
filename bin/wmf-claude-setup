@@ -254,6 +254,10 @@ else
   ok "Added 'claude' alias to $RC_DISPLAY"
 fi
 
+# A self-update that was interrupted after its merge leaves this marker so
+# bin/claude keeps warning. Reaching here means setup finished, so clear it.
+rm -f "${XDG_CACHE_HOME:-$HOME/.cache}/wmf-claude/update-pending" 2>/dev/null || true
+
 echo ""
 echo "  $(green "Done.") Restart your shell or run: $(bold "source $RC_DISPLAY")"
 echo ""

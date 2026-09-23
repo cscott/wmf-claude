@@ -1,518 +1,208 @@
 # Security model
 
-Threat model and design rationale for the wmf-engineer nono profile and the
-bundled Claude Code permission settings.
+**The short version:** Claude Code runs under a kernel-enforced sandbox —
+Seatbelt on macOS, Landlock on Linux. It reads and writes the directory you
+launched it from, talks to Wikimedia sites and the Claude API, and little else.
+SSH keys, shell configs, password managers, and browser profiles are denied, and
+SSH push is blocked.
 
-## Two layers of restriction
+Two layers enforce that, and they are not equally strong:
 
-1. **OS-level (nono / Seatbelt)** — `profiles/wmf-engineer.json`. Restricts
-   filesystem, network, environment variables, signals, and Mach services for
-   the entire Claude Code process tree.
-2. **Tool-level (Claude Code permissions)** — `wiring/settings-merge.json`.
-   Restricts what Claude itself can invoke via its tools (`Bash`, `Read`,
-   `Edit`, `Write`, `WebFetch`). Applied by the nono pack at install time;
-   **not** applied by `setup.sh` for local-dev installs (copy fragments by
-   hand if you want them today).
+| Layer | Defined in | Restricts | Enforced by |
+|---|---|---|---|
+| OS | `profiles/wmf-engineer.json` | Filesystem, network, env vars, signals, Mach services, for the whole process tree | nono → [Seatbelt](https://nono.sh/docs/cli/internals/seatbelt) / [Landlock](https://nono.sh/docs/cli/internals/landlock) |
+| Tool | `wiring/settings-merge.json` | What Claude may invoke via `Bash`, `Read`, `Edit`, `Write`, `WebFetch` | Claude Code |
 
-When changing one layer, consider whether the other should change too.
+The OS layer is the real boundary. The tool layer is defense in depth, and it
+covers one thing the OS layer cannot: `WebFetch` runs on Anthropic's servers,
+not your laptop, so nono can't gate it. It is set to `ask`, which makes it the
+most important rule in that layer.
 
-## Network
+`bin/claude` applies the tool layer per launch, passing
+`--settings wiring/settings-merge.json` to the sandboxed Claude Code. It is
+**not** installed into your `~/.claude/settings.json`, so these rules bind
+wmf-claude sessions only and every other Claude Code session on the machine
+stays exactly as you configured it. No pack is published today, and `package.json` no longer declares this file
+as a pack wiring directive — the pack would otherwise have installed it
+machine-wide, which is what per-launch replaced.
 
-- Deny by default — `network_profile: minimal` (Anthropic LLM API endpoints only).
-- Allowlisted: `console.anthropic.com`, `claude.ai`, `*.claudeusercontent.com`
-  (artifact content, see "Artifact content host" below), Wikimedia + wiki-family
-  domains, `codesearch{,-backend}.wmcloud.org`, language doc sites
-  (`php.net`, MDN, `docs.python.org`, `docs.rs`, `doc.rust-lang.org`,
-  `nodejs.org`, `pkg.go.dev`; read-only, see "Method-restricted domains" below),
-  `api.minimax.io`.
-- `network.open_port: [3306]` — local MariaDB connections allowed. Port 9222
-  (chrome-devtools CDP) is **not** in the static profile; `bin/claude --chrome`
-  passes `--open-port 9222` per-invocation so plain `bin/claude` sessions
-  cannot reach a leftover test Chrome.
-- `bin/claude --local-web` passes `--open-port` for 80/443/8080 per-invocation for
-  curl-based testing against a local dev wiki (the cheap "Tier 1" path that the
-  `manual-test` skill prefers over the chrome-devtools MCP). `--local-web=PORT`
-  (comma-separated for several) narrows to just the ports a given setup needs;
-  values are validated as TCP ports before reaching the nono command. `--chrome`
-  implies the default set. `--open-port` is **localhost-only** (`nono run --help`: "Allow
-  bidirectional localhost TCP on a port"), so this does **not** widen external
-  egress — outbound to the internet stays gated by the allow_domain proxy.
-  Verified with 80/443 open: a raw-IP connect to an external host on those
-  ports still fails, and a non-allowlisted domain is still rejected with a
-  CONNECT-tunnel `403`.
-  Residual risk: while set, the sandboxed agent can reach *any* local service on
-  80/443/8080, not just the wiki. Because `--chrome` implies `--local-web`,
-  browser sessions carry this same local-service reach on top of the CDP port.
-  Bounded, and kept off the static profile so it applies only to opt-in sessions.
-- SSH push (port 22, including Gerrit's 29418) is unreachable. HTTPS push to
-  Wikimedia hosts is reachable but requires a Gerrit HTTP password most
-  engineers don't have. GitHub push is unreachable (`github.com` not
-  allowlisted).
+## How much we trust each control
 
-## Method-restricted domains (read-only)
+| Control | Enforced by | How sure we are |
+|---|---|---|
+| Filesystem denies, network deny-by-default, env allowlist, SSH blocked, Spotlight blocked | The kernel, via nono | **High.** The process cannot opt out, and `tests/test-profile.sh` asserts the behaviour. |
+| Read-only documentation domains | nono's TLS-intercepting proxy | **High** for in-sandbox traffic; does not apply to `WebFetch`, which egresses from Anthropic. |
+| `WebFetch` gated, `.claude/` unwritable, credential globs, `find -exec` denied | Claude Code | **Medium.** In-process, not an OS boundary; applied per launch by `bin/claude`, so a session started any other way has none of these. On **Linux the glob rules are ignored entirely**, so workdir secrets are unprotected there. |
+| Docker broker refusing unsafe containers | `bin/launch-docker-broker` | **Best-effort.** A denylist, not an allowlist; it can't inspect a container that isn't running, and a container recreated after the check is a TOCTOU gap. |
+| Only navigating `--chrome` to authorized URLs | Prompt instructions in the `manual-test` skill | **Not enforced.** Guidance only. The attached Chrome has unrestricted network. |
 
-The static documentation hosts are allow-listed for read methods (`GET` and
-`HEAD`) only, not as plain CONNECT tunnels. Each is an object entry in
-`allow_domain` carrying endpoint rules:
+A control being "High" means the mechanism is sound and tested, not that the
+system is unbreakable — see [residual risks](#residual-risks).
 
-```json
-{ "domain": "www.php.net", "endpoints": [
-  { "method": "GET", "path": "/**" },
-  { "method": "HEAD", "path": "/**" }
-] }
-```
+## What Claude can reach
 
-Any write or body-carrying request (POST/PUT/PATCH/DELETE), plus OPTIONS, is
-rejected with `403` by nono's proxy before it leaves the sandbox, so a
-proxy-routed agent cannot POST to these hosts (data exfiltration, unexpected
-writes) while still reading them. GET and HEAD are both permitted because HEAD
-is a safe read (no body, strictly less capable than GET), so denying it would
-break `curl -I` and link-checkers without adding any security. OPTIONS stays
-blocked because non-browser clients never need it. Scope is deliberately narrow:
-`docs.python.org`, `docs.rs`, `doc.rust-lang.org`, `developer.mozilla.org`,
-`nodejs.org`, `pkg.go.dev`, `www.php.net`, `php.net`.
+| | |
+|---|---|
+| **Files** | The directory you launched from and everything beneath, read-write. Plus whatever you pass with `--allow` / `--read`. |
+| **Network** | Deny-by-default, with these allowed and nothing else: `api.anthropic.com`, `claude.ai`, `platform.claude.com`, `*.claudeusercontent.com`; the wiki family (`*.wikimedia.org`, `*.wikipedia.org`, and ten siblings); `codesearch{,-backend}.wmcloud.org`; `*.local.wmftest.net`; **`api.minimax.io`** (a third-party LLM API — an egress channel worth knowing about); and eight documentation sites allowed **read-only** (`docs.python.org`, `docs.rs`, `doc.rust-lang.org`, `developer.mozilla.org`, `nodejs.org`, `pkg.go.dev`, `php.net`, `vuejs.org`). Enforced by nono's [filtering proxy](https://nono.sh/docs/cli/features/networking). |
+| **Localhost** | MariaDB on 3306. Web and Chrome debug ports only when you opt in. |
+| **Env vars** | [16 allowlisted names](https://nono.sh/docs/cli/features/environment) — `PATH`, `HOME`, `TERM`, locale, `CLAUDE_*`/`ANTHROPIC_*`/`NONO_*`, the non-credential MCP vars, and `WMF_DOCKER_*`, which carries the broker's URL and per-session bearer token in when you use `--docker`. Everything else, including `AWS_*`, `GH_TOKEN`, and `SSH_AUTH_SOCK`, is dropped. |
+| **Keychain** | Yes — deliberately. Claude Code reads its own login token from it at startup. See [residual risks](#residual-risks). |
 
-Important scoping caveat: the rule only covers egress that transits the nono
-proxy, i.e. Bash-driven `curl`/`wget`/Node/Python. `WebFetch` egresses from
-Anthropic's servers, not the laptop (see "Tool-level denies"), so it never
-reaches these endpoint rules. That opens no POST hole, because `WebFetch` only
-issues GETs and runs in `ask` mode, but it does mean the read-only guarantee is
-specific to in-sandbox proxy traffic, not a blanket no-POST property of the
-agent.
+## What Claude cannot reach
 
-Trade-off: endpoint rules force TLS interception. To read the method and path
-of an HTTPS request nono must terminate TLS itself (any entry with endpoint
-rules takes the `requires_intercept` path). It mints a cert from an ephemeral
-CA and injects that CA into the child's trust env
-(`SSL_CERT_FILE`/`NODE_EXTRA_CA_CERTS`/`CURL_CA_BUNDLE`), so curl, Node, and
-Python trust it with no flag and no prompt. Two consequences: nono sees the
-plaintext of traffic to these hosts, and Go tools that use the macOS system
-trust store (`gh`, `terraform`) reject the minted cert unless launched with
-`--trust-proxy-ca`. We don't fetch docs with Go tools, so no flag is needed
-today.
+| | |
+|---|---|
+| **Parent and sibling directories** | Unless you grant them explicitly. |
+| **Credentials** | `~/.ssh`, `~/.aws`, `~/.config/gcloud`, `~/.gnupg`, `~/.netrc`, `~/.npmrc`, `~/.pypirc`, `~/.kube/config`, `~/.docker/config.json`, `~/.config/gh`, composer auth, `~/.env` — plus any `*.env`, `*.key`, `*.pem`, `*.secret`, `*.credential`, `.git/config`, or `.git-credentials` anywhere on disk. |
+| **Shell configs and history** | `~/.bashrc`, `~/.zshrc`, `~/.profile`, fish config — so it can't plant a command that runs next time you open a terminal. |
+| **Password managers** | 1Password, Bitwarden, KeePassXC, `pass`, Enpass. |
+| **Private comms** | Mail, Messages, Slack, Discord, Signal, Telegram, Thunderbird. |
+| **Browser profiles** | Chrome, Firefox, Safari, Edge, Arc, Brave, Chromium, Vivaldi, Opera — cookies and saved passwords included. |
+| **iCloud Drive** | `~/Library/Mobile Documents`. |
+| **SSH and GitHub** | Port 22 and Gerrit's 29418; `github.com` is not allowlisted. |
+| **Spotlight** | `mdfind` is blocked at the Mach layer, so it can't enumerate the filenames the denies above hide. |
+| **Its own config** | `settings.json`, `settings.local.json`, `hooks/**`, `agents/**`, `skills/**`, `commands/**` at **both** scopes (`~/.claude/` and per-project `.claude/`), plus `~/.claude/plugins/**`, `~/.claude.json` (MCP servers and per-project allowed tools — it sits outside `~/.claude/`, so the directory rules miss it), `~/.claude/CLAUDE.md`, and a project `.mcp.json`. Claude Code loads config from all of these, so any one left writable is a way to widen its own permissions next session. `tests/test-templates.sh` asserts the full set. **These are tool-layer denies, not a boundary** — they stop the agent's `Edit`/`Write` tools, but `Bash` can still reach the same files through an interpreter, and the OS layer cannot deny `~/.claude` because Claude Code needs it. Treat them as raising the bar, not closing the hole. |
 
-Left as plain tunnels on purpose (no endpoint rules, no interception):
+Two denies worth naming because their reason is not obvious:
+`Bash(git config core.hooksPath:*)` stops commit hooks being redirected to an
+attacker-controlled path, and `PHABRICATOR_API_TOKEN` is deliberately absent
+from the env allowlist — MCP access to Phabricator is anonymous by design.
 
-- `console.anthropic.com`, `claude.ai`: the model API is POST, so intercepting
-  would `403` every model call and route Claude's own conversation and tokens
-  through nono in plaintext.
-- `*.claudeusercontent.com`: see "Artifact content host" below.
-- `*.wiki*`: legitimate POST reads (batched API queries, login) and the
-  `manual-test` Tier-1 flow. Needs a separate review before any lockdown.
-- `codesearch{,-backend}.wmcloud.org`, `api.minimax.io`.
+Profile posture, for completeness: `capability_elevation: false`,
+`signal_mode: isolated`, `process_info_mode: isolated`,
+`ipc_mode: shared_memory_only`. Beyond the workdir the profile hardcodes three
+read grants — `~/.local/state/fnm_multishells`, `~/.local/state/claude/locks`,
+and `~/.agents/skills` — and `bin/claude` adds `--allow` for the bundled MCP
+submodules.
 
-`tests/test-profile.sh` asserts the structure (each docs host is an
-endpoint-restricted read-only object, and the model API domains stay plain). To
-verify live behaviour, run **outside** the sandbox (nested nono cannot write its
-audit dir):
+The tool layer also **allows** some commands outright, which auto-approves them
+with no prompt: `Bash(git:*)`, `Bash(curl:*)`, `Bash(ls:*)`, `Bash(grep:*)`,
+`Bash(rg:*)`, `Bash(jq:*)`, a rebase form, and eight read-only `find` forms.
+Two are worth noting: `curl` is auto-approved, which matters when `--local-web`
+opens localhost ports, and `git` is auto-approved, which covers an HTTPS push.
+It also sets `sandbox.enabled: false`, turning off Claude Code's own in-process
+sandbox — deliberate, since nono is already the OS boundary, but it is a second
+control switched off.
+
+## Weakening it, knowingly
+
+Nothing below happens on its own. Each is something you choose, and each is
+scoped to the session you choose it in unless noted.
+
+| What you run | What you give up |
+|---|---|
+| `--allow PATH` | Read **and write** on another tree. The most common way to widen the blast radius — scope it as tightly as the task allows. |
+| `--read PATH` | Read on another tree. Anything secret in it becomes readable, including by a prompt-injected agent. |
+| `--allow-command CMD` | One command the profile blocks by default. |
+| `--override-deny PATH` + `--read-file PATH` | Lifts a specific deny. Use for one file, not a directory. |
+| `--local-web[=PORTS]` | Reach to **any** local service on 80/443/8080, not just your wiki. External egress does not widen. |
+| `--chrome` | A Chrome running **outside** the sandbox with unrestricted network, driven over an unauthenticated debug port. Implies `--local-web`. **Throwaway dev-wiki accounts only.** |
+| `--docker=SERVICE` without `--egress` | Code execution in a container whose network nono cannot restrict — an outbound channel. The launcher warns and asks for a one-time acknowledgment. |
+| `\claude` or `command claude` | **The sandbox entirely.** Claude Code runs with your full user privileges, and without the tool layer, which `bin/claude` applies per launch. |
+| Answering `y` to the update prompt | Fast-forwards the install to `origin/main` and runs `setup.sh`, i.e. runs code you have seen listed but not read. Declining, or any non-tty launch, changes nothing. |
+| `WMF_CLAUDE_PROFILE=<name>` | Swaps in `profiles/<name>.json`, whatever that profile allows. |
+| Editing `profiles/wmf-engineer.json` or `wiring/settings-merge.json` | Whatever you change. `bin/claude` prints a warning at launch while either differs from the committed version — expected when you made the edit, a stop-and-look signal when you did not. Re-run `tests/test-profile.sh` afterwards. |
+| Registering another MCP server | A tool surface neither layer was designed around. MCP tools are not covered by the `Bash`/`Read`/`Edit` deny rules. |
+
+`bin/claude` **refuses** `--capability-elevation`, `--trust-override`, and
+`--dangerously-skip-permissions`. There is no supported way to pass them.
+
+### chrome-devtools MCP
+
+Chrome can't run inside the sandbox — IOKit is denied and it segfaults during
+init — so `bin/launch-test-chrome` starts it outside with a fresh throwaway
+profile and the debug port pinned to `127.0.0.1`. The MCP server itself stays
+sandboxed. [Full analysis](docs/security-rationale.md#chrome-devtools-mcp).
+
+### Docker exec broker
+
+The Docker socket is root on the host, so it never enters the sandbox. The
+broker holds it outside and exposes a token-authenticated localhost endpoint;
+the in-sandbox `mwdocker` shim is the only client. It builds argv as a list (no
+shell), pins the docker flags so the caller picks only an allowlisted binary
+(`composer`, `php`, `npm`, `vendor/bin/{phpunit,phpcs,phpcbf,phan}`) and its
+arguments, and refuses containers that are a path to host root — privileged,
+host-root caps, device passthrough, host PID/IPC namespace, or a bind of the
+socket, a host-root path, or your `$HOME` credentials.
+
+That allowlist is **not** an RCE boundary: `composer` and `npm` run scripts from
+the checkout and `php` runs arbitrary code. The host is the boundary.
+[Full analysis](docs/security-rationale.md#docker-exec-broker).
+
+## Residual risks
+
+What the sandbox does *not* protect against, even with no flags.
+
+| Risk | What bounds it |
+|---|---|
+| **Keychain is reachable** — a prompt-injected agent could run `security find-internet-password` | Egress limited to Wikimedia + LLM domains, so there's nowhere to send it; env allowlist; most engineers store no HTTPS push credential. Closable as of nono 0.78 — see [follow-ups](#open-follow-ups). [Detail](docs/security-rationale.md#keychain-access) |
+| **HTTPS push to a Wikimedia host can succeed** with a keychain-stored Gerrit password | The standard SSH workflow is fully blocked, and most engineers have no HTTP password |
+| **On Linux, nothing protects secrets in your workdir** | Neither layer covers it. Don't keep them there. [Detail](docs/security-rationale.md#linux-glob-caveat) |
+| **Reading a shared artifact is a prompt-injection surface** | The `Artifact` tool returns an isolated summary, treated as data — same trust class as reading a wiki page. [Detail](docs/security-rationale.md#artifact-content-host) |
+| **LaunchServices is reachable** (inherited from the base profile) | Not yet narrowed — see below |
+
+## Verifying
 
 ```bash
-URL='https://www.php.net/manual/en/function.array-keys.php'
-PROFILE=./profiles/wmf-engineer.json
-
-# Reads: expect 200 (allowed; served by php.net through nono's interception).
-nono run --profile "$PROFILE" --allow-cwd -- \
-  curl -sS -o /dev/null -w 'GET  -> %{http_code}\n' "$URL"
-nono run --profile "$PROFILE" --allow-cwd -- \
-  curl -sS -o /dev/null -w 'HEAD -> %{http_code}\n' -I "$URL"
-
-# Write: expect 403 (nono rejects before the request reaches php.net).
-nono run --profile "$PROFILE" --allow-cwd -- \
-  curl -sS -o /dev/null -w 'POST -> %{http_code}\n' -X POST "$URL"
-
-# Negative control: the same POST to a plain-tunnel domain is NOT a nono 403.
-# It tunnels through and returns whatever the upstream replies, proving the
-# 403 above is rule-specific (method filtering), not a blanket POST block.
-nono run --profile "$PROFILE" --allow-cwd -- \
-  curl -sS -o /dev/null -w 'POST(plain) -> %{http_code}\n' \
-  -X POST https://www.mediawiki.org/w/api.php
+./tests/test-profile.sh     # sandbox behaviour (cannot run inside a sandbox)
+./tests/test-templates.sh   # manifest, frontmatter, permission-rule shapes
 ```
 
-Expected: `GET -> 200`, `HEAD -> 200`, `POST -> 403`, `POST(plain) -> ` a
-non-403 upstream code. A `403` on the read paths means interception broke (CA
-not trusted, or the rule too narrow); a `403` on the negative control means the
-block is broader than intended.
+This file describes intent. To audit what nono actually enforces — including
+everything inherited from the base `claude-code` profile, which this file does
+not repeat — ask nono directly:
 
-A `403` here is nono's signature (php.net would answer a real POST with `405`),
-emitted with a `tls_intercept: endpoint rules denied POST ... no rule matched`
-log line and recorded in `~/.nono/audit/<session>/`.
+```bash
+nono profile show ./profiles/wmf-engineer.json --format manifest  # effective rules
+nono profile diff claude-code ./profiles/wmf-engineer.json        # our delta vs. the base
+nono audit list && nono audit show <session>                      # what a session did
+```
 
-## Artifact content host (`*.claudeusercontent.com`)
+The tool layer is applied per launch, so "is it actually live?" is worth
+checking directly. This should be refused, not run:
 
-Claude Code's `Artifact` tool publishes to `claude.ai`, but *reads* the
-published page from a per-artifact subdomain of `claudeusercontent.com`. With
-only `claude.ai` allowlisted, the `claude.ai`-side calls (publish, `list`)
-worked while every content read (`read`, `list` scope `files`, asset fetch)
-failed with a CONNECT-tunnel `403`. Because the tool refuses to publish over
-an artifact the conversation has not read, that made an already-published
-artifact impossible to update (T437718).
+```bash
+# Denied — the layer is in effect.
+command claude -p --permission-mode manual \
+  --settings ./wiring/settings-merge.json \
+  'Run exactly this bash command: ssh -V'
 
-Allowed as a plain tunnel, not an endpoint-restricted read-only entry, for two
-reasons:
+# Runs and prints the OpenSSH version — the control case.
+command claude -p --permission-mode manual \
+  --settings '{"permissions":{"allow":["Bash(ssh -V)"]}}' \
+  'Run exactly this bash command: ssh -V'
+```
 
-- Method rules would buy close to nothing. The point of `GET`/`HEAD` rules is
-  to close a body-carrying exfiltration channel, but `claude.ai` is already a
-  plain tunnel *and* is the channel that writes artifacts — an agent that
-  wanted to exfiltrate would publish an artifact through `claude.ai`, not POST
-  to a static content CDN. Restricting the read host does not close that.
-- Interception has a real cost here. Endpoint rules force nono to terminate
-  TLS, which would put artifact bodies — up to 16 MB, often binary assets —
-  through nono in plaintext, and adds a CA-trust dependency on whatever HTTP
-  client the `Artifact` tool uses.
+Two things make this meaningful. `command claude`, not `claude`: the alias is
+`bin/claude`, which injects its own `--settings`. And the control carries an
+explicit allow: under `-p` an un-allowlisted command is not run but held for
+approval, so without it both halves would print a refusal and prove nothing.
+The first half must say *denied*; the second must actually print a version.
 
-Residual risk: `claudeusercontent.com` serves *user-generated* content, and is
-a separate domain from `claude.ai` precisely so that untrusted artifact content
-is sandboxed away from the app origin. Reading an artifact that someone else
-authored is therefore a prompt-injection surface. Three things bound it:
+## Open follow-ups
 
-- Artifacts the engineer owns hold content Claude itself wrote — the common
-  case, and the one T437718 was about.
-- For an artifact merely *shared* with the engineer, the `Artifact` tool
-  returns an isolated summary rather than raw HTML, and its contract treats
-  what comes back as data, never instructions.
-- This is the same trust class we already accept for `*.wikipedia.org` and the
-  rest of the wiki family, which Claude reads routinely and which any reader
-  can edit.
+- **Keychain access** — the largest residual exfil surface, and as of nono 0.78
+  there is a supported way to close it. [Sandboxed OAuth
+  logins](https://nono.sh/docs/cli/features/sandboxed-oauth-logins) capture the
+  token outside the sandbox and hand the agent a phantom, so
+  `deny_keychains_macos` can be enabled without breaking `/login`. The cost is
+  TLS interception of the Anthropic hosts, which this profile avoids today.
+  **Not yet adopted or tested here** —
+  [evaluation](docs/security-rationale.md#closing-the-keychain-gap).
+- **LaunchServices** — narrow once we know which workflows depend on it.
+- **Mach denies** still live in the `unsafe_macos_seatbelt_rules` escape hatch;
+  migrate when nono promotes Mach control to a typed capability.
 
-The allowlist entry does not make artifacts readable on its own — the engineer
-must still be signed in to the Claude account that owns or was shared the
-artifact.
+## Reference
 
-## Filesystem denies (nono profile)
+Why each choice was made: [`docs/security-rationale.md`](docs/security-rationale.md).
 
-- Shell configs: `~/.bashrc`, `~/.bash_profile`, `~/.bash_history`, `~/.zshrc`, `~/.zprofile`, `~/.zsh_history`, `~/.profile`, `~/.config/fish/config.fish`, `~/.config/fish/fish_variables`.
-- Credentials: `~/.ssh`, `~/.netrc`, `~/.npmrc`, `~/.pypirc`, `~/.composer/auth.json`, `~/.config/composer/auth.json`, `~/.docker/config.json`, `~/.kube/config`, `~/.config/gh`, `~/.env`.
-- Password managers: `~/.password-store`, `~/.config/{bitwarden,keepassxc}`, `~/Library/Application Support/{1Password,Bitwarden,Enpass}`.
-- Private comms: `~/Library/{Mail,Messages}`, `~/.thunderbird`, `~/Library/Application Support/{Slack,Discord,Signal,Telegram}`.
-- iCloud Drive: `~/Library/Mobile Documents`.
-- Additional Chromium-based browser profile dirs: `~/Library/Application Support/{Chromium,BraveSoftware,Vivaldi,com.operasoftware.Opera}`. Defense in depth for the optional `chrome-devtools` MCP — the sandboxed MCP server could in principle read those paths directly off disk, and these denies remove that vector. The base `claude-code` profile we extend already inherits the `deny_browser_data_macos` group, which covers Chrome, Firefox, Edge, Arc, Brave Browser, and Safari; we add only the Chromium derivatives that group misses. (Note: `BraveSoftware` is also a path correction — the upstream group denies `~/Library/Application Support/Brave Browser`, but the actual macOS storage path is `BraveSoftware/Brave-Browser`. Both are listed for belt-and-suspenders coverage of older and current Brave installs.)
-
-## Expected denies (`filesystem.suppress_save_prompt`)
-
-Claude Code itself probes `Library/Application Support/{Google/Chrome,Google/Chrome Beta,Google/Chrome Canary,Chromium,Microsoft Edge,BraveSoftware/Brave-Browser}/DevToolsActivePort` at startup to auto-discover a running Chromium-family browser with `--remote-debugging-port` open (classic `chrome-launcher` / `chrome-remote-interface` behaviour). The Claude binary also embeds `/home/...` paths from its CI builder, which Bun's runtime stats during identifier resolution. All of these reads are correctly denied by the profile — but without intervention nono would offer to save them as grants on every first run, which is a confusing first-time-user experience for a denial that is working as designed. `filesystem.suppress_save_prompt` silences the save-profile dialog for these paths; the sandbox still denies the reads and the denial diagnostic still prints to stderr. Arc, Vivaldi, and Opera are listed alongside the Chromium-family paths because the base `deny_browser_data_macos` group sometimes surfaces them in the same batched prompt even though the current Claude binary doesn't appear to probe them directly.
-
-`~/.local/state/claude/locks` and `~/.CFUserTextEncoding` are also suppressed. Both are listed as granted (`r+w` and `r` respectively) in the runtime capability set, but nono still reports them as denied at shutdown and offers to save them as grants — most likely a child process at teardown not inheriting the dynamic grants, or a read that races with `Applying sandbox...`. The reads aren't breaking anything we can observe; suppressing keeps the first-run prompt clean while the underlying inherited-grant question gets investigated separately.
-
-## Tool-level denies (`wiring/settings-merge.json`)
-
-- `WebFetch` is in `ask` (not `allow`). nono can't gate `WebFetch` because
-  it's served by Anthropic's API, not the laptop — this is the primary egress
-  barrier to attacker URLs and the most important rule in this list.
-- `Edit` blocked on `.claude/{settings.json,hooks/**}` (per-project)
-  and `~/.claude/{settings*.json,hooks/**,plugins/**,agents/**,skills/**}`
-  (user-global). `Edit` rules cover Write and NotebookEdit too. Prevents
-  Claude from tampering with hooks or rewriting its own allowlist for future
-  sessions. The nono pack writes these paths via the nono CLI, which runs
-  outside Claude's tool surface.
-- `Read(//**/*.{env,key,secret,credential,pem})` and `Read(//**/.env*)`,
-  each with an `Edit` twin — credential files anywhere on disk, so a `.env`
-  in a `--read` sibling repo is covered too, and the agent can neither read
-  nor overwrite one. The `//` prefix anchors at the filesystem root; a bare
-  `**/` rule is relative to the session cwd. The cwd-relative forms stay
-  beside them for the Linux path (see the caveat below). There are no
-  `Write(...)` rules: file-permission checks never match them (Claude Code
-  warns at startup), and `Edit(path)` already covers Write and NotebookEdit.
-- `Read(//**/.git/config)` and `Read(//**/.git-credentials)` — credentials in
-  remote URLs and `git credential-store` files aren't leaked into context.
-- `Read(~/.ssh/**)` — defense in depth alongside the profile's `~/.ssh`
-  filesystem deny (`~/.ssh/*` is single-star and does not descend).
-- `Bash(ssh:*)` — defense in depth alongside the network-layer port-22 deny.
-- `-exec`, `-execdir`, `-delete`, `-ok`, `-okdir`, `-fprint*` and `-fls*` are
-  denied for `find`, which leaves only the read-only traversal forms. `-exec`
-  is otherwise effectively shell escape, and `-delete`/`-fprint*`/`-fls*`
-  write. Each action takes **two** rules, `Bash(find -exec*)` and
-  `Bash(find * -exec*)`, because the glob syntax has no alternation and each
-  form alone is wrong:
-  - `Bash(find:* -exec*)` is rejected at load. Claude Code requires `:*` to
-    end the pattern ("The :\* pattern must be at the end"), so the rule is
-    dropped with a warning and nothing is denied.
-  - `Bash(find * -exec*)` alone needs a path operand. GNU find lets you omit
-    it, so `find -exec rm {} \;` slips through to a prompt.
-  - `Bash(find *-exec*)` alone becomes a substring match. It denies a
-    read-only `find ./pre-delete -name x`, and a deny gives no prompt to
-    override.
-  `tests/test-templates.sh` fails if an action loses either form.
-- `Bash(git config core.hooksPath:*)` — no redirecting commit hooks to
-  attacker-controlled paths.
-- `sandbox.enabled: false` — nono is the OS boundary; Claude Code's softer
-  in-process sandbox would add friction without restricting an already
-  sandboxed session.
-
-**Linux caveat.** On Linux, Claude Code ignores glob patterns in `Read` and
-`Edit` rules ("On Linux, glob patterns in Edit/Read rules will be ignored").
-`Bash` glob rules are not affected, so the `find` denies above still apply.
-What does not apply is every `Read(//**/…)` credential rule and every `Edit`
-twin beside it. Two things fill the gap only in part:
-
-- The non-glob fallbacks are 10 exact `Read` names, `.env` through
-  `.env.staging.local`. They cover no other spelling — `.envrc` is not among
-  them — and there is **no** non-glob `Edit` twin, so on Linux nothing at the
-  tool layer stops the agent overwriting a `.env`.
-- The nono OS-level sandbox still denies `~/.ssh` and the other credential
-  paths on every platform, but it grants the workdir read+write.
-
-So the gap is workdir-local: on Linux an unusually-named or deep-nested
-`.key`/`.pem`/`.secret`/`.credential` file inside the workdir is blocked by
-neither layer, for reads or for writes, whereas on macOS the tool glob blocks
-both. Avoid keeping secrets in the workdir on Linux; `bin/wmf-claude-setup`
-prints this warning on Linux hosts.
-
-## Environment variables
-
-`environment.allow_vars` is a deliberately narrow allowlist (15 entries):
-`PATH`, `HOME`, `TERM`, locale (`LANG`, `LC_*`), Claude/Anthropic/nono
-internals (`CLAUDE_*`, `CLAUDECODE`, `ANTHROPIC_*`, `NONO_*`), and the
-non-credential MCP vars the Phabricator/Gerrit submodules read
-(`PHABRICATOR_URL`/`USERNAME`/`CONTACT_*`, `GERRIT_BASE_URL`/`CONFIG_PATH`).
-
-Everything else is dropped before the child sees it: `AWS_*`, `GH_TOKEN`,
-`NPM_TOKEN`, `KUBECONFIG`, `GCLOUD_*`, `GIT_*`, `SSH_AUTH_SOCK`, `EDITOR`,
-`TMPDIR`, `USER`, language version managers, GUI/X11 vars, etc. Git
-identity comes from `~/.gitconfig` (the base profile grants read access).
-`PHABRICATOR_API_TOKEN` is intentionally omitted — MCP usage is anonymous.
-
-## Spotlight metadata recon
-
-`com.apple.metadata.mds` is denied at the Mach layer via
-`unsafe_macos_seatbelt_rules`. Spotlight indexes filenames and metadata
-across the user's home regardless of nono's filesystem denies, so `mdfind`
-would otherwise be a recon channel for sensitive paths (e.g. `*.pem` keys).
-Verified by `tests/test-profile.sh`.
-
-## Keychain (intentionally not denied)
-
-Keychain Mach services (`com.apple.securityd`, `com.apple.SecurityServer`,
-`com.apple.SecurityAgent`) are **not** denied. Claude Code stores its login
-token in the login keychain (item: `Claude Code-credentials`) and reads it
-via `securityd` on every startup; denying that service makes `/login` and
-the persistent-session UI fail (the user sees "Not logged in" on every
-launch). The base `claude-code` profile's `filesystem.allow` +
-`filesystem.bypass_protection` on `~/Library/Keychains` is specifically for
-this.
-
-**Residual risk:** a prompt-injected agent could call
-`security find-internet-password -s <wmf-host>` to extract credentials
-stored for Wikimedia services. Mitigations are layered, not absolute:
-
-- The network policy only permits egress to Wikimedia and LLM-vendor
-  domains, so attacker-controlled exfil endpoints are unreachable.
-- The env-var allowlist removes most credential-shaped material from the
-  agent's process env.
-- WMF engineers on the standard SSH-based git workflow typically don't have
-  HTTPS push credentials in the keychain in the first place.
-
-## Other hardening choices
-
-- `capability_elevation: false` — no runtime prompts to escalate.
-- `signal_mode: isolated`, `process_info_mode: isolated`,
-  `ipc_mode: shared_memory_only` — set explicitly so the posture is visible
-  in the profile, not implicit.
-- No hardcoded filesystem grants in the profile. `bin/claude` adds `--allow`
-  for the bundled MCP submodules; engineers can pass additional
-  `--allow`/`--read` flags for other paths.
-- `bin/claude` rejects `--capability-elevation`, `--trust-override`, and
-  `--dangerously-skip-permissions` to prevent runtime sandbox weakening.
-- `bin/claude` runs unsandboxed, so in an interactive terminal it does a
-  throttled (once/24h) background `git fetch origin` of the install checkout to
-  notify the engineer when wmf-claude (vs `origin/main`) or nono is out of date.
-  It is notify-only: it never pulls or updates, so no unreviewed code is fetched
-  and run. It is skipped for non-interactive runs (`claude -p`, the VS Code
-  extension) where stderr is not a terminal. The fetch uses
-  `ssh -o BatchMode=yes` (no credential prompts) and writes a single timestamp
-  under `${XDG_CACHE_HOME:-~/.cache}/wmf-claude`. Opt out with
-  `WMF_CLAUDE_SKIP_UPDATE=1`.
-
-## chrome-devtools MCP — attach mode
-
-> **Local-dev only.** chrome-devtools support is wired up by `setup.sh`, not
-> by the signed nono pack — `wiring/` does not install `bin/launch-test-chrome`,
-> the `chrome-devtools-mcp/` install dir, or any chrome-related Claude Code
-> settings. Engineers who installed via `nono pull` will see the `manual-test`
-> skill listed but neither `bin/claude --chrome` nor the MCP itself; the
-> SessionStart hook is conditional on `mcp__chrome-devtools__*` tools being
-> present so it stays quiet for those sessions. If/when the pack ships
-> chrome-devtools support, revisit this section and the wiring directives.
-
-The optional `chrome-devtools` MCP runs the *server* inside the sandbox but
-its *Chrome* outside. Chrome cannot run inside the wmf-engineer profile —
-it calls `IONotificationPortCreate(kIOMainPortDefault)` during early init,
-and when IOKit is denied at the Mach layer (which the base `claude-code`
-profile does, since LLM API talkers don't need driver access) the call
-returns NULL and Chrome segfaults before it ever paints a pixel. Allowing
-IOKit broadly to fix this would hand any prompt-injected agent driver-
-level capability — too big a grant for one MCP.
-
-Instead: `bin/launch-test-chrome` starts Chrome unsandboxed with a fresh
-`mktemp -d` user-data-dir and `--remote-debugging-port=9222
---remote-debugging-address=127.0.0.1`. The address pin matters: with the
-port flag alone, some Chrome builds bound the CDP listener on 0.0.0.0,
-which would expose the unauthenticated debugging socket to the LAN.
-
-**Per-session opt-in.** The MCP is **not** registered globally with `claude
-mcp add`. Instead, `bin/claude --chrome`:
-
-- adds `--open-port 9222` to the nono invocation so the sandbox can reach
-  the CDP socket only for this session
-- passes `--mcp-config` so the chrome-devtools tools are only present when
-  asked for
-- grants the sandbox read+write on the install dir
-
-Sessions launched without `--chrome` have no chrome-devtools MCP loaded
-*and* cannot reach 127.0.0.1:9222 even via raw `Bash(curl:*)`. The CDP-
-controlled-browser attack surface is present only when an engineer is
-actively running a manual test in *this* session.
-
-**Supply-chain pinning.** `chrome-devtools-mcp` is pinned to a single
-version in `chrome-devtools-mcp/package.json` and `package-lock.json`
-(both tracked in git). `bin/wmf-claude-build` runs `npm ci --ignore-scripts`,
-which reproduces node_modules from the lockfile and refuses any `postinstall`
-hook from the package or its deps. The package currently bundles its
-runtime dependencies (puppeteer-core, etc.) into the published tarball,
-so pinning the one version pins the whole tree. `bin/wmf-claude-build` enforces
-this as a checked invariant: after `npm ci`, it asserts exactly one
-top-level package directory under `node_modules/` and fails the install
-if upstream ever stops bundling — review the new tree before bumping
-the pin.
-
-**What this preserves:**
-
-- Fresh per-launch `mktemp -d` user-data-dir at mode 0700 — the testing
-  Chrome has no cookies, saved passwords, or history from the engineer's
-  regular browsing. The dir is removed when Chrome exits via the cleanup
-  trap, so cookies / Service Workers / localStorage / IndexedDB set
-  during one session don't carry into the next. (SIGKILL bypasses the
-  trap and leaks the dir; `bin/wmf-claude-setup` sweeps stale `wmf-claude-chrome.*`
-  dirs older than a day at install time as a safety net.)
-- The MCP server is still sandboxed. Anything *it* tries to do (reading
-  files, hitting the network, spawning processes) is bounded by the same
-  rules as the rest of the agent.
-
-**What this gives up — and what's left as residual risk:**
-
-- Pages loaded in the attached Chrome have **unrestricted outbound
-  network**. The nono network allowlist applies to the MCP server, not to
-  the externally-launched Chrome. A page loaded by Chrome (or arbitrary
-  JS run via `mcp__chrome-devtools__evaluate_script`) can fetch from any
-  domain. Mitigations: prompt discipline (the `manual-test` skill says to
-  only navigate to authorized URLs), per-session opt-in (the MCP is gone
-  in the next session), and Chrome hardening flags
-  (`--disable-background-networking`, `--no-pings`, `--disable-sync`,
-  `--disable-component-update`) that disable Chrome's own background
-  chatter even if the agent isn't navigating anywhere yet.
-- The CDP endpoint on `127.0.0.1:9222` is **unauthenticated**. Any
-  process running as the engineer can connect and drive the test Chrome
-  (run JS, exfiltrate cookies, navigate). Chrome's `--remote-debugging-
-  port` does enforce a `Host:` header check that mitigates DNS rebinding
-  from a page in the engineer's *other* browser, but this is a hardening
-  layer rather than an absolute boundary. `chrome-devtools-mcp` doesn't
-  expose a pipe transport (`--browserUrl`/`--wsEndpoint`/`--autoConnect`
-  only), so we can't move CDP off a listening socket without changing
-  upstream. Rationale for accepting the risk: the local-process trust
-  boundary here is roughly the same as for the rest of the sandbox
-  (anything running as the engineer can already do a lot).
-- Chrome itself runs with the engineer's normal user privileges and full
-  Mach/IOKit access. nono no longer adds a layer on top while Chrome is
-  running. Chrome's own renderer sandbox still bounds malicious *page*
-  content from escaping the renderer, but it does **not** bound the
-  agent — CDP gives the agent more authority over the browser than any
-  renderer ever has.
-
-The trade is deliberate: the network restriction we lose was a defense
-against a malicious *page* exfiltrating; the fresh-per-launch user-data-
-dir we keep is a defense against a malicious *agent* using the browser
-to read the engineer's authenticated sessions. The latter is the bigger
-threat in the wmf-claude threat model. Per-session opt-in further bounds
-the window during which any of these costs are paid.
-
-## Docker exec broker
-
-Local-dev only. The broker ships with the checkout (`bin/launch-docker-broker`,
-`bin/mwdocker`, `bin/claude --docker`), not with the signed nono pack. Without
-`--docker` there is no broker, no open port, and `mwdocker` is not on `PATH`.
-
-A sandboxed session on a Docker-based wiki has no host PHP/composer/npm. The
-Docker socket can't go in the sandbox (it is root-equivalent on the host: `docker
-run -v /:/host` reads/writes the whole filesystem as root), so the socket stays
-outside the sandbox behind the broker. `bin/claude --docker=SERVICE[:WORKDIR]`
-starts the broker, opens only its ephemeral localhost port (not in the static
-profile), and stops it on exit. Bare `--docker` attaches to a manually started
-broker. `--docker=auto` resolves the service from the compose file.
-
-What the broker enforces:
-
-- No shell. argv is built as a list and run with `shell=False`.
-- Pinned docker flags: `<compose> -f <file> exec -T [-w <wd>] <service> <bin>
-  <args>`. The caller controls only `<bin>` (allowlisted) and its `<args>`. It
-  cannot set `-u`, `-v`, `--privileged`, `--entrypoint`, switch `exec` to `run`,
-  or choose the compose file or service.
-- A 256-bit per-session bearer token from a `0600` handshake file, compared
-  constant-time.
-- Refuses a container that is a path to host root: `--privileged`, host-root caps
-  (`SYS_ADMIN`, `SYS_PTRACE`, ...), device passthrough, host `PidMode`/`IpcMode`,
-  or a bind/mount of the socket or a host-root path (`/`, `/var/run`, `/run`,
-  `/var/lib/docker`, `/proc`, `/sys`). Also refuses a bind/mount of host
-  credentials — a `$HOME` dotfile/dotdir (`~/.ssh`, `~/.aws`, `~/.config/*`,
-  `~/.gitconfig`, ...) or the forwarded `$SSH_AUTH_SOCK` — which the agent could
-  read and exfiltrate over the container network. Inspects every replica.
-  Best-effort: it can't inspect a container that isn't up, and a container
-  recreated after the check is a TOCTOU gap.
-- Logs every exec and applies a per-command timeout (default 900s). Caps the
-  request body (1 MiB) and the output relayed per stream (8 MiB, spooled to
-  disk, truncation noted), so one command can't pin the broker's memory.
-
-The managed broker stops on session exit. A SIGKILL leaks the broker and its
-handshake/shim files; the next `--docker` launch sweeps artifacts whose launcher
-PID is gone and reaps the orphaned broker.
-
-Residual risk:
-
-- The container's network is not nono-restricted: `composer`/`npm` fetch and
-  run scripts over the network, and `php -r` is full code execution, so by
-  default running dev tools in the container gives the agent an outbound
-  channel. nono cannot reach the container's network namespace; the restriction
-  has to happen at the compose layer. The `templates/docker-egress/` overrides
-  do that: `egress-none.yml` removes the PHP containers' route out entirely,
-  and `egress-allowlist.yml` funnels them through a squid sidecar that permits
-  only package-registry hosts (exfiltration to an allowed host remains
-  possible). Keep the override copies outside the checkout (the agent can edit
-  checkout files; it cannot apply them — containers must be recreated — but an
-  unwritable copy closes even the proposal vector). `--egress=none|allowlist`
-  makes the broker verify the running container's isolation at startup and
-  refuse to serve when the override is not applied; without `--egress` the
-  launcher prints an egress warning and asks for a one-time acknowledgment.
-- The allowlist (`composer`, `php`, `npm`, `vendor/bin/phpunit|phpcs|phpcbf|phan`)
-  is not an RCE boundary: `composer`/`npm` run agent-writable scripts and `php`
-  runs arbitrary code. It blocks reaching raw `docker`; it does not sandbox the
-  container from its own source. The boundary is the host.
-- The localhost port is shared with other processes running as the engineer; the
-  token keeps them out. It does not gate the sandboxed agent, which holds the
-  token by design.
-
-Stock MediaWiki-Docker (`docker-compose up -d` in the core checkout) mounts only
-the checkout (`.:/var/www/html/w`), runs as your UID, and mounts no socket, home
-dir, or privileged config. There a rogue agent can read and exfiltrate the
-checkout (dev `LocalSettings.php`, `.env`) over the container network and reach
-the dev database, but does not get host root, your home dir, SSH keys, or git
-credentials (not mounted). It cannot escape to the host short of a kernel
-exploit. The container-safety check refuses the common credential-widening
-mounts — a `$HOME` dotfile/dotdir (`~/.ssh`, `~/.aws`, `~/.composer`, ...) or
-`$SSH_AUTH_SOCK` — but it is a denylist, not an allowlist: a non-dot secret path
-mounted by name, a non-dot sibling dir it can't distinguish from a code mount,
-or a `user: root` container still slip through. Keep secrets out of dev checkouts
-and mounts limited to the checkout.
-
-## Open hardening follow-ups
-
-- **Keychain access** is the largest residual exfil surface. Closing it
-  cleanly needs either (a) per-binary Seatbelt rules that allow Claude Code
-  itself to talk to `securityd` while denying tool-spawned subprocesses
-  (`security`, `bash`-spawned children) — brittle and chains badly through
-  Claude Code's tool framework, or (b) a credential-proxy mechanism that
-  lets nono fetch the OAuth token outside the sandbox and inject it into
-  the child without `securityd` access — Claude Code would need to support
-  a non-keychain credential source.
-- **LaunchServices** (`allow_launch_services: true`, inherited from base)
-  is reachable. Could leak app-launch availability or open arbitrary apps.
-  Worth narrowing once we know which engineer workflows depend on it.
-- **Mach denies** live in the `unsafe_macos_seatbelt_rules` escape hatch.
-  Migrate when nono promotes Mach control to a typed capability.
+nono's own docs: [security model](https://nono.sh/docs/cli/internals/security-model),
+[networking](https://nono.sh/docs/cli/features/networking),
+[environment](https://nono.sh/docs/cli/features/environment),
+[profile authoring](https://nono.sh/docs/cli/features/profile-authoring),
+[introspection](https://nono.sh/docs/cli/features/profile-introspection),
+[audit](https://nono.sh/docs/cli/features/audit),
+[trust](https://nono.sh/docs/cli/features/trust),
+[flags](https://nono.sh/docs/cli/usage/flags).

@@ -12,3 +12,6 @@ chrome-devtools-mcp/mcp-config.json
 # Python bytecode (e.g. if bin/launch-docker-broker is ever imported).
 __pycache__/
 *.pyc
+
+# Claude Code per-project local settings (machine-specific, never shared).
+.claude/settings.local.json

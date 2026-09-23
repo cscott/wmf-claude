@@ -203,16 +203,24 @@ Claude Code itself probes `Library/Application Support/{Google/Chrome,Google/Chr
   (user-global). Prevents Claude from tampering with hooks or rewriting its
   own allowlist for future sessions. The nono pack writes these paths via
   the nono CLI, which runs outside Claude's tool surface.
-- `Read(**/*.{env,key,secret,credential,pem})` — credential files anywhere
-  in the workdir.
-- `Read(.git/config)` and `Read(.git/credentials*)` — credentials in remote
-  URLs aren't leaked into context.
-- `Read(~/.ssh/*)` — defense in depth alongside the profile's `~/.ssh`
-  filesystem deny.
+- `Read(//**/*.{env,key,secret,credential,pem})` and `Read(//**/.env*)`,
+  each with an `Edit` twin — credential files anywhere on disk, so a `.env`
+  in a `--read` sibling repo is covered too, and the agent can neither read
+  nor overwrite one. The `//` prefix anchors at the filesystem root; a bare
+  `**/` rule is relative to the session cwd. The cwd-relative forms stay
+  beside them for the Linux path (see the caveat below). There are no
+  `Write(...)` rules: file-permission checks never match them (Claude Code
+  warns at startup), and `Edit(path)` already covers Write and NotebookEdit.
+- `Read(//**/.git/config)` and `Read(//**/.git-credentials)` — credentials in
+  remote URLs and `git credential-store` files aren't leaked into context.
+- `Read(~/.ssh/**)` — defense in depth alongside the profile's `~/.ssh`
+  filesystem deny (`~/.ssh/*` is single-star and does not descend).
 - `Bash(ssh:*)` — defense in depth alongside the network-layer port-22 deny.
-- `Bash(find:* -exec*)`, `-execdir`, `-delete`, `-ok`, `-okdir`, `-fprint*` —
+- `Bash(find * -exec*)`, `-execdir`, `-delete`, `-ok`, `-okdir`, `-fprint*` —
   `find` only allows read-only traversal forms; `-exec` is otherwise
-  effectively shell escape.
+  effectively shell escape. Glob form on purpose: `Bash(find:* -exec*)` never
+  fires, because the `:*` prefix form takes the whole remainder as the prefix.
+  `tests/test-templates.sh` fails on that shape.
 - `Bash(git config core.hooksPath:*)` — no redirecting commit hooks to
   attacker-controlled paths.
 - `sandbox.enabled: false` — nono is the OS boundary; Claude Code's softer
@@ -220,7 +228,7 @@ Claude Code itself probes `Library/Application Support/{Google/Chrome,Google/Chr
   sandboxed session.
 
 **Linux caveat.** Claude Code silently ignores glob patterns in permission
-deny rules on Linux, so the `Read(**/*.{env,key,secret,credential,pem})`
+deny rules on Linux, so the `Read(//**/*.{env,key,secret,credential,pem})`
 rules above do not fire there. The explicit non-glob `.env*` entries still
 apply, and the nono OS-level sandbox still denies `~/.ssh` and the other
 credential paths regardless of platform. The gap is workdir-local: an

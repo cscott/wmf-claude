@@ -79,6 +79,42 @@ for f in \
 done
 
 echo ""
+echo "--- settings-merge.json rule shapes ---"
+# Three shapes that parse as valid JSON and silently protect nothing.
+# Verified against Claude Code 2.1.267: a `Write(path)` rule is never matched
+# by file-permission checks and only emits a startup warning (`Edit(path)`
+# already covers Write and NotebookEdit); a `Bash(cmd:* more)` rule never
+# fires because the `:*` prefix form takes the whole remainder as the prefix
+# (`Bash(cmd * more)` is the glob form that does); and a `Read(**/x)` rule
+# is relative to the session cwd, so it misses the same file in a `--read`
+# sibling repo (`//**/x` anchors at the filesystem root).
+SM="$REPO_ROOT/wiring/settings-merge.json"
+RULES="$(jq -r '.permissions | (.allow + .deny + .ask)[]' "$SM")"
+if grep -q '^Write(' <<<"$RULES"; then
+  fail "settings-merge.json has Write() rules (never matched; use Edit())"
+else
+  pass "settings-merge.json has no Write() rules"
+fi
+if grep -Eq '^Bash\([^ )]+:\* .+\)$' <<<"$RULES"; then
+  fail "settings-merge.json has a Bash(cmd:* more) rule (never matches; use Bash(cmd * more))"
+else
+  pass "settings-merge.json Bash rules are prefix-only or glob form"
+fi
+# A cwd-relative `**/` rule may stay (Linux ignores glob rules, so the
+# explicit forms are kept), but only beside its root-anchored `//**/` twin.
+UNANCHORED=""
+while IFS= read -r r; do
+  [[ -z "$r" ]] && continue
+  twin="$(sed 's|(\*\*/|(//**/|' <<<"$r")"
+  grep -qxF "$twin" <<<"$RULES" || UNANCHORED+="$r "
+done < <(grep -E '^(Read|Edit)\(\*\*/' <<<"$RULES")
+if [[ -n "$UNANCHORED" ]]; then
+  fail "settings-merge.json cwd-relative rule(s) without a //**/ twin: $UNANCHORED"
+else
+  pass "settings-merge.json every **/ file rule has a //**/ twin"
+fi
+
+echo ""
 echo "--- docker-egress templates ---"
 # Structural checks (no YAML parser is guaranteed on the host): each override
 # must isolate the PHP services and must not put them back on a routed

@@ -27,11 +27,15 @@ if [[ ${#MISSING[@]} -gt 0 ]]; then
   exit 1
 fi
 
-# Floor (keep in sync with package.json min_nono_version). nono before
-# 0.78.0 can skip the signature check on a pack that it pulls
-# (GHSA-6542-g6qc-gj95), and this script pulls the base pack below.
+# package.json holds the minimum version. nono before 0.78.0 can skip the
+# signature check on a pack that it pulls (GHSA-6542-g6qc-gj95), and this
+# script pulls the base pack below.
 # .nono-version holds the recommended version CI installs.
-NONO_MIN="0.78.0"
+NONO_MIN=$(jq -r '.min_nono_version // empty' "$ROOT/package.json" 2>/dev/null || echo "")
+if [[ -z "$NONO_MIN" ]]; then
+  fail "Could not read min_nono_version from package.json"
+  exit 1
+fi
 NONO_RECOMMENDED=$(tr -d '[:space:]' < "$ROOT/.nono-version" 2>/dev/null || echo "")
 NONO_VER=$(nono --version 2>/dev/null | awk '{print $2}')
 if [[ -z "$NONO_VER" ]]; then

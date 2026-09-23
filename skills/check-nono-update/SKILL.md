@@ -47,9 +47,10 @@ Compare the pinned nono version (`.nono-version` at the repo root) against upstr
 
 5. **Cross-check CI and setup.** Read `.gitlab-ci.yml` and `bin/wmf-claude-setup`:
    - Does CI rely on a flag whose behavior changed?
-   - Does `bin/wmf-claude-setup`'s `NONO_MIN` floor still make sense, or has the
-     schema-compat floor moved? Keep it in sync with `package.json`
-     `min_nono_version` and with the base pack's own `min_nono_version`.
+   - `bin/wmf-claude-setup` reads the minimum version from `package.json`
+     `min_nono_version`. Does that value still make sense, or has the
+     schema-compat minimum moved? Keep it in sync with the base pack's own
+     `min_nono_version`.
 
 6. **Report.** Give the user a structured summary:
    - **Versions between baseline and latest** (one line each, e.g. `0.52.1 — schema fix for environment block`).

@@ -79,27 +79,47 @@ for f in \
 done
 
 echo ""
-echo "--- settings-merge.json rule shapes ---"
-# Three shapes that parse as valid JSON and silently protect nothing.
-# Verified against Claude Code 2.1.267: a `Write(path)` rule is never matched
-# by file-permission checks and only emits a startup warning (`Edit(path)`
-# already covers Write and NotebookEdit); a `Bash(cmd:* more)` rule never
-# fires because the `:*` prefix form takes the whole remainder as the prefix
-# (`Bash(cmd * more)` is the glob form that does); and a `Read(**/x)` rule
-# is relative to the session cwd, so it misses the same file in a `--read`
-# sibling repo (`//**/x` anchors at the filesystem root).
+echo "--- permission rule shapes ---"
+# Four shapes that parse as valid JSON and silently protect nothing.
+# Verified against Claude Code 2.1.280. A `Write(path)` rule is never matched
+# by file-permission checks and only emits a startup warning; `Edit(path)`
+# already covers Write and NotebookEdit. A Bash rule that holds `:*` anywhere
+# but at the end is rejected at load; `Bash(cmd * more)` is the glob form that
+# fires. A `Read(**/x)` rule is relative to the session cwd, so it misses the
+# same file in a `--read` sibling repo; `//**/x` anchors at the filesystem
+# root. A find deny rule that keeps a space before the dash misses
+# `find -exec ...`, because GNU find lets you omit the path operand.
 SM="$REPO_ROOT/wiring/settings-merge.json"
-RULES="$(jq -r '.permissions | (.allow + .deny + .ask)[]' "$SM")"
-if grep -q '^Write(' <<<"$RULES"; then
-  fail "settings-merge.json has Write() rules (never matched; use Edit())"
-else
-  pass "settings-merge.json has no Write() rules"
-fi
-if grep -Eq '^Bash\([^ )]+:\* .+\)$' <<<"$RULES"; then
-  fail "settings-merge.json has a Bash(cmd:* more) rule (never matches; use Bash(cmd * more))"
-else
-  pass "settings-merge.json Bash rules are prefix-only or glob form"
-fi
+# `// []` keeps a file with only an allow list readable. Without it jq errors
+# to stderr, the command substitution keeps only stdout, and every check below
+# passes over an empty rule list.
+rules_of() { jq -er '.permissions | ((.allow // []) + (.deny // []) + (.ask // []))[]' "$1"; }
+SMN="${SM#"$REPO_ROOT"/}"
+RULES="$(rules_of "$SM")" || fail "cannot read permission rules from $SMN"
+
+for f in "$SM" "$REPO_ROOT/templates/mediawiki/settings.json"; do
+  n="${f#"$REPO_ROOT"/}"
+  frules="$(rules_of "$f")" || fail "cannot read permission rules from $n"
+  if grep -q '^Write(' <<<"$frules"; then
+    fail "$n has Write() rules (never matched; use Edit())"
+  else
+    pass "$n has no Write() rules"
+  fi
+  # Match Claude Code's own rule, not just the single-token case:
+  # `Bash(npm run x:* -y)` is as dead as `Bash(find:* -exec*)`.
+  BAD=""
+  while IFS= read -r rule; do
+    [[ -z "$rule" ]] && continue
+    c="${rule#Bash(}"; c="${c%)}"
+    if [[ "$c" == *':*'* && "$c" != *':*' ]]; then BAD+="${BAD:+, }$rule"; fi
+  done < <(grep -E '^Bash\(' <<<"$frules")
+  if [[ -n "$BAD" ]]; then
+    fail "$n has a Bash rule with :* before the end (never matches): $BAD"
+  else
+    pass "$n Bash rules end at :* or use the glob form"
+  fi
+done
+
 # A cwd-relative `**/` rule may stay (Linux ignores glob rules, so the
 # explicit forms are kept), but only beside its root-anchored `//**/` twin.
 UNANCHORED=""
@@ -112,6 +132,29 @@ if [[ -n "$UNANCHORED" ]]; then
   fail "settings-merge.json cwd-relative rule(s) without a //**/ twin: $UNANCHORED"
 else
   pass "settings-merge.json every **/ file rule has a //**/ twin"
+fi
+
+# Every find deny needs both forms. `Bash(find * -exec*)` alone misses
+# `find -exec rm {} \;`, because GNU find lets you omit the path operand.
+# `Bash(find *-exec*)` alone is worse: it becomes a substring match and denies
+# a read-only `find ./pre-delete -name x`, with no prompt to override it.
+# The glob syntax has no alternation, so each action takes a pair. This
+# applies to the deny list only: the no-path form would widen an allow rule.
+DENIES="$(jq -er '.permissions.deny // [] | .[]' "$SM")" || fail "no deny list in $SMN"
+LONELY=""
+while IFS= read -r rule; do
+  [[ -z "$rule" ]] && continue
+  case "$rule" in
+    "Bash(find -"*)  twin="${rule/find -/find * -}" ;;
+    "Bash(find * -"*) twin="${rule/find \* -/find -}" ;;
+    *) fail "settings-merge.json find deny rule is neither form: $rule"; continue ;;
+  esac
+  grep -qxF "$twin" <<<"$DENIES" || LONELY+="${LONELY:+, }$rule (wants $twin)"
+done < <(grep -E '^Bash\(find ' <<<"$DENIES")
+if [[ -n "$LONELY" ]]; then
+  fail "settings-merge.json find deny rule(s) missing the twin form: $LONELY"
+elif [[ -n "$DENIES" ]]; then
+  pass "settings-merge.json every find deny rule has both forms"
 fi
 
 echo ""

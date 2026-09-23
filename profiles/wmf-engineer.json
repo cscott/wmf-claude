@@ -135,6 +135,7 @@
       "api.anthropic.com",
       "claude.ai",
       "platform.claude.com",
+      "*.claudeusercontent.com",
       "*.wikimedia.org",
       "*.wikipedia.org",
       "*.mediawiki.org",

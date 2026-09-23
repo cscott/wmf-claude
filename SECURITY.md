@@ -19,7 +19,8 @@ When changing one layer, consider whether the other should change too.
 ## Network
 
 - Deny by default — `network_profile: minimal` (Anthropic LLM API endpoints only).
-- Allowlisted: `console.anthropic.com`, `claude.ai`, Wikimedia + wiki-family
+- Allowlisted: `console.anthropic.com`, `claude.ai`, `*.claudeusercontent.com`
+  (artifact content, see "Artifact content host" below), Wikimedia + wiki-family
   domains, `codesearch{,-backend}.wmcloud.org`, language doc sites
   (`php.net`, MDN, `docs.python.org`, `docs.rs`, `doc.rust-lang.org`,
   `nodejs.org`, `pkg.go.dev`; read-only, see "Method-restricted domains" below),
@@ -95,6 +96,7 @@ Left as plain tunnels on purpose (no endpoint rules, no interception):
 - `console.anthropic.com`, `claude.ai`: the model API is POST, so intercepting
   would `403` every model call and route Claude's own conversation and tokens
   through nono in plaintext.
+- `*.claudeusercontent.com`: see "Artifact content host" below.
 - `*.wiki*`: legitimate POST reads (batched API queries, login) and the
   `manual-test` Tier-1 flow. Needs a separate review before any lockdown.
 - `codesearch{,-backend}.wmcloud.org`, `api.minimax.io`.
@@ -134,6 +136,47 @@ block is broader than intended.
 A `403` here is nono's signature (php.net would answer a real POST with `405`),
 emitted with a `tls_intercept: endpoint rules denied POST ... no rule matched`
 log line and recorded in `~/.nono/audit/<session>/`.
+
+## Artifact content host (`*.claudeusercontent.com`)
+
+Claude Code's `Artifact` tool publishes to `claude.ai`, but *reads* the
+published page from a per-artifact subdomain of `claudeusercontent.com`. With
+only `claude.ai` allowlisted, the `claude.ai`-side calls (publish, `list`)
+worked while every content read (`read`, `list` scope `files`, asset fetch)
+failed with a CONNECT-tunnel `403`. Because the tool refuses to publish over
+an artifact the conversation has not read, that made an already-published
+artifact impossible to update (T437718).
+
+Allowed as a plain tunnel, not an endpoint-restricted read-only entry, for two
+reasons:
+
+- Method rules would buy close to nothing. The point of `GET`/`HEAD` rules is
+  to close a body-carrying exfiltration channel, but `claude.ai` is already a
+  plain tunnel *and* is the channel that writes artifacts — an agent that
+  wanted to exfiltrate would publish an artifact through `claude.ai`, not POST
+  to a static content CDN. Restricting the read host does not close that.
+- Interception has a real cost here. Endpoint rules force nono to terminate
+  TLS, which would put artifact bodies — up to 16 MB, often binary assets —
+  through nono in plaintext, and adds a CA-trust dependency on whatever HTTP
+  client the `Artifact` tool uses.
+
+Residual risk: `claudeusercontent.com` serves *user-generated* content, and is
+a separate domain from `claude.ai` precisely so that untrusted artifact content
+is sandboxed away from the app origin. Reading an artifact that someone else
+authored is therefore a prompt-injection surface. Three things bound it:
+
+- Artifacts the engineer owns hold content Claude itself wrote — the common
+  case, and the one T437718 was about.
+- For an artifact merely *shared* with the engineer, the `Artifact` tool
+  returns an isolated summary rather than raw HTML, and its contract treats
+  what comes back as data, never instructions.
+- This is the same trust class we already accept for `*.wikipedia.org` and the
+  rest of the wiki family, which Claude reads routinely and which any reader
+  can edit.
+
+The allowlist entry does not make artifacts readable on its own — the engineer
+must still be signed in to the Claude account that owns or was shared the
+artifact.
 
 ## Filesystem denies (nono profile)
 

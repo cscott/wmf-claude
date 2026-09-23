@@ -14,7 +14,7 @@ the sandbox. The broker never lets the caller choose docker flags, the compose
 file, or the service — those are pinned here at launch. The caller controls
 only the trailing command run *inside* the pinned container.
 
-Security model (see SECURITY.md):
+Security model (see docs/security-rationale.md#docker-exec-broker):
   - No shell. argv is built as a list and spawned with shell=False. There is no
     `sh -c`, so argument content can't break out into a new command.
   - Fixed template: `<compose-cmd> -f <file> exec -T [-w <wd>] <service> <bin> <args...>`.

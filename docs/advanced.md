@@ -1,0 +1,170 @@
+# Advanced usage
+
+Reference material that most people never need. Start with the
+[README](../README.md).
+
+## Full flag reference
+
+Two different kinds of flag, which `bin/claude` treats differently.
+
+**Wrapper flags** are consumed by `bin/claude` itself and never reach nono.
+They must appear **before** `--`; after it they are passed to Claude Code as
+unknown options and do nothing:
+
+| Flag | Effect |
+|---|---|
+| `--local-web[=PORTS]` | Open localhost web ports — see [local testing](local-testing.md) |
+| `--chrome` | Load the chrome-devtools MCP; implies `--local-web` |
+| `--docker[=SERVICE[:WORKDIR]]` | Run dev tools in a container through the broker |
+| `--egress=none\|allowlist` | Verify the container's egress override at startup. **Requires `--docker=SERVICE`** — with a bare `--docker` (hand-started broker) it exits with an error. |
+
+**nono flags** go before `--`; everything after `--` is passed to Claude:
+
+| Flag | Effect |
+|---|---|
+| `--allow PATH` | Read + write another directory |
+| `--read PATH` | Read-only access to another directory |
+| `--allow-command CMD` | Permit a command the profile normally blocks |
+| `--override-deny PATH` | Lift a deny rule for one path (pair with `--read-file`) |
+| `--read-file PATH` | Grant a single file, rather than a directory |
+
+Example — read a sibling repo for context while keeping writes confined, and
+lift one deny:
+
+```bash
+claude --read ~/src/mediawiki/extensions \
+  --override-deny ~/.kube/config --read-file ~/.kube/config --
+```
+
+`bin/claude` **rejects** `--capability-elevation`, `--trust-override`, and
+`--dangerously-skip-permissions`. Sandbox-weakening flags don't compose with the
+threat model, so there is no supported way to pass them.
+
+## Environment variables
+
+| Variable | Effect |
+|---|---|
+| `WMF_CLAUDE_PROFILE` | Load `profiles/<name>.json` instead of `wmf-engineer` |
+| `WMF_CLAUDE_QUIET` | Suppress the session banner |
+| `WMF_CLAUDE_SKIP_UPDATE` | Skip the update check and prompt entirely |
+| `WMF_CLAUDE_SKIP_CHROME` | Skip building the chrome-devtools MCP during setup |
+
+## Using a different security profile
+
+Drop a profile at `profiles/<name>.json` and launch with it:
+
+```bash
+WMF_CLAUDE_PROFILE=wmf-data-scientist claude
+```
+
+`bin/claude` passes the profile to nono by absolute path, so nothing needs to be
+copied into `~/.config/nono/profiles/`. A custom profile should still
+`extends: claude-code`, which resolves against the installed `nolabs-ai/claude`
+pack.
+
+## Workspace layout
+
+Clone each repo to a path mirroring its Gerrit/GitLab project path, so a project
+name maps to a predictable location:
+
+```
+~/src/
+  mediawiki/core
+  mediawiki/extensions/GrowthExperiments
+  integration/quibble
+  operations/puppet
+  repos/product-safety-and-integrity/wmf-claude
+```
+
+This matters more than it looks: the directory you launch from is both your
+write blast radius and the key for Claude's per-project memory and `CLAUDE.md`.
+A stable entrypoint per area accumulates useful context over time, while
+launching from a broad root like `~/src` dumps every project into one memory
+store and grants write access to all of them.
+
+## Bypassing the sandbox
+
+To run Claude Code unsandboxed for a single invocation, skip the alias:
+
+```bash
+\claude          # or: command claude
+```
+
+If you already had a `claude` alias when you ran `setup.sh`, it was left alone
+and the alias line was printed for you to install by hand.
+
+Fish users get an `abbr` in `~/.config/fish/conf.d/wmf-claude.fish` that expands
+inline, so the sandbox invocation stays visible before you press Enter.
+
+## Updating
+
+`bin/claude` checks on every launch and, when your install is on `main` with a
+clean tree, lists the pending commits and offers to update in place. (The
+once-a-day throttle applies to the background `git fetch` that refreshes the
+count, not to the check or the prompt — while you are behind, you are asked
+each launch.) Say yes and it
+fast-forwards, updates the submodules, runs `setup.sh`, and relaunches on the
+new version.
+
+On a feature branch or a dirty tree it won't touch anything — it prints the
+command instead. That is also the command to use for a manual update:
+
+```bash
+git -C <install> pull \
+  && git -C <install> submodule update --init --recursive \
+  && <install>/setup.sh
+```
+
+The submodule step is not optional. `git pull` leaves submodules at their old
+SHAs, and `bin/wmf-claude-build` only initializes them when they are missing, so
+skipping it silently keeps a stale MCP server.
+
+If an update is interrupted after the checkout has moved — Ctrl-C in `setup.sh`,
+say — `bin/claude` prints `UPDATE INCOMPLETE` with the command to finish it on
+every launch until `setup.sh` completes. If a fast-forward is refused (an
+untracked file upstream now tracks, for example) you are not asked again for
+that revision; the command is printed instead.
+
+Set `WMF_CLAUDE_SKIP_UPDATE=1` to silence the check entirely.
+
+## Submitting patches
+
+The sandbox blocks SSH — Gerrit's port 29418 and GitHub's port 22 — so
+`git review` and any SSH push fail from inside a session. This is deliberate:
+it keeps an agent from publishing code on your behalf.
+
+Work with it rather than around it. Claude stages commits and writes the
+messages inside the session; you run the push from a normal terminal, outside
+the sandbox:
+
+```bash
+git review        # your usual Gerrit push, from a regular shell
+```
+
+HTTPS push to a Wikimedia host *is* reachable from inside the sandbox, but only
+if you have a Gerrit HTTP password configured, which most engineers on the SSH
+workflow do not.
+
+## Troubleshooting
+
+**MCP servers registered twice.** If you previously added the Phabricator or
+Gerrit MCP servers at project scope, they conflict with the global registration:
+
+```bash
+claude mcp remove gerrit -s local
+claude mcp remove phabricator -s local
+```
+
+**`setup.sh` says nono is too old.** Upgrade it first, then re-run:
+
+```bash
+brew upgrade nono     # or a fresh .deb / .rpm from the nono releases page
+./setup.sh
+```
+
+**`--chrome` fails to connect.** The MCP attaches to a Chrome started *outside*
+the sandbox. Run `bin/launch-test-chrome` in a separate terminal first.
+
+**A path or domain is denied.** That is the sandbox working. Grant it
+deliberately with `--allow` / `--read` rather than reaching for a bypass; see
+[`SECURITY.md`](../SECURITY.md) for what is denied and why.

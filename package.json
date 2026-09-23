@@ -77,11 +77,6 @@
       "type": "json_merge",
       "file": "$HOME/.claude/settings.json",
       "patch": "wiring/enabled-plugin.json"
-    },
-    {
-      "type": "json_merge",
-      "file": "$HOME/.claude/settings.json",
-      "patch": "wiring/settings-merge.json"
     }
   ]
 }

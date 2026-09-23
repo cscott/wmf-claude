@@ -81,12 +81,20 @@
       "Edit(//**/*.pem)",
       "Edit(.claude/hooks/**)",
       "Edit(.claude/settings.json)",
+      "Edit(.claude/settings.local.json)",
+      "Edit(.claude/agents/**)",
+      "Edit(.claude/skills/**)",
+      "Edit(.claude/commands/**)",
       "Edit(~/.claude/settings.json)",
       "Edit(~/.claude/settings.local.json)",
       "Edit(~/.claude/hooks/**)",
       "Edit(~/.claude/plugins/**)",
       "Edit(~/.claude/agents/**)",
-      "Edit(~/.claude/skills/**)"
+      "Edit(~/.claude/skills/**)",
+      "Edit(~/.claude/commands/**)",
+      "Edit(~/.claude.json)",
+      "Edit(~/.claude/CLAUDE.md)",
+      "Edit(.mcp.json)"
     ],
     "ask": [
       "WebFetch"

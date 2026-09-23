@@ -26,6 +26,15 @@ set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
+# Captured before any parsing so a post-update re-exec can replay the launch
+# exactly as the engineer typed it.
+ORIG_ARGS=("$@")
+
+# Persistent self-updater state, beside the fetch stamp:
+#   update-pending  the checkout moved but setup.sh has not finished (holds the sha)
+#   update-refused  the sha a fast-forward last refused, so we stop re-asking for it
+WMF_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/wmf-claude"
+
 # `-h`/`--help` as the first arg prints wrapper usage and exits before launching
 # (claude's own help is still reachable via `claude -- --help`).
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
@@ -163,13 +172,41 @@ for arg in "${NONO_ARGS[@]}"; do
   esac
 done
 
+# `--settings` is single-valued, so a second occurrence wins outright. We pass
+# the tool layer that way, so a user-supplied one after `--` would silently
+# replace every deny (Bash(ssh:*), WebFetch=ask, the credential globs) with
+# whatever that file contains. Refuse rather than quietly drop the layer.
 for arg in "${CLAUDE_ARGS[@]}"; do
   case "$arg" in
-    --dangerously-skip-permissions|--dangerously-skip-permissions=*)
-      echo "error: $arg is not allowed — it would bypass permission checks" >&2
+    --settings|--settings=*)
+      echo "error: $arg is not allowed — it would replace the wmf-claude permission layer" >&2
+      echo "       (run 'command claude --settings ...' unsandboxed if you need your own)" >&2
       exit 1
       ;;
   esac
+done
+
+# Refuse the permission bypass in every spelling Claude Code accepts.
+# `--permission-mode bypassPermissions` and `--allow-dangerously-skip-permissions`
+# are the same capability as `--dangerously-skip-permissions`: every tool call
+# auto-approved, including the WebFetch=ask rule the tool layer exists to keep.
+prev_arg=''
+for arg in "${CLAUDE_ARGS[@]}"; do
+  case "$arg" in
+    --dangerously-skip-permissions|--dangerously-skip-permissions=*|\
+    --allow-dangerously-skip-permissions|--allow-dangerously-skip-permissions=*|\
+    --permission-mode=bypassPermissions)
+      echo "error: $arg is not allowed — it would bypass permission checks" >&2
+      exit 1
+      ;;
+    bypassPermissions)
+      if [[ "$prev_arg" == "--permission-mode" ]]; then
+        echo "error: --permission-mode bypassPermissions is not allowed — it would bypass permission checks" >&2
+        exit 1
+      fi
+      ;;
+  esac
+  prev_arg="$arg"
 done
 
 # Claude Code's own sandbox (sandbox.enabled in ~/.claude/settings*.json) uses
@@ -503,7 +540,7 @@ if $WANT_DOCKER; then
   else
     echo "warning: --docker: the container's network is NOT sandbox-restricted;" >&2
     echo "         code run via mwdocker has full egress. Keep secrets out of the" >&2
-    echo "         dev checkout and dev DB. See SECURITY.md (Docker exec broker)," >&2
+    echo "         dev checkout and dev DB. See docs/security-rationale.md (Docker exec broker)," >&2
     echo "         or use --egress=none|allowlist with a templates/docker-egress/" >&2
     echo "         compose override to restrict the container." >&2
     DOCKER_ACK_FILE="$HOME/.config/wmf-claude/docker-egress-ack"
@@ -517,15 +554,99 @@ fi
 
 # Update notices. bin/claude runs UNSANDBOXED (it's what launches nono), so
 # unlike the in-sandbox `claude` session it can reach the network and the
-# install repo's .git. We only *notify*, never auto-pull, since pulling and
-# then running the freshly-pulled launcher would execute unreviewed code,
-# which the threat model avoids. Two checks, shown only in an interactive
-# terminal (skipped for `claude -p` and embeddings like the VS Code extension):
+# install repo's .git. We never update silently: pulling and then running the
+# freshly-pulled launcher executes code the engineer hasn't seen, which the
+# threat model avoids. Instead we print the commits that would land and ask.
+# Saying yes is informed consent to a reviewed list, not a blind auto-update,
+# and saying nothing (the default) still just prints the command.
+# Two checks, shown only in an interactive terminal (skipped for `claude -p`
+# and embeddings like the VS Code extension):
 #   1. nono vs the .nono-version pin (local, instant).
 #   2. wmf-claude behind origin/main, measured from the local tracking ref
 #      (instant). A `git fetch origin` refreshes that ref in the background,
 #      throttled to once/24h, so it never blocks a launch and is offline-safe.
 # Opt out with WMF_CLAUDE_SKIP_UPDATE=1 (the same knob setup.sh honors).
+# The one manual update command, printed from three places. Kept here so a
+# change (this branch already added the submodule step once) lands everywhere.
+print_update_cmd() {  # $1 c_cmd  $2 c_off
+  printf '      %sgit -C %s pull && git -C %s submodule update --init --recursive && %s/setup.sh%s\n' \
+    "$1" "$SCRIPT_DIR" "$SCRIPT_DIR" "$SCRIPT_DIR" "$2" >&2
+}
+
+# Shown while update-pending exists: on the launch that broke and on every launch
+# after it, until setup.sh succeeds (bin/wmf-claude-setup clears the marker). A
+# one-shot line is not enough: the relaunch's banners scroll it away, and with
+# HEAD already current nothing else will ever mention it again.
+print_incomplete_warning() {  # $1 c_note  $2 c_off  $3 c_cmd
+  printf '\n%sUPDATE INCOMPLETE%s — the checkout moved but setup did not finish.\n' "$1" "$2" >&2
+  printf 'Finish it (this notice repeats until setup.sh succeeds):\n' >&2
+  printf '  %sgit -C %s submodule update --init --recursive && %s/setup.sh%s\n\n' \
+    "$3" "$SCRIPT_DIR" "$SCRIPT_DIR" "$2" >&2
+}
+
+# Apply a pending update, then hand the session to the new launcher.
+#
+# `git merge --ff-only` against the sha we listed, never `git pull` (which
+# re-fetches and follows the configured upstream). The submodule step is not
+# optional:
+# `git pull` leaves submodule worktrees at their old SHAs, and
+# bin/wmf-claude-build only initializes submodules when they are *missing*, so
+# without this a submodule bump silently keeps the stale MCP server.
+#
+# On success we exec rather than return: setup.sh may have rewritten this very
+# file, and bash reads a script lazily, so continuing would parse whatever now
+# sits at the old byte offset. exec replaces the process before that can happen.
+# Any failure returns non-zero and the caller falls through to launching the
+# current (un-updated) version, so a broken update never blocks work.
+do_self_update() {
+  # Everything passed explicitly rather than relied on via dynamic scope.
+  local c_note="$1" c_off="$2" c_cmd="$3" target="$4"
+  [[ -n "$target" ]] || return 1
+  printf '\n' >&2
+  mkdir -p "$WMF_CACHE_DIR" 2>/dev/null || true
+
+  # `git merge --ff-only <the sha we listed>` rather than `git pull`: pull
+  # re-fetches first and follows the branch's configured upstream, so it can
+  # land commits that were never shown, or a different ref entirely on a fork.
+  # Merging the exact sha the behind-count and the commit list came from is
+  # what makes the engineer's yes informed consent to what they just read.
+  if ! git -C "$SCRIPT_DIR" merge --ff-only "$target"; then
+    printf '%snote:%s update failed; continuing on the current version\n' \
+      "$c_note" "$c_off" >&2
+    # Remember the sha so we stop asking on every launch. update_notices prints
+    # the manual command for it instead, until origin/main moves on.
+    printf '%s\n' "$target" > "$WMF_CACHE_DIR/update-refused" 2>/dev/null || true
+    return 1
+  fi
+
+  # Past this point the checkout HAS moved: HEAD is at origin/main, the
+  # behind-count is 0, and the prompt will never fire again. So the half-done
+  # state is persisted, not just printed — the marker makes every later launch
+  # warn until setup.sh finishes. Ctrl-C anywhere in here exits via the
+  # caller's INT trap; the EXIT trap tears down any broker; the marker carries
+  # the warning to the next launch. (setup.sh is interactive and may ask for a
+  # Phabricator username, so Ctrl-C here is a realistic path.)
+  printf '%s\n' "$target" > "$WMF_CACHE_DIR/update-pending" 2>/dev/null || true
+  if git -C "$SCRIPT_DIR" submodule update --init --recursive \
+     && "$SCRIPT_DIR/setup.sh"; then
+    rm -f "$WMF_CACHE_DIR/update-pending"
+  else
+    print_incomplete_warning "$c_note" "$c_off" "$c_cmd"
+  fi
+
+  # exec does not run EXIT traps. A managed Docker broker may be running and
+  # holds the host Docker socket, so tear it down by hand or it is orphaned
+  # with no owner and no handshake file naming it.
+  # `|| true`: cleanup_docker ends in a `[[ ... ]] && rm` that returns 1 when
+  # no broker ran, which is harmless in a trap but would abort us here.
+  cleanup_docker || true
+  trap - EXIT INT TERM
+
+  # Guards against an exec loop if the behind-count somehow survives the merge.
+  export WMF_CLAUDE_UPDATED=1
+  exec "$SCRIPT_DIR/bin/claude" "${ORIG_ARGS[@]}"
+}
+
 update_notices() {
   [[ -n "${WMF_CLAUDE_SKIP_UPDATE:-}" ]] && return 0
 
@@ -551,6 +672,12 @@ update_notices() {
     c_off=$'\033[0m'
   fi
 
+  # A previous self-update moved the checkout but setup.sh did not finish.
+  # Repeats every launch until it does; see print_incomplete_warning.
+  if [[ -f "$WMF_CACHE_DIR/update-pending" ]]; then
+    print_incomplete_warning "$c_note" "$c_off" "$c_cmd"
+  fi
+
   # 1. Installed nono older than the pin.
   if command -v nono >/dev/null 2>&1 && [[ -f "$SCRIPT_DIR/.nono-version" ]]; then
     local pin have
@@ -574,12 +701,95 @@ update_notices() {
   # instant and drops to 0 the moment they pull.
   local behind
   if git -C "$SCRIPT_DIR" rev-parse --verify --quiet refs/remotes/origin/main >/dev/null; then
-    behind=$(git -C "$SCRIPT_DIR" rev-list --count "HEAD..refs/remotes/origin/main" 2>/dev/null || echo 0)
+    # Resolve the ref to a SHA once and use it for the count, the listing and
+    # the merge. A background `git fetch` from a concurrent launch can advance
+    # refs/remotes/origin/main while we block on the prompt, which would land
+    # commits the engineer never saw.
+    local UPDATE_TARGET
+    UPDATE_TARGET=$(git -C "$SCRIPT_DIR" rev-parse refs/remotes/origin/main 2>/dev/null || echo "")
+    [[ -n "$UPDATE_TARGET" ]] || return 0
+    behind=$(git -C "$SCRIPT_DIR" rev-list --count "HEAD..$UPDATE_TARGET" 2>/dev/null || echo 0)
     if [[ "$behind" =~ ^[0-9]+$ ]] && (( behind > 0 )); then
-      printf '%snote:%s wmf-claude is %s commit(s) behind origin/main; update with\n' \
+      printf '%snote:%s wmf-claude is %s commit(s) behind origin/main:\n' \
         "$c_note" "$c_off" "$behind" >&2
-      printf '      %sgit -C %s pull && %s/setup.sh%s\n' \
-        "$c_cmd" "$SCRIPT_DIR" "$SCRIPT_DIR" "$c_off" >&2
+
+      # Show what would land. The prompt below is only meaningful if the
+      # engineer can see what they're agreeing to; capped so a long gap can't
+      # scroll nono's capability table off the screen.
+      local log_max=10
+      # `|| true`: under `set -eo pipefail` a failing pipeline exits the whole
+      # launcher. A shallow clone or a gc mid-flight must not stop Claude Code
+      # from starting over a cosmetic notice.
+      { git -C "$SCRIPT_DIR" log --oneline --no-decorate -n "$log_max" \
+          "HEAD..$UPDATE_TARGET" 2>/dev/null | sed 's/^/      /' >&2; } || true
+      (( behind > log_max )) && \
+        printf '      ... and %s more\n' "$(( behind - log_max ))" >&2
+
+      # Only offer to self-update a checkout where a fast-forward is safe and
+      # unambiguous: on main, nothing uncommitted, a readable tty to prompt on,
+      # and not already re-executed after an update this launch. Anything else
+      # (feature branch, dirty tree, piped stdin) falls back to printing the
+      # command, so we never touch an engineer's in-progress work for them.
+      local can_prompt=1 why='' refused=''
+      [[ -n "${WMF_CLAUDE_UPDATED:-}" ]] && can_prompt=0
+      # A refusal recorded for an older revision is stale once origin/main moves.
+      [[ -f "$WMF_CACHE_DIR/update-refused" ]] && refused=$(cat "$WMF_CACHE_DIR/update-refused" 2>/dev/null || true)
+      [[ -n "$refused" && "$refused" != "$UPDATE_TARGET" ]] && rm -f "$WMF_CACHE_DIR/update-refused"
+      # Needs a tty on stdin too, not just stderr. A background launch is
+      # handled at the read itself (SIGTTIN ignored) rather than by detecting
+      # the foreground pgrp, which needs `ps` and fails closed where `ps` is
+      # restricted — that would silently disable the prompt.
+      [[ -r /dev/tty && -t 0 ]] || can_prompt=0
+      if [[ "$(git -C "$SCRIPT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null)" != "main" ]]; then
+        can_prompt=0; why=' (install is not on main)'
+      # Tracked changes only. `git status --porcelain` also reports untracked
+      # files, and Claude Code drops .claude/settings.local.json into any repo
+      # where a permission is approved — including this checkout — which would
+      # disable the prompt permanently on a perfectly updatable install.
+      # A fast-forward only cares about tracked modifications.
+      elif ! git -C "$SCRIPT_DIR" diff --quiet --ignore-submodules=dirty HEAD 2>/dev/null; then
+        can_prompt=0; why=' (install has uncommitted changes)'
+      # Local commits on main mean `merge --ff-only` will refuse. Without this
+      # the prompt would appear, fail, and reappear on every single launch.
+      elif ! git -C "$SCRIPT_DIR" merge-base --is-ancestor HEAD "$UPDATE_TARGET" 2>/dev/null; then
+        can_prompt=0; why=' (install has diverged from main)'
+      # The fast-forward to this exact revision was refused last time (an
+      # untracked file upstream now tracks, a hook, a locked index). Asking
+      # again each launch only repeats the failure, so print the command until
+      # origin/main moves on.
+      elif [[ "$refused" == "$UPDATE_TARGET" ]]; then
+        can_prompt=0; why=' (the last attempt to update to this revision failed)'
+      fi
+
+      if (( can_prompt )); then
+        local reply=''
+        printf '\n      %sUpdate now?%s [y/N] ' "$c_cmd" "$c_off" >&2
+        # Timeout so an unattended launch proceeds instead of hanging at the
+        # prompt; no answer means no, same as declining.
+        # One INT owner from here until do_self_update returns: Ctrl-C at the
+        # prompt, during the merge, or inside setup.sh all end the launch. With
+        # --docker the EXIT trap then tears the broker down cleanly. The
+        # alternative — letting cleanup_docker run as the INT handler and then
+        # continuing — launches a session against a dead broker. do_self_update
+        # returns only on a pre-merge failure; success execs and never returns.
+        trap 'printf "\n" >&2; exit 130' INT
+        # Ignoring SIGTTIN makes a read from a background process group fail
+        # with EIO instead of suspending the job ("Stopped (tty input)"), so
+        # `claude &` declines and launches rather than hanging.
+        trap '' TTIN
+        read -t 60 -r reply </dev/tty || reply=''
+        trap - TTIN
+        printf '\n' >&2   # `read` ate the newline; keep later output on its own line
+        case "$reply" in
+          [yY]|[yY][eE][sS]) do_self_update "$c_note" "$c_off" "$c_cmd" "$UPDATE_TARGET" || true ;;
+          *) printf '      skipped; update later with:\n' >&2
+             print_update_cmd "$c_cmd" "$c_off" ;;
+        esac
+        if $WANT_DOCKER; then trap cleanup_docker EXIT INT TERM; else trap - INT; fi
+      else
+        printf '      update with%s\n' "$why" >&2
+        print_update_cmd "$c_cmd" "$c_off"
+      fi
     fi
   fi
 
@@ -588,7 +798,7 @@ update_notices() {
   # terminal prompt, short connect timeout); detached from stdin/tty. Offline
   # or auth failures are ignored; the count just keeps using the last fetch.
   local cache_dir stamp now last interval
-  cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/wmf-claude"
+  cache_dir="$WMF_CACHE_DIR"
   stamp="$cache_dir/last-fetch"
   mkdir -p "$cache_dir" 2>/dev/null || return 0
   interval=86400
@@ -622,6 +832,41 @@ update_notices
 #
 # --profile loads $PROFILE by path (nono accepts NAME_OR_PATH); `extends:
 # claude-code` still resolves. No copy into ~/.config/nono/profiles to drift.
+# The Claude Code permission layer, applied per-launch rather than installed
+# into ~/.claude/settings.json. `--settings` loads additional settings for this
+# session only, so the denies bind sandboxed wmf-claude sessions and leave every
+# other Claude Code session on the machine exactly as the engineer configured
+# it. The file is inside SCRIPT_DIR, which the sandbox already grants read.
+# Verified: with --settings the shipped file refuses `ssh -V` (Bash(ssh:*));
+# without it the same command runs. SECURITY.md documents the check.
+# Hard-fail rather than launch without it: every other missing-precondition in
+# this script errors out, and this is the security-relevant one. Failing open
+# would start a session with WebFetch auto-allowed and ssh un-denied, silently.
+if [[ ! -f "$SCRIPT_DIR/wiring/settings-merge.json" ]]; then
+  echo "error: wiring/settings-merge.json missing — refusing to launch without" >&2
+  echo "       the Claude Code permission layer. Re-run ./setup.sh or restore it." >&2
+  exit 1
+fi
+SETTINGS_CLAUDE_ARGS=(--settings "$SCRIPT_DIR/wiring/settings-merge.json")
+
+# Warn when the policy this launch will enforce differs from what is committed.
+# With the checkout as the workdir the agent can rewrite these files through
+# Bash, and an Edit deny cannot stop that (and a cwd-relative one would block
+# every other repo's wiring/ or profiles/ directory), so the launcher checks
+# instead. A warning, not a refusal: a maintainer editing the profile is the
+# common case and knows they did — an unexpected one here is the signal.
+if git -C "$SCRIPT_DIR" rev-parse --git-dir >/dev/null 2>&1; then
+  policy_rc=0
+  git -C "$SCRIPT_DIR" diff --quiet HEAD -- wiring/settings-merge.json profiles 2>/dev/null || policy_rc=$?
+  if (( policy_rc == 1 )); then
+    if [[ -z "${NO_COLOR:-}" ]]; then printf '\033[1;33mnote:\033[0m' >&2; else printf 'note:' >&2; fi
+    printf ' the security policy differs from the committed version:\n' >&2
+    { git -C "$SCRIPT_DIR" diff --stat HEAD -- wiring/settings-merge.json profiles 2>/dev/null \
+        | sed 's/^/      /' >&2; } || true
+    printf '      If you did not make this change, stop and run: git -C %s diff\n' "$SCRIPT_DIR" >&2
+  fi
+fi
+
 NONO_CMD=(nono run --profile "$PROFILE_PATH" \
   --read "$SCRIPT_DIR" \
   --allow "$SCRIPT_DIR/mcp-phabricator" \
@@ -632,6 +877,7 @@ NONO_CMD=(nono run --profile "$PROFILE_PATH" \
   "${DOCKER_BROKER_NONO_ARGS[@]}" \
   "${NONO_ARGS[@]}" \
   -- "$SCRIPT_DIR/bin/launch-claude.sh" --plugin-dir "$SCRIPT_DIR" \
+  "${SETTINGS_CLAUDE_ARGS[@]}" \
   "${CHROME_DEVTOOLS_CLAUDE_ARGS[@]}" \
   "${CLAUDE_ARGS[@]}")
 

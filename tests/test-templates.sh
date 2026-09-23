@@ -134,6 +134,31 @@ else
   pass "settings-merge.json every **/ file rule has a //**/ twin"
 fi
 
+# Claude Code loads config from BOTH ~/.claude/ and a project's .claude/, so a
+# rule denied at only one scope leaves the other as an open path. This asserts
+# the pair stays in step. It is defense in depth, not a boundary: these rules
+# bind the Edit/Write tools, while Bash can still reach the same files through
+# an interpreter and the OS layer must leave ~/.claude writable for Claude Code. (plugins/** is
+# deliberately absent: it is user-global only.)
+PARITY_MISSING=""
+for cfg in settings.json settings.local.json 'hooks/**' 'agents/**' 'skills/**' 'commands/**'; do
+  grep -qxF "Edit(.claude/$cfg)"  <<<"$RULES" || PARITY_MISSING+="project .claude/$cfg; "
+  grep -qxF "Edit(~/.claude/$cfg)" <<<"$RULES" || PARITY_MISSING+="user ~/.claude/$cfg; "
+done
+# Config that steers a future session but lives OUTSIDE ~/.claude/: the nono
+# base profile grants read-write on ~/.claude.json (mcpServers, allowedTools,
+# trust state), ~/.claude/CLAUDE.md loads into every session in every project,
+# and a project .mcp.json defines servers the deny rules do not cover.
+for cfg in 'Edit(~/.claude.json)' 'Edit(~/.claude/CLAUDE.md)' 'Edit(.mcp.json)'; do
+  grep -qxF "$cfg" <<<"$RULES" || PARITY_MISSING+="$cfg; "
+done
+
+if [[ -n "$PARITY_MISSING" ]]; then
+  fail "settings-merge.json .claude/ denies not at both scopes: $PARITY_MISSING"
+else
+  pass "settings-merge.json denies .claude/ config at both project and user scope"
+fi
+
 # Every find deny needs both forms. `Bash(find * -exec*)` alone misses
 # `find -exec rm {} \;`, because GNU find lets you omit the path operand.
 # `Bash(find *-exec*)` alone is worse: it becomes a substring match and denies
@@ -267,6 +292,8 @@ mkdir -p "$FAKE_REPO/bin" \
 cp "$REPO_ROOT/bin/claude" "$FAKE_REPO/bin/claude"
 # bin/claude checks the profile file exists before launching.
 touch "$FAKE_REPO/profiles/wmf-engineer.json"
+mkdir -p "$FAKE_REPO/wiring"
+echo '{}' > "$FAKE_REPO/wiring/settings-merge.json"
 touch "$FAKE_REPO/chrome-devtools-mcp/mcp-config.json"
 touch "$FAKE_REPO/chrome-devtools-mcp/node_modules/.bin/chrome-devtools-mcp"
 chmod +x "$FAKE_REPO/chrome-devtools-mcp/node_modules/.bin/chrome-devtools-mcp"
@@ -586,6 +613,277 @@ if WMF_DOCKER_BROKER_URL=http://127.0.0.1:5000 bash "$REPO_ROOT/bin/session-star
   pass "session-start tells Claude to use mwdocker when a broker is attached"
 else
   fail "session-start does not route to mwdocker when a broker is attached"
+fi
+
+echo ""
+echo "--- bin/claude update prompt ---"
+# The prompt only fires on a tty, so these drive bin/claude through a real pty.
+# What matters is not the happy path but the guards: an install on a feature
+# branch or with uncommitted work must never be fast-forwarded out from under
+# the engineer. Without coverage those guards can silently invert.
+UPD="$(mktemp -d)"
+trap 'rm -rf "$FAKE_REPO" "$UPD"' EXIT
+
+cat > "$UPD/drive.py" <<'DRIVER'
+import os, pty, select, sys, time
+cwd, answer = sys.argv[1], sys.argv[2]
+# Cache dir must live OUTSIDE the checkout: the wrapper writes a fetch stamp
+# under it, and an untracked file inside `work` would read as a dirty tree and
+# trip the very guard these tests exercise.
+env = dict(os.environ, PATH=cwd + "/bin:" + os.environ["PATH"], NO_COLOR="1",
+           XDG_CACHE_HOME=os.path.join(os.path.dirname(cwd.rstrip("/")), ".cache"))
+# A developer with the documented opt-out exported would otherwise see these
+# tests fail rather than run: update_notices returns early on either of these.
+env.pop("WMF_CLAUDE_SKIP_UPDATE", None)
+env.pop("WMF_CLAUDE_UPDATED", None)
+env.pop("WMF_CLAUDE_PROFILE", None)   # fixture only ships wmf-engineer.json
+# Point HOME at a scratch dir: bin/claude reads ~/.claude/settings*.json and
+# exits before update_notices if sandbox.enabled is true, which would turn
+# every assertion below into an unexplained failure on the developer's machine.
+env["HOME"] = os.path.join(os.path.dirname(cwd.rstrip("/")), ".home")
+os.makedirs(env["HOME"], exist_ok=True)
+pid, fd = pty.fork()
+if pid == 0:
+    os.chdir(cwd); os.execve("/bin/bash", ["bash", "bin/claude"], env); os._exit(1)
+buf, sent, deadline = b"", False, time.time() + 60
+while time.time() < deadline:
+    r, _, _ = select.select([fd], [], [], 0.5)
+    if r:
+        try: chunk = os.read(fd, 4096)
+        except OSError: break
+        if not chunk: break
+        buf += chunk
+        if not sent and b"[y/N]" in buf:
+            time.sleep(0.3); os.write(fd, answer.encode() + b"\n"); sent = True
+    else:
+        try:
+            if os.waitpid(pid, os.WNOHANG)[0]: break
+        except ChildProcessError: break
+try: os.waitpid(pid, 0)
+except Exception: pass
+sys.stdout.write(buf.decode(errors="replace"))
+DRIVER
+
+# A fake install: `work` is a clone of `origin.git` that sits two commits behind.
+upd_fixture() {
+  rm -rf "$UPD/origin.git" "$UPD/work" "$UPD/ahead" "$UPD/.cache"   # .cache: updater markers
+  git init -q --bare "$UPD/origin.git"
+  git -C "$UPD/origin.git" symbolic-ref HEAD refs/heads/main
+  mkdir -p "$UPD/work" && git -C "$UPD/work" init -q -b main .
+  git -C "$UPD/work" config user.email t@t && git -C "$UPD/work" config user.name T
+  mkdir -p "$UPD/work/bin" "$UPD/work/profiles" "$UPD/work/wiring"
+  touch "$UPD/work/profiles/wmf-engineer.json"
+  # bin/claude refuses to launch without this; without it every driven launch
+  # died right after the prompt and the assertions never noticed.
+  echo '{}' > "$UPD/work/wiring/settings-merge.json"
+  cp "$REPO_ROOT/bin/claude" "$UPD/work/bin/claude"
+  # Prints a marker so tests can tell a launch that reached nono from one that
+  # died on a precondition after the prompt.
+  printf '#!/bin/bash\necho NONO_LAUNCHED\n' > "$UPD/work/bin/nono"
+  # $1: make setup.sh fail, to exercise the incomplete-update path.
+  if [[ "${1:-}" == "failing-setup" ]]; then
+    printf '#!/bin/bash\necho SETUP_RAN\nexit 1\n' > "$UPD/work/setup.sh"
+  else
+    printf '#!/bin/bash\necho SETUP_RAN\n' > "$UPD/work/setup.sh"
+  fi
+  chmod +x "$UPD/work/bin/nono" "$UPD/work/setup.sh"
+  git -C "$UPD/work" add -A && git -C "$UPD/work" commit -qm initial
+  git -C "$UPD/work" remote add origin "$UPD/origin.git"
+  git -C "$UPD/work" push -q -u origin main
+  git clone -q "$UPD/origin.git" "$UPD/ahead"
+  git -C "$UPD/ahead" config user.email t@t && git -C "$UPD/ahead" config user.name T
+  echo a > "$UPD/ahead/a.txt" && git -C "$UPD/ahead" add -A \
+    && git -C "$UPD/ahead" commit -qm "profile: Allow example.wmcloud.org"
+  echo b > "$UPD/ahead/b.txt" && git -C "$UPD/ahead" add -A \
+    && git -C "$UPD/ahead" commit -qm "wiring: Tighten the find denies"
+  git -C "$UPD/ahead" push -q origin main
+  git -C "$UPD/work" fetch -q origin
+}
+upd_head() { git -C "$UPD/work" rev-parse HEAD; }
+
+if ! upd_fixture >/dev/null 2>&1; then
+  # Loud, but not a FAIL: a missing/old git is an environment problem, not a
+  # defect. CI installs git so this path should never be taken there.
+  red "SKIP: bin/claude update prompt — fixture could not be built (git missing or <2.28)"
+  red "      The update-prompt guards were NOT exercised in this run."
+else
+  # Declining must leave the checkout exactly as it was.
+  before="$(upd_head)"
+  out="$(python3 "$UPD/drive.py" "$UPD/work" n 2>&1)"
+  if grep -q 'Update now?' <<<"$out" \
+     && grep -q 'profile: Allow example.wmcloud.org' <<<"$out"; then
+    pass "update prompt lists the pending commits before asking"
+  else
+    fail "update prompt did not list pending commits"
+  fi
+  if [[ "$(upd_head)" == "$before" ]] && ! grep -q SETUP_RAN <<<"$out"; then
+    pass "declining the update leaves the checkout untouched"
+  else
+    fail "declining the update still modified the checkout"
+  fi
+  if grep -q NONO_LAUNCHED <<<"$out"; then
+    pass "the launch proceeds after the prompt is declined"
+  else
+    fail "the launch died after the prompt (a precondition after update_notices failed)"
+  fi
+
+  # An untracked file must NOT block: Claude Code writes
+  # .claude/settings.local.json into any repo where a permission is approved,
+  # including this checkout, so treating untracked as dirty disables the
+  # prompt permanently on a perfectly updatable install.
+  mkdir -p "$UPD/work/.claude"
+  echo '{}' > "$UPD/work/.claude/settings.local.json"
+  before="$(upd_head)"
+  out="$(python3 "$UPD/drive.py" "$UPD/work" n 2>&1)"
+  if grep -q 'Update now?' <<<"$out" && [[ "$(upd_head)" == "$before" ]]; then
+    pass "untracked files do not block the update prompt"
+  else
+    fail "untracked files wrongly blocked the update prompt"
+  fi
+  rm -rf "$UPD/work/.claude"
+
+  # Guard: a tracked modification is real work in progress and must never be
+  # fast-forwarded over.
+  echo "local edit" >> "$UPD/work/setup.sh"
+  before="$(upd_head)"
+  out="$(python3 "$UPD/drive.py" "$UPD/work" y 2>&1)"
+  if ! grep -q 'Update now?' <<<"$out" \
+     && grep -q 'uncommitted changes' <<<"$out" \
+     && [[ "$(upd_head)" == "$before" ]]; then
+    pass "dirty install is not offered (or given) an update"
+  else
+    fail "dirty install was offered or given an update"
+  fi
+  git -C "$UPD/work" checkout -q -- setup.sh
+
+  # Guard: a feature branch is not origin/main and must be left alone.
+  git -C "$UPD/work" checkout -q -b feature-branch
+  before="$(upd_head)"
+  out="$(python3 "$UPD/drive.py" "$UPD/work" y 2>&1)"
+  if ! grep -q 'Update now?' <<<"$out" \
+     && grep -q 'not on main' <<<"$out" \
+     && [[ "$(upd_head)" == "$before" ]]; then
+    pass "install on a feature branch is not offered (or given) an update"
+  else
+    fail "install on a feature branch was offered or given an update"
+  fi
+  git -C "$UPD/work" checkout -q main
+
+  # Guard: local commits on main mean merge --ff-only would refuse, so the
+  # prompt must not appear and then fail on every launch forever.
+  git -C "$UPD/work" checkout -q main
+  echo local > "$UPD/work/local.txt"
+  git -C "$UPD/work" add -A >/dev/null 2>&1
+  git -C "$UPD/work" commit -qm "local tweak" >/dev/null 2>&1
+  before="$(upd_head)"
+  out="$(python3 "$UPD/drive.py" "$UPD/work" y 2>&1)"
+  if ! grep -q 'Update now?' <<<"$out" \
+     && grep -q 'diverged from main' <<<"$out" \
+     && [[ "$(upd_head)" == "$before" ]]; then
+    pass "diverged install is not offered an update it cannot fast-forward"
+  else
+    fail "diverged install was offered an unusable update"
+  fi
+  upd_fixture >/dev/null 2>&1   # reset: the local commit broke fast-forwarding
+
+  # Accepting fast-forwards to origin/main and runs setup.sh.
+  target="$(git -C "$UPD/work" rev-parse refs/remotes/origin/main)"
+  out="$(python3 "$UPD/drive.py" "$UPD/work" y 2>&1)"
+  if [[ "$(upd_head)" == "$target" ]] && grep -q SETUP_RAN <<<"$out"; then
+    pass "accepting the update fast-forwards and runs setup.sh"
+  else
+    fail "accepting the update did not fast-forward or did not run setup.sh"
+  fi
+
+  # A failure AFTER the merge is the dangerous case: HEAD is already current,
+  # so the behind-count is 0 and this notice can never fire again. It has to
+  # say so rather than leave a half-updated install behind quietly.
+  if ! upd_fixture failing-setup >/dev/null 2>&1; then
+    red "SKIP: incomplete-update warning (fixture could not be rebuilt)"
+  else
+    target="$(git -C "$UPD/work" rev-parse refs/remotes/origin/main)"
+    out="$(python3 "$UPD/drive.py" "$UPD/work" y 2>&1)"
+    if grep -q 'UPDATE INCOMPLETE' <<<"$out" \
+       && grep -q 'repeats until setup.sh succeeds' <<<"$out" \
+       && [[ "$(upd_head)" == "$target" ]]; then
+      pass "a failure after the merge reports the incomplete update"
+    else
+      fail "a failure after the merge did not report the incomplete update"
+    fi
+    # The warning must survive the relaunch: HEAD is now current so no prompt
+    # will ever fire again, and the TUI scrolls the one-shot line away.
+    out="$(python3 "$UPD/drive.py" "$UPD/work" n 2>&1)"
+    if grep -q 'UPDATE INCOMPLETE' <<<"$out" && ! grep -q 'Update now?' <<<"$out"; then
+      pass "the incomplete-update warning persists on the next launch"
+    else
+      fail "the incomplete-update warning was lost after one launch"
+    fi
+  fi
+fi
+
+echo ""
+echo "--- Claude Code permission layer ---"
+# The tool layer is applied per-launch with `claude --settings`, never written
+# into the engineer's ~/.claude/settings.json. That keeps the denies on
+# sandboxed wmf-claude sessions and leaves every other Claude Code session on
+# the machine alone, so this must not regress to a global install.
+out="$(run_fake_claude)"
+if grep -qx 'NONO_ARG: --settings' <<<"$out"; then
+  pass "bin/claude applies the permission layer with --settings"
+else
+  fail "bin/claude did not pass --settings (permission layer would be inert)"
+fi
+if grep -qx "NONO_ARG: $FAKE_REPO/wiring/settings-merge.json" <<<"$out"; then
+  pass "bin/claude points --settings at wiring/settings-merge.json"
+else
+  fail "bin/claude passed --settings with the wrong path"
+fi
+# Assert the behaviour, not one implementation's identifiers: nothing in the
+# install path may write the engineer's global settings file. package.json is
+# in scope because its `wiring` block declares exactly that write for the pack.
+GLOBAL_WRITERS=""
+for f in "$REPO_ROOT"/bin/* "$REPO_ROOT/setup.sh"; do
+  [[ -f "$f" ]] || continue
+  # Comment lines are dropped first, so a `#` that merely names the path does
+  # not trip this; the commands are word-bounded so `backup` or `except` cannot.
+  if grep -vE '^[[:space:]]*#' "$f" \
+     | grep -qE '((^|[^[:alnum:]_])(cp|mv|tee)([^[:alnum:]_]|$)|>)[^#]*\.claude/settings\.json'; then
+    GLOBAL_WRITERS+="${f#"$REPO_ROOT"/} "
+  fi
+done
+# package.json is JSON, so grep by line would miss a pretty-printed directive.
+# The plugin-enable merge is expected; the permission layer must NOT be there.
+if jq -e '[.wiring[] | select((.file // "") | endswith(".claude/settings.json"))
+           | select(.patch == "wiring/settings-merge.json")] | length > 0' \
+     "$REPO_ROOT/package.json" >/dev/null 2>&1; then
+  GLOBAL_WRITERS+="package.json(wiring) "
+fi
+if [[ -z "$GLOBAL_WRITERS" ]]; then
+  pass "nothing in the install path writes ~/.claude/settings.json"
+else
+  fail "these still write the engineer's global settings: $GLOBAL_WRITERS"
+fi
+
+# Every spelling of the permission bypass is refused; a normal mode still passes.
+for bad in --dangerously-skip-permissions --allow-dangerously-skip-permissions --permission-mode=bypassPermissions; do
+  out="$(run_fake_claude -- "$bad")"
+  if grep -q 'not allowed' <<<"$out" && ! grep -q 'NONO_ARG: run' <<<"$out"; then
+    pass "bin/claude refuses $bad"
+  else
+    fail "bin/claude forwarded $bad to Claude Code"
+  fi
+done
+out="$(run_fake_claude -- --permission-mode bypassPermissions)"
+if grep -q 'not allowed' <<<"$out" && ! grep -q 'NONO_ARG: run' <<<"$out"; then
+  pass "bin/claude refuses --permission-mode bypassPermissions (two-token form)"
+else
+  fail "bin/claude forwarded --permission-mode bypassPermissions"
+fi
+out="$(run_fake_claude -- --permission-mode manual)"
+if grep -q 'NONO_ARG: run' <<<"$out"; then
+  pass "bin/claude still forwards --permission-mode manual"
+else
+  fail "bin/claude wrongly refused --permission-mode manual"
 fi
 
 echo ""

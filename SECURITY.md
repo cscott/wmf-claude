@@ -198,11 +198,12 @@ Claude Code itself probes `Library/Application Support/{Google/Chrome,Google/Chr
 - `WebFetch` is in `ask` (not `allow`). nono can't gate `WebFetch` because
   it's served by Anthropic's API, not the laptop — this is the primary egress
   barrier to attacker URLs and the most important rule in this list.
-- `Edit`/`Write` blocked on `.claude/{settings.json,hooks/**}` (per-project)
+- `Edit` blocked on `.claude/{settings.json,hooks/**}` (per-project)
   and `~/.claude/{settings*.json,hooks/**,plugins/**,agents/**,skills/**}`
-  (user-global). Prevents Claude from tampering with hooks or rewriting its
-  own allowlist for future sessions. The nono pack writes these paths via
-  the nono CLI, which runs outside Claude's tool surface.
+  (user-global). `Edit` rules cover Write and NotebookEdit too. Prevents
+  Claude from tampering with hooks or rewriting its own allowlist for future
+  sessions. The nono pack writes these paths via the nono CLI, which runs
+  outside Claude's tool surface.
 - `Read(//**/*.{env,key,secret,credential,pem})` and `Read(//**/.env*)`,
   each with an `Edit` twin — credential files anywhere on disk, so a `.env`
   in a `--read` sibling repo is covered too, and the agent can neither read
@@ -216,27 +217,45 @@ Claude Code itself probes `Library/Application Support/{Google/Chrome,Google/Chr
 - `Read(~/.ssh/**)` — defense in depth alongside the profile's `~/.ssh`
   filesystem deny (`~/.ssh/*` is single-star and does not descend).
 - `Bash(ssh:*)` — defense in depth alongside the network-layer port-22 deny.
-- `Bash(find * -exec*)`, `-execdir`, `-delete`, `-ok`, `-okdir`, `-fprint*` —
-  `find` only allows read-only traversal forms; `-exec` is otherwise
-  effectively shell escape. Glob form on purpose: `Bash(find:* -exec*)` never
-  fires, because the `:*` prefix form takes the whole remainder as the prefix.
-  `tests/test-templates.sh` fails on that shape.
+- `-exec`, `-execdir`, `-delete`, `-ok`, `-okdir`, `-fprint*` and `-fls*` are
+  denied for `find`, which leaves only the read-only traversal forms. `-exec`
+  is otherwise effectively shell escape, and `-delete`/`-fprint*`/`-fls*`
+  write. Each action takes **two** rules, `Bash(find -exec*)` and
+  `Bash(find * -exec*)`, because the glob syntax has no alternation and each
+  form alone is wrong:
+  - `Bash(find:* -exec*)` is rejected at load. Claude Code requires `:*` to
+    end the pattern ("The :\* pattern must be at the end"), so the rule is
+    dropped with a warning and nothing is denied.
+  - `Bash(find * -exec*)` alone needs a path operand. GNU find lets you omit
+    it, so `find -exec rm {} \;` slips through to a prompt.
+  - `Bash(find *-exec*)` alone becomes a substring match. It denies a
+    read-only `find ./pre-delete -name x`, and a deny gives no prompt to
+    override.
+  `tests/test-templates.sh` fails if an action loses either form.
 - `Bash(git config core.hooksPath:*)` — no redirecting commit hooks to
   attacker-controlled paths.
 - `sandbox.enabled: false` — nono is the OS boundary; Claude Code's softer
   in-process sandbox would add friction without restricting an already
   sandboxed session.
 
-**Linux caveat.** Claude Code silently ignores glob patterns in permission
-deny rules on Linux, so the `Read(//**/*.{env,key,secret,credential,pem})`
-rules above do not fire there. The explicit non-glob `.env*` entries still
-apply, and the nono OS-level sandbox still denies `~/.ssh` and the other
-credential paths regardless of platform. The gap is workdir-local: an
-unusually-named or deep-nested `.key`/`.pem`/`.secret`/`.credential` file
-inside the workdir is blocked by neither layer on Linux (the tool glob is
-ignored, and nono grants the workdir read+write), whereas on macOS the tool
-glob blocks it. Avoid keeping secrets in the workdir on Linux;
-`bin/wmf-claude-setup` prints this warning on Linux hosts.
+**Linux caveat.** On Linux, Claude Code ignores glob patterns in `Read` and
+`Edit` rules ("On Linux, glob patterns in Edit/Read rules will be ignored").
+`Bash` glob rules are not affected, so the `find` denies above still apply.
+What does not apply is every `Read(//**/…)` credential rule and every `Edit`
+twin beside it. Two things fill the gap only in part:
+
+- The non-glob fallbacks are 10 exact `Read` names, `.env` through
+  `.env.staging.local`. They cover no other spelling — `.envrc` is not among
+  them — and there is **no** non-glob `Edit` twin, so on Linux nothing at the
+  tool layer stops the agent overwriting a `.env`.
+- The nono OS-level sandbox still denies `~/.ssh` and the other credential
+  paths on every platform, but it grants the workdir read+write.
+
+So the gap is workdir-local: on Linux an unusually-named or deep-nested
+`.key`/`.pem`/`.secret`/`.credential` file inside the workdir is blocked by
+neither layer, for reads or for writes, whereas on macOS the tool glob blocks
+both. Avoid keeping secrets in the workdir on Linux; `bin/wmf-claude-setup`
+prints this warning on Linux hosts.
 
 ## Environment variables
 

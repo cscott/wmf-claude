@@ -47,9 +47,29 @@ threat model, so there is no supported way to pass them.
 | Variable | Effect |
 |---|---|
 | `WMF_CLAUDE_PROFILE` | Load `profiles/<name>.json` instead of `wmf-engineer` |
-| `WMF_CLAUDE_QUIET` | Suppress the session banner |
+| `WMF_CLAUDE_NO_PAUSE` | Skip the Enter pause that follows startup notices. (`WMF_CLAUDE_QUIET`, which hid the old banner, is now a no-op.) |
 | `WMF_CLAUDE_SKIP_UPDATE` | Skip the update check and prompt entirely |
 | `WMF_CLAUDE_SKIP_CHROME` | Skip building the chrome-devtools MCP during setup |
+
+## Startup notices and the status line
+
+Claude Code redraws the terminal as it starts, so anything the launcher printed
+is gone almost immediately. Two things compensate:
+
+- When `bin/claude` printed a notice that needs action (Chrome not started yet,
+  a policy file that differs from the commit, a failed update), it waits up to
+  60 s for Enter before starting Claude Code. A clean launch does not pause, and
+  neither does `claude -p` or a piped launch (VS Code). `WMF_CLAUDE_NO_PAUSE=1`
+  skips the pause.
+- The status line shows the session's sandbox state for as long as it runs:
+  `WMF nono sandbox · --local-db --docker=mediawiki (egress none) --allow ~/src`,
+  plus a note when the install is behind `origin/main`. Notices about that state
+  (behind count, Docker service, egress mode) are printed but do not pause. If
+  you have your own `statusLine` in `~/.claude/settings.json`, its output is
+  appended after the sandbox segment, not replaced. It is read once, at launch,
+  from the user-level file only: inside the sandbox the project's `.claude/` and
+  `~/.claude` are agent-writable, so the status line never takes a command from
+  a file there.
 
 ## Using a different security profile
 

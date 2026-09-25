@@ -26,9 +26,9 @@ Compare the pinned nono version (`.nono-version` at the repo root) against upstr
 2. **Fetch upstream release notes.** Use `WebFetch` against `https://github.com/nolabs-ai/nono/releases` and ask for:
    - Every release tag newer than the baseline (semver compare, not lexicographic).
    - For each: headline changes, especially around:
-     - **Profile schema** (new fields, removed fields, validation tightening). The wmf-engineer profile uses `extends`, `security.{signal_mode,process_info_mode,ipc_mode,capability_elevation}`, `filesystem.{read,deny}`, `environment.allow_vars`, `network.{block,network_profile,allow_domain,open_port}`, `workdir.access`, and `unsafe_macos_seatbelt_rules`. Flag anything that touches those.
+     - **Profile schema** (new fields, removed fields, validation tightening). The wmf-engineer profile uses `extends`, `security.{signal_mode,process_info_mode,ipc_mode,capability_elevation}`, `filesystem.{read,deny}`, `environment.allow_vars`, `network.{block,network_profile,allow_domain}`, `filesystem.suppress_save_prompt`, `workdir.access`, and `unsafe_macos_seatbelt_rules`. Flag anything that touches those.
      - **Sandbox enforcement** (Landlock/seatbelt/seccomp behavior, Mach lookup rules, env-var filtering).
-     - **`nono run` flags** — particularly `--workdir`, `--allow-cwd`, `--silent`, `--profile`. The CI test scripts (`tests/test-profile.sh`) depend on these.
+     - **`nono run` flags** — particularly `--workdir`, `--allow-cwd`, `--silent`, `--profile`, `--listen-port` (the `/login` callback bind on macOS), `--allow-file`, `--allow-domain`, `--open-port`. The CI test scripts (`tests/test-profile.sh`) depend on these.
      - **`nono pull` / pack format** changes (we ship a pack via `package.json`).
      - **Linux-only regressions or fixes.** History: 0.51 broke `nono run --workdir --allow-cwd` on Linux (job 820086); CI was pinned to 0.50 until 0.53 unblocked it. Always check whether new releases fix or reintroduce CI-Linux issues.
 

@@ -95,7 +95,7 @@ assert_status "~/.ssh read denied" "denied" "$(why_path "$HOME/.ssh" read)"
 assert_status "~/.ssh write denied" "denied" "$(why_path "$HOME/.ssh" write)"
 assert_status "~/.gnupg read denied" "denied" "$(why_path "$HOME/.gnupg" read)"
 
-for f in .env .bashrc .bash_profile .bash_history .zshrc .zprofile .zsh_history .profile .netrc .npmrc .pypirc; do
+for f in .env .bashrc .bash_profile .bash_history .zshrc .zprofile .zsh_history .profile .netrc .npmrc .pypirc .git-credentials .vault-token .gitcookies; do
   assert_status "~/$f read denied" "denied" "$(why_path "$HOME/$f" read)"
 done
 assert_status "~/.composer/auth.json read denied" "denied" "$(why_path "$HOME/.composer/auth.json" read)"
@@ -103,6 +103,12 @@ assert_status "~/.config/composer/auth.json read denied" "denied" "$(why_path "$
 assert_status "~/.docker/config.json read denied" "denied" "$(why_path "$HOME/.docker/config.json" read)"
 assert_status "~/.kube/config read denied" "denied" "$(why_path "$HOME/.kube/config" read)"
 assert_status "~/.config/gh read denied" "denied" "$(why_path "$HOME/.config/gh" read)"
+assert_status "~/.config/git/credentials read denied" "denied" "$(why_path "$HOME/.config/git/credentials" read)"
+assert_status "~/.terraform.d read denied" "denied" "$(why_path "$HOME/.terraform.d" read)"
+assert_status "~/.azure read denied" "denied" "$(why_path "$HOME/.azure" read)"
+assert_status "~/.config/op read denied" "denied" "$(why_path "$HOME/.config/op" read)"
+assert_status "~/.cargo/credentials.toml read denied" "denied" "$(why_path "$HOME/.cargo/credentials.toml" read)"
+assert_status "~/.local/share/keyrings read denied" "denied" "$(why_path "$HOME/.local/share/keyrings" read)"
 
 # Password managers and secret stores not covered by claude-code's deny_credentials group.
 assert_status "~/.password-store read denied" "denied" "$(why_path "$HOME/.password-store" read)"
@@ -185,7 +191,7 @@ else
 fi
 
 for port in 22 29418; do
-  if jq -e ".network.open_port | index($port)" "$PROFILE" >/dev/null 2>&1; then
+  if jq -e "(.network.open_port // []) | index($port)" "$PROFILE" >/dev/null 2>&1; then
     red "FAIL: port $port should not be in network.open_port (would enable SSH push)"
     ((FAIL++))
   else
@@ -201,6 +207,13 @@ done
 # leaves the sandbox. We assert the structure here; the live GET=200 / POST=403
 # check is in docs/security-rationale.md (needs external egress, cannot run
 # nested in a sandbox).
+echo ""
+# api.minimax.io is opened per session by `bin/claude --minimax`, never statically.
+if ! jq -e '.network.allow_domain[] | strings | select(. == "api.minimax.io")' "$PROFILE" >/dev/null 2>&1; then
+  green "PASS: api.minimax.io not in the static allow_domain (opt-in via --minimax)"; ((PASS++))
+else
+  red "FAIL: api.minimax.io is in the static allow_domain — every session can reach a third-party LLM API"; ((FAIL++))
+fi
 echo ""
 echo "--- Network: docs domains are read-only (GET/HEAD) ---"
 DOCS_READ_ONLY=(docs.python.org docs.rs doc.rust-lang.org developer.mozilla.org \
@@ -269,15 +282,12 @@ fi
 echo ""
 echo "--- Network: localhost port access ---"
 
-# Verify profile declares open_port for MySQL.
-# Runtime enforcement works on macOS but not yet on Linux
-# (nono blocks localhost connections under seccomp/landlock even with open_port set).
-# TODO: replace with a real sandboxed connection test once nono supports open_port on Linux.
-if jq -e '.network.open_port | index(3306)' "$PROFILE" >/dev/null 2>&1; then
-  green "PASS: network.open_port includes 3306 (MySQL)"
+# No localhost port is static any more; MariaDB moved to `bin/claude --local-db`.
+if ! jq -e '((.network.open_port // []) | length > 0) or ((.network.listen_port // []) | length > 0)' "$PROFILE" >/dev/null 2>&1; then
+  green "PASS: no static open_port/listen_port (3306 is opt-in via --local-db; /login bind is a launcher flag on macOS)"
   ((PASS++))
 else
-  red "FAIL: network.open_port should include 3306 for local MySQL access"
+  red "FAIL: the static profile has an open_port/listen_port"
   ((FAIL++))
 fi
 

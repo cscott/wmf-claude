@@ -14,18 +14,25 @@ forced them, and the residual risk accepted.
 - [Why each find deny needs two rules](#why-each-find-deny-needs-two-rules)
 - [Linux glob caveat](#linux-glob-caveat)
 - [Keychain access](#keychain-access)
-  - [Closing the keychain gap](#closing-the-keychain-gap)
 - [Update notifier](#update-notifier)
 - [chrome-devtools MCP](#chrome-devtools-mcp)
 - [Docker exec broker](#docker-exec-broker)
 
 ## Localhost port opening
 
-`bin/claude --local-web` and `--chrome` pass `--open-port` per-invocation rather
-than putting the ports in the static profile, so a plain `bin/claude` session
-cannot reach a leftover test Chrome or a local web service. `--local-web=PORT`
-(comma-separated for several) narrows to just the ports a given setup needs;
-values are validated as TCP ports before reaching the nono command.
+`bin/claude --local-web`, `--chrome` and `--local-db` pass `--open-port`
+per-invocation rather than putting any real port in the static profile
+(MariaDB's 3306 was the last one there). `/login` binds an OS-assigned callback
+port, which needs a bind grant nono emits only when some port grant exists. On
+macOS `bin/claude` passes a bind-only `--listen-port` (Seatbelt cannot filter
+bind by port, so the value is nominal and no outbound rule is added); Linux
+filters bind per port, where a fixed number would not cover an ephemeral
+callback, so it is left as it was. Removing the old static `open_port: [3306]`
+had silently removed that bind and broke `/login`. The per-invocation ports are
+kept off the static profile, so a plain `bin/claude` session cannot reach a
+leftover test Chrome or a local web service. `--local-web=PORT` (comma-separated
+for several) narrows to just the ports a given setup needs; values are validated
+as TCP ports before reaching the nono command.
 
 `--open-port` is **localhost-only** (`nono run --help`: "Allow bidirectional
 localhost TCP on a port"), so it does not widen external egress — outbound to
@@ -83,15 +90,17 @@ today.
 
 Left as plain tunnels on purpose (no endpoint rules, no interception):
 
-- `api.anthropic.com`, `claude.ai`, `platform.claude.com`: the model API is
-  POST, so intercepting would `403` every model call and route Claude's own
-  conversation and tokens through nono in plaintext. (These are the exact
-  entries in the profile; note they are already allowlisted plain tunnels,
-  which is what the keychain evaluation below builds on.)
+- `api.anthropic.com`, `claude.ai`, `platform.claude.com`: the model API is POST,
+  so intercepting would `403` every model call and route Claude's own
+  conversation and tokens through nono in plaintext.
 - `*.claudeusercontent.com`: see [Artifact content host](#artifact-content-host).
 - `*.wiki*`: legitimate POST reads (batched API queries, login) and the
   `manual-test` Tier-1 flow. Needs a separate review before any lockdown.
-- `codesearch{,-backend}.wmcloud.org`, `*.local.wmftest.net`, `api.minimax.io`.
+- `codesearch{,-backend}.wmcloud.org`, `*.local.wmftest.net`.
+- `api.minimax.io` is **not** in the static profile. It was, which put a
+  third-party LLM API within reach of every session; `bin/claude --minimax` now
+  adds it per session with nono's `--allow-domain`, the same pattern as the
+  localhost ports.
 
 ### Verifying the method filtering
 
@@ -274,67 +283,31 @@ the Linux path.
 
 ## Keychain access
 
-Keychain Mach services (`com.apple.securityd`, `com.apple.SecurityServer`,
-`com.apple.SecurityAgent`) are **not** denied. Claude Code stores its login
-token in the login keychain (item: `Claude Code-credentials`) and reads it
-via `securityd` on every startup; denying that service makes `/login` and
-the persistent-session UI fail (the user sees "Not logged in" on every
-launch). The base `claude-code` profile's `filesystem.allow` +
-`filesystem.bypass_protection` on `~/Library/Keychains` is specifically for
-this.
+The keychain daemons are not denied and the base `claude-code` profile grants
+`~/Library/Keychains`: Claude Code reads its login token through them at
+startup, and denying them breaks `/login`. This is the largest residual exfil
+surface (a prompt-injected agent could read other stored credentials); it is
+bounded by the egress allowlist and the env-var allowlist.
 
-**Residual risk:** a prompt-injected agent could call
-`security find-internet-password -s <wmf-host>` to extract credentials
-stored for Wikimedia services. Mitigations are layered, not absolute:
+Closing it with nono 0.78's sandboxed OAuth capture was attempted and reverted.
+Findings, for whoever tries next:
 
-- The network policy only permits egress to Wikimedia and LLM-vendor
-  domains, so attacker-controlled exfil endpoints are unreachable.
-- The env-var allowlist removes most credential-shaped material from the
-  agent's process env.
-- WMF engineers on the standard SSH-based git workflow typically don't have
-  HTTPS push credentials in the keychain in the first place.
+- The grant comes from the `claude_code_macos` group *and* the pack profile
+  body with `bypass_protection`; a child can exclude the group but cannot
+  remove the body grant, and because a grant exists nono skips its own five
+  keychain-daemon denies, so a profile must restate all five.
+- Capture works, but the login route injects the token only at launch: a
+  `/login` inside a session got `407` afterwards. `claude auth login` cannot be
+  the pre-step (it binds an ephemeral port, denied; no manual mode). Without
+  `env_var`/`base_url_env_var` the provider hosts are unrouted (`403` at
+  startup); with them and allow-by-default, the client opened a direct
+  CONNECT to `api.anthropic.com`, which nono correctly refuses for a route
+  upstream. Why it bypasses the injected base URL is the open question.
 
-### Closing the keychain gap
-
-nono 0.78 (the version pinned in `.nono-version`) ships two pieces that together
-make the keychain deniable, which was not true when this profile was written:
-
-- The **`deny_keychains_macos`** policy group blocks `~/Library/Keychains` and
-  the other password stores.
-- **[Sandboxed OAuth logins](https://nono.sh/docs/cli/features/sandboxed-oauth-logins)**
-  (`credential_providers` with `type: oauth_capture`) intercept the OAuth token
-  response, store the real tokens outside the sandbox, and hand the agent
-  `nono_<64hex>` phantoms. The proxy swaps the phantom back for the real token
-  only on the declared API route, so a phantom read out of any store is useless
-  to an attacker.
-
-nono's own manual-QA checklist for this feature asserts both that "denied
-Keychain or credential-store access does not prevent phantom-backed use" and,
-for Claude Code specifically, that the command "succeeds without granting raw
-Keychain access". The documented helper commands (`claude auth login`,
-`claude auth status --json`, `claude auth logout`) all exist in current Claude
-Code, so the example profile is valid against the client we ship.
-
-**Why it isn't adopted yet.** The documented Claude Code provider declares
-`token_endpoints` on `https://platform.claude.com/v1/oauth/token` and
-`api_hosts` of `https://api.anthropic.com`. Both require nono to terminate TLS,
-which is precisely what this profile
-[avoids for the Anthropic hosts](#method-restricted-documentation-domains) —
-intercepting them routes Claude's own conversation and tokens through nono in
-plaintext. So the choice is a real trade, not a free win: keychain exfil risk
-against plaintext visibility of model traffic to the local proxy.
-
-Worth noting the two risks have different shapes. The keychain risk is an
-*attacker* capability (a prompt-injected agent reading the engineer's stored
-Wikimedia credentials). The interception cost is a *visibility* change within
-software the engineer already trusts to enforce the sandbox. That asymmetry
-argues for adopting it, but it needs testing — start by checking whether capture
-can be scoped to the token endpoint alone, leaving `api.anthropic.com` a plain
-tunnel, and whether refresh still works across sessions with the keychain denied.
-
-Note this closes the *credential-store* vector specifically. It does not change
-the fact that `security` is a binary the agent can run; with the keychain denied
-at the filesystem and Mach layers, those calls simply fail.
+Upstream asks: the pack should not grant `~/Library/Keychains` (with capture it
+needs no keychain), or nono should let a child subtract an inherited
+`bypass_protection`; and guidance for the interactive client behind an
+`oauth_capture` route.
 
 ## Update notifier
 

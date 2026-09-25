@@ -291,12 +291,13 @@ mkdir -p "$FAKE_REPO/bin" \
          "$FAKE_REPO/profiles"
 cp "$REPO_ROOT/bin/claude" "$FAKE_REPO/bin/claude"
 # bin/claude checks the profile file exists before launching.
-touch "$FAKE_REPO/profiles/wmf-engineer.json"
+echo '{}' > "$FAKE_REPO/profiles/wmf-engineer.json"
 mkdir -p "$FAKE_REPO/wiring"
 echo '{}' > "$FAKE_REPO/wiring/settings-merge.json"
 touch "$FAKE_REPO/chrome-devtools-mcp/mcp-config.json"
 touch "$FAKE_REPO/chrome-devtools-mcp/node_modules/.bin/chrome-devtools-mcp"
 chmod +x "$FAKE_REPO/chrome-devtools-mcp/node_modules/.bin/chrome-devtools-mcp"
+mkdir -p "$FAKE_REPO/gerrit-mcp-server/gerrit_mcp_server" && touch "$FAKE_REPO/gerrit-mcp-server/gerrit_mcp_server/main.py"
 cat > "$FAKE_REPO/bin/nono" <<'STUB'
 #!/bin/bash
 printf 'NONO_ARG: %s\n' "$@"
@@ -320,6 +321,47 @@ if ! has_open_port "$out"; then pass "plain bin/claude does not open port 9222";
 # --chrome after `--` is a claude arg, not a wrapper flag — must NOT enable chrome.
 out="$(run_fake_claude -- --chrome)"
 if ! has_open_port "$out"; then pass "--chrome after -- does not enable chrome mode"; else fail "--chrome after -- incorrectly enabled chrome mode"; fi
+
+echo "--- bin/claude --local-db arg routing ---"
+has_db_port() { grep -qx 'NONO_ARG: --open-port' <<<"$1" && grep -qx "NONO_ARG: $2" <<<"$1"; }
+out="$(run_fake_claude --local-db)"
+if has_db_port "$out" 3306; then pass "bin/claude --local-db opens 3306"; else fail "bin/claude --local-db did not open 3306"; fi
+out="$(run_fake_claude --local-db=3307)"
+if has_db_port "$out" 3307 && ! grep -qx 'NONO_ARG: 3306' <<<"$out"; then pass "--local-db=3307 opens only 3307"; else fail "--local-db=3307 did not override the port"; fi
+out="$(run_fake_claude)"
+if ! grep -qx 'NONO_ARG: 3306' <<<"$out"; then pass "plain bin/claude does not open 3306"; else fail "plain bin/claude leaked --open-port 3306"; fi
+out="$(run_fake_claude -- --local-db)"
+if ! grep -qx 'NONO_ARG: 3306' <<<"$out"; then pass "--local-db after -- does not open the port"; else fail "--local-db after -- was wrongly consumed"; fi
+out="$(run_fake_claude --local-db=99999 2>&1)"
+if grep -q 'not a valid TCP port' <<<"$out"; then pass "--local-db rejects an invalid port"; else fail "--local-db accepted an invalid port"; fi
+# No static port of any kind. /login's callback bind is a Darwin-only
+# --listen-port from the launcher (bind-only; Seatbelt cannot filter by port);
+# Linux filters per port and is left as it was.
+if ! jq -e '((.network.open_port // []) | length > 0) or ((.network.listen_port // []) | length > 0)' "$REPO_ROOT/profiles/wmf-engineer.json" >/dev/null 2>&1; then
+  pass "the static profile opens or listens on no port (all per-invocation)"
+else
+  fail "the static profile has a static open_port/listen_port"
+fi
+out="$(run_fake_claude)"
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  if grep -A1 -x "NONO_ARG: --listen-port" <<<"$out" | grep -qx "NONO_ARG: 49152"; then pass "macOS: launcher passes a listen-only port for the /login callback"; else fail "macOS: --listen-port missing — /login cannot bind its callback"; fi
+else
+  if ! grep -qx "NONO_ARG: --listen-port" <<<"$out"; then pass "Linux: no --listen-port (per-port Landlock bind would not cover an ephemeral callback)"; else fail "Linux: --listen-port passed"; fi
+fi
+
+echo "--- bin/claude --minimax arg routing ---"
+has_minimax() { grep -qx 'NONO_ARG: --allow-domain' <<<"$1" && grep -qx 'NONO_ARG: api.minimax.io' <<<"$1"; }
+out="$(run_fake_claude --minimax)"
+if has_minimax "$out"; then pass "bin/claude --minimax allows api.minimax.io for the session"; else fail "bin/claude --minimax did not pass --allow-domain api.minimax.io"; fi
+out="$(run_fake_claude)"
+if ! has_minimax "$out"; then pass "plain bin/claude does not allow api.minimax.io"; else fail "plain bin/claude leaked --allow-domain api.minimax.io"; fi
+out="$(run_fake_claude -- --minimax)"
+if ! has_minimax "$out"; then pass "--minimax after -- does not enable MiniMax egress"; else fail "--minimax after -- was wrongly consumed as a wrapper flag"; fi
+if ! jq -e '.network.allow_domain[] | strings | select(. == "api.minimax.io")' "$REPO_ROOT/profiles/wmf-engineer.json" >/dev/null 2>&1; then
+  pass "api.minimax.io is not in the static profile (opt-in only)"
+else
+  fail "api.minimax.io is back in the static profile"
+fi
 
 echo "--- bin/claude --local-web arg routing ---"
 has_web_ports() {
@@ -356,8 +398,8 @@ if PATH="$FAKE_REPO/bin:$PATH" bash "$FAKE_REPO/bin/claude" --local-web=abc >/de
 echo "--- bin/claude MCP + profile grants ---"
 # MCP grants resolve under the repo; the profile loads by path.
 out="$(run_fake_claude)"
-if grep -qx "NONO_ARG: $FAKE_REPO/mcp-phabricator" <<<"$out"; then
-  pass "MCP grants point at the repo"; else fail "MCP grant not under the repo"; fi
+if grep -A1 -x "NONO_ARG: --read" <<<"$out" | grep -qx "NONO_ARG: $FAKE_REPO"; then
+  pass "repo checkout (incl. MCP servers) granted read-only by path"; else fail "repo read grant missing"; fi
 if grep -qx "NONO_ARG: $FAKE_REPO/profiles/wmf-engineer.json" <<<"$out"; then
   pass "profile loaded by path (default wmf-engineer)"; else fail "profile not loaded by path"; fi
 
@@ -679,7 +721,7 @@ upd_fixture() {
   cp "$REPO_ROOT/bin/claude" "$UPD/work/bin/claude"
   # Prints a marker so tests can tell a launch that reached nono from one that
   # died on a precondition after the prompt.
-  printf '#!/bin/bash\necho NONO_LAUNCHED\n' > "$UPD/work/bin/nono"
+  printf '#!/bin/bash\necho NONO_LAUNCHED\nfor a in "$@"; do echo "NONO_ARG: $a"; done\n' > "$UPD/work/bin/nono"
   # $1: make setup.sh fail, to exercise the incomplete-update path.
   if [[ "${1:-}" == "failing-setup" ]]; then
     printf '#!/bin/bash\necho SETUP_RAN\nexit 1\n' > "$UPD/work/setup.sh"
@@ -885,6 +927,39 @@ if grep -q 'NONO_ARG: run' <<<"$out"; then
 else
   fail "bin/claude wrongly refused --permission-mode manual"
 fi
+
+echo ""
+echo "--- security CLI denied at the tool layer ---"
+if jq -e '.permissions.deny | (index("Bash(security:*)") and index("Bash(/usr/bin/security:*)") and index("Bash(git credential*)"))' "$REPO_ROOT/wiring/settings-merge.json" >/dev/null 2>&1; then
+  pass "tool layer denies security (both spellings) and git credential helpers"
+else
+  fail "tool layer does not deny Bash(security:*)"
+fi
+
+echo ""
+echo "--- MCP server checkouts are read-only ---"
+# Read-write would let an agent plant code that runs in every later session.
+out="$(run_fake_claude)"
+mcp_ok=1
+for d in mcp-phabricator gerrit-mcp-server; do
+  if grep -B1 -x "NONO_ARG: $FAKE_REPO/$d" <<<"$out" | grep -qx "NONO_ARG: --allow"; then mcp_ok=0; fi
+done
+grep -qx "NONO_ARG: --allow-file" <<<"$out" || mcp_ok=0
+grep -qx "NONO_ARG: $FAKE_REPO/gerrit-mcp-server/server.log" <<<"$out" || mcp_ok=0
+if (( mcp_ok )) && [[ -f "$FAKE_REPO/gerrit-mcp-server/server.log" ]]; then
+  pass "MCP server checkouts are read-only; gerrit's server.log is created and granted"
+else
+  fail "MCP checkouts writable again, or server.log not pre-created for its grant"
+fi
+# An uninitialised submodule must get neither the file nor the grant.
+mv "$FAKE_REPO/gerrit-mcp-server/gerrit_mcp_server/main.py" "$FAKE_REPO/main.py.bak"; rm -f "$FAKE_REPO/gerrit-mcp-server/server.log"
+out="$(run_fake_claude)"
+if ! grep -qx "NONO_ARG: --allow-file" <<<"$out" && [[ ! -f "$FAKE_REPO/gerrit-mcp-server/server.log" ]]; then
+  pass "uninitialised gerrit submodule: no server.log planted, no allow-file grant"
+else
+  fail "launcher plants server.log into an uninitialised submodule (breaks git submodule update --init)"
+fi
+mv "$FAKE_REPO/main.py.bak" "$FAKE_REPO/gerrit-mcp-server/gerrit_mcp_server/main.py"
 
 echo ""
 echo "========================="

@@ -2,7 +2,7 @@
   "extends": "claude-code",
   "meta": {
     "name": "wmf-engineer",
-    "version": "0.4.0",
+    "version": "0.5.0",
     "description": "Wikimedia Foundation engineer profile for Claude Code with WMF-specific domain access and destructive action prevention",
     "author": "Kosta Harlan <kharlan@wikimedia.org>"
   },
@@ -61,7 +61,20 @@
       "~/Library/Application Support/Chromium",
       "~/Library/Application Support/BraveSoftware",
       "~/Library/Application Support/Vivaldi",
-      "~/Library/Application Support/com.operasoftware.Opera"
+      "~/Library/Application Support/com.operasoftware.Opera",
+      "~/.git-credentials",
+      "~/.config/git/credentials",
+      "~/.vault-token",
+      "~/.terraform.d",
+      "~/.azure",
+      "~/.config/op",
+      "~/.cargo/credentials.toml",
+      "~/.cargo/credentials",
+      "~/.gem/credentials",
+      "~/.local/share/keyrings",
+      "~/.config/hub",
+      "~/.gitcookies",
+      "~/.config/glab-cli"
     ],
     "suppress_save_prompt": [
       "~/.ssh",
@@ -112,7 +125,20 @@
       "/home",
       "~",
       "~/.local/state/claude/locks",
-      "~/.CFUserTextEncoding"
+      "~/.CFUserTextEncoding",
+      "~/.git-credentials",
+      "~/.config/git/credentials",
+      "~/.vault-token",
+      "~/.terraform.d",
+      "~/.azure",
+      "~/.config/op",
+      "~/.cargo/credentials.toml",
+      "~/.cargo/credentials",
+      "~/.gem/credentials",
+      "~/.local/share/keyrings",
+      "~/.config/hub",
+      "~/.gitcookies",
+      "~/.config/glab-cli"
     ]
   },
   "environment": {
@@ -160,10 +186,8 @@
       "*.wikifunctions.org",
       "codesearch.wmcloud.org",
       "codesearch-backend.wmcloud.org",
-      "*.local.wmftest.net",
-      "api.minimax.io"
-    ],
-    "open_port": [3306]
+      "*.local.wmftest.net"
+    ]
   },
   "workdir": { "access": "readwrite" },
   "unsafe_macos_seatbelt_rules": [

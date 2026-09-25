@@ -17,6 +17,8 @@ unknown options and do nothing:
 | `--chrome` | Load the chrome-devtools MCP; implies `--local-web` |
 | `--docker[=SERVICE[:WORKDIR]]` | Run dev tools in a container through the broker |
 | `--egress=none\|allowlist` | Verify the container's egress override at startup. **Requires `--docker=SERVICE`** — with a bare `--docker` (hand-started broker) it exits with an error. |
+| `--minimax` | Allow egress to `api.minimax.io` (MiniMax models) for this session. Not in the static profile. |
+| `--local-db[=PORT]` | Open the local MariaDB/MySQL port (default 3306) for this session. Not in the static profile. |
 
 **nono flags** go before `--`; everything after `--` is passed to Claude:
 

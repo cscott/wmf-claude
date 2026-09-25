@@ -19,6 +19,9 @@
     ],
     "deny": [
       "Bash(ssh:*)",
+      "Bash(security:*)",
+      "Bash(/usr/bin/security:*)",
+      "Bash(git credential*)",
       "Bash(git config core.hooksPath:*)",
       "Bash(find -exec*)",
       "Bash(find * -exec*)",
@@ -48,6 +51,7 @@
       "Read(~/.aws/**)",
       "Read(~/.config/gcloud/**)",
       "Read(~/.gnupg/**)",
+      "Read(~/.claude/.credentials.json)",
       "Read(.git/config)",
       "Read(.git/credentials*)",
       "Read(//**/.git/config)",

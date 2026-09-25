@@ -66,7 +66,7 @@ As part of writing a patch, check that code coverage levels do not drop. Sometim
 
 Run maintenance scripts via `php maintenance/run.php ScriptName` from the MediaWiki root.
 
-The sandbox opens only local port `3306` (the MariaDB/MySQL primary). A dev wiki that puts a DB **replica** on another port, or **memcached** on `:11211`, is unreachable from inside the sandbox — a CLI/maintenance script that tries to reach them trips a `DBConnectionError` ("Database servers ... overloaded") circuit-breaker. Run such scripts in a primary-only, no-memcached mode. The override is setup-specific — some local setups expose an env var or a `LocalSettings.claude.php` toggle for this; check your own settings for how to force primary-only.
+The sandbox opens no local port by default; launch with `bin/claude --local-db` (or `--local-db=PORT`) to reach the MariaDB/MySQL primary on `3306`. A dev wiki that puts a DB **replica** on another port, or **memcached** on `:11211`, is unreachable from inside the sandbox — a CLI/maintenance script that tries to reach them trips a `DBConnectionError` ("Database servers ... overloaded") circuit-breaker. Run such scripts in a primary-only, no-memcached mode. The override is setup-specific — some local setups expose an env var or a `LocalSettings.claude.php` toggle for this; check your own settings for how to force primary-only.
 
 ## Linting
 

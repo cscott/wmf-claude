@@ -44,17 +44,17 @@ system is unbreakable — see [residual risks](#residual-risks).
 | | |
 |---|---|
 | **Files** | The directory you launched from and everything beneath, read-write. Plus whatever you pass with `--allow` / `--read`. |
-| **Network** | Deny-by-default, with these allowed and nothing else: `api.anthropic.com`, `claude.ai`, `platform.claude.com`, `*.claudeusercontent.com`; the wiki family (`*.wikimedia.org`, `*.wikipedia.org`, and ten siblings); `codesearch{,-backend}.wmcloud.org`; `*.local.wmftest.net`; **`api.minimax.io`** (a third-party LLM API — an egress channel worth knowing about); and eight documentation sites allowed **read-only** (`docs.python.org`, `docs.rs`, `doc.rust-lang.org`, `developer.mozilla.org`, `nodejs.org`, `pkg.go.dev`, `php.net`, `vuejs.org`). Enforced by nono's [filtering proxy](https://nono.sh/docs/cli/features/networking). |
-| **Localhost** | MariaDB on 3306. Web and Chrome debug ports only when you opt in. |
+| **Network** | Deny-by-default, with these allowed and nothing else: `api.anthropic.com`, `claude.ai`, `platform.claude.com`, `*.claudeusercontent.com`; the wiki family (`*.wikimedia.org`, `*.wikipedia.org`, and ten siblings); `codesearch{,-backend}.wmcloud.org`; `*.local.wmftest.net`; and eight documentation sites allowed **read-only** (`docs.python.org`, `docs.rs`, `doc.rust-lang.org`, `developer.mozilla.org`, `nodejs.org`, `pkg.go.dev`, `php.net`, `vuejs.org`). Enforced by nono's [filtering proxy](https://nono.sh/docs/cli/features/networking). |
+| **Localhost** | No static port. On macOS `bin/claude` passes a listen-only `--listen-port` so `/login` can bind its OAuth callback (Seatbelt cannot filter bind by port, so the number is nominal); on Linux nothing is passed, since nono filters bind per port there and the callback uses an OS-assigned port. Real ports are per session: `--local-db`, `--local-web`, `--chrome`. |
 | **Env vars** | [16 allowlisted names](https://nono.sh/docs/cli/features/environment) — `PATH`, `HOME`, `TERM`, locale, `CLAUDE_*`/`ANTHROPIC_*`/`NONO_*`, the non-credential MCP vars, and `WMF_DOCKER_*`, which carries the broker's URL and per-session bearer token in when you use `--docker`. Everything else, including `AWS_*`, `GH_TOKEN`, and `SSH_AUTH_SOCK`, is dropped. |
-| **Keychain** | Yes — deliberately. Claude Code reads its own login token from it at startup. See [residual risks](#residual-risks). |
+| **Keychain** | Yes — Claude Code reads its login token through it at startup. Closing it was attempted and parked; see [residual risks](#residual-risks). |
 
 ## What Claude cannot reach
 
 | | |
 |---|---|
 | **Parent and sibling directories** | Unless you grant them explicitly. |
-| **Credentials** | `~/.ssh`, `~/.aws`, `~/.config/gcloud`, `~/.gnupg`, `~/.netrc`, `~/.npmrc`, `~/.pypirc`, `~/.kube/config`, `~/.docker/config.json`, `~/.config/gh`, composer auth, `~/.env` — plus any `*.env`, `*.key`, `*.pem`, `*.secret`, `*.credential`, `.git/config`, or `.git-credentials` anywhere on disk. |
+| **Credentials** | `~/.ssh`, `~/.git-credentials` (and `~/.config/git/credentials`), `~/.gitcookies` (Gerrit HTTP password), `~/.aws`, `~/.azure`, `~/.config/gcloud`, `~/.gnupg`, `~/.netrc`, `~/.npmrc`, `~/.pypirc`, `~/.kube/config`, `~/.docker/config.json`, `~/.config/gh`, `~/.config/hub`, `~/.config/glab-cli`, `~/.config/op` (1Password CLI), `~/.vault-token`, `~/.terraform.d`, cargo and gem credentials, the Linux keyring (`~/.local/share/keyrings`), composer auth, `~/.env` — plus any `*.env`, `*.key`, `*.pem`, `*.secret`, `*.credential`, `.git/config`, or `.git-credentials` anywhere on disk. |
 | **Shell configs and history** | `~/.bashrc`, `~/.zshrc`, `~/.profile`, fish config — so it can't plant a command that runs next time you open a terminal. |
 | **Password managers** | 1Password, Bitwarden, KeePassXC, `pass`, Enpass. |
 | **Private comms** | Mail, Messages, Slack, Discord, Signal, Telegram, Thunderbird. |
@@ -62,6 +62,7 @@ system is unbreakable — see [residual risks](#residual-risks).
 | **iCloud Drive** | `~/Library/Mobile Documents`. |
 | **SSH and GitHub** | Port 22 and Gerrit's 29418; `github.com` is not allowlisted. |
 | **Spotlight** | `mdfind` is blocked at the Mach layer, so it can't enumerate the filenames the denies above hide. |
+| **Its own tooling** | In a normal session the MCP server checkouts are read-only (the repo is granted `--read`); only Gerrit's `server.log` is writable. Two exceptions: `--chrome` grants `chrome-devtools-mcp/` read-write (a pre-existing TODO), and a session launched from *inside* this checkout makes all of them writable through the workdir grant. |
 | **Its own config** | `settings.json`, `settings.local.json`, `hooks/**`, `agents/**`, `skills/**`, `commands/**` at **both** scopes (`~/.claude/` and per-project `.claude/`), plus `~/.claude/plugins/**`, `~/.claude.json` (MCP servers and per-project allowed tools — it sits outside `~/.claude/`, so the directory rules miss it), `~/.claude/CLAUDE.md`, and a project `.mcp.json`. Claude Code loads config from all of these, so any one left writable is a way to widen its own permissions next session. `tests/test-templates.sh` asserts the full set. **These are tool-layer denies, not a boundary** — they stop the agent's `Edit`/`Write` tools, but `Bash` can still reach the same files through an interpreter, and the OS layer cannot deny `~/.claude` because Claude Code needs it. Treat them as raising the bar, not closing the hole. |
 
 Two denies worth naming because their reason is not obvious:
@@ -73,8 +74,8 @@ Profile posture, for completeness: `capability_elevation: false`,
 `signal_mode: isolated`, `process_info_mode: isolated`,
 `ipc_mode: shared_memory_only`. Beyond the workdir the profile hardcodes three
 read grants — `~/.local/state/fnm_multishells`, `~/.local/state/claude/locks`,
-and `~/.agents/skills` — and `bin/claude` adds `--allow` for the bundled MCP
-submodules.
+and `~/.agents/skills` — and `bin/claude` adds `--read` for the bundled MCP
+checkouts plus a single-file write grant on the Gerrit server's `server.log`.
 
 The tool layer also **allows** some commands outright, which auto-approves them
 with no prompt: `Bash(git:*)`, `Bash(curl:*)`, `Bash(ls:*)`, `Bash(grep:*)`,
@@ -96,9 +97,11 @@ scoped to the session you choose it in unless noted.
 | `--read PATH` | Read on another tree. Anything secret in it becomes readable, including by a prompt-injected agent. |
 | `--allow-command CMD` | One command the profile blocks by default. |
 | `--override-deny PATH` + `--read-file PATH` | Lifts a specific deny. Use for one file, not a directory. |
+| `--local-db[=PORT]` | Reach to the dev database — and anything else on that port. Was in the static profile; now only sessions that need it carry it. |
 | `--local-web[=PORTS]` | Reach to **any** local service on 80/443/8080, not just your wiki. External egress does not widen. |
 | `--chrome` | A Chrome running **outside** the sandbox with unrestricted network, driven over an unauthenticated debug port. Implies `--local-web`. **Throwaway dev-wiki accounts only.** |
 | `--docker=SERVICE` without `--egress` | Code execution in a container whose network nono cannot restrict — an outbound channel. The launcher warns and asks for a one-time acknowledgment. |
+| `--minimax` | Egress to `api.minimax.io`, a third-party LLM API, for this session. It used to be in the static profile; now only sessions that use MiniMax carry that channel. |
 | `\claude` or `command claude` | **The sandbox entirely.** Claude Code runs with your full user privileges, and without the tool layer, which `bin/claude` applies per launch. |
 | Answering `y` to the update prompt | Fast-forwards the install to `origin/main` and runs `setup.sh`, i.e. runs code you have seen listed but not read. Declining, or any non-tty launch, changes nothing. |
 | `WMF_CLAUDE_PROFILE=<name>` | Swaps in `profiles/<name>.json`, whatever that profile allows. |
@@ -136,8 +139,8 @@ What the sandbox does *not* protect against, even with no flags.
 
 | Risk | What bounds it |
 |---|---|
-| **Keychain is reachable** — a prompt-injected agent could run `security find-internet-password` | Egress limited to Wikimedia + LLM domains, so there's nowhere to send it; env allowlist; most engineers store no HTTPS push credential. Closable as of nono 0.78 — see [follow-ups](#open-follow-ups). [Detail](docs/security-rationale.md#keychain-access) |
-| **HTTPS push to a Wikimedia host can succeed** with a keychain-stored Gerrit password | The standard SSH workflow is fully blocked, and most engineers have no HTTP password |
+| **Keychain is reachable** — a prompt-injected agent could read other stored credentials | Egress allowlist and env allowlist; most engineers store no push credential there. Closing it needs a non-keychain login path; nono's OAuth capture was tried and parked — [findings](docs/security-rationale.md#keychain-access). |
+| **HTTPS push to a Wikimedia host could still succeed** with a keychain-stored Gerrit HTTP password | SSH push is fully blocked, `~/.git-credentials` and `~/.gitcookies` are denied at the OS layer, and `git credential*` is denied at the tool layer (it would otherwise be auto-approved under `Bash(git:*)` and return the stored password). Most engineers have no HTTP password. |
 | **On Linux, nothing protects secrets in your workdir** | Neither layer covers it. Don't keep them there. [Detail](docs/security-rationale.md#linux-glob-caveat) |
 | **Reading a shared artifact is a prompt-injection surface** | The `Artifact` tool returns an isolated summary, treated as data — same trust class as reading a wiki page. [Detail](docs/security-rationale.md#artifact-content-host) |
 | **LaunchServices is reachable** (inherited from the base profile) | Not yet narrowed — see below |
@@ -182,14 +185,7 @@ The first half must say *denied*; the second must actually print a version.
 
 ## Open follow-ups
 
-- **Keychain access** — the largest residual exfil surface, and as of nono 0.78
-  there is a supported way to close it. [Sandboxed OAuth
-  logins](https://nono.sh/docs/cli/features/sandboxed-oauth-logins) capture the
-  token outside the sandbox and hand the agent a phantom, so
-  `deny_keychains_macos` can be enabled without breaking `/login`. The cost is
-  TLS interception of the Anthropic hosts, which this profile avoids today.
-  **Not yet adopted or tested here** —
-  [evaluation](docs/security-rationale.md#closing-the-keychain-gap).
+- **Keychain access** — largest residual; a closure attempt with nono's OAuth capture is recorded in the [rationale](docs/security-rationale.md#keychain-access) and needs upstream input before another try.
 - **LaunchServices** — narrow once we know which workflows depend on it.
 - **Mach denies** still live in the `unsafe_macos_seatbelt_rules` escape hatch;
   migrate when nono promotes Mach control to a typed capability.

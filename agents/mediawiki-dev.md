@@ -83,7 +83,7 @@ If you find yourself writing more than one sentence to justify a comment, the co
 When creating or modifying any database query (via `IDatabase` methods like `select()`, `selectRow()`, `newSelectQueryBuilder()`, etc.):
 
 1. Reconstruct the raw SQL from the query builder arguments
-2. Run `EXPLAIN` via the project's MediaWiki entry point. For a typical core checkout this is `php maintenance/run.php sql --query "EXPLAIN <query>"`; in containerized setups (MediaWiki-Docker, MWDD, vagrant) the same command runs through the container's exec wrapper. Check the project's `CLAUDE.md` for the actual invocation.
+2. Run `EXPLAIN` via the project's MediaWiki entry point. For a typical core checkout this is `php maintenance/run.php sql --query "EXPLAIN <query>"`; in containerized setups (MediaWiki-Docker, MWDD, vagrant) the same command runs through the container's exec wrapper. Check the project's `CLAUDE.md` for the actual invocation. In a sandboxed session the local DB port is closed unless it was launched with `bin/claude --local-db`; a connection error there means relaunch, not a broken wiki.
 3. Check for full table scans, missing indexes, filesort/temporary tables, large row estimates
 4. If issues found, add indexes or restructure the query
 

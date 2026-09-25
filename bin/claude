@@ -7,6 +7,8 @@
 #   bin/claude --local-web                  # open localhost web ports (default 80/443/8080) for curl-based testing
 #   bin/claude --local-web=8080             # narrow to specific port(s); comma-separated for several
 #   bin/claude --chrome                     # also enable chrome-devtools MCP (implies --local-web)
+#   bin/claude --minimax                    # allow egress to api.minimax.io for this session only
+#   bin/claude --local-db[=PORT]            # open the local MariaDB port (default 3306) for this session only
 #   bin/claude --docker=mediawiki           # auto-start a Docker exec broker for that compose service,
 #                                           # stopped automatically when the session exits
 #   bin/claude --docker=auto                # ...detect the service from the compose file
@@ -47,6 +49,8 @@ Wrapper flags:
   --chrome             enable the chrome-devtools MCP (opens 127.0.0.1:9222; implies --local-web)
   --local-web[=PORTS]  open localhost web ports for curl-based local-wiki testing
                        (default 80,443,8080; comma-separated list to narrow)
+  --minimax            allow egress to api.minimax.io (MiniMax models) for this session only
+  --local-db[=PORT]    open the local MariaDB/MySQL port (default 3306) for this session only
   --docker[=SVC[:WD]]  run dev tools (composer/php/npm/vendor/bin/*) in a Docker
                        compose service via the broker. =SVC starts and owns the
                        broker (=auto detects the service); add :WD for the
@@ -106,6 +110,9 @@ done
 WANT_CHROME=false
 WANT_LOCAL_WEB=false
 WANT_DOCKER=false
+WANT_MINIMAX=false
+WANT_LOCAL_DB=false
+LOCAL_DB_PORT=""    # empty -> 3306; --local-db=3307 overrides
 DOCKER_SERVICE=""   # set by --docker=SERVICE -> bin/claude manages the broker
 DOCKER_EGRESS=""    # set by --egress=none|allowlist -> broker verifies isolation
 LOCAL_WEB_PORTS=""  # empty -> default set below; --local-web=80,443 narrows it
@@ -118,6 +125,13 @@ for arg in "${NONO_ARGS[@]}"; do
   elif [[ "$arg" == --local-web=* ]]; then
     WANT_LOCAL_WEB=true
     LOCAL_WEB_PORTS="${arg#--local-web=}"
+  elif [[ "$arg" == "--minimax" ]]; then
+    WANT_MINIMAX=true
+  elif [[ "$arg" == "--local-db" ]]; then
+    WANT_LOCAL_DB=true
+  elif [[ "$arg" == --local-db=* ]]; then
+    WANT_LOCAL_DB=true
+    LOCAL_DB_PORT="${arg#--local-db=}"
   elif [[ "$arg" == "--docker" ]]; then
     WANT_DOCKER=true
   elif [[ "$arg" == --docker=* ]]; then
@@ -283,6 +297,38 @@ if $WANT_CHROME; then
   CHROME_DEVTOOLS_CLAUDE_ARGS+=(--mcp-config "$CDP_CONFIG")
 fi
 
+validate_tcp_port() {  # $1 flag  $2 value
+  if [[ ! "$2" =~ ^[0-9]{1,5}$ ]] || (( 10#$2 < 1 || 10#$2 > 65535 )); then
+    echo "error: $1 port '$2' is not a valid TCP port (1-65535)" >&2
+    exit 1
+  fi
+}
+
+# /login binds an OS-assigned callback port, and nono allows binding only when
+# some port grant exists. --listen-port is bind-only (no outbound rule). macOS
+# only: Seatbelt cannot filter bind by port, so any value yields a blanket
+# allow; Linux filters per port, where a fixed number would not cover an
+# ephemeral callback, so Linux is left as it was.
+LOGIN_BIND_NONO_ARGS=()
+[[ "$(uname -s)" == "Darwin" ]] && LOGIN_BIND_NONO_ARGS=(--listen-port 49152)
+
+# --local-db: open the local MariaDB/MySQL port for this session only.
+# --open-port is localhost-only; the static profile opens no port.
+LOCAL_DB_NONO_ARGS=()
+if $WANT_LOCAL_DB; then
+  validate_tcp_port --local-db "${LOCAL_DB_PORT:-3306}"
+  LOCAL_DB_NONO_ARGS=(--open-port "${LOCAL_DB_PORT:-3306}")
+fi
+
+# --minimax: allow api.minimax.io for this session only. It used to be in the
+# static profile, reachable from every session.
+MINIMAX_NONO_ARGS=()
+if $WANT_MINIMAX; then
+  MINIMAX_NONO_ARGS=(--allow-domain api.minimax.io)
+elif [[ "${ANTHROPIC_BASE_URL:-}" == *minimax* ]]; then
+  echo "note: ANTHROPIC_BASE_URL points at MiniMax but --minimax was not given; api.minimax.io is closed this session" >&2
+fi
+
 # --local-web opens localhost TCP on dev-wiki web ports for curl-based testing
 # without loading the MCP. `--open-port` is localhost-only (see `nono run
 # --help`), so external egress stays gated by the profile's allow_domain proxy.
@@ -293,10 +339,7 @@ LOCAL_WEB_NONO_ARGS=()
 if $WANT_LOCAL_WEB; then
   IFS=',' read -ra _LOCAL_WEB_PORTS <<<"${LOCAL_WEB_PORTS:-80,443,8080}"
   for port in "${_LOCAL_WEB_PORTS[@]}"; do
-    if [[ ! "$port" =~ ^[0-9]{1,5}$ ]] || (( 10#$port < 1 || 10#$port > 65535 )); then
-      echo "error: --local-web port '$port' is not a valid TCP port (1-65535)" >&2
-      exit 1
-    fi
+    validate_tcp_port --local-web "$port"
     LOCAL_WEB_NONO_ARGS+=(--open-port "$port")
   done
 fi
@@ -867,13 +910,30 @@ if git -C "$SCRIPT_DIR" rev-parse --git-dir >/dev/null 2>&1; then
   fi
 fi
 
+# MCP checkouts are read-only (via --read SCRIPT_DIR): read-write let an agent
+# plant code that runs in every later session. Only the Gerrit server writes
+# to its tree (server.log, appended per call); that file gets its own grant,
+# created here (unsandboxed) so the grant has a target. Skipped when the
+# submodule is not initialised, so nothing is planted in an empty directory
+# that `git submodule update --init` would then refuse to clone into.
+GERRIT_LOG_NONO_ARGS=()
+if [[ -f "$SCRIPT_DIR/gerrit-mcp-server/gerrit_mcp_server/main.py" ]]; then
+  if { : >> "$SCRIPT_DIR/gerrit-mcp-server/server.log"; } 2>/dev/null; then
+    GERRIT_LOG_NONO_ARGS=(--allow-file "$SCRIPT_DIR/gerrit-mcp-server/server.log")
+  else
+    echo "warning: cannot create gerrit-mcp-server/server.log — the Gerrit MCP will fail on use" >&2
+  fi
+fi
+
 NONO_CMD=(nono run --profile "$PROFILE_PATH" \
   --read "$SCRIPT_DIR" \
-  --allow "$SCRIPT_DIR/mcp-phabricator" \
-  --allow "$SCRIPT_DIR/gerrit-mcp-server" \
+  "${GERRIT_LOG_NONO_ARGS[@]}" \
   "${CHROME_DEVTOOLS_ALLOWS[@]}" \
   "${CHROME_DEVTOOLS_NONO_ARGS[@]}" \
   "${LOCAL_WEB_NONO_ARGS[@]}" \
+  "${MINIMAX_NONO_ARGS[@]}" \
+  "${LOCAL_DB_NONO_ARGS[@]}" \
+  "${LOGIN_BIND_NONO_ARGS[@]}" \
   "${DOCKER_BROKER_NONO_ARGS[@]}" \
   "${NONO_ARGS[@]}" \
   -- "$SCRIPT_DIR/bin/launch-claude.sh" --plugin-dir "$SCRIPT_DIR" \

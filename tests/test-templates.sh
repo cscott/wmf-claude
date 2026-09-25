@@ -301,6 +301,7 @@ mkdir -p "$FAKE_REPO/gerrit-mcp-server/gerrit_mcp_server" && touch "$FAKE_REPO/g
 cat > "$FAKE_REPO/bin/nono" <<'STUB'
 #!/bin/bash
 printf 'NONO_ARG: %s\n' "$@"
+env | grep '^WMF_CLAUDE_' | sed 's/^/NONO_ENV: /'
 STUB
 chmod +x "$FAKE_REPO/bin/nono"
 
@@ -679,6 +680,7 @@ env = dict(os.environ, PATH=cwd + "/bin:" + os.environ["PATH"], NO_COLOR="1",
 env.pop("WMF_CLAUDE_SKIP_UPDATE", None)
 env.pop("WMF_CLAUDE_UPDATED", None)
 env.pop("WMF_CLAUDE_PROFILE", None)   # fixture only ships wmf-engineer.json
+env.pop("WMF_CLAUDE_NO_PAUSE", None)  # the pause after a notice is under test
 # Point HOME at a scratch dir: bin/claude reads ~/.claude/settings*.json and
 # exits before update_notices if sandbox.enabled is true, which would turn
 # every assertion below into an unexplained failure on the developer's machine.
@@ -686,8 +688,8 @@ env["HOME"] = os.path.join(os.path.dirname(cwd.rstrip("/")), ".home")
 os.makedirs(env["HOME"], exist_ok=True)
 pid, fd = pty.fork()
 if pid == 0:
-    os.chdir(cwd); os.execve("/bin/bash", ["bash", "bin/claude"], env); os._exit(1)
-buf, sent, deadline = b"", False, time.time() + 60
+    os.chdir(cwd); os.execve("/bin/bash", ["bash", "bin/claude"] + sys.argv[3:], env); os._exit(1)
+buf, sent, pressed, deadline = b"", False, 0, time.time() + 60
 while time.time() < deadline:
     r, _, _ = select.select([fd], [], [], 0.5)
     if r:
@@ -697,6 +699,8 @@ while time.time() < deadline:
         buf += chunk
         if not sent and b"[y/N]" in buf:
             time.sleep(0.3); os.write(fd, answer.encode() + b"\n"); sent = True
+        if buf.count(b"Press Enter to start") > pressed:   # answer "int" sends Ctrl-C instead
+            time.sleep(0.2); os.write(fd, b"\x03" if answer == "int" else b"\n"); pressed += 1
     else:
         try:
             if os.waitpid(pid, os.WNOHANG)[0]: break
@@ -721,7 +725,7 @@ upd_fixture() {
   cp "$REPO_ROOT/bin/claude" "$UPD/work/bin/claude"
   # Prints a marker so tests can tell a launch that reached nono from one that
   # died on a precondition after the prompt.
-  printf '#!/bin/bash\necho NONO_LAUNCHED\nfor a in "$@"; do echo "NONO_ARG: $a"; done\n' > "$UPD/work/bin/nono"
+  printf '#!/bin/bash\necho NONO_LAUNCHED\nfor a in "$@"; do echo "NONO_ARG: $a"; done\nenv | grep "^WMF_CLAUDE_" | sed "s/^/NONO_ENV: /"\n' > "$UPD/work/bin/nono"
   # $1: make setup.sh fail, to exercise the incomplete-update path.
   if [[ "${1:-}" == "failing-setup" ]]; then
     printf '#!/bin/bash\necho SETUP_RAN\nexit 1\n' > "$UPD/work/setup.sh"
@@ -768,6 +772,25 @@ else
   else
     fail "the launch died after the prompt (a precondition after update_notices failed)"
   fi
+  if ! grep -q 'Press Enter to start' <<<"$out"; then
+    pass "no extra pause after the update prompt was answered"
+  else
+    fail "the launcher paused again after the update prompt was answered"
+  fi
+  # A notice printed AFTER the prompt was answered must still pause: the reset
+  # covers only what was on screen while the prompt waited. server.log as a
+  # directory makes the gerrit pre-create fail late in the launch (untracked,
+  # so the prompt still fires).
+  mkdir -p "$UPD/work/gerrit-mcp-server/gerrit_mcp_server" "$UPD/work/gerrit-mcp-server/server.log"
+  touch "$UPD/work/gerrit-mcp-server/gerrit_mcp_server/main.py"
+  out="$(python3 "$UPD/drive.py" "$UPD/work" n 2>&1)"
+  if grep -q 'Update now?' <<<"$out" && grep -q 'warning: cannot create gerrit-mcp-server/server.log' <<<"$out" \
+     && grep -q 'Press Enter to start' <<<"$out" && grep -q NONO_LAUNCHED <<<"$out"; then
+    pass "a notice after the answered prompt still pauses"
+  else
+    fail "a notice printed after the update prompt was answered did not pause"
+  fi
+  rm -rf "$UPD/work/gerrit-mcp-server"
 
   # An untracked file must NOT block: Claude Code writes
   # .claude/settings.local.json into any repo where a permission is approved,
@@ -808,6 +831,38 @@ else
     pass "install on a feature branch is not offered (or given) an update"
   else
     fail "install on a feature branch was offered or given an update"
+  fi
+  if ! grep -q 'Press Enter to start' <<<"$out"; then
+    pass "being behind origin/main alone does not pause (the status line carries it)"
+  else
+    fail "the behind-origin/main note paused the launch (nags every feature-branch launch)"
+  fi
+  # A notice that needs action pauses; drive.py sends the key and the launch proceeds.
+  out="$(ANTHROPIC_BASE_URL=https://api.minimax.io/v1 python3 "$UPD/drive.py" "$UPD/work" n 2>&1)"
+  if grep -q 'Press Enter to start Claude Code' <<<"$out" && grep -q NONO_LAUNCHED <<<"$out"; then
+    pass "a startup notice pauses for Enter on a tty, then the launch proceeds"
+  else
+    fail "a startup notice did not pause on a tty (lost in the redraw), or the launch died"
+  fi
+  if grep -q 'NONO_ENV: WMF_CLAUDE_UPDATE=2' <<<"$out"; then
+    pass "the behind count reaches the status line (WMF_CLAUDE_UPDATE)"
+  else
+    fail "WMF_CLAUDE_UPDATE not exported for a 2-behind install"
+  fi
+  # Ctrl-C at the pause ends the launch (with --docker the trap would
+  # otherwise tear the broker down and launch anyway).
+  out="$(ANTHROPIC_BASE_URL=https://api.minimax.io/v1 python3 "$UPD/drive.py" "$UPD/work" int 2>&1)"
+  if grep -q 'Press Enter to start' <<<"$out" && ! grep -q NONO_LAUNCHED <<<"$out"; then
+    pass "Ctrl-C at the pause aborts the launch"
+  else
+    fail "Ctrl-C at the pause fell through to a launch"
+  fi
+  # `claude -p` never redraws, so a notice prints but nothing pauses.
+  out="$(ANTHROPIC_BASE_URL=https://api.minimax.io/v1 python3 "$UPD/drive.py" "$UPD/work" n -p hello 2>&1)"
+  if grep -q 'note: ANTHROPIC_BASE_URL' <<<"$out" && ! grep -q 'Press Enter to start' <<<"$out" && grep -q NONO_LAUNCHED <<<"$out"; then
+    pass "claude -p from a terminal prints the notice and does not pause"
+  else
+    fail "claude -p from a terminal paused (or lost the notice)"
   fi
   git -C "$UPD/work" checkout -q main
 
@@ -960,6 +1015,133 @@ else
   fail "launcher plants server.log into an uninitialised submodule (breaks git submodule update --init)"
 fi
 mv "$FAKE_REPO/main.py.bak" "$FAKE_REPO/gerrit-mcp-server/gerrit_mcp_server/main.py"
+
+echo ""
+echo "--- startup visibility: pause and status line ---"
+# Claude Code redraws the terminal as it starts, so launcher output is lost.
+# Notices pause for a key (tty only; covered in the pty tests above) and the
+# sandbox state is exported for the status line.
+if ! grep -q 'WMF_CLAUDE_QUIET\|╭─' "$REPO_ROOT/bin/launch-claude.sh"; then
+  pass "launch-claude.sh no longer prints a banner (it was never readable)"
+else
+  fail "launch-claude.sh still prints a startup banner"
+fi
+out="$(ANTHROPIC_BASE_URL=https://api.minimax.io/v1 run_fake_claude)"
+if grep -q '^note: ANTHROPIC_BASE_URL points at MiniMax' <<<"$out" && ! grep -q 'Press Enter to start' <<<"$out"; then
+  pass "a notice on a non-tty launch prints but does not pause"
+else
+  fail "non-tty launch: notice missing or the launcher paused without a tty"
+fi
+out="$(run_fake_claude --local-db --minimax)"
+if grep -qx "NONO_ENV: WMF_CLAUDE_HOME=$FAKE_REPO" <<<"$out" \
+   && grep -qx "NONO_ENV: WMF_CLAUDE_SESSION=--local-db --minimax" <<<"$out" \
+   && grep -qx "NONO_ENV: WMF_CLAUDE_PROFILE=wmf-engineer" <<<"$out"; then
+  pass "bin/claude exports the session facts for the status line"
+else
+  fail "bin/claude did not export WMF_CLAUDE_HOME/SESSION/PROFILE"
+fi
+out="$(run_fake_claude)"
+if grep -qx "NONO_ENV: WMF_CLAUDE_SESSION=" <<<"$out"; then
+  pass "a plain launch exports an empty session summary"
+else
+  fail "plain launch: WMF_CLAUDE_SESSION not empty"
+fi
+# One status-line row: defaults elided, ~ for HOME, grant flags grouped,
+# --local-web dropped when --chrome implies it.
+out="$(HOME=/home/t run_fake_claude --local-db=3307 --chrome --allow /home/t/src --allow /home/t/.config/x --read /opt/y --allow-net --)"
+if grep -qx 'NONO_ENV: WMF_CLAUDE_SESSION=--local-db=3307 --chrome --allow ~/src ~/.config/x --read /opt/y --allow-net' <<<"$out"; then
+  pass "session summary is compact (grouped grants, ~ paths, implied flags elided)"
+else
+  fail "session summary not compact: $(grep '^NONO_ENV: WMF_CLAUDE_SESSION=' <<<"$out")"
+fi
+out="$(run_fake_claude --local-web=8080 --chrome)"
+if grep -qx 'NONO_ENV: WMF_CLAUDE_SESSION=--local-web=8080 --chrome' <<<"$out"; then
+  pass "session summary keeps --local-web when its ports were narrowed"
+else
+  fail "session summary lost a narrowed --local-web: $(grep '^NONO_ENV: WMF_CLAUDE_SESSION=' <<<"$out")"
+fi
+if jq -e '.environment.allow_vars | index("WMF_CLAUDE_*")' "$REPO_ROOT/profiles/wmf-engineer.json" >/dev/null 2>&1; then
+  pass "profile passes WMF_CLAUDE_* into the sandbox (status line needs it)"
+else
+  fail "profile drops WMF_CLAUDE_*; the status line cannot see the session"
+fi
+if jq -e '.statusLine.command | test("WMF_CLAUDE_HOME") and test("bin/statusline.sh")' "$REPO_ROOT/wiring/settings-merge.json" >/dev/null 2>&1; then
+  pass "settings-merge.json wires statusLine to bin/statusline.sh via WMF_CLAUDE_HOME"
+else
+  fail "settings-merge.json statusLine missing or not pointing at bin/statusline.sh"
+fi
+SL="$REPO_ROOT/bin/statusline.sh"
+SL_HOME="$(mktemp -d)"; trap 'rm -rf "$FAKE_REPO" "$UPD" "$SL_HOME"' EXIT
+if [[ -x "$SL" ]] && bash -n "$SL"; then pass "bin/statusline.sh is executable and parses"; else fail "bin/statusline.sh missing, not executable, or has a syntax error"; fi
+sl_run() {  # $1 stdin json; env from caller
+  ( cd "$SL_HOME" && printf '%s' "$1" | HOME="$SL_HOME" WMF_CLAUDE_HOME="$REPO_ROOT" bash "$SL" )
+}
+out="$(WMF_CLAUDE_PROFILE=wmf-engineer WMF_CLAUDE_SESSION="--local-db=3306 --docker=mediawiki" WMF_CLAUDE_UPDATE= sl_run '{"model":{"display_name":"Opus"}}')"
+if [[ "$out" == "WMF nono sandbox · --local-db=3306 --docker=mediawiki" ]]; then
+  pass "status line shows the sandbox segment with the session flags"
+else
+  fail "status line segment wrong: '$out'"
+fi
+out="$(WMF_CLAUDE_PROFILE=wmf-data-scientist WMF_CLAUDE_SESSION= WMF_CLAUDE_UPDATE=2 sl_run '{}')"
+if [[ "$out" == *"(wmf-data-scientist)"* && "$out" == *"update available (2 behind"* ]]; then
+  pass "status line names a non-default profile and a pending update"
+else
+  fail "status line profile/update segment wrong: '$out'"
+fi
+# The engineer's command arrives as WMF_CLAUDE_STATUSLINE (snapshotted by
+# bin/claude at launch), fed the same JSON.
+out="$(WMF_CLAUDE_SESSION= WMF_CLAUDE_STATUSLINE='input=$(cat); echo THEIRS-$(printf %s "$input" | jq -r .model.display_name)' sl_run '{"model":{"display_name":"Opus"}}')"
+if [[ "$out" == "WMF nono sandbox │ THEIRS-Opus" ]]; then
+  pass "status line appends the engineer's own status line, fed the same JSON"
+else
+  fail "status line did not chain to the engineer's statusLine: '$out'"
+fi
+out="$(WMF_CLAUDE_SESSION= WMF_CLAUDE_STATUSLINE='echo partial; exit 1' sl_run '{}')"
+if [[ "$out" == "WMF nono sandbox │ partial" ]]; then
+  pass "status line keeps the engineer's output when their command exits non-zero"
+else
+  fail "status line dropped output on a non-zero exit: '$out'"
+fi
+# Three ways a snapshot can lead back here: the merge file's literal, the
+# resolved path, and an indirect invocation (stopped by the nested guard).
+for self in '"$WMF_CLAUDE_HOME/bin/statusline.sh"' "$REPO_ROOT/bin/statusline.sh" "cd '$REPO_ROOT/bin' && ./statusline.sh"; do
+  out="$(WMF_CLAUDE_SESSION= WMF_CLAUDE_STATUSLINE="$self" sl_run '{}')"
+  if [[ "$out" == "WMF nono sandbox" ]]; then
+    pass "status line does not chain to itself via: $self"
+  else
+    fail "status line recursed or duplicated via $self: '$out'"
+  fi
+done
+# Settings files inside the sandbox are agent-writable; the status line must
+# never take a command from them, only from the launch-time snapshot.
+mkdir -p "$SL_HOME/.claude"
+for f in settings.json settings.local.json; do
+  echo '{"statusLine":{"type":"command","command":"echo PWNED"}}' > "$SL_HOME/.claude/$f"
+done
+out="$(WMF_CLAUDE_SESSION= WMF_CLAUDE_STATUSLINE= sl_run '{}')"
+if [[ "$out" == "WMF nono sandbox" ]]; then
+  pass "status line ignores statusLine commands in cwd/HOME settings files (agent-writable)"
+else
+  fail "status line executed a command from a settings file: '$out'"
+fi
+rm -rf "$SL_HOME/.claude"
+# bin/claude snapshots the user-level statusLine into the env, unsandboxed.
+SNAP_HOME="$(mktemp -d)"; trap 'rm -rf "$FAKE_REPO" "$UPD" "$SL_HOME" "$SNAP_HOME"' EXIT
+mkdir -p "$SNAP_HOME/.claude"
+echo '{"statusLine":{"type":"command","command":"~/.claude/mine.sh"}}' > "$SNAP_HOME/.claude/settings.json"
+out="$(HOME="$SNAP_HOME" run_fake_claude)"
+if grep -qx 'NONO_ENV: WMF_CLAUDE_STATUSLINE=~/.claude/mine.sh' <<<"$out"; then
+  pass "bin/claude snapshots ~/.claude/settings.json statusLine.command at launch"
+else
+  fail "bin/claude did not export the engineer's statusLine command: $(grep '^NONO_ENV: WMF_CLAUDE_STATUSLINE' <<<"$out")"
+fi
+echo '{"statusLine":{"type":"static","command":"nope"}}' > "$SNAP_HOME/.claude/settings.json"
+out="$(HOME="$SNAP_HOME" run_fake_claude)"
+if grep -qx 'NONO_ENV: WMF_CLAUDE_STATUSLINE=' <<<"$out"; then
+  pass "a non-command statusLine is not snapshotted"
+else
+  fail "non-command statusLine leaked into WMF_CLAUDE_STATUSLINE"
+fi
 
 echo ""
 echo "========================="

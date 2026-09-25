@@ -26,6 +26,19 @@
 # consumed here regardless of where the separator is.
 set -eo pipefail
 
+# Startup notices. Claude Code redraws the terminal as it starts, so anything
+# printed before it is gone before it can be read. note/warn are for things
+# that need action this launch: they set STARTUP_NOTICE and the launcher waits
+# for a key before it starts. info is for state the status line shows anyway
+# (behind count, Docker service, egress mode): printed, but does not hold the
+# launch.
+STARTUP_NOTICE=0
+C_LABEL='' C_OFF=''
+if [[ -z "${NO_COLOR:-}" && -t 2 ]]; then C_LABEL=$'\033[1;33m'; C_OFF=$'\033[0m'; fi
+info() { printf '%s%s:%s %s\n' "$C_LABEL" "${2:-note}" "$C_OFF" "$1" >&2; }  # $2: label
+note() { info "$1"; STARTUP_NOTICE=1; }
+warn() { info "$1" warning; STARTUP_NOTICE=1; }
+
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 # Captured before any parsing so a post-update re-exec can replay the launch
@@ -67,7 +80,7 @@ Passthrough (split at --):
 
 Environment:
   WMF_CLAUDE_PROFILE=<name>   load profiles/<name>.json (default: wmf-engineer)
-  WMF_CLAUDE_QUIET=1          suppress the WMF banner
+  WMF_CLAUDE_NO_PAUSE=1       skip the Enter pause after startup notices
   WMF_CLAUDE_SKIP_UPDATE=1    skip update-staleness notices
 
 Refuses --capability-elevation, --trust-override, --dangerously-skip-permissions.
@@ -186,6 +199,13 @@ for arg in "${NONO_ARGS[@]}"; do
   esac
 done
 
+# `claude -p` never redraws the terminal, so notices stay readable there: no
+# update prompt, no pause. Stderr may still be a TTY, hence an arg scan.
+PRINT_MODE=0
+for arg in "${CLAUDE_ARGS[@]}"; do
+  case "$arg" in -p|--print|--print=*) PRINT_MODE=1 ;; esac
+done
+
 # `--settings` is single-valued, so a second occurrence wins outright. We pass
 # the tool layer that way, so a user-supplied one after `--` would silently
 # replace every deny (Bash(ssh:*), WebFetch=ask, the credential globs) with
@@ -254,8 +274,20 @@ if command -v jq >/dev/null 2>&1; then
     exit 1
   fi
 else
-  echo "warning: jq not found on PATH; skipping sandbox.enabled conflict check" >&2
+  warn "jq not found on PATH; skipping sandbox.enabled conflict check"
 fi
+
+# The engineer's own status line, read here (unsandboxed, at launch) so
+# bin/statusline.sh can append it. User-level file only, snapshotted into the
+# env: inside the sandbox the workdir and ~/.claude are agent-writable, so the
+# status line must not read settings files itself, or an edit would execute
+# on the next tick with no prompt. A snapshot makes later edits inert.
+WMF_CLAUDE_STATUSLINE=""
+if command -v jq >/dev/null 2>&1; then
+  WMF_CLAUDE_STATUSLINE=$(jq -r 'select(.statusLine.type == "command") | .statusLine.command // empty' \
+    "$HOME/.claude/settings.json" 2>/dev/null || true)
+fi
+export WMF_CLAUDE_STATUSLINE
 
 # chrome-devtools MCP is opt-in per session via --chrome. This keeps its
 # attack surface (CDP-controlled browser, unrestricted page-side network)
@@ -289,7 +321,7 @@ if $WANT_CHROME; then
   # still launch, the engineer just needs to start Chrome before driving it.
   if command -v lsof >/dev/null 2>&1 \
      && ! lsof -nP -iTCP:9222 -sTCP:LISTEN >/dev/null 2>&1; then
-    echo "note: nothing listening on 127.0.0.1:9222 yet — start Chrome with" >&2
+    note "nothing listening on 127.0.0.1:9222 yet — start Chrome with"
     echo "      bin/launch-test-chrome in another terminal before driving it" >&2
   fi
   CHROME_DEVTOOLS_ALLOWS+=(--allow "$CDP_DIR")
@@ -326,7 +358,7 @@ MINIMAX_NONO_ARGS=()
 if $WANT_MINIMAX; then
   MINIMAX_NONO_ARGS=(--allow-domain api.minimax.io)
 elif [[ "${ANTHROPIC_BASE_URL:-}" == *minimax* ]]; then
-  echo "note: ANTHROPIC_BASE_URL points at MiniMax but --minimax was not given; api.minimax.io is closed this session" >&2
+  note "ANTHROPIC_BASE_URL points at MiniMax but --minimax was not given; api.minimax.io is closed this session"
 fi
 
 # --local-web opens localhost TCP on dev-wiki web ports for curl-based testing
@@ -483,7 +515,7 @@ if $WANT_DOCKER; then
         printf '%s\n' "$DOCKER_SERVICES" | grep . | sed 's/^/         /' >&2
         exit 1
       fi
-      echo "note: --docker=auto selected service '$DOCKER_SERVICE'" >&2
+      info "--docker=auto selected service '$DOCKER_SERVICE'"
     elif [[ -n "$DOCKER_SERVICES" ]] && ! printf '%s\n' "$DOCKER_SERVICES" | grep -qx "$DOCKER_SERVICE"; then
       echo "error: '$DOCKER_SERVICE' is not a service in $COMPOSE_FILE. Available:" >&2
       printf '%s\n' "$DOCKER_SERVICES" | grep . | sed 's/^/         /' >&2
@@ -525,7 +557,7 @@ if $WANT_DOCKER; then
       sleep 0.1
       (( waited++ )) || true
     done
-    echo "note: started a managed Docker broker for '$DOCKER_SERVICE' (pid $BROKER_PID); it stops when this session exits" >&2
+    info "started a managed Docker broker for '$DOCKER_SERVICE' (pid $BROKER_PID); it stops when this session exits"
   else
     # Attach to a broker the engineer started manually in another terminal.
     HS_FILE="$RUNTIME_DIR/wmf-docker-broker.json"
@@ -559,7 +591,7 @@ if $WANT_DOCKER; then
   elif command -v curl >/dev/null 2>&1; then
     curl -fsS --max-time 2 -o /dev/null "http://127.0.0.1:$BROKER_PORT/health" 2>/dev/null || broker_dead=1
   else
-    echo "warning: cannot verify the broker is alive (no lsof or curl on PATH)" >&2
+    warn "cannot verify the broker is alive (no lsof or curl on PATH)"
   fi
   if [[ -n "$broker_dead" ]]; then
     echo "error: broker handshake points at port $BROKER_PORT but it's not responding" >&2
@@ -576,19 +608,25 @@ if $WANT_DOCKER; then
   # on the first unrestricted use (no acknowledgment marker) wait for Enter —
   # only on an interactive terminal, so scripts and tests never hang.
   if [[ "$DOCKER_EGRESS" == "none" ]]; then
-    echo "note: --egress=none verified: the container has no network route out." >&2
+    info "--egress=none verified: the container has no network route out."
   elif [[ "$DOCKER_EGRESS" == "allowlist" ]]; then
-    echo "note: --egress=allowlist verified: the container reaches only the" >&2
+    info "--egress=allowlist verified: the container reaches only the"
     echo "      hosts in your squid allowlist (exfil to those hosts remains)." >&2
   else
-    echo "warning: --docker: the container's network is NOT sandbox-restricted;" >&2
+    # Acknowledged once below; after that the status line shows the state.
+    info "--docker: the container's network is NOT sandbox-restricted;" warning
     echo "         code run via mwdocker has full egress. Keep secrets out of the" >&2
     echo "         dev checkout and dev DB. See docs/security-rationale.md (Docker exec broker)," >&2
     echo "         or use --egress=none|allowlist with a templates/docker-egress/" >&2
     echo "         compose override to restrict the container." >&2
     DOCKER_ACK_FILE="$HOME/.config/wmf-claude/docker-egress-ack"
     if [[ ! -f "$DOCKER_ACK_FILE" && -t 0 && -t 1 ]]; then
+      # Ctrl-C ends the launch; the EXIT trap still tears the broker down.
+      # Left to the docker trap, Ctrl-C would run cleanup and then launch.
+      trap 'printf "\n" >&2; exit 130' INT
       read -r -p "Press Enter to acknowledge (asked once): "
+      trap cleanup_docker EXIT INT TERM
+      STARTUP_NOTICE=0  # read while the prompt waited
       mkdir -p "$(dirname "$DOCKER_ACK_FILE")"
       touch "$DOCKER_ACK_FILE"
     fi
@@ -625,6 +663,7 @@ print_incomplete_warning() {  # $1 c_note  $2 c_off  $3 c_cmd
   printf 'Finish it (this notice repeats until setup.sh succeeds):\n' >&2
   printf '  %sgit -C %s submodule update --init --recursive && %s/setup.sh%s\n\n' \
     "$3" "$SCRIPT_DIR" "$SCRIPT_DIR" "$2" >&2
+  STARTUP_NOTICE=1
 }
 
 # Apply a pending update, then hand the session to the new launcher.
@@ -654,8 +693,7 @@ do_self_update() {
   # Merging the exact sha the behind-count and the commit list came from is
   # what makes the engineer's yes informed consent to what they just read.
   if ! git -C "$SCRIPT_DIR" merge --ff-only "$target"; then
-    printf '%snote:%s update failed; continuing on the current version\n' \
-      "$c_note" "$c_off" >&2
+    note "update failed; continuing on the current version"
     # Remember the sha so we stop asking on every launch. update_notices prints
     # the manual command for it instead, until origin/main moves on.
     printf '%s\n' "$target" > "$WMF_CACHE_DIR/update-refused" 2>/dev/null || true
@@ -695,19 +733,15 @@ update_notices() {
 
   # Only nag a human at an interactive terminal. `[[ -t 2 ]]` is false when
   # stderr is captured (the VS Code extension run headless, piped output), so
-  # we stay silent and skip the background fetch there. The arg scan catches
+  # we stay silent and skip the background fetch there. PRINT_MODE catches
   # `claude -p` run from a terminal, where stderr is still a TTY.
   [[ -t 2 ]] || return 0
-  local a
-  for a in "${CLAUDE_ARGS[@]}"; do
-    case "$a" in -p|--print|--print=*) return 0 ;; esac
-  done
+  (( PRINT_MODE )) && return 0
 
   # Colorize the notices so they stand out against nono's colored capability
   # table; an uncolored note at the top is easy to miss. Only reached when
   # stderr is a TTY (checked above); also honors NO_COLOR. Bold yellow labels
-  # the "note:"; bold magenta marks the copy-paste command, matching the
-  # banner's convention (launch-claude.sh) of magenta for things you act on.
+  # the "note:"; bold magenta marks the copy-paste command.
   local c_note='' c_cmd='' c_off=''
   if [[ -z "${NO_COLOR:-}" ]]; then
     c_note=$'\033[1;33m'
@@ -729,8 +763,7 @@ update_notices() {
     # Older = the smaller of the two under version sort, and they differ.
     if [[ -n "$pin" && -n "$have" && "$have" != "$pin" \
           && "$(printf '%s\n%s\n' "$pin" "$have" | sort -V | head -n1)" == "$have" ]]; then
-      printf '%snote:%s nono %s is older than the pinned %s; run %sbrew upgrade nono%s\n' \
-        "$c_note" "$c_off" "$have" "$pin" "$c_cmd" "$c_off" >&2
+      note "nono $have is older than the pinned $pin; run ${c_cmd}brew upgrade nono${c_off}"
     fi
   fi
 
@@ -753,8 +786,8 @@ update_notices() {
     [[ -n "$UPDATE_TARGET" ]] || return 0
     behind=$(git -C "$SCRIPT_DIR" rev-list --count "HEAD..$UPDATE_TARGET" 2>/dev/null || echo 0)
     if [[ "$behind" =~ ^[0-9]+$ ]] && (( behind > 0 )); then
-      printf '%snote:%s wmf-claude is %s commit(s) behind origin/main:\n' \
-        "$c_note" "$c_off" "$behind" >&2
+      info "wmf-claude is $behind commit(s) behind origin/main:"
+      UPDATE_BEHIND=$behind  # shown in the status line
 
       # Show what would land. The prompt below is only meaningful if the
       # engineer can see what they're agreeing to; capped so a long gap can't
@@ -822,6 +855,7 @@ update_notices() {
         trap '' TTIN
         read -t 60 -r reply </dev/tty || reply=''
         trap - TTIN
+        STARTUP_NOTICE=0  # read while the prompt waited
         printf '\n' >&2   # `read` ate the newline; keep later output on its own line
         case "$reply" in
           [yY]|[yY][eE][sS]) do_self_update "$c_note" "$c_off" "$c_cmd" "$UPDATE_TARGET" || true ;;
@@ -862,9 +896,8 @@ update_notices() {
 }
 update_notices
 
-# Launch claude inside the nono sandbox via launch-claude.sh, which prints
-# the WMF Claude banner after nono's capability table (so it lands right
-# before Claude Code's banner instead of getting scrolled past).
+# Launch claude inside the nono sandbox via launch-claude.sh, which sets the
+# in-sandbox environment and execs claude.
 #
 # --read grants the plugin code + MCP submodule dirs under the repo. The user's
 # CWD is granted via the profile's filesystem.allow on $WORKDIR (--workdir is
@@ -902,8 +935,7 @@ if git -C "$SCRIPT_DIR" rev-parse --git-dir >/dev/null 2>&1; then
   policy_rc=0
   git -C "$SCRIPT_DIR" diff --quiet HEAD -- wiring/settings-merge.json profiles 2>/dev/null || policy_rc=$?
   if (( policy_rc == 1 )); then
-    if [[ -z "${NO_COLOR:-}" ]]; then printf '\033[1;33mnote:\033[0m' >&2; else printf 'note:' >&2; fi
-    printf ' the security policy differs from the committed version:\n' >&2
+    note "the security policy differs from the committed version:"
     { git -C "$SCRIPT_DIR" diff --stat HEAD -- wiring/settings-merge.json profiles 2>/dev/null \
         | sed 's/^/      /' >&2; } || true
     printf '      If you did not make this change, stop and run: git -C %s diff\n' "$SCRIPT_DIR" >&2
@@ -921,8 +953,59 @@ if [[ -f "$SCRIPT_DIR/gerrit-mcp-server/gerrit_mcp_server/main.py" ]]; then
   if { : >> "$SCRIPT_DIR/gerrit-mcp-server/server.log"; } 2>/dev/null; then
     GERRIT_LOG_NONO_ARGS=(--allow-file "$SCRIPT_DIR/gerrit-mcp-server/server.log")
   else
-    echo "warning: cannot create gerrit-mcp-server/server.log — the Gerrit MCP will fail on use" >&2
+    warn "cannot create gerrit-mcp-server/server.log — the Gerrit MCP will fail on use"
   fi
+fi
+
+# Session facts for bin/statusline.sh: Claude Code redraws the terminal, so the
+# status line is where the sandbox state stays visible. WMF_CLAUDE_* passes the
+# profile's env filter.
+# Kept short: the status line has one row and the engineer's own segment
+# follows ours. Defaults are elided, $HOME is ~, repeated grant flags group.
+session=()
+$WANT_LOCAL_DB && session+=("--local-db${LOCAL_DB_PORT:+=$LOCAL_DB_PORT}")
+if $WANT_LOCAL_WEB && { ! $WANT_CHROME || [[ -n "$LOCAL_WEB_PORTS" ]]; }; then
+  session+=("--local-web${LOCAL_WEB_PORTS:+=$LOCAL_WEB_PORTS}")
+fi
+$WANT_CHROME && session+=(--chrome)
+$WANT_MINIMAX && session+=(--minimax)
+if $WANT_DOCKER; then
+  session+=("--docker${DOCKER_SERVICE:+=$DOCKER_SERVICE} (egress ${DOCKER_EGRESS:-unrestricted})")
+fi
+grant_flag='' last_flag='' tilde='~'
+for a in "${NONO_ARGS[@]}"; do
+  if [[ -n "$grant_flag" ]]; then
+    v=$a
+    [[ "$a" == "$HOME" || "$a" == "$HOME/"* ]] && v="$tilde${a#"$HOME"}"
+    if [[ "$grant_flag" == "$last_flag" ]]; then
+      session[${#session[@]}-1]+=" $v"
+    else
+      session+=("$grant_flag $v"); last_flag=$grant_flag
+    fi
+    grant_flag=''; continue
+  fi
+  case "$a" in
+    --allow|--read|--allow-file|--allow-domain|--open-port|--listen-port) grant_flag=$a ;;
+    *) session+=("$a"); last_flag='' ;;
+  esac
+done
+export WMF_CLAUDE_HOME="$SCRIPT_DIR" WMF_CLAUDE_PROFILE="$PROFILE"
+export WMF_CLAUDE_SESSION="${session[*]}" WMF_CLAUDE_UPDATE="${UPDATE_BEHIND:-}"
+
+# Wait for Enter when a notice was printed. No pause on a clean launch, on
+# `claude -p` (no redraw), or without a tty. Bounded so an unattended pty never
+# hangs. Plain read, not -s/-n1: those set terminal modes, which stops a
+# backgrounded launch. Ctrl-C must end the launch, not fall through to it:
+# with --docker the INT trap would otherwise tear the broker down and then
+# start Claude Code against it.
+if (( STARTUP_NOTICE && ! PRINT_MODE )) && [[ -r /dev/tty && -t 0 && -t 2 && -z "${WMF_CLAUDE_NO_PAUSE:-}" ]]; then
+  printf '\nPress Enter to start Claude Code (WMF_CLAUDE_NO_PAUSE=1 skips this)... ' >&2
+  trap 'printf "\n" >&2; exit 130' INT
+  trap '' TTIN
+  read -t 60 -r _ </dev/tty || true
+  trap - TTIN
+  if $WANT_DOCKER; then trap cleanup_docker EXIT INT TERM; else trap - INT; fi
+  printf '\n' >&2
 fi
 
 NONO_CMD=(nono run --profile "$PROFILE_PATH" \

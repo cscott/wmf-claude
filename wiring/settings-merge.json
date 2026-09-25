@@ -1,4 +1,5 @@
 {
+  "statusLine": { "type": "command", "command": "\"$WMF_CLAUDE_HOME/bin/statusline.sh\"" },
   "permissions": {
     "allow": [
       "Bash(git:*)",

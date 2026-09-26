@@ -1,0 +1,141 @@
+diff --git a/SECURITY.md b/SECURITY.md
+index ffec424..9d28c6c 100644
+--- a/SECURITY.md
++++ b/SECURITY.md
+@@ -164,11 +164,17 @@ Claude Code itself probes `Library/Application Support/{Google/Chrome,Google/Chr
+ - `WebFetch` is in `ask` (not `allow`). nono can't gate `WebFetch` because
+   it's served by Anthropic's API, not the laptop — this is the primary egress
+   barrier to attacker URLs and the most important rule in this list.
+-- `Edit`/`Write` blocked on `.claude/{settings.json,hooks/**}` (per-project)
++- `Edit` blocked on `.claude/{settings.json,hooks/**}` (per-project)
+   and `~/.claude/{settings*.json,hooks/**,plugins/**,agents/**,skills/**}`
+   (user-global). Prevents Claude from tampering with hooks or rewriting its
+   own allowlist for future sessions. The nono pack writes these paths via
+   the nono CLI, which runs outside Claude's tool surface.
++
++  `Edit(path)` is the rule that covers *every* file-editing tool, Write
++  included. A matching `Write(path)` rule is not a second lock: Claude Code
++  skips it and says so on stderr at every startup ("`Write(...)` is not
++  matched by file permission checks — only `Edit(path)` rules are"). The
++  eight that used to be here were removed for that reason, not relaxed.
+ - `Read(**/*.{env,key,secret,credential,pem})` — credential files anywhere
+   in the workdir.
+ - `Read(.git/config)` and `Read(.git/credentials*)` — credentials in remote
+@@ -176,25 +182,38 @@ Claude Code itself probes `Library/Application Support/{Google/Chrome,Google/Chr
+ - `Read(~/.ssh/*)` — defense in depth alongside the profile's `~/.ssh`
+   filesystem deny.
+ - `Bash(ssh:*)` — defense in depth alongside the network-layer port-22 deny.
+-- `Bash(find:* -exec*)`, `-execdir`, `-delete`, `-ok`, `-okdir`, `-fprint*` —
++- `Bash(find *-exec*)`, `-execdir`, `-delete`, `-ok`, `-okdir`, `-fprint*` —
+   `find` only allows read-only traversal forms; `-exec` is otherwise
+   effectively shell escape.
++
++  The spelling matters and used to be wrong. These were written
++  `Bash(find:* -exec*)`, which Claude Code rejects — "the `:*` pattern must
++  be at the end" — and a rejected rule is **skipped**, so `find -exec` was
++  never denied at all. `:*` means prefix-match and may only terminate the
++  pattern; anything else with a `*` in it is a wildcard match against the
++  whole command. `find *-exec*` is that, and it catches `find . -exec …` and
++  the path-less `find -exec …` alike while leaving `find . -name …` allowed.
++  All three measured against Claude Code 2.1.269.
+ - `Bash(git config core.hooksPath:*)` — no redirecting commit hooks to
+   attacker-controlled paths.
+ - `sandbox.enabled: false` — nono is the OS boundary; Claude Code's softer
+   in-process sandbox would add friction without restricting an already
+   sandboxed session.
+ 
+-**Linux caveat.** Claude Code silently ignores glob patterns in permission
+-deny rules on Linux, so the `Read(**/*.{env,key,secret,credential,pem})`
+-rules above do not fire there. The explicit non-glob `.env*` entries still
+-apply, and the nono OS-level sandbox still denies `~/.ssh` and the other
+-credential paths regardless of platform. The gap is workdir-local: an
+-unusually-named or deep-nested `.key`/`.pem`/`.secret`/`.credential` file
+-inside the workdir is blocked by neither layer on Linux (the tool glob is
+-ignored, and nono grants the workdir read+write), whereas on macOS the tool
+-glob blocks it. Avoid keeping secrets in the workdir on Linux;
+-`bin/wmf-claude-setup` prints this warning on Linux hosts.
++**Linux caveat — no longer reproducible on Claude Code 2.1.269.** Claude
++Code used to silently ignore glob patterns in permission deny rules on
++Linux, so the `Read(**/*.{env,key,secret,credential,pem})` rules above did
++not fire there: an unusually-named or deep-nested `.key`/`.pem`/`.secret`/
++`.credential` file inside the workdir was blocked by neither layer (the tool
++glob was ignored, and nono grants the workdir read+write), whereas on macOS
++the tool glob blocked it.
++
++Re-measured on Linux under 2.1.269 with the sandbox's own deny list: a Read of `deep/nested/secret.pem` and of
++`sample.env` are both denied, by `Read(**/*.pem)` and `Read(**/*.env)`
++respectively — the only rules that can match either. So the globs do fire.
++The version this was fixed in is unknown, `bin/wmf-claude-setup` still
++prints the warning on Linux hosts, and the advice it gives (don't keep
++secrets in the workdir) is worth following regardless.
+ 
+ ## Environment variables
+ 
+diff --git a/wiring/settings-merge.json b/wiring/settings-merge.json
+index 2744df9..04bac24 100644
+--- a/wiring/settings-merge.json
++++ b/wiring/settings-merge.json
+@@ -3,14 +3,14 @@
+     "allow": [
+       "Bash(git:*)",
+       "Bash(GIT_SEQUENCE_EDITOR=* git rebase:*)",
+-      "Bash(find:* -name*)",
+-      "Bash(find:* -type*)",
+-      "Bash(find:* -path*)",
+-      "Bash(find:* -maxdepth*)",
+-      "Bash(find:* -mindepth*)",
+-      "Bash(find:* -mtime*)",
+-      "Bash(find:* -newer*)",
+-      "Bash(find:* -print*)",
++      "Bash(find *-name*)",
++      "Bash(find *-type*)",
++      "Bash(find *-path*)",
++      "Bash(find *-maxdepth*)",
++      "Bash(find *-mindepth*)",
++      "Bash(find *-mtime*)",
++      "Bash(find *-newer*)",
++      "Bash(find *-print*)",
+       "Bash(ls:*)",
+       "Bash(grep:*)",
+       "Bash(rg:*)",
+@@ -20,12 +20,12 @@
+     "deny": [
+       "Bash(ssh:*)",
+       "Bash(git config core.hooksPath:*)",
+-      "Bash(find:* -exec*)",
+-      "Bash(find:* -execdir*)",
+-      "Bash(find:* -delete*)",
+-      "Bash(find:* -ok*)",
+-      "Bash(find:* -okdir*)",
+-      "Bash(find:* -fprint*)",
++      "Bash(find *-exec*)",
++      "Bash(find *-execdir*)",
++      "Bash(find *-delete*)",
++      "Bash(find *-ok*)",
++      "Bash(find *-okdir*)",
++      "Bash(find *-fprint*)",
+       "Read(~/.ssh/*)",
+       "Read(~/.ssh/id_rsa)",
+       "Read(~/.ssh/id_rsa.pub)",
+@@ -58,20 +58,12 @@
+       "Read(**/*.pem)",
+       "Edit(.claude/hooks/**)",
+       "Edit(.claude/settings.json)",
+-      "Write(.claude/hooks/**)",
+-      "Write(.claude/settings.json)",
+       "Edit(~/.claude/settings.json)",
+       "Edit(~/.claude/settings.local.json)",
+       "Edit(~/.claude/hooks/**)",
+       "Edit(~/.claude/plugins/**)",
+       "Edit(~/.claude/agents/**)",
+-      "Edit(~/.claude/skills/**)",
+-      "Write(~/.claude/settings.json)",
+-      "Write(~/.claude/settings.local.json)",
+-      "Write(~/.claude/hooks/**)",
+-      "Write(~/.claude/plugins/**)",
+-      "Write(~/.claude/agents/**)",
+-      "Write(~/.claude/skills/**)"
++      "Edit(~/.claude/skills/**)"
+     ],
+     "ask": [
+       "WebFetch"

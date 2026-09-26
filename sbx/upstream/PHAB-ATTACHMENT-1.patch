@@ -1,0 +1,62 @@
+diff --git a/includes/Rest/Validator/ParamValidatorCallbacks.php b/includes/Rest/Validator/ParamValidatorCallbacks.php
+index 5aeac591af8..5c5a1ce87ad 100644
+--- a/includes/Rest/Validator/ParamValidatorCallbacks.php
++++ b/includes/Rest/Validator/ParamValidatorCallbacks.php
+@@ -49,20 +49,28 @@ class ParamValidatorCallbacks implements Callbacks {
+ 
+ 	/** @inheritDoc */
+ 	public function hasParam( $name, array $options ) {
++		if ( $options['source'] === 'header' ) {
++			// Header names are case-insensitive (RFC 9110 section 5.1)
++			return $this->request->hasHeader( $name );
++		}
+ 		$params = $this->getParamsFromSource( $options['source'] );
+ 		return isset( $params[$name] );
+ 	}
+ 
+ 	/** @inheritDoc */
+ 	public function getValue( $name, $default, array $options ) {
+-		$params = $this->getParamsFromSource( $options['source'] );
+-		$value = $params[$name] ?? $default;
+-		if (
+-			$options['source'] === 'header' &&
+-			$options['type'] === 'string' &&
+-			isset( $params[$name] )
+-		) {
+-			$value = implode( ', ', $value );
++		if ( $options['source'] === 'header' ) {
++			// Header names are case-insensitive (RFC 9110 section 5.1)
++			if ( !$this->request->hasHeader( $name ) ) {
++				$value = $default;
++			} elseif ( $options['type'] === 'string' ) {
++				$value = implode( ', ', $this->request->getHeader( $name ) );
++			} else {
++				$value = $this->request->getHeader( $name );
++			}
++		} else {
++			$params = $this->getParamsFromSource( $options['source'] );
++			$value = $params[$name] ?? $default;
+ 		}
+ 
+ 		// Normalisation for body is being handled in Handler::parseBodyData
+diff --git a/tests/phpunit/unit/includes/Rest/Validator/ValidatorTest.php b/tests/phpunit/unit/includes/Rest/Validator/ValidatorTest.php
+index fa2464736f1..7504e5b7b0c 100644
+--- a/tests/phpunit/unit/includes/Rest/Validator/ValidatorTest.php
++++ b/tests/phpunit/unit/includes/Rest/Validator/ValidatorTest.php
+@@ -954,6 +954,16 @@ class ValidatorTest extends MediaWikiUnitTestCase {
+ 				],
+ 				'expected' => [ 'en, tg-latn;q=1', 'tg-latn' ]
+ 			],
++
++			// Test case 10: Header names are case-insensitive
++			[
++				'source' => 'header',
++				'requestData' => new RequestData( [ 'headers' => [ 'PARAM1' => 'en' ] ] ),
++				'options' => [
++					'type' => 'string'
++				],
++				'expected' => 'en'
++			],
+ 		];
+ 	}
+ 

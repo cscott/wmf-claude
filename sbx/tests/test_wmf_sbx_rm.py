@@ -145,6 +145,19 @@ class RemoveOneTests(unittest.TestCase):
         self.assertEqual(self.remotes_of_host(), [])
         self.assertIsNone(state_mod.load("mw-cite", env=self.env))
 
+    def test_a_path_shortcut_resolves_to_its_sandbox(self):
+        repo = tempfile.TemporaryDirectory()
+        self.addCleanup(repo.cleanup)
+        state = state_mod.load("mw-cite", env=self.env)
+        state["primaryDir"] = repo.name
+        state_mod.save(state, env=self.env)
+
+        code, err = self._main(["--force", repo.name], self.fake_run())
+        self.assertEqual(code, 0)
+        self.assertIn("resolved", err)
+        self.assertIn("mw-cite", err)
+        self.assertIsNone(state_mod.load("mw-cite", env=self.env))
+
     def test_declining_the_prompt_leaves_everything_alone(self):
         # `sbx rm` exits 0 when the user answers N, so the only honest
         # signal is that the sandbox is still listed afterward. Trusting
@@ -309,9 +322,20 @@ class RemoveOneTests(unittest.TestCase):
         self.assertIn("no wmf-sbx state", err)
 
     def test_unusable_name_is_rejected(self):
-        code, err = self._main(["../evil"], self.fake_run())
+        # A bare unusable name -- not path-shaped, so resolve_name_arg
+        # passes it straight through to validate_name's own rejection.
+        code, err = self._main(["bad name"], self.fake_run())
         self.assertEqual(code, 1)
         self.assertIn("not a usable sandbox name", err)
+
+    def test_path_shaped_name_with_no_matching_sandbox_is_rejected(self):
+        # "../evil" looks like a directory shortcut (see
+        # wmf_sbx.state.is_path_shortcut), so it is rejected by
+        # resolve_name_arg -- not by validate_name -- before it ever
+        # becomes a candidate filename.
+        code, err = self._main(["../evil"], self.fake_run())
+        self.assertEqual(code, 1)
+        self.assertIn("no sandbox has", err)
 
     def test_several_names_and_a_failure_reports_nonzero(self):
         def run(cmd, **kwargs):

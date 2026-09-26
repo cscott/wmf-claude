@@ -95,6 +95,24 @@ class UpstreamPlanTests(unittest.TestCase):
         plan = c.upstream_plan([(None, "/home/c/scratch")], run=run)
         self.assertEqual(plan, {})
 
+    def test_gitlab_fork_is_repointed_at_its_true_upstream(self):
+        run = lambda argv, **kw: FakeCompletedProcess(1)
+        plan = c.upstream_plan(
+            [("gitlab:cscott/wmf-claude", "/home/c/wmf-claude")], run=run,
+            gitlab_upstream=lambda path: "repos/psi/wmf-claude")
+        self.assertEqual(plan, {
+            "/home/c/wmf-claude": "https://gitlab.wikimedia.org/repos/psi/wmf-claude.git"})
+
+    def test_gitlab_outage_keeps_the_canonicals_own_url(self):
+        def down(path):
+            raise c.resolve_mod.ResolutionError("offline")
+        run = lambda argv, **kw: FakeCompletedProcess(1)
+        plan = c.upstream_plan(
+            [("gitlab:cscott/wmf-claude", "/home/c/wmf-claude")], run=run,
+            gitlab_upstream=down)
+        self.assertEqual(plan, {
+            "/home/c/wmf-claude": "https://gitlab.wikimedia.org/cscott/wmf-claude.git"})
+
 
 class HostUpstreamUrlTests(unittest.TestCase):
     def test_returns_http_origin(self):

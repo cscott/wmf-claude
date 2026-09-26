@@ -463,6 +463,40 @@ class MainTests(unittest.TestCase):
         self.assertEqual(calls, [])
         self.assertIn("error:", err)
 
+    def test_a_path_shortcut_resolves_to_its_sandbox(self):
+        repo = tempfile.TemporaryDirectory()
+        self.addCleanup(repo.cleanup)
+        state = state_mod.load("mw-cite", env=self.env)
+        state["primaryDir"] = repo.name
+        state_mod.save(state, env=self.env)
+
+        calls = []
+        code, err = self._main(
+            ["--config", self.config, repo.name], self.fake_run(calls)
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("resolved", err)
+        self.assertIn("mw-cite", err)
+        self.assertEqual(calls[0], [create_mod.WMF_SBX, "--upstream", "exec", "mw-cite", "--", "true"])
+
+    def test_an_ambiguous_path_shortcut_is_refused_before_anything_runs(self):
+        state_mod.save(
+            state_mod.new_state("mw-ve", daemon_port=9977, host_port=32783,
+                                 primary_dir=self.tmp.name),
+            env=self.env,
+        )
+        state = state_mod.load("mw-cite", env=self.env)
+        state["primaryDir"] = self.tmp.name
+        state_mod.save(state, env=self.env)
+
+        calls = []
+        code, err = self._main(
+            ["--config", self.config, self.tmp.name], self.fake_run(calls)
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(calls, [])
+        self.assertIn("error:", err)
+
 
 if __name__ == "__main__":
     unittest.main()

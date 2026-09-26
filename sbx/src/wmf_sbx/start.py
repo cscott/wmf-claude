@@ -54,11 +54,15 @@ def main(argv=None, run=subprocess.run, env=None):
     )
     args = parser.parse_args(argv)
 
+    original_name = args.name
     try:
+        args.name = state_mod.resolve_name_arg(args.name, env=env)
         state_mod.validate_name(args.name)
     except state_mod.StateError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
+    if args.name != original_name:
+        print(f"+ resolved {original_name!r} to sandbox {args.name!r}", file=sys.stderr)
 
     ok = resume_mod.start_and_restore(
         args.name, no_restore=args.no_restore, no_remotes=args.no_remotes,

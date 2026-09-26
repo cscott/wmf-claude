@@ -602,6 +602,33 @@ def sandbox_ids():
         return os.getuid(), os.getgid()
 
 
+def seed_commit_msg_hook(source, dest):
+    """Copy the Gerrit `commit-msg` hook from `source`'s own `.git/hooks`
+    into a freshly cloned parallel-tree repo at `dest`.
+
+    `git clone` never copies hooks -- they live outside version control --
+    so a clone of a Gerrit-backed repo comes up with no commit-msg hook at
+    all, and every commit it makes is missing the `Change-Id:` trailer the
+    write-commit-msg skill assumes is already there (sbx/NOTES.md, "One
+    still-open gap..."). `source` is the engineer's own host mirror (or
+    its moved-aside copy), which already has a working hook installed if
+    Gerrit access was ever set up on the host -- copying it is simpler and
+    needs no network, unlike fetching one fresh from Gerrit.
+
+    Gated on `dest` having a `.gitreview` (a tracked file, so it's already
+    there right after the clone if the repo is Gerrit-backed) and `source`
+    actually having a hook to copy; does nothing otherwise, the same as a
+    plain `git clone` would."""
+    if not os.path.isfile(os.path.join(dest, ".gitreview")):
+        return
+    src_hook = os.path.join(source, ".git", "hooks", "commit-msg")
+    if not os.path.isfile(src_hook):
+        return
+    dst_hook = os.path.join(dest, ".git", "hooks", "commit-msg")
+    shutil.copyfile(src_hook, dst_hook)
+    shutil.copymode(src_hook, dst_hook)
+
+
 def clone_into_parallel_tree(literal_path, dest, run=subprocess.run):
     if os.path.exists(dest):
         print(f"{dest} already exists; leaving it alone", file=sys.stderr)
@@ -634,6 +661,11 @@ def clone_into_parallel_tree(literal_path, dest, run=subprocess.run):
             f"git clone --shared {literal_path} {dest} "
             f"failed (exit {result.returncode})"
         )
+    # Before the chown below, not after: it recurses over chown_root, so
+    # doing this first means the copied hook file lands owned by the
+    # sandbox user along with everything else the clone created, instead
+    # of needing a chown of its own.
+    seed_commit_msg_hook(literal_path, dest)
     # This script runs as root (see module docstring), so the clone above
     # -- and any ancestor directories os.makedirs just created -- land
     # owned by root, making the checkout unusable (and unwritable) for the

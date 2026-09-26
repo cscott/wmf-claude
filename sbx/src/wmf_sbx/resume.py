@@ -286,11 +286,15 @@ def main(argv=None, run=subprocess.run, env=None):
     )
     args = parser.parse_args(ours)
 
+    original_name = args.name
     try:
+        args.name = state_mod.resolve_name_arg(args.name, env=env)
         state_mod.validate_name(args.name)
     except state_mod.StateError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
+    if args.name != original_name:
+        print(f"+ resolved {original_name!r} to sandbox {args.name!r}", file=sys.stderr)
 
     state = load_state(args.name, env=env)
     attached = bool(state and state.get("attached"))

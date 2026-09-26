@@ -111,6 +111,87 @@ class RoundTripTests(unittest.TestCase):
         self.assertTrue(s.new_state("mw-cite", attached=True)["attached"])
 
 
+class ResolveNameArgTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.env = {"XDG_STATE_HOME": self.tmp.name}
+        self.repo = tempfile.TemporaryDirectory()
+        self.addCleanup(self.repo.cleanup)
+
+    def test_bare_name_passes_through_unchanged(self):
+        self.assertEqual(s.resolve_name_arg("mw-cite", env=self.env), "mw-cite")
+
+    def test_path_shortcuts_recognized(self):
+        for arg in (".", "..", "./", "../", "./foo", "../foo", "/foo"):
+            self.assertTrue(s.is_path_shortcut(arg), arg)
+        for arg in ("mw-cite", "foo/bar", "..foo", ".git", ""):
+            self.assertFalse(s.is_path_shortcut(arg), arg)
+
+    def test_resolves_dot_to_the_matching_sandbox(self):
+        s.save(
+            s.new_state("mw-cite", primary_dir=self.repo.name), env=self.env,
+        )
+        old_cwd = os.getcwd()
+        os.chdir(self.repo.name)
+        self.addCleanup(os.chdir, old_cwd)
+        self.assertEqual(s.resolve_name_arg(".", env=self.env), "mw-cite")
+
+    def test_resolves_an_absolute_path(self):
+        s.save(
+            s.new_state("mw-cite", primary_dir=self.repo.name), env=self.env,
+        )
+        self.assertEqual(s.resolve_name_arg(self.repo.name, env=self.env), "mw-cite")
+
+    def test_no_match_raises(self):
+        with self.assertRaises(s.StateError):
+            s.resolve_name_arg(self.repo.name, env=self.env)
+
+    def test_ambiguous_match_raises(self):
+        s.save(s.new_state("mw-cite", primary_dir=self.repo.name), env=self.env)
+        s.save(s.new_state("mw-ve", primary_dir=self.repo.name), env=self.env)
+        with self.assertRaises(s.StateError):
+            s.resolve_name_arg(self.repo.name, env=self.env)
+
+    def test_sandboxes_without_primary_dir_are_not_matched(self):
+        # A state file written before `primaryDir` existed.
+        s.save(s.new_state("mw-cite"), env=self.env)
+        with self.assertRaises(s.StateError):
+            s.resolve_name_arg(self.repo.name, env=self.env)
+
+    def test_corrupt_state_file_is_skipped_not_raised(self):
+        # find_by_primary_dir must not let one bad file break every lookup.
+        path = s.state_path("mw-broken", self.env)
+        os.makedirs(os.path.dirname(path))
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("{not json")
+        s.save(s.new_state("mw-cite", primary_dir=self.repo.name), env=self.env)
+        self.assertEqual(s.resolve_name_arg(self.repo.name, env=self.env), "mw-cite")
+
+
+class PrimaryDirForTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.env = {"XDG_STATE_HOME": self.tmp.name}
+        self.repo = tempfile.TemporaryDirectory()
+        self.addCleanup(self.repo.cleanup)
+
+    def test_returns_the_recorded_primary_dir(self):
+        s.save(s.new_state("mw-cite", primary_dir=self.repo.name), env=self.env)
+        self.assertEqual(s.primary_dir_for("mw-cite", env=self.env), self.repo.name)
+
+    def test_unknown_sandbox_is_none(self):
+        self.assertIsNone(s.primary_dir_for("mw-nope", env=self.env))
+
+    def test_sandbox_predating_primary_dir_is_none(self):
+        s.save(s.new_state("mw-cite"), env=self.env)
+        self.assertIsNone(s.primary_dir_for("mw-cite", env=self.env))
+
+    def test_an_invalid_state_filename_is_none_not_raised(self):
+        self.assertIsNone(s.primary_dir_for("../escape", env=self.env))
+
+
 class DeleteAndListTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

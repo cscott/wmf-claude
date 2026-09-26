@@ -2,7 +2,7 @@
 # wmf-sbx: the ONLY supported way to invoke Docker Sandboxes (`sbx`) for
 # this project. Never call `sbx` directly -- see sbx/NOTES.md #8.
 #
-# For nine verbs (create, exec, ls-remotes, refresh-claude-md, resolve,
+# For ten verbs (cp, create, exec, ls-remotes, refresh-claude-md, resolve,
 # resume, rm, run, start) this file also redirects to the matching, smarter `wmf-sbx-<verb>`
 # wrapper instead of running the raw `sbx` verb -- see the
 # REDIRECT_VERBS block below and sbx/NOTES.md "wmf-sbx redirects".
@@ -35,21 +35,21 @@ set -euo pipefail
 # from every sbx invocation, and the redirect exits via `exec` too.
 unset SSH_AUTH_SOCK
 
-# `wmf-sbx-<verb>` exists for these eight `sbx` verbs and adds real
+# `wmf-sbx-<verb>` exists for these `sbx` verbs and adds real
 # safety/smarts on top of the plain verb (unfetched-commit guards, remote
-# repointing, mount restore, daemon-wait, ...). Typing the natural
-# `wmf-sbx create ...` should reach that smart wrapper, not go straight to
-# raw `sbx create ...` and skip all of it -- so redirect here unless the
-# engineer explicitly asked for the raw behavior with `--upstream`.
-# `sbx/NOTES.md` "wmf-sbx redirects".
+# repointing, mount restore, daemon-wait, path-shortcut NAME resolution,
+# ...). Typing the natural `wmf-sbx create ...` should reach that smart
+# wrapper, not go straight to raw `sbx create ...` and skip all of it --
+# so redirect here unless the engineer explicitly asked for the raw
+# behavior with `--upstream`. `sbx/NOTES.md` "wmf-sbx redirects".
 #
 # This has to happen before the real-`sbx`-on-PATH lookup below: a
 # redirect never touches the real binary at all (the wmf-sbx-<verb>
 # script it execs into is the one that invokes `sbx`, via its own
 # `wmf-sbx --upstream ...` call), so requiring a real `sbx` on PATH just
-# to redirect would make every one of these nine verbs depend on an
-# install step it doesn't actually need.
-REDIRECT_VERBS="create exec ls-remotes refresh-claude-md resolve resume rm run start"
+# to redirect would make every one of these verbs depend on an install
+# step it doesn't actually need.
+REDIRECT_VERBS="cp create exec ls-remotes refresh-claude-md resolve resume rm run start"
 
 if [ "${1:-}" = "--upstream" ]; then
   shift
@@ -82,7 +82,7 @@ elif [ $# -gt 0 ]; then
 fi
 
 # Everything past this point actually needs the real binary: --upstream
-# was given, or the verb (if any) isn't one of the eight redirected above.
+# was given, or the verb (if any) isn't one of the ones redirected above.
 real_sbx=$(command -v sbx) || {
   echo "wmf-sbx: no 'sbx' binary found on PATH" >&2
   exit 127

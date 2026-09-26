@@ -57,7 +57,8 @@ def state_path(name, env=None):
     return os.path.join(state_dir(env), f"{validate_name(name)}.json")
 
 
-def new_state(name, daemon_port=None, host_port=None, created=None, attached=False):
+def new_state(name, daemon_port=None, host_port=None, created=None, attached=False,
+              primary_dir=None):
     """A fresh, empty state dict. `created` is passed in rather than
     stamped here so callers stay testable without freezing the clock.
 
@@ -68,7 +69,14 @@ def new_state(name, daemon_port=None, host_port=None, created=None, attached=Fal
     sandbox's first conversation. MEASURED, cananian, 2026-09-08: leaving
     this False meant the very next `wmf-sbx-resume` always saw
     attached=False and stripped `--continue`, forcing a fresh session with
-    nothing to continue even though one had already run."""
+    nothing to continue even though one had already run.
+
+    `primary_dir` is the realpath'd host directory of the sandbox's
+    *primary* repo -- the one `sbx create`'s positional argument named,
+    not an extra. It is what `resolve_name_arg()` below matches a path
+    shortcut (`.`, `..`, an absolute path, ...) against, so a sandbox
+    created before this field existed simply isn't reachable that way;
+    it is still reachable by its plain name."""
     return {
         "schemaVersion": SCHEMA_VERSION,
         "name": validate_name(name),
@@ -81,6 +89,7 @@ def new_state(name, daemon_port=None, host_port=None, created=None, attached=Fal
         # starting fresh. Readers use .get(), so a state file written
         # before this key existed is simply "not yet attached".
         "attached": attached,
+        "primaryDir": primary_dir,
         "remotes": [],
         "skipped": [],
     }
@@ -144,3 +153,80 @@ def list_names(env=None):
         if NAME_RE.match(stem):
             names.append(stem)
     return sorted(names)
+
+
+# A filesystem-path shortcut for a sandbox name: an absolute path, or a
+# relative one that starts `.` or `..` -- as opposed to a bare NAME,
+# which never contains a `/` and never starts with `.` (see NAME_RE).
+# sbx/NOTES.md "Allow shortcut sandbox names". Matched with re.match
+# (a prefix test, not a full match) against the raw argument, before
+# any expanduser/realpath.
+#
+# `.` alone and `..` alone are added on top of the original
+# `^(/|.(.?/|$))` from the NOTES.md item: as written, that pattern
+# matches `.`, `./...` and `../...` but not a bare `..` (the `(\.?/|$)`
+# branch needs either a trailing `/` or end-of-string right after the
+# first `.`, and `..` has neither) -- an odd gap, since `..` alone is
+# just as natural a thing to type as `.` alone.
+PATH_SHORTCUT_RE = re.compile(r"^(/|\.\.?$|\.(\.?/))")
+
+
+def is_path_shortcut(arg):
+    """Whether `arg` looks like a filesystem path rather than a bare
+    sandbox NAME -- see PATH_SHORTCUT_RE."""
+    return bool(PATH_SHORTCUT_RE.match(arg or ""))
+
+
+def find_by_primary_dir(path, env=None):
+    """Names of every sandbox whose recorded `primaryDir` realpath-matches
+    `path` (already expected to be realpath'd by the caller). A sandbox
+    created before `primaryDir` existed, or whose state file failed to
+    parse, is silently skipped -- the caller sees "no match", the same
+    as if the sandbox had never been created with our tooling at all."""
+    matches = []
+    for name in list_names(env=env):
+        try:
+            saved = load(name, env=env)
+        except StateError:
+            continue
+        primary_dir = (saved or {}).get("primaryDir")
+        if primary_dir and os.path.realpath(primary_dir) == path:
+            matches.append(name)
+    return matches
+
+
+def primary_dir_for(name, env=None):
+    """The recorded `primaryDir` for sandbox `name`, or None if there is
+    no saved state for it, that state predates the `primaryDir` field, or
+    `name` isn't even a valid state filename. Unlike `find_by_primary_dir`
+    this goes the other way -- name to directory -- for a caller that
+    already has a real sandbox NAME (not a path shortcut) and wants to
+    anchor a relative path inside it; see wmf_sbx.cp.resolve_cp_arg."""
+    try:
+        saved = load(name, env=env)
+    except StateError:
+        return None
+    return (saved or {}).get("primaryDir")
+
+
+def resolve_name_arg(arg, env=None):
+    """If `arg` is a path shortcut (see is_path_shortcut), resolve it to
+    the one sandbox whose primary workspace is that directory and return
+    its name; otherwise return `arg` unchanged. Raises StateError if no
+    sandbox matches, or if more than one does -- both cases need a human
+    to pick, not a guess."""
+    if not is_path_shortcut(arg):
+        return arg
+    path = os.path.realpath(os.path.expanduser(arg))
+    matches = find_by_primary_dir(path, env=env)
+    if not matches:
+        raise StateError(
+            f"no sandbox has {path!r} as its primary workspace -- pass its "
+            f"name instead of {arg!r}."
+        )
+    if len(matches) > 1:
+        raise StateError(
+            f"{path!r} is the primary workspace of {len(matches)} sandboxes "
+            f"({', '.join(matches)}) -- name one explicitly instead of {arg!r}."
+        )
+    return matches[0]

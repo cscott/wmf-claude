@@ -176,6 +176,85 @@ class CloneIntoParallelTreeTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 s.clone_into_parallel_tree(literal, dest, run=fake_run)
 
+    def test_seeds_the_commit_msg_hook_before_the_chown(self):
+        # fake_run stands in for the real `git clone`, so it has to create
+        # the bits of the tree seed_commit_msg_hook and the chown both
+        # look at -- same as the earlier tests do for `calls`.
+        with tempfile.TemporaryDirectory() as tmp:
+            literal = os.path.join(tmp, "Cite")
+            dest = os.path.join(tmp, "sandbox-home", "Wikimedia", "Cite")
+            os.makedirs(os.path.join(literal, ".git", "hooks"))
+            with open(os.path.join(literal, ".git", "hooks", "commit-msg"), "w") as f:
+                f.write("#!/bin/sh\necho fake gerrit hook\n")
+
+            def fake_run(argv):
+                if argv[:2] == ["git", "clone"]:
+                    os.makedirs(os.path.join(dest, ".git", "hooks"))
+                    with open(os.path.join(dest, ".gitreview"), "w") as f:
+                        f.write("project=mediawiki/extensions/Cite.git\n")
+                return FakeCompletedProcess(0)
+
+            s.clone_into_parallel_tree(literal, dest, run=fake_run)
+
+            with open(os.path.join(dest, ".git", "hooks", "commit-msg")) as f:
+                self.assertEqual(f.read(), "#!/bin/sh\necho fake gerrit hook\n")
+
+
+class SeedCommitMsgHookTests(unittest.TestCase):
+    def test_copies_the_hook_when_gitreview_and_source_hook_both_exist(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = os.path.join(tmp, "source")
+            dest = os.path.join(tmp, "dest")
+            os.makedirs(os.path.join(source, ".git", "hooks"))
+            os.makedirs(os.path.join(dest, ".git", "hooks"))
+            with open(os.path.join(source, ".git", "hooks", "commit-msg"), "w") as f:
+                f.write("#!/bin/sh\necho fake gerrit hook\n")
+            os.chmod(os.path.join(source, ".git", "hooks", "commit-msg"), 0o755)
+            with open(os.path.join(dest, ".gitreview"), "w") as f:
+                f.write("[gerrit]\nproject=mediawiki/extensions/Cite.git\n")
+
+            s.seed_commit_msg_hook(source, dest)
+
+            dst_hook = os.path.join(dest, ".git", "hooks", "commit-msg")
+            self.assertTrue(os.path.isfile(dst_hook))
+            with open(dst_hook) as f:
+                self.assertEqual(f.read(), "#!/bin/sh\necho fake gerrit hook\n")
+            self.assertTrue(os.stat(dst_hook).st_mode & stat.S_IXUSR)
+
+    def test_does_nothing_without_a_gitreview(self):
+        # Not a Gerrit-backed repo -- leave the clone exactly as `git
+        # clone` left it.
+        with tempfile.TemporaryDirectory() as tmp:
+            source = os.path.join(tmp, "source")
+            dest = os.path.join(tmp, "dest")
+            os.makedirs(os.path.join(source, ".git", "hooks"))
+            os.makedirs(os.path.join(dest, ".git", "hooks"))
+            with open(os.path.join(source, ".git", "hooks", "commit-msg"), "w") as f:
+                f.write("#!/bin/sh\necho fake gerrit hook\n")
+
+            s.seed_commit_msg_hook(source, dest)
+
+            self.assertFalse(
+                os.path.exists(os.path.join(dest, ".git", "hooks", "commit-msg"))
+            )
+
+    def test_does_nothing_when_source_has_no_hook(self):
+        # The engineer's own host checkout never had Gerrit access set up
+        # -- nothing to copy, same as a plain git clone.
+        with tempfile.TemporaryDirectory() as tmp:
+            source = os.path.join(tmp, "source")
+            dest = os.path.join(tmp, "dest")
+            os.makedirs(os.path.join(source, ".git", "hooks"))
+            os.makedirs(os.path.join(dest, ".git", "hooks"))
+            with open(os.path.join(dest, ".gitreview"), "w") as f:
+                f.write("project=mediawiki/extensions/Cite.git\n")
+
+            s.seed_commit_msg_hook(source, dest)
+
+            self.assertFalse(
+                os.path.exists(os.path.join(dest, ".git", "hooks", "commit-msg"))
+            )
+
 
 class RemountReadonlyTests(unittest.TestCase):
     def test_success_runs_expected_mount_command(self):

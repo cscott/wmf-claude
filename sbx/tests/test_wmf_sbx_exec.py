@@ -129,6 +129,20 @@ class MainTests(unittest.TestCase):
         self.assertEqual(self.refreshed, [])
         self.assertIn("exec mw-cite git log", err)
 
+    def test_a_path_shortcut_resolves_to_its_sandbox(self):
+        repo = tempfile.TemporaryDirectory()
+        self.addCleanup(repo.cleanup)
+        state = state_mod.load("mw-cite", env=self.env)
+        state["primaryDir"] = repo.name
+        state_mod.save(state, env=self.env)
+
+        calls = []
+        code, err = self._main([repo.name, "true"], self.fake_run(calls))
+        self.assertEqual(code, 0)
+        self.assertIn("resolved", err)
+        self.assertIn("mw-cite", err)
+        self.assertEqual(calls[-1], [create_mod.WMF_SBX, "--upstream", "exec", "mw-cite", "true"])
+
     def test_an_invalid_name_is_refused_before_anything_runs(self):
         calls = []
         code, err = self._main(

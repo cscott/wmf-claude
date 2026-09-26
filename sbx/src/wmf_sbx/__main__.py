@@ -10,6 +10,7 @@ import importlib
 import sys
 
 COMMANDS = {
+    "cp": "wmf_sbx.cp",
     "create": "wmf_sbx.create",
     "exec": "wmf_sbx.exec",
     "ls-remotes": "wmf_sbx.ls_remotes",

@@ -147,12 +147,16 @@ def prune(dry_run=False, run=subprocess.run, env=None):
 
 def remove_one(name, args, run=subprocess.run, env=None):
     """Returns 0 on success, non-zero on failure."""
+    original_name = name
     try:
+        name = state_mod.resolve_name_arg(name, env=env)
         state_mod.validate_name(name)
         state = state_mod.load(name, env=env)
     except state_mod.StateError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
+    if name != original_name:
+        print(f"+ resolved {original_name!r} to sandbox {name!r}", file=sys.stderr)
 
     if state is None:
         warn(

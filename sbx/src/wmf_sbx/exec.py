@@ -107,11 +107,15 @@ def main(argv=None, run=subprocess.run, env=None):
     if not args.cmd:
         parser.error("give a command to run")
 
+    original_name = args.name
     try:
+        args.name = state_mod.resolve_name_arg(args.name, env=env)
         state_mod.validate_name(args.name)
     except state_mod.StateError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
+    if args.name != original_name:
+        print(f"+ resolved {original_name!r} to sandbox {args.name!r}", file=sys.stderr)
 
     # These mirror the real `sbx exec`'s own flags one for one, so they're
     # rebuilt here in a fixed order rather than replayed positionally --

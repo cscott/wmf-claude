@@ -529,6 +529,181 @@ class ReverseResolveTests(unittest.TestCase):
         self.assertEqual(rule["match"], "gerrit:mediawiki/core")
 
 
+def _projects(*paths):
+    return [{"path_with_namespace": p} for p in paths]
+
+
+class FakeGitlab:
+    """A `get` for gitlab_search/gitlab_project: {url-substring: JSON}.
+    The first key found in the URL wins; anything else is an empty page."""
+    def __init__(self, table):
+        self.table = table
+        self.urls = []
+
+    def __call__(self, url):
+        self.urls.append(url)
+        for key, data in self.table.items():
+            if key in url:
+                return data, ""
+        return [], ""
+
+
+class GitlabSearchTests(unittest.TestCase):
+    def test_first_group_with_a_hit_wins_and_marks_archived(self):
+        get = FakeGitlab({
+            "archived=true": _projects("repos/a/wmf-claude-old"),
+            "/groups/repos/": _projects("repos/a/wmf-claude-old", "repos/b/wmf-claude"),
+        })
+        names, archived = r.gitlab_search("wmf-claude", get=get)
+        self.assertEqual(names, ["repos/a/wmf-claude-old", "repos/b/wmf-claude"])
+        self.assertEqual(archived, {"repos/a/wmf-claude-old"})
+        self.assertFalse(any("toolforge-repos" in u for u in get.urls))
+
+    def test_falls_through_to_next_group(self):
+        get = FakeGitlab({"archived=true": [],
+                          "/groups/toolforge-repos/": _projects("toolforge-repos/xtools")})
+        names, archived = r.gitlab_search("xtools", get=get)
+        self.assertEqual(names, ["toolforge-repos/xtools"])
+        self.assertEqual(archived, set())
+
+    def test_no_hits_anywhere(self):
+        self.assertEqual(r.gitlab_search("nope", get=FakeGitlab({})), ([], set()))
+
+    def test_follows_pagination(self):
+        def get(url):
+            page = int(url.rsplit("page=", 1)[1])
+            return _projects(f"repos/p{page}"), "2" if page == 1 else ""
+        self.assertEqual(r._gitlab_paths("http://x?a=b", get), ["repos/p1", "repos/p2"])
+
+    def test_get_maps_404_to_none_and_other_errors_to_resolution_error(self):
+        import io
+        import urllib.error
+
+        def fail(code):
+            return urllib.error.HTTPError("u", code, "m", {}, io.BytesIO(b""))
+        with mock.patch.object(r.urllib.request, "urlopen", side_effect=fail(404)):
+            self.assertEqual(r._gitlab_get("u"), (None, ""))
+        with mock.patch.object(r.urllib.request, "urlopen", side_effect=fail(401)):
+            with self.assertRaises(r.ResolutionError):
+                r._gitlab_get("u")
+        with mock.patch.object(r.urllib.request, "urlopen", side_effect=OSError("down")):
+            with self.assertRaises(r.ResolutionError):
+                r._gitlab_get("u")
+
+
+class GitlabFallbackTests(unittest.TestCase):
+    def test_bare_name_falls_back_to_gitlab_when_gerrit_has_no_match(self):
+        result = r.resolve_canonical_path(
+            "wmf-claude", search=lambda s: ([], set()),
+            gitlab=lambda s: (["repos/product-safety-and-integrity/wmf-claude",
+                               "repos/x/wmf-claude-extras"], set()))
+        self.assertEqual(result, "gitlab:repos/product-safety-and-integrity/wmf-claude")
+
+    def test_gerrit_match_never_consults_gitlab(self):
+        def boom(s):
+            raise AssertionError("GitLab must not be queried")
+        result = r.resolve_canonical_path(
+            "core", search=lambda s: (["mediawiki/core"], set()), gitlab=boom)
+        self.assertEqual(result, "gerrit:mediawiki/core")
+
+    def test_gitlab_ambiguity_and_archived_warning(self):
+        with self.assertRaises(r.ResolutionError):
+            r.resolve_canonical_path(
+                "tool", search=lambda s: ([], set()),
+                gitlab=lambda s: (["repos/a/tool", "toolforge-repos/tool"], set()))
+        warnings = []
+        result = r.resolve_canonical_path(
+            "tool", search=lambda s: ([], set()), warn=warnings.append,
+            gitlab=lambda s: (["repos/a/tool"], {"repos/a/tool"}))
+        self.assertEqual(result, "gitlab:repos/a/tool")
+        self.assertIn("ARCHIVED", warnings[0])
+
+    def test_no_match_anywhere_names_both_forges(self):
+        with self.assertRaisesRegex(r.ResolutionError, "Gerrit or GitLab"):
+            r.resolve_canonical_path(
+                "zzz", search=lambda s: ([], set()), gitlab=lambda s: ([], set()))
+
+    def test_without_gitlab_the_message_stays_gerrit_only(self):
+        with self.assertRaisesRegex(r.ResolutionError, "No Gerrit project"):
+            r.resolve_canonical_path("zzz", search=lambda s: ([], set()))
+
+
+class GitlabUpstreamTests(unittest.TestCase):
+    def test_follows_forks_to_the_root(self):
+        table = {
+            "cscott/wmf-claude": {"forked_from_project": {"path_with_namespace": "bob/wmf-claude"}},
+            "bob/wmf-claude": {"forked_from_project": {"path_with_namespace": "repos/x/wmf-claude"}},
+            "repos/x/wmf-claude": {"forked_from_project": None},
+        }
+        self.assertEqual(r.gitlab_upstream("cscott/wmf-claude", project=table.get),
+                         "repos/x/wmf-claude")
+
+    def test_mr_default_target_self_stops_the_walk(self):
+        table = {"a/f": {"mr_default_target_self": True,
+                         "forked_from_project": {"path_with_namespace": "repos/x/f"}}}
+        self.assertEqual(r.gitlab_upstream("a/f", project=table.get), "a/f")
+
+    def test_unknown_project_and_cycles_mean_a_project_in_the_chain(self):
+        self.assertEqual(r.gitlab_upstream("a/f", project=lambda p: None), "a/f")
+        table = {"a/f": {"forked_from_project": {"path_with_namespace": "b/f"}},
+                 "b/f": {"forked_from_project": {"path_with_namespace": "a/f"}}}
+        self.assertIn(r.gitlab_upstream("a/f", project=table.get), {"a/f", "b/f"})
+
+    def test_gitlab_project_quotes_the_path(self):
+        get = FakeGitlab({"repos%2Fx%2Fy": {"id": 1}})
+        self.assertEqual(r.gitlab_project("repos/x/y", get=get), {"id": 1})
+
+
+class CanonicalFromUrlTests(unittest.TestCase):
+    def test_recognised_forms(self):
+        for url in (
+            "https://gitlab.wikimedia.org/repos/x/y.git",
+            "https://gitlab.wikimedia.org/repos/x/y",
+            "git@gitlab-ssh.wikimedia.org:repos/x/y.git",
+            "ssh://git@gitlab-ssh.wikimedia.org:2222/repos/x/y.git",
+            " https://gitlab.wikimedia.org/repos/x/y/\n",
+        ):
+            self.assertEqual(r.canonical_from_url(url), "gitlab:repos/x/y", url)
+
+    def test_other_hosts_and_junk(self):
+        for url in ("https://github.com/a/b", "", None,
+                    "https://gerrit.wikimedia.org/r/mediawiki/core"):
+            self.assertIsNone(r.canonical_from_url(url))
+
+    def test_git_origin_url(self):
+        class Done:
+            returncode, stdout = 0, "https://gitlab.wikimedia.org/a/b.git\n"
+        seen = {}
+
+        def run(argv, **kw):
+            seen.update(argv=argv, **kw)
+            return Done()
+        self.assertEqual(r.git_origin_url("/w/b", run=run), "https://gitlab.wikimedia.org/a/b.git")
+        self.assertEqual(seen["argv"], ["git", "-C", "/w/b", "remote", "get-url", "origin"])
+        self.assertEqual(seen["stdin"], r.subprocess.DEVNULL)
+        Done.returncode = 1
+        self.assertIsNone(r.git_origin_url("/w/b", run=run))
+
+
+class ReverseResolveOriginTests(unittest.TestCase):
+    RULES = [{"match": "gitlab:repos/**/{name}", "path": "/w/{name}"}]
+
+    def test_origin_url_identifies_a_gitlab_checkout(self):
+        canonical, rule = r.reverse_resolve(
+            "/w/wmf-claude", self.RULES, exists=lambda p: True,
+            gitreview_project=lambda p: None,
+            origin_url=lambda p: "https://gitlab.wikimedia.org/repos/psi/wmf-claude.git")
+        self.assertEqual(canonical, "gitlab:repos/psi/wmf-claude")
+        self.assertEqual(rule["match"], "gitlab:repos/**/{name}")
+
+    def test_unknown_origin_is_unresolved(self):
+        self.assertEqual(
+            r.reverse_resolve("/w/x", self.RULES, exists=lambda p: True,
+                              gitreview_project=lambda p: None,
+                              origin_url=lambda p: "https://github.com/a/x"),
+            (None, None))
+
+
 @unittest.skipUnless(r.yaml is not None, "PyYAML not installed")
 class LoadConfigTests(unittest.TestCase):
     def test_loads_example_config(self):

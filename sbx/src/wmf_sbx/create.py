@@ -138,7 +138,8 @@ def host_upstream_url(host_dir, run=subprocess.run):
     return url
 
 
-def upstream_plan(resolved, run=subprocess.run):
+def upstream_plan(resolved, run=subprocess.run,
+                  gitlab_upstream=resolve_mod.gitlab_upstream):
     """{local_dir: upstream_clone_url} for the repos we can name an upstream
     for, so the sandbox clone can call the real upstream remote `origin`
     and the host mirror `local` (sbx/DESIGN-setup-steps.md §8.1).
@@ -150,6 +151,11 @@ def upstream_plan(resolved, run=subprocess.run):
     project identification at all, so it covers any already-cloned
     directory clone_url()/canonical resolution can't name.
 
+    A gitlab: canonical that is a fork is followed to its root project
+    (gitlab_upstream), so `origin` in the sandbox is the real upstream and
+    not the engineer's personal fork. If GitLab does not answer, the
+    canonical's own URL is used (sbx/NOTES.md §100).
+
     A repo with neither is simply absent: the clone keeps the host mirror
     as `origin` and git-safe-reset falls back to it."""
     plan = {}
@@ -157,6 +163,12 @@ def upstream_plan(resolved, run=subprocess.run):
         url = None
         if canonical is not None:
             try:
+                if canonical.startswith("gitlab:"):
+                    try:
+                        canonical = "gitlab:" + gitlab_upstream(
+                            canonical[len("gitlab:"):])
+                    except resolve_mod.ResolutionError:
+                        pass
                 url = clone_url(canonical)
             except LaunchError:
                 url = None
@@ -975,7 +987,8 @@ def prune_removed_sandboxes(run=subprocess.run):
     return pruned
 
 
-def add_host_remotes(name, candidates, daemon_port, host_port, run=subprocess.run):
+def add_host_remotes(name, candidates, daemon_port, host_port, run=subprocess.run,
+                      primary_dir=None):
     """Add the `<name>` remotes and record them, so `wmf-sbx-rm`
     can take them out again. Returns the saved state, or None if nothing
     was recorded.
@@ -985,7 +998,11 @@ def add_host_remotes(name, candidates, daemon_port, host_port, run=subprocess.ru
     sandbox's first conversation, so the state we create here must record
     attached=True. Otherwise the next `wmf-sbx-resume` sees a fresh
     attached=False state and strips `--continue`, even though a session
-    already ran. MEASURED, cananian, 2026-09-08."""
+    already ran. MEASURED, cananian, 2026-09-08.
+
+    `primary_dir` is recorded so a later `wmf-sbx-resume`/`-rm`/`-start`/
+    `-exec` can take a path shortcut (`.`, `..`, an absolute path) in
+    place of this sandbox's name -- see wmf_sbx.state.resolve_name_arg."""
     remotes, skipped = remotes_mod.sync_remotes(name, candidates, run=run, warn=_warn)
     if not remotes:
         print_remote_add_reminder(candidates)
@@ -998,6 +1015,7 @@ def add_host_remotes(name, candidates, daemon_port, host_port, run=subprocess.ru
         .replace(microsecond=0)
         .isoformat(),
         attached=True,
+        primary_dir=primary_dir,
     )
     state["remotes"] = remotes
     state["skipped"] = skipped
@@ -2230,7 +2248,10 @@ def main(argv=None, run=subprocess.run):
             if args.no_remotes:
                 print_remote_add_reminder(candidates)
             else:
-                add_host_remotes(name, candidates, port, host_port, run=run)
+                add_host_remotes(
+                    name, candidates, port, host_port, run=run,
+                    primary_dir=primary_dir,
+                )
         else:
             print(
                 f"warning: could not determine the published host port for "

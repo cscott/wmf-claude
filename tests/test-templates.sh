@@ -291,7 +291,9 @@ mkdir -p "$FAKE_REPO/bin" \
          "$FAKE_REPO/profiles"
 cp "$REPO_ROOT/bin/claude" "$FAKE_REPO/bin/claude"
 # bin/claude checks the profile file exists before launching.
-echo '{}' > "$FAKE_REPO/profiles/wmf-engineer.json"
+echo '{"security":{"signal_mode":"isolated"}}' > "$FAKE_REPO/profiles/wmf-engineer.json"
+# An IDE terminal sets this, which would put every launch below in IDE mode.
+unset CLAUDE_CODE_SSE_PORT
 mkdir -p "$FAKE_REPO/wiring"
 echo '{}' > "$FAKE_REPO/wiring/settings-merge.json"
 touch "$FAKE_REPO/chrome-devtools-mcp/mcp-config.json"
@@ -301,7 +303,10 @@ mkdir -p "$FAKE_REPO/gerrit-mcp-server/gerrit_mcp_server" && touch "$FAKE_REPO/g
 cat > "$FAKE_REPO/bin/nono" <<'STUB'
 #!/bin/bash
 printf 'NONO_ARG: %s\n' "$@"
-env | grep '^WMF_CLAUDE_' | sed 's/^/NONO_ENV: /'
+env | grep -E '^(WMF_CLAUDE_|CLAUDE_CODE_SSE_PORT=)' | sed 's/^/NONO_ENV: /'
+for ((i = 1; i <= $#; i++)); do
+  [[ "${!i}" == "--profile" ]] && { j=$((i + 1)); printf 'NONO_PROFILE: %s\n' "$(jq -c . "${!j}")"; }
+done
 STUB
 chmod +x "$FAKE_REPO/bin/nono"
 
@@ -396,6 +401,127 @@ if grep -qx 'NONO_ARG: 80' <<<"$out" && grep -qx 'NONO_ARG: 443' <<<"$out" && ! 
 if PATH="$FAKE_REPO/bin:$PATH" bash "$FAKE_REPO/bin/claude" --local-web=abc >/dev/null 2>&1; then
   fail "--local-web=abc was not rejected"; else pass "--local-web=abc is rejected"; fi
 
+echo "--- bin/claude IDE mode ---"
+# IDE mode opens the plugin's port, passes --ide, and swaps in a copy of the
+# profile with signal_mode allow_all, kept outside the sandbox's grants. It is
+# entered from CLAUDE_CODE_SSE_PORT (plugin launch) or --ide (terminal), never
+# from a lockfile alone. Lockfiles live in a scratch HOME; a stub lsof reports
+# STUB_LSOF_PID (default: this shell) as the listener on STUB_LSOF_LISTENING.
+IDE_HOME="$(mktemp -d)"; trap 'rm -rf "$FAKE_REPO" "$IDE_HOME"' EXIT
+IDE_RT="$IDE_HOME/.config/wmf-claude/ide-profiles"
+mkdir -p "$IDE_HOME/.claude/ide" "$IDE_HOME/bin" "$IDE_HOME/proj/sub" "$IDE_HOME/other" "$IDE_HOME/elsewhere"
+cat > "$IDE_HOME/bin/lsof" <<'STUB'
+#!/bin/bash
+for a in "$@"; do [[ "$a" == -iTCP:* ]] && port="${a#-iTCP:}"; done
+[[ " ${STUB_LSOF_LISTENING:-} " == *" $port "* ]] || exit 1
+echo "$STUB_LSOF_PID"
+STUB
+sleep 0 & DEAD_IDE_PID=$!; wait "$DEAD_IDE_PID"
+chmod +x "$IDE_HOME/bin/lsof"
+ide_lock() {  # $1 port  $2 pid  $3 ideName  $4 workspace folder
+  printf '{"pid":%s,"workspaceFolders":["%s"],"ideName":"%s","authToken":"SECRET-TOKEN-%s"}\n' \
+    "$2" "$4" "$3" "$1" > "$IDE_HOME/.claude/ide/$1.lock"
+}
+run_ide_claude() {
+  HOME="$IDE_HOME" STUB_LSOF_PID="${STUB_LSOF_PID:-$$}" PATH="$IDE_HOME/bin:$FAKE_REPO/bin:$PATH" \
+    bash "$FAKE_REPO/bin/claude" "$@" 2>&1
+}
+has_ide_port() {  # $1 output  $2 port
+  grep -A1 -x 'NONO_ARG: --open-port' <<<"$1" | grep -qx "NONO_ARG: $2"
+}
+
+# Plugin launch: the env var alone turns IDE mode on.
+ide_lock 60123 $$ PhpStorm "$IDE_HOME/proj"
+out="$(CLAUDE_CODE_SSE_PORT=60123 run_ide_claude)"
+if has_ide_port "$out" 60123 && grep -qx 'NONO_ARG: --ide' <<<"$out"; then
+  pass "CLAUDE_CODE_SSE_PORT opens the IDE port and passes --ide"; else fail "CLAUDE_CODE_SSE_PORT did not enter IDE mode"; fi
+if grep -qE "^NONO_ARG: $IDE_RT/wmf-ide-profile\.[0-9]+\.[A-Za-z0-9]+$" <<<"$out" \
+   && ! grep -qx "NONO_ARG: $FAKE_REPO/profiles/wmf-engineer.json" <<<"$out"; then
+  pass "IDE mode loads a per-session profile copy from ~/.config/wmf-claude"; else fail "IDE mode did not swap the profile"; fi
+if grep -qx 'NONO_PROFILE: {"security":{"signal_mode":"allow_all"}}' <<<"$out"; then
+  pass "the profile copy differs from the base only in signal_mode allow_all"; else fail "unexpected profile copy: $(grep '^NONO_PROFILE' <<<"$out")"; fi
+ide_copy="$(grep -oE "^NONO_ARG: $IDE_RT/wmf-ide-profile\.[^ ]+" <<<"$out" | head -1)"; ide_copy="${ide_copy#NONO_ARG: }"
+if [[ -f "$ide_copy" && "$(ls -l "$ide_copy" | cut -c1-10)" == "-rw-------" \
+   && "$(ls -ld "$IDE_RT" | cut -c1-10)" == "drwx------" ]]; then
+  pass "the profile copy and its dir are private to the user"; else fail "profile copy or dir not private: $ide_copy"; fi
+if grep -qx 'NONO_ENV: CLAUDE_CODE_SSE_PORT=60123' <<<"$out" \
+   && grep -qx 'NONO_ENV: WMF_CLAUDE_SESSION=--ide=60123 (signal_mode allow_all)' <<<"$out" \
+   && grep -q 'IDE mode: localhost:60123' <<<"$out"; then
+  pass "IDE mode is announced and shown in the status line"; else fail "IDE mode notice or status line missing"; fi
+out="$(CLAUDE_CODE_SSE_PORT=abc run_ide_claude || true)"
+if grep -q 'not a valid TCP port' <<<"$out" && ! grep -q '^NONO_ARG:' <<<"$out"; then
+  pass "an invalid CLAUDE_CODE_SSE_PORT is rejected"; else fail "CLAUDE_CODE_SSE_PORT=abc was not rejected"; fi
+# Stale copies of a SIGKILLed session (launcher PID gone, or 0/1) are swept on
+# every launch, not only IDE ones.
+echo '{}' > "$IDE_RT/wmf-ide-profile.$DEAD_IDE_PID.AbC123"
+echo '{}' > "$IDE_RT/wmf-ide-profile.0.AbC123"
+echo '{}' > "$IDE_RT/wmf-ide-profile.$$.AbC123"
+run_ide_claude >/dev/null
+if [[ ! -e "$IDE_RT/wmf-ide-profile.$DEAD_IDE_PID.AbC123" && ! -e "$IDE_RT/wmf-ide-profile.0.AbC123" \
+   && ! -e "$ide_copy" ]]; then
+  pass "a stale profile copy from a dead session is swept"; else fail "stale profile copy was not swept"; fi
+if [[ -e "$IDE_RT/wmf-ide-profile.$$.AbC123" ]]; then
+  pass "a live session's profile copy is kept"; else fail "a live session's profile copy was swept"; fi
+rm -f "$IDE_RT"/wmf-ide-profile.*
+
+# No trigger: a live lockfile alone changes nothing.
+out="$(STUB_LSOF_LISTENING=60123 run_ide_claude)"
+if ! grep -qx 'NONO_ARG: --open-port' <<<"$out" && ! grep -qx 'NONO_ARG: --ide' <<<"$out" \
+   && grep -qx "NONO_ARG: $FAKE_REPO/profiles/wmf-engineer.json" <<<"$out"; then
+  pass "a lockfile alone does not enter IDE mode"; else fail "plain bin/claude guessed an IDE from a lockfile"; fi
+# --ide after -- is a Claude Code arg: no port, but say so.
+out="$(STUB_LSOF_LISTENING=60123 run_ide_claude -- --ide)"
+if ! grep -qx 'NONO_ARG: --open-port' <<<"$out" && grep -q -- '--ide after --' <<<"$out"; then
+  pass "--ide after -- does not enter IDE mode and is flagged"; else fail "--ide after -- was mishandled"; fi
+# --ide given to Claude Code already is not repeated.
+out="$(CLAUDE_CODE_SSE_PORT=60123 run_ide_claude -- --ide)"
+if [[ "$(grep -cx 'NONO_ARG: --ide' <<<"$out")" == "1" ]]; then
+  pass "--ide is passed to Claude Code once"; else fail "--ide was duplicated or dropped"; fi
+
+# --ide from a terminal: the one live lockfile wins.
+out="$(STUB_LSOF_LISTENING=60123 run_ide_claude --ide)"
+if has_ide_port "$out" 60123 && grep -qx 'NONO_ENV: CLAUDE_CODE_SSE_PORT=60123' <<<"$out"; then
+  pass "--ide picks the single live lockfile and exports its port"; else fail "--ide did not pick the live lockfile"; fi
+out="$(STUB_LSOF_LISTENING=60123 run_ide_claude --ide --)"
+if has_ide_port "$out" 60123; then pass "--ide -- also enters IDE mode"; else fail "--ide -- did not enter IDE mode"; fi
+# Not listening, or a dead pid, is not live.
+out="$(STUB_LSOF_LISTENING= run_ide_claude --ide || true)"
+if grep -q 'no running IDE plugin' <<<"$out"; then
+  pass "--ide skips a lockfile whose port is not listening"; else fail "--ide accepted a non-listening lockfile"; fi
+ide_lock 60123 "$DEAD_IDE_PID" PhpStorm "$IDE_HOME/proj"
+out="$(STUB_LSOF_LISTENING=60123 STUB_LSOF_PID="$DEAD_IDE_PID" run_ide_claude --ide || true)"
+if grep -q 'no running IDE plugin' <<<"$out"; then
+  pass "--ide skips a lockfile whose pid is dead"; else fail "--ide accepted a dead-pid lockfile"; fi
+# The sandbox can write ~/.claude/ide, so a planted lockfile must not open a port.
+rm -f "$IDE_HOME/.claude/ide"/*.lock
+ide_lock 3306 0 PhpStorm "/"
+out="$(STUB_LSOF_LISTENING=3306 STUB_LSOF_PID=0 run_ide_claude --ide || true)"
+if grep -q 'no running IDE plugin' <<<"$out"; then
+  pass "--ide skips a lockfile with pid 0"; else fail "--ide accepted a pid-0 lockfile"; fi
+ide_lock 3306 $$ PhpStorm "/"
+out="$(STUB_LSOF_LISTENING=3306 STUB_LSOF_PID=1 run_ide_claude --ide || true)"
+if grep -q 'no running IDE plugin' <<<"$out"; then
+  pass "--ide skips a lockfile whose pid is not the port's listener"; else fail "--ide accepted a port another process listens on"; fi
+rm -f "$IDE_HOME/.claude/ide"/*.lock
+ide_lock 99999 $$ PhpStorm "/"
+out="$(STUB_LSOF_LISTENING=99999 run_ide_claude --ide || true)"
+if grep -q 'no running IDE plugin' <<<"$out"; then
+  pass "--ide skips a lockfile with an out-of-range port"; else fail "--ide accepted port 99999"; fi
+rm -f "$IDE_HOME/.claude/ide"/*.lock
+# Several live windows: the one whose workspace contains $PWD wins; otherwise
+# fail and list them, without the token.
+ide_lock 60123 $$ PhpStorm "$IDE_HOME/proj"
+ide_lock 60125 $$ 'VS\u001b[2JCode' "$IDE_HOME/other"
+out="$(cd "$IDE_HOME/proj/sub" && STUB_LSOF_LISTENING='60123 60125' run_ide_claude --ide)"
+if has_ide_port "$out" 60123 && ! has_ide_port "$out" 60125; then
+  pass "--ide prefers the window whose workspace contains the cwd"; else fail "--ide did not pick the cwd's window"; fi
+out="$(cd "$IDE_HOME/elsewhere" && STUB_LSOF_LISTENING='60123 60125' run_ide_claude --ide || true)"
+if grep -q 'found 2 IDE windows' <<<"$out" && grep -q 'port 60123  PhpStorm' <<<"$out" \
+   && grep -q 'port 60125  VS?\[2JCode' <<<"$out" && ! grep -q '^NONO_ARG:' <<<"$out"; then
+  pass "--ide lists the candidates, control characters replaced, and stops"; else fail "--ide ambiguity was not reported"; fi
+if ! grep -q 'SECRET-TOKEN' <<<"$out"; then
+  pass "the candidate list never prints the lockfile's authToken"; else fail "authToken leaked into the error output"; fi
+
 echo "--- bin/claude MCP + profile grants ---"
 # MCP grants resolve under the repo; the profile loads by path.
 out="$(run_fake_claude)"
@@ -420,8 +546,9 @@ out="$(run_fake_claude --help)"
 if grep -q 'Wrapper flags:' <<<"$out" && ! grep -q '^NONO_ARG:' <<<"$out"; then
   pass "--help prints wrapper usage without launching"; else fail "--help did not short-circuit"; fi
 # Every wrapper flag must be documented in --help.
-if grep -q -- '--chrome' <<<"$out" && grep -q -- '--local-web' <<<"$out" && grep -q -- '--docker' <<<"$out"; then
-  pass "--help documents --chrome, --local-web, and --docker"; else fail "--help is missing a wrapper flag"; fi
+if grep -q -- '--chrome' <<<"$out" && grep -q -- '--local-web' <<<"$out" && grep -q -- '--docker' <<<"$out" \
+   && grep -q -- '--ide' <<<"$out"; then
+  pass "--help documents --chrome, --local-web, --docker, and --ide"; else fail "--help is missing a wrapper flag"; fi
 # `claude -- --help` is passed through to Claude Code, not intercepted.
 out="$(run_fake_claude -- --help)"
 if grep -qx 'NONO_ARG: --help' <<<"$out" && ! grep -q 'Wrapper flags:' <<<"$out"; then
@@ -665,7 +792,7 @@ echo "--- bin/claude update prompt ---"
 # branch or with uncommitted work must never be fast-forwarded out from under
 # the engineer. Without coverage those guards can silently invert.
 UPD="$(mktemp -d)"
-trap 'rm -rf "$FAKE_REPO" "$UPD"' EXIT
+trap 'rm -rf "$FAKE_REPO" "$IDE_HOME" "$UPD"' EXIT
 
 cat > "$UPD/drive.py" <<'DRIVER'
 import os, pty, select, sys, time
@@ -1071,7 +1198,7 @@ else
   fail "settings-merge.json statusLine missing or not pointing at bin/statusline.sh"
 fi
 SL="$REPO_ROOT/bin/statusline.sh"
-SL_HOME="$(mktemp -d)"; trap 'rm -rf "$FAKE_REPO" "$UPD" "$SL_HOME"' EXIT
+SL_HOME="$(mktemp -d)"; trap 'rm -rf "$FAKE_REPO" "$IDE_HOME" "$UPD" "$SL_HOME"' EXIT
 if [[ -x "$SL" ]] && bash -n "$SL"; then pass "bin/statusline.sh is executable and parses"; else fail "bin/statusline.sh missing, not executable, or has a syntax error"; fi
 sl_run() {  # $1 stdin json; env from caller
   ( cd "$SL_HOME" && printf '%s' "$1" | HOME="$SL_HOME" WMF_CLAUDE_HOME="$REPO_ROOT" bash "$SL" )
@@ -1126,7 +1253,7 @@ else
 fi
 rm -rf "$SL_HOME/.claude"
 # bin/claude snapshots the user-level statusLine into the env, unsandboxed.
-SNAP_HOME="$(mktemp -d)"; trap 'rm -rf "$FAKE_REPO" "$UPD" "$SL_HOME" "$SNAP_HOME"' EXIT
+SNAP_HOME="$(mktemp -d)"; trap 'rm -rf "$FAKE_REPO" "$IDE_HOME" "$UPD" "$SL_HOME" "$SNAP_HOME"' EXIT
 mkdir -p "$SNAP_HOME/.claude"
 echo '{"statusLine":{"type":"command","command":"~/.claude/mine.sh"}}' > "$SNAP_HOME/.claude/settings.json"
 out="$(HOME="$SNAP_HOME" run_fake_claude)"

@@ -351,6 +351,54 @@ else
   ((FAIL++))
 fi
 
+# --- IDE mode: derived profile ---
+# An IDE session (bin/claude --ide, or a plugin launch with CLAUDE_CODE_SSE_PORT
+# set) runs a copy of the profile with signal_mode allow_all. Capture the copy
+# the launcher hands nono through a stub, then ask nono itself that it differs
+# from the base in that one field only and that it loads with the IDE port open.
+echo ""
+echo "--- IDE mode: derived profile ---"
+IDE_T="$(mktemp -d)"
+cat > "$IDE_T/nono" <<'STUB'
+#!/bin/bash
+for ((i = 1; i <= $#; i++)); do
+  [[ "${!i}" == "--profile" ]] && { j=$((i + 1)); cp "${!j}" "$IDE_COPY"; }
+done
+STUB
+chmod +x "$IDE_T/nono"
+# HOME is scratch so the engineer's own ~/.claude/settings.json cannot refuse the launch.
+IDE_COPY="$IDE_T/derived.json" CLAUDE_CODE_SSE_PORT=60123 HOME="$IDE_T" WMF_CLAUDE_SKIP_UPDATE=1 \
+  PATH="$IDE_T:$PATH" bash "$WORKDIR/bin/claude" >/dev/null 2>&1 || true
+if [[ -s "$IDE_T/derived.json" ]]; then
+  green "PASS: IDE mode hands nono a derived profile"
+  ((PASS++))
+  # `nono profile diff` prints one "  field:" line per field that differs.
+  ide_diff=$(nono profile diff "$PROFILE" "$IDE_T/derived.json" 2>/dev/null)
+  if [[ "$(grep -E '^  [a-z_]+:$' <<<"$ide_diff" | tr -d ' ')" == "signal_mode:" ]] \
+     && grep -q '+ AllowAll' <<<"$ide_diff"; then
+    green "PASS: derived profile differs from the base only in signal_mode (allow_all)"
+    ((PASS++))
+  else
+    red "FAIL: derived profile differs from the base beyond signal_mode:"
+    printf '%s\n' "$ide_diff"
+    ((FAIL++))
+  fi
+  # The capability table goes to stderr.
+  ide_dry=$(nono run --profile "$IDE_T/derived.json" --workdir "$WORKDIR" --open-port 60123 --dry-run -- true 2>&1)
+  if grep -q 'localhost:60123' <<<"$ide_dry"; then
+    green "PASS: nono loads the derived profile with the IDE port open"
+    ((PASS++))
+  else
+    red "FAIL: nono did not load the derived profile with --open-port 60123:"
+    printf '%s\n' "$ide_dry" | tail -n 5
+    ((FAIL++))
+  fi
+else
+  red "FAIL: bin/claude in IDE mode did not pass a derived profile to nono"
+  ((FAIL++))
+fi
+rm -rf "$IDE_T"
+
 # --- Mach service denials (keychain hardening) ---
 # The base claude-code profile grants readwrite to ~/Library/Keychains via a
 # built-in exception, but keychain access in practice flows through securityd

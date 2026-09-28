@@ -19,6 +19,7 @@ unknown options and do nothing:
 | `--egress=none\|allowlist` | Verify the container's egress override at startup. **Requires `--docker=SERVICE`** — with a bare `--docker` (hand-started broker) it exits with an error. |
 | `--minimax` | Allow egress to `api.minimax.io` (MiniMax models) for this session. Not in the static profile. |
 | `--local-db[=PORT]` | Open the local MariaDB/MySQL port (default 3306) for this session. Not in the static profile. |
+| `--ide` | Connect to the open JetBrains/VS Code plugin window: opens its localhost port and runs with `signal_mode: allow_all`. Automatic when `CLAUDE_CODE_SSE_PORT` is set: the plugin sets it when it launches `claude`, and in the IDE's own terminal. |
 
 **nono flags** go before `--`; everything after `--` is passed to Claude:
 

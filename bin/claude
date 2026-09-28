@@ -15,6 +15,8 @@
 #   bin/claude --docker=mediawiki:/var/www/html/w   # ...and run commands from that in-container dir
 #   bin/claude --docker                     # attach to a broker you started yourself
 #                                           # (bin/launch-docker-broker, for custom compose-file/workdir)
+#   bin/claude --ide                        # connect to the open JetBrains/VS Code plugin window (opens its
+#                                           # localhost port; runs with signal_mode allow_all this session)
 #   bin/claude --allow ~/src/other-repo --  # grant nono access to additional paths
 #   bin/claude --help                       # show wrapper options and exit
 #   WMF_CLAUDE_PROFILE=wmf-data-scientist bin/claude   # load profiles/<name>.json (default wmf-engineer)
@@ -72,6 +74,10 @@ Wrapper flags:
   --egress=MODE        with --docker=SVC: verify the container was created with
                        the matching templates/docker-egress/ override (MODE is
                        none or allowlist) and refuse to start when it was not.
+  --ide                connect to the open IDE plugin window (JetBrains, VS Code):
+                       opens its localhost port and runs with signal_mode allow_all
+                       for this session. Automatic when CLAUDE_CODE_SSE_PORT is set
+                       (the plugin, and the IDE's own terminal, set it).
   -h, --help           show this help
 
 Passthrough (split at --):
@@ -125,6 +131,7 @@ WANT_LOCAL_WEB=false
 WANT_DOCKER=false
 WANT_MINIMAX=false
 WANT_LOCAL_DB=false
+WANT_IDE=false
 LOCAL_DB_PORT=""    # empty -> 3306; --local-db=3307 overrides
 DOCKER_SERVICE=""   # set by --docker=SERVICE -> bin/claude manages the broker
 DOCKER_EGRESS=""    # set by --egress=none|allowlist -> broker verifies isolation
@@ -152,6 +159,8 @@ for arg in "${NONO_ARGS[@]}"; do
     DOCKER_SERVICE="${arg#--docker=}"
   elif [[ "$arg" == --egress=* ]]; then
     DOCKER_EGRESS="${arg#--egress=}"
+  elif [[ "$arg" == "--ide" ]]; then
+    WANT_IDE=true
   else
     FILTERED_NONO_ARGS+=("$arg")
   fi
@@ -420,6 +429,7 @@ cleanup_docker() {
   [[ -n "${MANAGED_HS:-}" ]] && rm -f "$MANAGED_HS"
   [[ -n "${MANAGED_LOG:-}" ]] && rm -f "$MANAGED_LOG"
   [[ -n "${SHIM_DIR:-}" && -d "${SHIM_DIR:-}" ]] && rm -rf "$SHIM_DIR"
+  [[ -n "${IDE_PROFILE:-}" ]] && rm -f "$IDE_PROFILE"
 }
 
 # Reap artifacts a SIGKILLed session left behind (the EXIT trap can't run then).
@@ -451,6 +461,23 @@ sweep_stale_docker_artifacts() {
     rm -rf "$d"
   done
 }
+
+# IDE profile copies live outside every sandbox grant: a session that could
+# write the copy before nono reads it could give the next IDE session any policy.
+IDE_PROFILE=""
+IDE_PROFILE_DIR="$HOME/.config/wmf-claude/ide-profiles"
+# IDE mode execs nono, so the copy's launcher PID lives as long as the session.
+sweep_stale_ide_profiles() {
+  local f pid
+  for f in "$IDE_PROFILE_DIR"/wmf-ide-profile.*; do
+    [[ -e "$f" ]] || continue
+    pid="${f##*/wmf-ide-profile.}"; pid="${pid%%.*}"
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    (( 10#$pid > 1 )) && kill -0 "$pid" 2>/dev/null && continue
+    rm -f "$f"
+  done
+}
+sweep_stale_ide_profiles
 
 if $WANT_DOCKER; then
   if ! command -v jq >/dev/null 2>&1; then
@@ -631,6 +658,92 @@ if $WANT_DOCKER; then
       touch "$DOCKER_ACK_FILE"
     fi
   fi
+fi
+
+# IDE mode connects Claude Code to the JetBrains or VS Code plugin, which
+# serves a localhost websocket and records its port and pid in
+# ~/.claude/ide/<port>.lock. The sandbox blocks that twice: the static profile
+# opens no localhost port, and claude checks the IDE is alive with kill(pid, 0),
+# which signal_mode: isolated answers with EPERM — claude then deletes the
+# lockfile as stale and reports no IDE. So an IDE session opens that one port
+# and runs a copy of the profile with signal_mode: allow_all, the only value
+# that reaches host pids (nono has no flag for it); a later launch sweeps it.
+# Triggers: CLAUDE_CODE_SSE_PORT, which the plugin sets when it launches claude
+# (it cannot pass wrapper flags) and in the IDE terminal, or --ide, which picks
+# the live lockfile whose workspace contains $PWD. Nothing else turns it on.
+IDE_NONO_ARGS=()
+IDE_CLAUDE_ARGS=()
+IDE_PORT=""
+if [[ -n "${CLAUDE_CODE_SSE_PORT:-}" ]]; then
+  validate_tcp_port CLAUDE_CODE_SSE_PORT "$CLAUDE_CODE_SSE_PORT"
+  IDE_PORT="$CLAUDE_CODE_SSE_PORT"
+elif $WANT_IDE; then
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "error: --ide needs jq to read ~/.claude/ide/*.lock" >&2
+    exit 1
+  fi
+  # The sandbox can write ~/.claude/ide, so a lockfile only names a candidate.
+  # Live = the pid (> 1, since kill -0 0 always succeeds) answers kill -0, and,
+  # where lsof exists, that pid is the one listening on the port. The
+  # lockfile's authToken is never printed or passed on.
+  ide_ports=()   # live lockfiles, by port
+  ide_desc=()    # "port  ideName  folders" for each, for the error message
+  ide_match=()   # ports whose workspaceFolders contain $PWD or a parent of it
+  for f in "$HOME/.claude/ide"/*.lock; do
+    [[ -e "$f" ]] || continue
+    port="${f##*/}"; port="${port%.lock}"
+    [[ "$port" =~ ^[0-9]{1,5}$ ]] && (( 10#$port >= 1 && 10#$port <= 65535 )) || continue
+    pid=$(jq -r '.pid // empty' "$f" 2>/dev/null || true)
+    [[ "$pid" =~ ^[0-9]+$ ]] && (( 10#$pid > 1 )) && kill -0 "$pid" 2>/dev/null || continue
+    if command -v lsof >/dev/null 2>&1 \
+       && ! lsof -nP -t -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | grep -qx "$pid"; then
+      continue
+    fi
+    ide_ports+=("$port")
+    ide_desc+=("$(jq -r --arg port "$port" \
+      '"port \($port)  \(.ideName // "unknown IDE" | tostring)  "
+       + ([.workspaceFolders[]? | strings] | join(" ")) | gsub("[[:cntrl:]]"; "?")' \
+      "$f" 2>/dev/null || echo "port $port")")
+    if jq -e --arg pwd "$PWD" 'any(.workspaceFolders[]? | strings | rtrimstr("/");
+         . as $d | $d == $pwd or ($pwd | startswith($d + "/")))' "$f" >/dev/null 2>&1; then
+      ide_match+=("$port")
+    fi
+  done
+  if (( ${#ide_ports[@]} == 1 )); then
+    IDE_PORT="${ide_ports[0]}"
+  elif (( ${#ide_match[@]} == 1 )); then
+    IDE_PORT="${ide_match[0]}"
+  elif (( ${#ide_ports[@]} == 0 )); then
+    echo "error: --ide found no running IDE plugin (no live lockfile in ~/.claude/ide)" >&2
+    echo "       open the project in PhpStorm or VS Code with the Claude Code plugin first" >&2
+    exit 1
+  else
+    echo "error: --ide found ${#ide_ports[@]} IDE windows and none is clearly $PWD:" >&2
+    printf '         %s\n' "${ide_desc[@]}" >&2
+    echo "       pick one with: CLAUDE_CODE_SSE_PORT=<port> claude" >&2
+    exit 1
+  fi
+fi
+if [[ -n "$IDE_PORT" ]]; then
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "error: IDE mode needs jq to derive the profile" >&2
+    exit 1
+  fi
+  mkdir -p "$IDE_PROFILE_DIR"
+  chmod 700 "$IDE_PROFILE_DIR"
+  IDE_PROFILE=$(mktemp "$IDE_PROFILE_DIR/wmf-ide-profile.$$.XXXXXX")
+  jq '.security.signal_mode = "allow_all"' "$PROFILE_PATH" > "$IDE_PROFILE"
+  PROFILE_PATH="$IDE_PROFILE"
+  IDE_NONO_ARGS=(--open-port "$IDE_PORT")
+  # Pins claude to the window whose port is open; it can see every lockfile.
+  export CLAUDE_CODE_SSE_PORT="$IDE_PORT"
+  IDE_CLAUDE_ARGS=(--ide)
+  for arg in "${CLAUDE_ARGS[@]}"; do [[ "$arg" == "--ide" ]] && IDE_CLAUDE_ARGS=(); done
+  info "IDE mode: localhost:$IDE_PORT open; signal_mode allow_all this session (Claude can signal your processes)"
+else
+  for arg in "${CLAUDE_ARGS[@]}"; do
+    [[ "$arg" == "--ide" ]] && note "--ide after -- reaches Claude Code only; put it before -- to open the IDE port"
+  done
 fi
 
 # Update notices. bin/claude runs UNSANDBOXED (it's what launches nono), so
@@ -908,6 +1021,7 @@ update_notices
 #
 # --profile loads $PROFILE by path (nono accepts NAME_OR_PATH); `extends:
 # claude-code` still resolves. No copy into ~/.config/nono/profiles to drift.
+# In IDE mode PROFILE_PATH is the per-session copy with signal_mode allow_all.
 # The Claude Code permission layer, applied per-launch rather than installed
 # into ~/.claude/settings.json. `--settings` loads additional settings for this
 # session only, so the denies bind sandboxed wmf-claude sessions and leave every
@@ -972,6 +1086,7 @@ $WANT_MINIMAX && session+=(--minimax)
 if $WANT_DOCKER; then
   session+=("--docker${DOCKER_SERVICE:+=$DOCKER_SERVICE} (egress ${DOCKER_EGRESS:-unrestricted})")
 fi
+[[ -n "$IDE_PORT" ]] && session+=("--ide=$IDE_PORT (signal_mode allow_all)")
 grant_flag='' last_flag='' tilde='~'
 for a in "${NONO_ARGS[@]}"; do
   if [[ -n "$grant_flag" ]]; then
@@ -1018,10 +1133,12 @@ NONO_CMD=(nono run --profile "$PROFILE_PATH" \
   "${LOCAL_DB_NONO_ARGS[@]}" \
   "${LOGIN_BIND_NONO_ARGS[@]}" \
   "${DOCKER_BROKER_NONO_ARGS[@]}" \
+  "${IDE_NONO_ARGS[@]}" \
   "${NONO_ARGS[@]}" \
   -- "$SCRIPT_DIR/bin/launch-claude.sh" --plugin-dir "$SCRIPT_DIR" \
   "${SETTINGS_CLAUDE_ARGS[@]}" \
   "${CHROME_DEVTOOLS_CLAUDE_ARGS[@]}" \
+  "${IDE_CLAUDE_ARGS[@]}" \
   "${CLAUDE_ARGS[@]}")
 
 # With --docker we must NOT exec: the shell has to outlive nono to run

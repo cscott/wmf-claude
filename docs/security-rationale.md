@@ -97,6 +97,12 @@ encodes file paths as `%2F`, and nono rejects any `%2F` path on a host with
 endpoint rules, even for GET. The MCP is anonymous, so Gerrit refuses its
 writes.
 
+`phab.wmfusercontent.org` is read-only too. Phabricator serves file
+attachments (task screenshots, pasted logs) from it, on a separate domain so
+that uploaded content cannot run in the Phabricator origin. Without it an agent
+reads a task's text but not its images. Uploads go through
+`phabricator.wikimedia.org`, so GET/HEAD here opens no write path.
+
 There is no `network_profile`. `minimal` is nono's `llm_apis` group: the three
 Anthropic hosts plus thirteen third-party LLM APIs (OpenAI, OpenRouter, Groq,
 DeepSeek, xAI, …) as plain tunnels. An injected prompt can carry its own API

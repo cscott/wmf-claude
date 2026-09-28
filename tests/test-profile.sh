@@ -182,11 +182,34 @@ else
   ((PASS++))
 fi
 
-if jq -e '.network.allow_domain | index("*.wikimedia.org")' "$PROFILE" >/dev/null 2>&1; then
-  green "PASS: *.wikimedia.org in allow_domain"
+# Gerrit stays a plain tunnel. The Gerrit MCP encodes file paths with %2F, and
+# nono rejects %2F paths on every host that has endpoint rules. The MCP is
+# anonymous, so Gerrit refuses its writes.
+if jq -e '.network.allow_domain | index("gerrit.wikimedia.org")' "$PROFILE" >/dev/null 2>&1; then
+  green "PASS: gerrit.wikimedia.org is a plain allow_domain entry"
   ((PASS++))
 else
-  red "FAIL: *.wikimedia.org should be in allow_domain (required for Gerrit MCP)"
+  red "FAIL: gerrit.wikimedia.org should be a plain allow_domain entry (required for Gerrit MCP)"
+  ((FAIL++))
+fi
+
+# A *.wikimedia.org wildcard opens every chapter wiki. The profile lists the
+# subdomains one by one.
+if ! jq -e '[.network.allow_domain[] | if type=="object" then .domain else . end] | index("*.wikimedia.org")' "$PROFILE" >/dev/null 2>&1; then
+  green "PASS: no *.wikimedia.org wildcard"
+  ((PASS++))
+else
+  red "FAIL: *.wikimedia.org wildcard is present (list the subdomains instead)"
+  ((FAIL++))
+fi
+
+# network_profile "minimal" adds nono's llm_apis group: a dozen third-party LLM
+# APIs as plain, POST-capable tunnels. allow_domain lists the Anthropic hosts.
+if [[ -z "$(jq -r '.network.network_profile // empty' "$PROFILE")" ]]; then
+  green "PASS: no network_profile (no third-party LLM API group)"
+  ((PASS++))
+else
+  red "FAIL: network.network_profile is set (its host groups bypass the allow_domain review)"
   ((FAIL++))
 fi
 
@@ -200,13 +223,13 @@ for port in 22 29418; do
   fi
 done
 
-# --- Network: read-only docs domains (allow_domain endpoint rules) ---
-# Static documentation hosts are allow-listed as endpoint-restricted objects
-# that permit only read methods (GET, HEAD). Any endpoint rule forces nono TLS
-# interception, so a write request (POST/PUT/...) is rejected with 403 before it
-# leaves the sandbox. We assert the structure here; the live GET=200 / POST=403
-# check is in docs/security-rationale.md (needs external egress, cannot run
-# nested in a sandbox).
+# --- Network: read-only domains (allow_domain endpoint rules) ---
+# Docs, wiki, and codesearch hosts are allow-listed as endpoint-restricted
+# objects that permit only read methods (GET, HEAD). Any endpoint rule forces
+# nono TLS interception, so a write request (POST/PUT/...) is rejected with 403
+# before it leaves the sandbox. This suite asserts the structure only. It sends
+# no POST to a production host. The manual live check is in
+# docs/security-rationale.md.
 echo ""
 # api.minimax.io is opened per session by `bin/claude --minimax`, never statically.
 if ! jq -e '.network.allow_domain[] | strings | select(. == "api.minimax.io")' "$PROFILE" >/dev/null 2>&1; then
@@ -215,10 +238,24 @@ else
   red "FAIL: api.minimax.io is in the static allow_domain — every session can reach a third-party LLM API"; ((FAIL++))
 fi
 echo ""
-echo "--- Network: docs domains are read-only (GET/HEAD) ---"
-DOCS_READ_ONLY=(docs.python.org docs.rs doc.rust-lang.org developer.mozilla.org \
-                nodejs.org pkg.go.dev www.php.net php.net vuejs.org "*.vuejs.org")
-for d in "${DOCS_READ_ONLY[@]}"; do
+echo "--- Network: docs, wiki, and codesearch domains are read-only (GET/HEAD) ---"
+# Content wikis are read-only so that an agent cannot POST an anonymous or
+# temporary-account edit, which is a public exfiltration channel.
+READ_ONLY=(docs.python.org docs.rs doc.rust-lang.org developer.mozilla.org \
+           nodejs.org pkg.go.dev www.php.net php.net vuejs.org "*.vuejs.org" \
+           "*.wikipedia.org" "*.mediawiki.org" "*.wikidata.org" "*.wiktionary.org" \
+           "*.wikibooks.org" "*.wikiquote.org" "*.wikivoyage.org" "*.wikisource.org" \
+           "*.wikinews.org" "*.wikiversity.org" "*.wikifunctions.org" \
+           commons.wikimedia.org meta.wikimedia.org species.wikimedia.org \
+           incubator.wikimedia.org wikitech.wikimedia.org outreach.wikimedia.org \
+           wikimania.wikimedia.org api.wikimedia.org doc.wikimedia.org \
+           integration.wikimedia.org upload.wikimedia.org www.wikimedia.org \
+           noc.wikimedia.org releases.wikimedia.org dumps.wikimedia.org \
+           design.wikimedia.org test-commons.wikimedia.org \
+           lists.wikimedia.org stream.wikimedia.org people.wikimedia.org \
+           analytics.wikimedia.org stats.wikimedia.org \
+           codesearch.wmcloud.org codesearch-backend.wmcloud.org)
+for d in "${READ_ONLY[@]}"; do
   # Object entry whose endpoints are non-empty, all read methods (GET/HEAD), and
   # include at least one GET (so write verbs 403 while reads still resolve).
   if jq -e --arg d "$d" '
@@ -261,6 +298,44 @@ for d in api.anthropic.com claude.ai platform.claude.com '*.claudeusercontent.co
     ((FAIL++))
   fi
 done
+
+# Phabricator and GitLab are read-only except for the POST paths that reads
+# need: the task search form that the Phabricator MCP submits (it runs without
+# an API token, so it scrapes HTML), and git-upload-pack for git fetch over
+# HTTPS. Push (git-receive-pack) and the Conduit API stay closed. nono strips a
+# trailing slash before it matches, so the rule is /search, not /search/.
+check_post_paths() {
+  local d=$1 want=$2
+  if jq -e --arg d "$d" --argjson want "$want" '
+        .network.allow_domain
+        | map(select(type=="object" and .domain==$d))[0] as $e
+        | ($e != null)
+          and (any($e.endpoints[]; .method=="GET" and .path=="/**"))
+          and (all($e.endpoints[]; .method=="GET" or .method=="HEAD" or .method=="POST"))
+          and ([$e.endpoints[] | select(.method=="POST") | .path] | sort) == ($want | sort)
+      ' "$PROFILE" >/dev/null 2>&1; then
+    green "PASS: $d is read-only plus POST to $want"; ((PASS++))
+  else
+    red "FAIL: $d should allow GET/HEAD and POST only to $want"; ((FAIL++))
+  fi
+}
+check_post_paths phabricator.wikimedia.org '["/search"]'
+check_post_paths gitlab.wikimedia.org '["/**/git-upload-pack"]'
+
+# The lists above must cover every allow_domain entry. Without this check, a
+# new all-methods object or plain host passes the suite unnoticed.
+PLAIN=(api.anthropic.com claude.ai platform.claude.com '*.claudeusercontent.com' \
+       gerrit.wikimedia.org '*.local.wmftest.net')
+want_hosts="$(printf '%s\n' "${READ_ONLY[@]}" phabricator.wikimedia.org gitlab.wikimedia.org | sort | jq -Rsc 'split("\n") | map(select(length > 0))')"
+want_plain="$(printf '%s\n' "${PLAIN[@]}" | sort | jq -Rsc 'split("\n") | map(select(length > 0))')"
+if jq -e --argjson objs "$want_hosts" --argjson plain "$want_plain" '
+      ([.network.allow_domain[] | objects | .domain] | sort) == ($objs | sort)
+      and ([.network.allow_domain[] | strings] | sort) == ($plain | sort)
+    ' "$PROFILE" >/dev/null 2>&1; then
+  green "PASS: every allow_domain entry is a known read-only, POST-path, or plain host"; ((PASS++))
+else
+  red "FAIL: allow_domain has an entry that the lists in this suite do not cover (or lacks one they expect)"; ((FAIL++))
+fi
 
 # --- Allowed commands ---
 echo ""

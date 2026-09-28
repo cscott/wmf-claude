@@ -7,7 +7,7 @@ what is allowed and denied, and links the relevant [nono docs](https://nono.sh/d
 forced them, and the residual risk accepted.
 
 - [Localhost port opening](#localhost-port-opening)
-- [Method-restricted documentation domains](#method-restricted-documentation-domains)
+- [Method-restricted (read-only) domains](#method-restricted-read-only-domains)
 - [Artifact content host](#artifact-content-host)
 - [Browser-profile denies](#browser-profile-denies)
 - [Expected denies](#expected-denies)
@@ -45,11 +45,12 @@ Residual risk: while set, the sandboxed agent can reach *any* local service on
 browser sessions carry this same local-service reach on top of the CDP port.
 Bounded, and kept off the static profile so it applies only to opt-in sessions.
 
-## Method-restricted documentation domains
+## Method-restricted (read-only) domains
 
-The static documentation hosts are allow-listed for read methods (`GET` and
-`HEAD`) only, not as plain CONNECT tunnels. Each is an object entry in
-`allow_domain` carrying endpoint rules:
+Every static host that does not need to write is allow-listed for read methods
+(`GET` and `HEAD`) only, not as a plain CONNECT tunnel: the documentation
+sites, the content wikis, the listed `*.wikimedia.org` subdomains, and
+codesearch. Each is an object entry in `allow_domain` carrying endpoint rules:
 
 ```json
 { "domain": "www.php.net", "endpoints": [
@@ -64,10 +65,62 @@ proxy-routed agent cannot POST to these hosts (data exfiltration, unexpected
 writes) while still reading them. GET and HEAD are both permitted because HEAD
 is a safe read (no body, strictly less capable than GET), so denying it would
 break `curl -I` and link-checkers without adding any security. OPTIONS stays
-blocked because non-browser clients never need it. Scope is deliberately narrow:
-`docs.python.org`, `docs.rs`, `doc.rust-lang.org`, `developer.mozilla.org`,
-`nodejs.org`, `pkg.go.dev`, `www.php.net`, `php.net`, `vuejs.org`, and
-`*.vuejs.org` — ten entries covering eight distinct sites.
+blocked because non-browser clients never need it.
+
+The wikis are the channel that matters most. MediaWiki accepts anonymous and
+temporary-account edits, and every write action must be POSTed, so a plain
+tunnel lets an agent publish data to a public page. Read-only rules close that.
+Reads still work: `api.php` queries take GET. A client that POSTs a long query
+gets a `403`; switch it to GET or launch with `--allow-post`.
+
+Hosts that need POST get only the paths that reads need:
+
+- `phabricator.wikimedia.org`: the Phabricator MCP runs without an API token,
+  so it scrapes HTML instead of calling Conduit. Its full-text task search
+  gets a CSRF token from `GET /search/` and then submits `POST /search/`
+  (`mcp-phabricator/src/scraper/search.js`), so `POST /search` is open. nono
+  strips a trailing slash before it matches, so the rule has no trailing
+  slash. Conduit (`/api/*`) and every other write form stay closed; the MCP is
+  anonymous anyway. A session that sets `PHABRICATOR_API_TOKEN` switches the
+  MCP to Conduit, which is POST even for reads, and needs `/api/<method>`
+  rules for the methods it calls.
+- `gitlab.wikimedia.org`: git smart-HTTP fetch is `GET /info/refs` followed by
+  `POST .../git-upload-pack`, so `POST /**/git-upload-pack` is open. Push
+  (`git-receive-pack`) stays closed.
+
+There is no `*.wikimedia.org` wildcard. An endpoint route for a host wins over
+a plain entry for the same host, so a wildcard can only be all-methods (opening
+every chapter wiki to POST) or read-only (breaking Gerrit). The subdomains are
+listed one by one; a subdomain not in the list is refused, so add it
+explicitly. `gerrit.wikimedia.org` is the one plain tunnel: the Gerrit MCP
+encodes file paths as `%2F`, and nono rejects any `%2F` path on a host with
+endpoint rules, even for GET. The MCP is anonymous, so Gerrit refuses its
+writes.
+
+There is no `network_profile`. `minimal` is nono's `llm_apis` group: the three
+Anthropic hosts plus thirteen third-party LLM APIs (OpenAI, OpenRouter, Groq,
+DeepSeek, xAI, …) as plain tunnels. An injected prompt can carry its own API
+key and POST data to an account that the attacker reads back. The Anthropic
+hosts are listed in `allow_domain` directly, and a non-empty `allow_domain`
+keeps the proxy in allowlist mode. We drop the group rather than `deny_domain`
+its extra hosts, so that a host nono adds to the group later is not opened
+without review.
+
+`bin/claude --allow-post=HOST[,HOST]` re-opens all methods on read-only hosts
+for one session. It passes nono `--allow-domain https://HOST/**`, which nono
+turns into an any-method route named `_ep_HOST`. For a host that is itself a
+profile entry, the route has the same name as the profile's GET/HEAD route and
+replaces it: nono appends CLI entries after the profile's, and its route store
+keeps the last route of a name (`proxy_runtime.rs`, `route.rs` `RouteStore`).
+For a host under a profile wildcard (`en.wikipedia.org` under
+`*.wikipedia.org`), the names differ and nono ORs the routes: a route whose
+rules do not match is skipped, and the request gets `403` only when no route
+allows it (`tls_intercept/handle.rs` `select_intercept_route`). The launcher
+accepts only
+hosts that match a read-only (GET/HEAD) profile entry, exactly or under its
+`*.` wildcard, so the flag cannot add a host. It refuses phabricator and
+gitlab, whose entries already allow some POST paths: an any-method route there
+would open writes such as `git push` (`git-receive-pack`).
 
 Important scoping caveat: the rule only covers egress that transits the nono
 proxy, i.e. Bash-driven `curl`/`wget`/Node/Python. `WebFetch` egresses from
@@ -82,11 +135,21 @@ of an HTTPS request nono must terminate TLS itself (any entry with endpoint
 rules takes the `requires_intercept` path). It mints a cert from an ephemeral
 CA and injects that CA into the child's trust env
 (`SSL_CERT_FILE`/`NODE_EXTRA_CA_CERTS`/`CURL_CA_BUNDLE`), so curl, Node, and
-Python trust it with no flag and no prompt. Two consequences: nono sees the
-plaintext of traffic to these hosts, and Go tools that use the macOS system
-trust store (`gh`, `terraform`) reject the minted cert unless launched with
-`--trust-proxy-ca`. We don't fetch docs with Go tools, so no flag is needed
-today.
+Python trust it with no flag and no prompt. Four consequences: nono sees the
+plaintext of traffic to these hosts, including all wiki and GitLab traffic;
+Go tools that use the macOS system trust store (`gh`, `terraform`) reject the
+minted cert unless launched with `--trust-proxy-ca`; PHP's curl extension
+reads none of those variables, so in-sandbox CLI PHP fails with `self-signed
+certificate in certificate chain` on these hosts (deliberately left so: PHP in
+the sandbox has no need to reach production, and the local dev wiki is not
+intercepted; run `php -d openssl.cafile="$SSL_CERT_FILE" …` if a script must,
+since the curl extension reads `openssl.cafile` before `curl.cainfo`); and nono
+rejects ambiguous paths (`%2F`, `%2E`, `;`, or a `%` left after one decode,
+such as `%25` for a literal `%` in a file name) on these hosts with a `403`,
+even for GET. The query string is exempt. The Wikimedia REST API encodes a
+slash in a page title as `%2F` (`/api/rest_v1/page/html/AC%2FDC`), and the
+GitLab API encodes project paths the same way, so those requests fail. Use
+`api.php?titles=…` for such titles.
 
 Left as plain tunnels on purpose (no endpoint rules, no interception):
 
@@ -94,9 +157,9 @@ Left as plain tunnels on purpose (no endpoint rules, no interception):
   so intercepting would `403` every model call and route Claude's own
   conversation and tokens through nono in plaintext.
 - `*.claudeusercontent.com`: see [Artifact content host](#artifact-content-host).
-- `*.wiki*`: legitimate POST reads (batched API queries, login) and the
-  `manual-test` Tier-1 flow. Needs a separate review before any lockdown.
-- `codesearch{,-backend}.wmcloud.org`, `*.local.wmftest.net`.
+- `gerrit.wikimedia.org`: see above (`%2F` paths, anonymous MCP).
+- `*.local.wmftest.net`: the local dev wiki. The `manual-test` flow logs in
+  and edits there, and the traffic stays on the machine.
 - `api.minimax.io` is **not** in the static profile. It was, which put a
   third-party LLM API within reach of every session; `bin/claude --minimax` now
   adds it per session with nono's `--allow-domain`, the same pattern as the
@@ -104,10 +167,13 @@ Left as plain tunnels on purpose (no endpoint rules, no interception):
 
 ### Verifying the method filtering
 
-`tests/test-profile.sh` asserts the structure (each docs host is an
-endpoint-restricted read-only object, and the model API domains stay plain). To
-verify live behaviour, run **outside** the sandbox (nested nono cannot write its
-audit dir):
+`tests/test-profile.sh` asserts the structure (each read-only host is an
+endpoint-restricted GET/HEAD object, phabricator and gitlab open only their
+POST paths, and the model API domains and Gerrit stay plain). It sends no POST
+to a production host. The rules for every read-only host use the same
+mechanism, so the live check below exercises one docs host and does not POST
+to a wiki. Run it **outside** the sandbox (nested nono cannot write its audit
+dir):
 
 ```bash
 URL='https://www.php.net/manual/en/function.array-keys.php'
@@ -123,18 +189,17 @@ nono run --profile "$PROFILE" --allow-cwd -- \
 nono run --profile "$PROFILE" --allow-cwd -- \
   curl -sS -o /dev/null -w 'POST -> %{http_code}\n' -X POST "$URL"
 
-# Negative control: the same POST to a plain-tunnel domain is NOT a nono 403.
-# It tunnels through and returns whatever the upstream replies, proving the
-# 403 above is rule-specific (method filtering), not a blanket POST block.
-nono run --profile "$PROFILE" --allow-cwd -- \
-  curl -sS -o /dev/null -w 'POST(plain) -> %{http_code}\n' \
-  -X POST https://www.mediawiki.org/w/api.php
+# Opt-in: the same POST with the session's all-methods route is NOT a nono 403.
+# It reaches php.net, which answers a real POST itself, proving the 403 above
+# is rule-specific (method filtering) and that --allow-post's route opens it.
+nono run --profile "$PROFILE" --allow-cwd --allow-domain 'https://www.php.net/**' -- \
+  curl -sS -o /dev/null -w 'POST(opt-in) -> %{http_code}\n' -X POST "$URL"
 ```
 
-Expected: `GET -> 200`, `HEAD -> 200`, `POST -> 403`, `POST(plain) -> ` a
+Expected: `GET -> 200`, `HEAD -> 200`, `POST -> 403`, `POST(opt-in) -> ` a
 non-403 upstream code. A `403` on the read paths means interception broke (CA
-not trusted, or the rule too narrow); a `403` on the negative control means the
-block is broader than intended.
+not trusted, or the rule too narrow); a `403` on the opt-in POST means the
+`--allow-post` route does not combine with the profile rule.
 
 A `403` here is nono's signature (php.net would answer a real POST with `405`),
 emitted with a `tls_intercept: endpoint rules denied POST ... no rule matched`

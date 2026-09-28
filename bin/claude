@@ -8,6 +8,7 @@
 #   bin/claude --local-web=8080             # narrow to specific port(s); comma-separated for several
 #   bin/claude --chrome                     # also enable chrome-devtools MCP (implies --local-web)
 #   bin/claude --minimax                    # allow egress to api.minimax.io for this session only
+#   bin/claude --allow-post=HOST[,HOST]     # allow POST (all methods) to read-only profile hosts, this session only
 #   bin/claude --local-db[=PORT]            # open the local MariaDB port (default 3306) for this session only
 #   bin/claude --docker=mediawiki           # auto-start a Docker exec broker for that compose service,
 #                                           # stopped automatically when the session exits
@@ -65,6 +66,9 @@ Wrapper flags:
   --local-web[=PORTS]  open localhost web ports for curl-based local-wiki testing
                        (default 80,443,8080; comma-separated list to narrow)
   --minimax            allow egress to api.minimax.io (MiniMax models) for this session only
+  --allow-post=HOSTS   allow POST and every other method to hosts the profile keeps
+                       read-only (GET/HEAD), for this session only. HOSTS is a
+                       comma-separated list, e.g. en.wikipedia.org or *.wikidata.org
   --local-db[=PORT]    open the local MariaDB/MySQL port (default 3306) for this session only
   --docker[=SVC[:WD]]  run dev tools (composer/php/npm/vendor/bin/*) in a Docker
                        compose service via the broker. =SVC starts and owns the
@@ -132,6 +136,7 @@ WANT_DOCKER=false
 WANT_MINIMAX=false
 WANT_LOCAL_DB=false
 WANT_IDE=false
+ALLOW_POST_HOSTS="" # set by --allow-post=HOST[,HOST]
 LOCAL_DB_PORT=""    # empty -> 3306; --local-db=3307 overrides
 DOCKER_SERVICE=""   # set by --docker=SERVICE -> bin/claude manages the broker
 DOCKER_EGRESS=""    # set by --egress=none|allowlist -> broker verifies isolation
@@ -147,6 +152,11 @@ for arg in "${NONO_ARGS[@]}"; do
     LOCAL_WEB_PORTS="${arg#--local-web=}"
   elif [[ "$arg" == "--minimax" ]]; then
     WANT_MINIMAX=true
+  elif [[ "$arg" == "--allow-post" ]]; then
+    echo "error: --allow-post needs a host list, e.g. --allow-post=en.wikipedia.org" >&2
+    exit 1
+  elif [[ "$arg" == --allow-post=* ]]; then
+    ALLOW_POST_HOSTS+="${ALLOW_POST_HOSTS:+,}${arg#--allow-post=}"
   elif [[ "$arg" == "--local-db" ]]; then
     WANT_LOCAL_DB=true
   elif [[ "$arg" == --local-db=* ]]; then
@@ -368,6 +378,45 @@ if $WANT_MINIMAX; then
   MINIMAX_NONO_ARGS=(--allow-domain api.minimax.io)
 elif [[ "${ANTHROPIC_BASE_URL:-}" == *minimax* ]]; then
   note "ANTHROPIC_BASE_URL points at MiniMax but --minimax was not given; api.minimax.io is closed this session"
+fi
+
+# --allow-post: allow every method to a host that the profile keeps read-only,
+# for this session only. nono turns `--allow-domain https://HOST/**` into an
+# any-method route named `_ep_HOST`. For a host that is a profile entry, that
+# route has the same name as the profile's GET/HEAD route and replaces it (nono
+# appends CLI entries after the profile's; the last route of a name wins). For
+# a host under a profile *. wildcard, the names differ and nono ORs the two
+# routes. Either way POST opens for that host only. The host must match a
+# read-only (GET/HEAD) profile entry, exactly or under its *. wildcard, so the
+# flag cannot add a host that the profile does not allow. Entries that already
+# allow some POST paths (phabricator, gitlab) are refused: an any-method route
+# there opens writes such as git push.
+ALLOW_POST_NONO_ARGS=()
+if [[ -n "$ALLOW_POST_HOSTS" ]]; then
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "error: --allow-post needs jq to read the profile" >&2
+    exit 1
+  fi
+  IFS=',' read -ra post_hosts <<<"$ALLOW_POST_HOSTS"
+  for h in "${post_hosts[@]}"; do
+    h=$(printf '%s' "$h" | tr '[:upper:]' '[:lower:]')
+    if [[ ! "$h" =~ ^(\*\.)?[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]]; then
+      echo "error: --allow-post: '$h' is not a hostname" >&2
+      exit 1
+    fi
+    if ! jq -e --arg h "$h" '
+          [.network.allow_domain[] | objects
+           | select(all(.endpoints[]; .method == "GET" or .method == "HEAD")) | .domain]
+          | any(.[]; . as $d
+                     | $d == $h
+                       or (($d | startswith("*.")) and ($h | startswith("*.") | not)
+                           and ($h | endswith($d[1:]))))
+        ' "$PROFILE_PATH" >/dev/null 2>&1; then
+      echo "error: --allow-post: '$h' is not a read-only host in $PROFILE_PATH" >&2
+      exit 1
+    fi
+    ALLOW_POST_NONO_ARGS+=(--allow-domain "https://$h/**")
+  done
 fi
 
 # --local-web opens localhost TCP on dev-wiki web ports for curl-based testing
@@ -1083,6 +1132,7 @@ if $WANT_LOCAL_WEB && { ! $WANT_CHROME || [[ -n "$LOCAL_WEB_PORTS" ]]; }; then
 fi
 $WANT_CHROME && session+=(--chrome)
 $WANT_MINIMAX && session+=(--minimax)
+[[ -n "$ALLOW_POST_HOSTS" ]] && session+=("--allow-post=$ALLOW_POST_HOSTS")
 if $WANT_DOCKER; then
   session+=("--docker${DOCKER_SERVICE:+=$DOCKER_SERVICE} (egress ${DOCKER_EGRESS:-unrestricted})")
 fi
@@ -1130,6 +1180,7 @@ NONO_CMD=(nono run --profile "$PROFILE_PATH" \
   "${CHROME_DEVTOOLS_NONO_ARGS[@]}" \
   "${LOCAL_WEB_NONO_ARGS[@]}" \
   "${MINIMAX_NONO_ARGS[@]}" \
+  "${ALLOW_POST_NONO_ARGS[@]}" \
   "${LOCAL_DB_NONO_ARGS[@]}" \
   "${LOGIN_BIND_NONO_ARGS[@]}" \
   "${DOCKER_BROKER_NONO_ARGS[@]}" \

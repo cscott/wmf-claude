@@ -45,7 +45,7 @@ system is unbreakable — see [residual risks](#residual-risks).
 |---|---|
 | **Files** | The directory you launched from and everything beneath, read-write. Plus whatever you pass with `--allow` / `--read`. |
 | **Network** | Deny-by-default, with these allowed and nothing else: `api.anthropic.com`, `claude.ai`, `platform.claude.com`, `*.claudeusercontent.com`; the wiki family (`*.wikimedia.org`, `*.wikipedia.org`, and ten siblings); `codesearch{,-backend}.wmcloud.org`; `*.local.wmftest.net`; and eight documentation sites allowed **read-only** (`docs.python.org`, `docs.rs`, `doc.rust-lang.org`, `developer.mozilla.org`, `nodejs.org`, `pkg.go.dev`, `php.net`, `vuejs.org`). Enforced by nono's [filtering proxy](https://nono.sh/docs/cli/features/networking). |
-| **Localhost** | No static port. On macOS `bin/claude` passes a listen-only `--listen-port` so `/login` can bind its OAuth callback (Seatbelt cannot filter bind by port, so the number is nominal); on Linux nothing is passed, since nono filters bind per port there and the callback uses an OS-assigned port. Real ports are per session: `--local-db`, `--local-web`, `--chrome`. |
+| **Localhost** | No static port. On macOS `bin/claude` passes a listen-only `--listen-port` so `/login` can bind its OAuth callback (Seatbelt cannot filter bind by port, so the number is nominal); on Linux nothing is passed, since nono filters bind per port there and the callback uses an OS-assigned port. Real ports are per session: `--local-db`, `--local-web`, `--chrome`, `--ide`. |
 | **Env vars** | [17 allowlisted names](https://nono.sh/docs/cli/features/environment) — `PATH`, `HOME`, `TERM`, locale, `CLAUDE_*`/`ANTHROPIC_*`/`NONO_*`, the non-credential MCP vars, `WMF_DOCKER_*`, which carries the broker's URL and per-session bearer token in when you use `--docker`, and `WMF_CLAUDE_*`, the launcher's own session facts for the status line (flags, profile name, update count, and your user-level `statusLine.command`, snapshotted at launch). Everything else, including `AWS_*`, `GH_TOKEN`, and `SSH_AUTH_SOCK`, is dropped. |
 | **Keychain** | Yes — Claude Code reads its login token through it at startup. Closing it was attempted and parked; see [residual risks](#residual-risks). |
 
@@ -72,7 +72,13 @@ from the env allowlist — MCP access to Phabricator is anonymous by design.
 
 Profile posture, for completeness: `capability_elevation: false`,
 `signal_mode: isolated`, `process_info_mode: isolated`,
-`ipc_mode: shared_memory_only`. Beyond the workdir the profile hardcodes three
+`ipc_mode: shared_memory_only`. One exception: an IDE session (`--ide`, a
+launch by the JetBrains/VS Code plugin, or `claude` in the IDE's terminal) runs
+a per-session copy of the profile with `signal_mode: allow_all`, because Claude
+Code checks the IDE is alive with `kill(pid, 0)` and `isolated` answers EPERM.
+The copy is written to `~/.config/wmf-claude/ide-profiles/`, which no sandbox
+grant covers, so a session cannot rewrite it before nono reads it — unless you
+launched from `~` or passed an `--allow` that covers it. Beyond the workdir the profile hardcodes three
 read grants — `~/.local/state/fnm_multishells`, `~/.local/state/claude/locks`,
 and `~/.agents/skills` — and `bin/claude` adds `--read` for the bundled MCP
 checkouts plus a single-file write grant on the Gerrit server's `server.log`.
@@ -100,6 +106,7 @@ scoped to the session you choose it in unless noted.
 | `--local-db[=PORT]` | Reach to the dev database — and anything else on that port. Was in the static profile; now only sessions that need it carry it. |
 | `--local-web[=PORTS]` | Reach to **any** local service on 80/443/8080, not just your wiki. External egress does not widen. |
 | `--chrome` | A Chrome running **outside** the sandbox with unrestricted network, driven over an unauthenticated debug port. Implies `--local-web`. **Throwaway dev-wiki accounts only.** |
+| `--ide`, or `CLAUDE_CODE_SSE_PORT` set (a launch by the IDE plugin, or `claude` in the IDE's terminal) | `signal_mode: allow_all` for the session: it can signal or kill your other processes. Plus the plugin's one localhost port: the plugin runs outside the sandbox, and a diff you accept there is written by the IDE, not by the sandboxed session. No new network access. |
 | `--docker=SERVICE` without `--egress` | Code execution in a container whose network nono cannot restrict — an outbound channel. The launcher warns and asks for a one-time acknowledgment. |
 | `--minimax` | Egress to `api.minimax.io`, a third-party LLM API, for this session. It used to be in the static profile; now only sessions that use MiniMax carry that channel. |
 | `\claude` or `command claude` | **The sandbox entirely.** Claude Code runs with your full user privileges, and without the tool layer, which `bin/claude` applies per launch. |

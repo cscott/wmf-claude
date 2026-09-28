@@ -60,6 +60,26 @@ sandboxed too:
 The extension gives you nowhere to pass nono flags, so sessions needing
 `--allow`, `--docker`, or `--chrome` must start from a terminal.
 
+## JetBrains / PhpStorm
+
+In *Settings → Tools → Claude Code*, set **Claude CLI path** to the absolute
+path of `bin/claude`, then restart PhpStorm. The plugin launches the wrapper
+itself, so its sessions are sandboxed. From a terminal, `claude --ide` connects
+to the open PhpStorm window instead (the one whose project contains the current
+directory, when several are open). A `claude` run in the IDE's own terminal is
+an IDE session too, because the IDE sets `CLAUDE_CODE_SSE_PORT` there; use a
+separate terminal for a session without IDE mode.
+
+IDE sessions run with `signal_mode: allow_all`. Claude Code checks that the IDE
+is alive by signalling its process, which the default `isolated` mode denies;
+with `allow_all` the session can also signal or kill your other processes. It
+can also talk to the plugin, which runs outside the sandbox: a diff you accept
+in PhpStorm is written by PhpStorm, so check its path first.
+
+On Linux, a snap-installed PhpStorm strips `~/.local/bin` from `PATH`, so the
+session cannot find `claude`. Use the JetBrains Toolbox or tar.gz install, or
+`sudo ln -s ~/.local/bin/claude /usr/local/bin/claude`.
+
 ## MediaWiki-Docker
 
 A sandboxed session has no PHP, composer, or npm on the host, and handing it

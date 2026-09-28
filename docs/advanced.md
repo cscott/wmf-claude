@@ -18,6 +18,7 @@ unknown options and do nothing:
 | `--docker[=SERVICE[:WORKDIR]]` | Run dev tools in a container through the broker |
 | `--egress=none\|allowlist` | Verify the container's egress override at startup. **Requires `--docker=SERVICE`** — with a bare `--docker` (hand-started broker) it exits with an error. |
 | `--minimax` | Allow egress to `api.minimax.io` (MiniMax models) for this session. Not in the static profile. |
+| `--allow-post=HOSTS` | Allow POST (and every other method) to hosts that the profile keeps read-only, for this session. Comma-separated; a host under a profile wildcard works (`--allow-post=test.wikipedia.org`), as does the wildcard itself (`--allow-post='*.wikidata.org'`). A host that the profile does not list read-only is refused, and so are phabricator and gitlab (all methods there would open writes such as `git push`). |
 | `--local-db[=PORT]` | Open the local MariaDB/MySQL port (default 3306) for this session. Not in the static profile. |
 | `--ide` | Connect to the open JetBrains/VS Code plugin window: opens its localhost port and runs with `signal_mode: allow_all`. Automatic when `CLAUDE_CODE_SSE_PORT` is set: the plugin sets it when it launches `claude`, and in the IDE's own terminal. |
 
@@ -164,9 +165,13 @@ the sandbox:
 git review        # your usual Gerrit push, from a regular shell
 ```
 
-HTTPS push to a Wikimedia host *is* reachable from inside the sandbox, but only
-if you have a Gerrit HTTP password configured, which most engineers on the SSH
-workflow do not.
+HTTPS push to Gerrit *is* reachable from inside the sandbox (it stays a plain
+tunnel), but only with a Gerrit HTTP password. The sandbox denies
+`~/.gitcookies` and `~/.git-credentials`, but not the macOS keychain, where
+git's `osxkeychain` helper keeps a password you have used before — see
+[residual risks](../SECURITY.md#residual-risks). HTTPS push to GitLab is
+blocked: the profile allows `git-upload-pack` (fetch) there, not
+`git-receive-pack`.
 
 ## Troubleshooting
 

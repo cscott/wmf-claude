@@ -124,7 +124,7 @@ if [[ "$(uname -s)" == "Linux" ]]; then
   dim "    NOT blocked by the Claude Code permission layer. Avoid storing secrets there."; echo ""
 fi
 
-# The sandboxed claude can't self-update (minimal network); do it here
+# The sandboxed claude can't self-update (allowlist-only network); do it here
 # (unsandboxed). Non-fatal so an offline run still completes.
 step "Updating Claude Code"
 if [[ -n "${WMF_CLAUDE_SKIP_UPDATE:-}" ]]; then

@@ -4,7 +4,7 @@
 
 # Disable Claude Code's auto-updater inside the sandbox. The version-check
 # endpoint isn't in the wmf-engineer profile's allow_domain (network is
-# "minimal"), so the updater can only ever fail ("Failed to fetch versions"
+# allowlist-only), so the updater can only ever fail ("Failed to fetch versions"
 # in `claude doctor`) — and we deliberately don't allow it: an in-sandbox
 # updater that downloads and execs new binaries would undercut the sandbox.
 # Updates happen out-of-band via ./setup.sh, which runs unsandboxed.

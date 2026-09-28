@@ -290,8 +290,10 @@ mkdir -p "$FAKE_REPO/bin" \
          "$FAKE_REPO/gerrit-mcp-server" \
          "$FAKE_REPO/profiles"
 cp "$REPO_ROOT/bin/claude" "$FAKE_REPO/bin/claude"
-# bin/claude checks the profile file exists before launching.
-echo '{"security":{"signal_mode":"isolated"}}' > "$FAKE_REPO/profiles/wmf-engineer.json"
+# bin/claude checks the profile file exists before launching. --allow-post reads
+# the real network section.
+jq '{security: {signal_mode: "isolated"}, network: .network}' \
+  "$REPO_ROOT/profiles/wmf-engineer.json" > "$FAKE_REPO/profiles/wmf-engineer.json"
 # An IDE terminal sets this, which would put every launch below in IDE mode.
 unset CLAUDE_CODE_SSE_PORT
 mkdir -p "$FAKE_REPO/wiring"
@@ -369,6 +371,25 @@ else
   fail "api.minimax.io is back in the static profile"
 fi
 
+echo "--- bin/claude --allow-post arg routing ---"
+has_post() { grep -qx 'NONO_ARG: --allow-domain' <<<"$1" && grep -qxF "NONO_ARG: https://$2/**" <<<"$1"; }
+out="$(run_fake_claude --allow-post=en.wikipedia.org)"
+if has_post "$out" en.wikipedia.org; then pass "--allow-post=en.wikipedia.org opens all methods (host under *.wikipedia.org)"; else fail "--allow-post=en.wikipedia.org did not pass --allow-domain https://en.wikipedia.org/**"; fi
+out="$(run_fake_claude '--allow-post=*.wikidata.org,commons.wikimedia.org')"
+if has_post "$out" '*.wikidata.org' && has_post "$out" commons.wikimedia.org; then pass "--allow-post takes a comma-separated list, wildcards included"; else fail "--allow-post list did not open both hosts"; fi
+out="$(run_fake_claude)"
+if ! grep -q 'NONO_ARG: https://' <<<"$out"; then pass "plain bin/claude opens no POST route"; else fail "plain bin/claude leaked an --allow-domain URL"; fi
+for bad in example.com api.anthropic.com gerrit.wikimedia.org gitlab.wikimedia.org phabricator.wikimedia.org \
+           evil.wikipedia.org.example.com '*.org' 'en.wikipedia.org/**'; do
+  if ! run_fake_claude "--allow-post=$bad" | grep -q 'NONO_ARG: https://'; then
+    pass "--allow-post=$bad is refused (not a read-only profile host)"
+  else
+    fail "--allow-post=$bad was accepted"
+  fi
+done
+out="$(run_fake_claude --allow-post)"
+if ! grep -q 'NONO_ARG: https://' <<<"$out"; then pass "bare --allow-post is refused"; else fail "bare --allow-post was accepted"; fi
+
 echo "--- bin/claude --local-web arg routing ---"
 has_web_ports() {
   grep -qx 'NONO_ARG: 80' <<<"$1" && grep -qx 'NONO_ARG: 443' <<<"$1" && grep -qx 'NONO_ARG: 8080' <<<"$1"
@@ -438,7 +459,8 @@ if has_ide_port "$out" 60123 && grep -qx 'NONO_ARG: --ide' <<<"$out"; then
 if grep -qE "^NONO_ARG: $IDE_RT/wmf-ide-profile\.[0-9]+\.[A-Za-z0-9]+$" <<<"$out" \
    && ! grep -qx "NONO_ARG: $FAKE_REPO/profiles/wmf-engineer.json" <<<"$out"; then
   pass "IDE mode loads a per-session profile copy from ~/.config/wmf-claude"; else fail "IDE mode did not swap the profile"; fi
-if grep -qx 'NONO_PROFILE: {"security":{"signal_mode":"allow_all"}}' <<<"$out"; then
+want_copy="NONO_PROFILE: $(jq -c '.security.signal_mode = "allow_all"' "$FAKE_REPO/profiles/wmf-engineer.json")"
+if grep -qxF "$want_copy" <<<"$out"; then
   pass "the profile copy differs from the base only in signal_mode allow_all"; else fail "unexpected profile copy: $(grep '^NONO_PROFILE' <<<"$out")"; fi
 ide_copy="$(grep -oE "^NONO_ARG: $IDE_RT/wmf-ide-profile\.[^ ]+" <<<"$out" | head -1)"; ide_copy="${ide_copy#NONO_ARG: }"
 if [[ -f "$ide_copy" && "$(ls -l "$ide_copy" | cut -c1-10)" == "-rw-------" \
@@ -1153,6 +1175,7 @@ if ! grep -q 'WMF_CLAUDE_QUIET\|╭─' "$REPO_ROOT/bin/launch-claude.sh"; then
 else
   fail "launch-claude.sh still prints a startup banner"
 fi
+
 out="$(ANTHROPIC_BASE_URL=https://api.minimax.io/v1 run_fake_claude)"
 if grep -q '^note: ANTHROPIC_BASE_URL points at MiniMax' <<<"$out" && ! grep -q 'Press Enter to start' <<<"$out"; then
   pass "a notice on a non-tty launch prints but does not pause"

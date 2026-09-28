@@ -81,9 +81,16 @@ Hosts that need POST get only the paths that reads need:
   (`mcp-phabricator/src/scraper/search.js`), so `POST /search` is open. nono
   strips a trailing slash before it matches, so the rule has no trailing
   slash. Conduit (`/api/*`) and every other write form stay closed; the MCP is
-  anonymous anyway. A session that sets `PHABRICATOR_API_TOKEN` switches the
-  MCP to Conduit, which is POST even for reads, and needs `/api/<method>`
-  rules for the methods it calls.
+  anonymous anyway. A `PHABRICATOR_API_TOKEN` switches the MCP to Conduit,
+  which is POST even for reads, so every call fails. `bin/launch-claude.sh`
+  therefore sets the variable empty: the MCP reads `mcp-phabricator/.env`
+  with dotenv, which does not replace a variable that exists. A token in the
+  MCP entry itself (`~/.claude.json` or `.mcp.json`) or in a settings `env`
+  block still wins. `bin/claude` warns only about the user-scope entry, where
+  `claude mcp add -e` puts it; the troubleshooting section of
+  [`advanced.md`](advanced.md) lists the rest. Conduit stays closed on
+  purpose: a token in the sandbox acts as the engineer, and opening `/api/*`
+  would need a per-method allowlist that keeps the write methods out.
 - `gitlab.wikimedia.org`: git smart-HTTP fetch is `GET /info/refs` followed by
   `POST .../git-upload-pack`, so `POST /**/git-upload-pack` is open. Push
   (`git-receive-pack`) stays closed.

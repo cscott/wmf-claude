@@ -183,6 +183,20 @@ claude mcp remove gerrit -s local
 claude mcp remove phabricator -s local
 ```
 
+**Phabricator MCP calls fail, but `/mcp` shows it connected.** A Phabricator
+API token puts the MCP in Conduit mode, which sends every read as a POST to
+`/api/<method>`. The profile refuses that. Without a token the MCP scrapes the
+web interface, which the profile allows. `bin/launch-claude.sh` blanks
+`PHABRICATOR_API_TOKEN`, so a token in `mcp-phabricator/.env` has no effect.
+A token in the MCP entry itself overrides that. `bin/claude` warns at launch
+when the user-scope entry (`claude mcp add -e PHABRICATOR_API_TOKEN=…`) has
+one; `./setup.sh` re-adds that entry without it. Other places also override
+the blank value, and `bin/claude` does not check them: a local-scope entry
+(`claude mcp remove phabricator -s local`, run inside that repository), a
+project `.mcp.json`, and an `env` block in a `settings.json`. Remove the token
+there. The value `${PHABRICATOR_API_TOKEN}` is fine: it expands inside the
+sandbox, where the token is blank.
+
 **`setup.sh` says nono is too old.** Upgrade it first, then re-run:
 
 ```bash

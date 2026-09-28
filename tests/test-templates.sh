@@ -1293,6 +1293,64 @@ else
   fail "non-command statusLine leaked into WMF_CLAUDE_STATUSLINE"
 fi
 
+echo "--- Phabricator MCP stays in scraper mode ---"
+# Conduit mode sends reads as POST /api/<method>, which the profile refuses.
+if grep -qx 'export PHABRICATOR_API_TOKEN=' "$REPO_ROOT/bin/launch-claude.sh"; then
+  pass "launch-claude.sh blanks PHABRICATOR_API_TOKEN"
+else
+  fail "launch-claude.sh does not blank PHABRICATOR_API_TOKEN (a token in .env puts the MCP in Conduit mode)"
+fi
+# The blank value works only because dotenv does not replace a set variable.
+# Check that with the vendored dotenv, when the submodule is built.
+if [[ -d "$REPO_ROOT/mcp-phabricator/node_modules/dotenv" ]] && command -v node >/dev/null 2>&1; then
+  DOTENV_DIR="$(mktemp -d)"
+  echo 'PHABRICATOR_API_TOKEN=api-fake' > "$DOTENV_DIR/.env"
+  got="$(cd "$REPO_ROOT/mcp-phabricator" && PHABRICATOR_API_TOKEN= DOTENV_FILE="$DOTENV_DIR/.env" node --input-type=module -e '
+    import dotenv from "dotenv";
+    dotenv.config({ path: process.env.DOTENV_FILE, quiet: true });
+    process.stdout.write(JSON.stringify(process.env.PHABRICATOR_API_TOKEN));' 2>/dev/null)"
+  rm -rf "$DOTENV_DIR"
+  if [[ "$got" == '""' ]]; then
+    pass "dotenv keeps the blank PHABRICATOR_API_TOKEN over the .env value"
+  else
+    fail "dotenv replaced the blank PHABRICATOR_API_TOKEN with the .env value (got $got)"
+  fi
+fi
+phab_warns() { grep -q '^warning: the phabricator MCP entry in .* sets PHABRICATOR_API_TOKEN' <<<"$1"; }
+phab_entry() { printf '{"mcpServers":{"phabricator":{"env":{"PHABRICATOR_API_TOKEN":"%s"}}}}\n' "$1"; }
+out="$(HOME="$SNAP_HOME" CLAUDE_CONFIG_DIR= run_fake_claude)"
+if ! phab_warns "$out"; then
+  pass "no Phabricator token warning without ~/.claude.json"
+else
+  fail "Phabricator token warning printed without ~/.claude.json"
+fi
+phab_entry api-fake > "$SNAP_HOME/.claude.json"
+out="$(HOME="$SNAP_HOME" CLAUDE_CONFIG_DIR= run_fake_claude)"
+if phab_warns "$out"; then
+  pass "a token in the user-scope MCP entry gets a warning"
+else
+  fail "a token in the user-scope MCP entry was not reported"
+fi
+for v in '' '${PHABRICATOR_API_TOKEN}'; do
+  phab_entry "$v" > "$SNAP_HOME/.claude.json"
+  out="$(HOME="$SNAP_HOME" CLAUDE_CONFIG_DIR= run_fake_claude)"
+  if ! phab_warns "$out"; then
+    pass "the value '$v' is not reported as a token"
+  else
+    fail "the value '$v' was reported as a token"
+  fi
+done
+rm -f "$SNAP_HOME/.claude.json"
+CFG_DIR="$SNAP_HOME/alt-config" && mkdir -p "$CFG_DIR"
+phab_entry api-fake > "$CFG_DIR/.claude.json"
+out="$(HOME="$SNAP_HOME" CLAUDE_CONFIG_DIR="$CFG_DIR" run_fake_claude)"
+if phab_warns "$out"; then
+  pass "CLAUDE_CONFIG_DIR moves the .claude.json check"
+else
+  fail "the .claude.json check ignored CLAUDE_CONFIG_DIR"
+fi
+rm -rf "$CFG_DIR"
+
 echo ""
 echo "========================="
 echo "Results: $PASS passed, $FAIL failed"

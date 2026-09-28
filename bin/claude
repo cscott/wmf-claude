@@ -1120,6 +1120,19 @@ if [[ -f "$SCRIPT_DIR/gerrit-mcp-server/gerrit_mcp_server/main.py" ]]; then
   fi
 fi
 
+# A Phabricator API token puts the MCP in Conduit mode. Conduit sends each
+# read as a POST to /api/<method>, and the read-only profile refuses that.
+# bin/launch-claude.sh blanks the token, so a token in mcp-phabricator/.env
+# has no effect. A per-server env in the MCP entry overrides the blank value.
+# `claude mcp add -e` puts it in the user-scope entry, so check that entry.
+# "${PHABRICATOR_API_TOKEN}" expands to the blank value, so it is not a token.
+CLAUDE_JSON="${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json"
+if [[ -f "$CLAUDE_JSON" ]] && command -v jq >/dev/null 2>&1 \
+   && jq -e '.mcpServers?.phabricator?.env?.PHABRICATOR_API_TOKEN? | strings | select(. != "" and . != "${PHABRICATOR_API_TOKEN}")' \
+        "$CLAUDE_JSON" >/dev/null 2>&1; then
+  warn "the phabricator MCP entry in $CLAUDE_JSON sets PHABRICATOR_API_TOKEN, which puts the MCP in Conduit mode; its calls will fail (the profile refuses POST). Re-add it without the token: ./setup.sh"
+fi
+
 # Session facts for bin/statusline.sh: Claude Code redraws the terminal, so the
 # status line is where the sandbox state stays visible. WMF_CLAUDE_* passes the
 # profile's env filter.

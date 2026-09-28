@@ -20,4 +20,10 @@ mkdir -p "$TMPDIR"
 export TMPDIR
 export TMPPREFIX="$TMPDIR/zsh"
 
+# Keep the Phabricator MCP in scraper mode. A token selects Conduit mode, which
+# sends each read as a POST to /api/<method>, and the profile refuses that.
+# The MCP loads mcp-phabricator/.env with dotenv, and dotenv does not replace
+# a variable that exists. An empty value thus disables a token in .env.
+export PHABRICATOR_API_TOKEN=
+
 exec claude "$@"

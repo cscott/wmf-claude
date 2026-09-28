@@ -175,6 +175,7 @@
       { "domain": "doc.wikimedia.org", "endpoints": [ { "method": "GET", "path": "/**" }, { "method": "HEAD", "path": "/**" } ] },
       { "domain": "integration.wikimedia.org", "endpoints": [ { "method": "GET", "path": "/**" }, { "method": "HEAD", "path": "/**" } ] },
       { "domain": "upload.wikimedia.org", "endpoints": [ { "method": "GET", "path": "/**" }, { "method": "HEAD", "path": "/**" } ] },
+      { "domain": "phab.wmfusercontent.org", "endpoints": [ { "method": "GET", "path": "/**" }, { "method": "HEAD", "path": "/**" } ] },
       { "domain": "noc.wikimedia.org", "endpoints": [ { "method": "GET", "path": "/**" }, { "method": "HEAD", "path": "/**" } ] },
       { "domain": "releases.wikimedia.org", "endpoints": [ { "method": "GET", "path": "/**" }, { "method": "HEAD", "path": "/**" } ] },
       { "domain": "dumps.wikimedia.org", "endpoints": [ { "method": "GET", "path": "/**" }, { "method": "HEAD", "path": "/**" } ] },

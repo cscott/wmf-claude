@@ -254,6 +254,7 @@ READ_ONLY=(docs.python.org docs.rs doc.rust-lang.org developer.mozilla.org \
            design.wikimedia.org test-commons.wikimedia.org \
            lists.wikimedia.org stream.wikimedia.org people.wikimedia.org \
            analytics.wikimedia.org stats.wikimedia.org \
+           phab.wmfusercontent.org \
            codesearch.wmcloud.org codesearch-backend.wmcloud.org)
 for d in "${READ_ONLY[@]}"; do
   # Object entry whose endpoints are non-empty, all read methods (GET/HEAD), and

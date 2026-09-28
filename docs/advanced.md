@@ -196,3 +196,10 @@ the sandbox. Run `bin/launch-test-chrome` in a separate terminal first.
 **A path or domain is denied.** That is the sandbox working. Grant it
 deliberately with `--allow` / `--read` rather than reaching for a bypass; see
 [`SECURITY.md`](../SECURITY.md) for what is denied and why.
+
+**Still stuck.** File it on the
+[#WMF-Claude](https://phabricator.wikimedia.org/tag/wmf-claude/) workboard in
+Phabricator, with the profile and flags you launched with and the nono denial
+if there is one. For quick questions, ask in
+[#ai-coding](https://wikimedia.enterprise.slack.com/archives/C0ATKE72JG6) in
+Wikimedia Slack.

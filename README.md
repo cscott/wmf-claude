@@ -122,6 +122,17 @@ claude --chrome      # screenshots, console errors, a11y tree, click-throughs
 can't run inside the sandbox. Its debug port is unauthenticated, so **use
 throwaway dev-wiki accounts only**.
 
+## Bugs and questions
+
+Bugs and feature requests go to the
+[#WMF-Claude](https://phabricator.wikimedia.org/tag/wmf-claude/) workboard in
+Phabricator. Say which profile and flags you launched with, and paste the nono
+denial if there is one.
+
+For quick questions, ask in
+[#ai-coding](https://wikimedia.enterprise.slack.com/archives/C0ATKE72JG6) in
+Wikimedia Slack.
+
 ## More
 
 | | |

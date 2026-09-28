@@ -7,6 +7,7 @@
   },
   "homepage": "https://gitlab.wikimedia.org/repos/product-safety-and-integrity/wmf-claude",
   "repository": "https://gitlab.wikimedia.org/repos/product-safety-and-integrity/wmf-claude",
+  "bugs": "https://phabricator.wikimedia.org/tag/wmf-claude/",
   "license": "MIT",
   "keywords": ["wikimedia", "wmf", "mediawiki", "gerrit", "phabricator"]
 }

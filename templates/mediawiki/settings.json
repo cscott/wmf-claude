@@ -16,7 +16,7 @@
       "Bash(php maintenance/run.php:*)",
       "Bash(vendor/bin/phpcs:*)",
       "Bash(vendor/bin/phpcbf:*)",
-      "Bash(GIT_SEQUENCE_EDITOR=* git rebase:*)"
+      "Bash(GIT_SEQUENCE_EDITOR=* git rebase *)"
     ]
   }
 }

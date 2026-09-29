@@ -1,9 +1,12 @@
 #!/bin/bash
 # Per-user config, invoked by ./setup.sh: build deps, pull the base nono pack,
-# register MCP servers, write the chrome config, install the `claude` alias.
+# register MCP servers, write the chrome config, install the `claude` alias
+# (and, if wanted, `claude-vm`).
 # The profile loads by path, so it is not copied anywhere.
 #
 #   WMF_CLAUDE_SKIP_UPDATE=1   skip the `claude update` step
+#   WMF_CLAUDE_SKIP_BUILD=1    skip bin/wmf-claude-build (the Lima guest builds
+#                              the tree as its owner and runs this as `agent`)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -135,8 +138,15 @@ else
   fail "Update check failed (offline?) — continuing with the installed version"
 fi
 
-# Build the MCP server dependencies in this checkout.
-"$ROOT/bin/wmf-claude-build"
+# Build the MCP server dependencies in this checkout. In the Lima guest the
+# tree belongs to the engineer, who built it (lima/guest-install.sh), and
+# this script runs as `agent`, who cannot write it.
+if [[ -n "${WMF_CLAUDE_SKIP_BUILD:-}" ]]; then
+  step "Building MCP server dependencies"
+  ok "Skipped (WMF_CLAUDE_SKIP_BUILD set)"
+else
+  "$ROOT/bin/wmf-claude-build"
+fi
 
 step "Registering MCP servers"
 echo ""
@@ -242,29 +252,44 @@ done
 dim "      Apply with: docker compose -f docker-compose.yml -f $EGRESS_DST/egress-none.yml up -d"
 dim "      Then launch: claude --docker=mediawiki --egress=none"; echo ""
 
-# Sandboxed `claude` alias pointing at this checkout's launcher.
-step "Installing shell alias"
-LAUNCHER="$ROOT/bin/claude"
+# Shell aliases pointing at this checkout: `claude` (the sandboxed launcher)
+# always, `claude-vm` (bin/wmf-claude-vm) if the engineer wants it.
 SHELL_NAME="$(basename "${SHELL:-}")"
 case "$SHELL_NAME" in
-  zsh)  RC_PATH="$HOME/.zshrc"  ; RC_DISPLAY="~/.zshrc"  ; ALIAS_LINE="alias claude='$LAUNCHER'" ;;
-  bash) RC_PATH="$HOME/.bashrc" ; RC_DISPLAY="~/.bashrc" ; ALIAS_LINE="alias claude='$LAUNCHER'" ;;
-  fish) RC_PATH="$HOME/.config/fish/conf.d/wmf-claude.fish" ; RC_DISPLAY="~/.config/fish/conf.d/wmf-claude.fish" ; ALIAS_LINE="abbr -a claude $LAUNCHER" ;;
-  *)    RC_PATH=""              ; RC_DISPLAY="your shell config" ; ALIAS_LINE="alias claude='$LAUNCHER'" ;;
+  zsh)  RC_PATH="$HOME/.zshrc"  ; RC_DISPLAY="~/.zshrc" ;;
+  bash) RC_PATH="$HOME/.bashrc" ; RC_DISPLAY="~/.bashrc" ;;
+  fish) RC_PATH="$HOME/.config/fish/conf.d/wmf-claude.fish" ; RC_DISPLAY="~/.config/fish/conf.d/wmf-claude.fish" ;;
+  *)    RC_PATH=""              ; RC_DISPLAY="your shell config" ;;
 esac
-if [[ -z "$RC_PATH" ]]; then
-  fail "Unsupported shell ($SHELL_NAME). Add this to $RC_DISPLAY:"
-  echo "      $ALIAS_LINE"
-elif [[ -f "$RC_PATH" ]] && grep -Fxq "$ALIAS_LINE" "$RC_PATH"; then
-  ok "Alias already present in $RC_DISPLAY"
-elif [[ -f "$RC_PATH" ]] && grep -Eq "^[[:space:]]*(alias[[:space:]]+claude=|abbr[[:space:]]+-a[[:space:]]+claude([[:space:]]|$))" "$RC_PATH"; then
-  fail "A different 'claude' alias is already in $RC_DISPLAY — leaving it alone."
-  fail "Replace it manually with:"
-  echo "      $ALIAS_LINE"
-else
-  mkdir -p "$(dirname "$RC_PATH")"
-  printf '\n# wmf-claude: sandbox claude by default (bypass with \\claude or `command claude`)\n%s\n' "$ALIAS_LINE" >> "$RC_PATH"
-  ok "Added 'claude' alias to $RC_DISPLAY"
+install_alias() {  # $1 NAME  $2 TARGET  $3 comment line
+  local line
+  if [[ "$SHELL_NAME" == fish ]]; then line="abbr -a $1 $2"; else line="alias $1='$2'"; fi
+  if [[ -z "$RC_PATH" ]]; then
+    fail "Unsupported shell ($SHELL_NAME). Add this to $RC_DISPLAY:"
+    echo "      $line"
+  elif [[ -f "$RC_PATH" ]] && grep -Fxq "$line" "$RC_PATH"; then
+    ok "'$1' alias already present in $RC_DISPLAY"
+  elif [[ -f "$RC_PATH" ]] && grep -Eq "^[[:space:]]*(alias[[:space:]]+$1=|abbr[[:space:]]+-a[[:space:]]+$1([[:space:]]|\$))" "$RC_PATH"; then
+    fail "A different '$1' alias is already in $RC_DISPLAY — leaving it alone."
+    fail "Replace it manually with:"
+    echo "      $line"
+  else
+    mkdir -p "$(dirname "$RC_PATH")"
+    printf '\n# %s\n%s\n' "$3" "$line" >> "$RC_PATH"
+    ok "Added '$1' alias to $RC_DISPLAY"
+  fi
+}
+
+step "Installing shell aliases"
+install_alias claude "$ROOT/bin/claude" \
+  'wmf-claude: sandbox claude by default (bypass with \claude or `command claude`)'
+# Lima VM mode is opt-in, so ask. Not inside the VM itself (lima/guest-install.sh
+# sets WMF_CLAUDE_IN_VM), and not without a terminal to ask on.
+if [[ -z "${WMF_CLAUDE_IN_VM:-}" && -t 0 ]]; then
+  read -rp "    Add a 'claude-vm' alias for Lima VM mode (docs/lima-vm.md)? [y/N] " WANT_VM_ALIAS
+  if [[ "$WANT_VM_ALIAS" == [yY]* ]]; then
+    install_alias claude-vm "$ROOT/bin/wmf-claude-vm" 'wmf-claude: Lima VM mode (docs/lima-vm.md)'
+  fi
 fi
 
 # A self-update that was interrupted after its merge leaves this marker so
@@ -277,4 +302,6 @@ echo ""
 echo "  $(dim "The 'claude' alias shadows the system binary so it's sandboxed by default.")"
 echo "  $(dim "Bypass with \\claude or 'command claude' for the unsandboxed binary.")"
 echo "  $(dim "Inside Claude, run") $(bold "/wmf-claude:init-project") $(dim "to bootstrap a repo.")"
+VM_CMD="bin/wmf-claude-vm"; [[ "${WANT_VM_ALIAS:-}" == [yY]* ]] && VM_CMD="claude-vm"
+echo "  $(dim "SRE or security work that needs a VM around the sandbox:") $(bold "$VM_CMD create") $(dim "(docs/lima-vm.md)")"
 echo ""

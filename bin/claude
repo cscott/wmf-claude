@@ -99,6 +99,8 @@ Environment:
   WMF_CLAUDE_NO_PAUSE=1       skip the Enter pause after startup notices
   WMF_CLAUDE_SKIP_UPDATE=1    skip update-staleness notices
   WMF_CLAUDE_NONO_VERBOSE=1   show nono's banner and exit summary (denied paths)
+  WMF_DOCKER_HANDSHAKE=PATH   bare --docker: read the broker handshake from PATH
+                              (set by the Lima VM launcher, lima/guest-claude.sh)
 
 Refuses --capability-elevation, --trust-override, --dangerously-skip-permissions.
 For Claude Code's own flags: claude -- --help
@@ -733,7 +735,13 @@ if $WANT_DOCKER; then
     info "started a managed Docker broker for '$DOCKER_SERVICE' (pid $BROKER_PID); it stops when this session exits"
   else
     # Attach to a broker the engineer started manually in another terminal.
-    HS_FILE="$RUNTIME_DIR/wmf-docker-broker.json"
+    # WMF_DOCKER_HANDSHAKE names another handshake file: in the Lima VM
+    # (lima/guest-claude.sh) the broker runs as the engineer and publishes the
+    # file in a shared directory, while this launcher runs as the agent.
+    # Unset after the read: WMF_DOCKER_* passes the profile's env filter, and
+    # the sandbox has no use for the path.
+    HS_FILE="${WMF_DOCKER_HANDSHAKE:-$RUNTIME_DIR/wmf-docker-broker.json}"
+    unset WMF_DOCKER_HANDSHAKE
     if [[ ! -f "$HS_FILE" ]]; then
       echo "error: --docker was passed but no broker handshake at $HS_FILE" >&2
       echo "       either let bin/claude manage it:  bin/claude --docker=mediawiki" >&2
@@ -757,9 +765,11 @@ if $WANT_DOCKER; then
   # Confirm the broker is actually up before we promise the session a working
   # broker — a stale handshake file outlives a SIGKILLed broker. Prefer lsof;
   # fall back to a /health probe where lsof is absent (common on Linux), so the
-  # check doesn't silently no-op and let a dead handshake through.
+  # check doesn't silently no-op and let a dead handshake through. lsof cannot
+  # see another user's socket, so a handshake that another user wrote (the
+  # Lima VM: broker as the engineer, this launcher as the agent) uses /health.
   broker_dead=""
-  if command -v lsof >/dev/null 2>&1; then
+  if command -v lsof >/dev/null 2>&1 && [[ -O "$HS_FILE" ]]; then
     lsof -nP -iTCP:"$BROKER_PORT" -sTCP:LISTEN >/dev/null 2>&1 || broker_dead=1
   elif command -v curl >/dev/null 2>&1; then
     curl -fsS --max-time 2 -o /dev/null "http://127.0.0.1:$BROKER_PORT/health" 2>/dev/null || broker_dead=1
@@ -1282,6 +1292,17 @@ if (( STARTUP_NOTICE && ! PRINT_MODE )) && [[ -r /dev/tty && -t 0 && -t 2 && -z 
   trap - TTIN
   if $WANT_DOCKER; then trap cleanup_docker EXIT INT TERM; else trap - INT; fi
   printf '\n' >&2
+fi
+
+# The claude pack grants /tmp/claude-$UID, and bin/launch-claude.sh sets
+# TMPDIR to it. But nono skips a grant whose path does not exist, and on a
+# fresh Linux boot /tmp is empty. Create the directory here, before the
+# sandbox starts, and refuse a directory that another user made.
+CLAUDE_TMP="/tmp/claude-$(id -u)"
+mkdir -p -m 0700 "$CLAUDE_TMP"
+if [[ ! -O "$CLAUDE_TMP" ]]; then
+  echo "error: $CLAUDE_TMP belongs to another user; remove it and retry" >&2
+  exit 1
 fi
 
 # nono's banner, status lines and exit summary are off by default. Claude

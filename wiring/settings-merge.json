@@ -3,7 +3,7 @@
   "permissions": {
     "allow": [
       "Bash(git:*)",
-      "Bash(GIT_SEQUENCE_EDITOR=* git rebase:*)",
+      "Bash(GIT_SEQUENCE_EDITOR=* git rebase *)",
       "Bash(find * -name*)",
       "Bash(find * -type*)",
       "Bash(find * -path*)",

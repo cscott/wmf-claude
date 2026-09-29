@@ -288,6 +288,7 @@ mkdir -p "$FAKE_REPO/bin" \
          "$FAKE_REPO/chrome-devtools-mcp/node_modules/.bin" \
          "$FAKE_REPO/mcp-phabricator" \
          "$FAKE_REPO/gerrit-mcp-server" \
+         "$FAKE_REPO/gitlab-mcp-server" \
          "$FAKE_REPO/profiles"
 cp "$REPO_ROOT/bin/claude" "$FAKE_REPO/bin/claude"
 # bin/claude checks the profile file exists before launching. --allow-post reads
@@ -1185,7 +1186,7 @@ echo "--- MCP server checkouts are read-only ---"
 # Read-write would let an agent plant code that runs in every later session.
 out="$(run_fake_claude)"
 mcp_ok=1
-for d in mcp-phabricator gerrit-mcp-server; do
+for d in mcp-phabricator gerrit-mcp-server gitlab-mcp-server; do
   if grep -B1 -x "NONO_ARG: $FAKE_REPO/$d" <<<"$out" | grep -qx "NONO_ARG: --allow"; then mcp_ok=0; fi
 done
 grep -qx "NONO_ARG: --allow-file" <<<"$out" || mcp_ok=0

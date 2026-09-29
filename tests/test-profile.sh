@@ -78,7 +78,7 @@ fi
 # --- Submodules ---
 echo ""
 echo "--- Submodules ---"
-for mod in mcp-phabricator gerrit-mcp-server; do
+for mod in mcp-phabricator gerrit-mcp-server gitlab-mcp-server; do
   if [[ -f "$WORKDIR/$mod/README.md" ]]; then
     green "PASS: submodule $mod is present"
     ((PASS++))
@@ -513,7 +513,7 @@ else
   red "FAIL: environment.allow_vars should be set to filter env"
   ((FAIL++))
 fi
-for var_pattern in "AWS_*" "GITHUB_TOKEN" "GH_TOKEN" "NPM_TOKEN" "GCLOUD_*" "AZURE_*" "KUBECONFIG" "DOCKER_*"; do
+for var_pattern in "AWS_*" "GITHUB_TOKEN" "GH_TOKEN" "NPM_TOKEN" "GCLOUD_*" "AZURE_*" "KUBECONFIG" "DOCKER_*" "GITLAB_PRIVATE_TOKEN" "GITLAB_*"; do
   if jq -e --arg p "$var_pattern" '.environment.allow_vars | index($p)' "$PROFILE" >/dev/null 2>&1; then
     red "FAIL: $var_pattern should NOT be in environment.allow_vars (credential exfil risk)"
     ((FAIL++))

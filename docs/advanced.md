@@ -185,12 +185,14 @@ line: it suggests grants such as `--read ~`, which open far more than the
 failing step needs. Grant the narrowest path instead, with
 `claude --read DIR -- ...` or `--allow DIR`.
 
-**MCP servers registered twice.** If you previously added the Phabricator or
-Gerrit MCP servers at project scope, they conflict with the global registration:
+**MCP servers registered twice.** If you previously added the Phabricator,
+Gerrit, or GitLab MCP servers at project scope, they conflict with the global
+registration:
 
 ```bash
 claude mcp remove gerrit -s local
 claude mcp remove phabricator -s local
+claude mcp remove gitlab -s local
 ```
 
 **Phabricator MCP calls fail, but `/mcp` shows it connected.** A Phabricator

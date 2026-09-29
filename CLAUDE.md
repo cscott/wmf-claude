@@ -27,7 +27,7 @@ Two artifacts in one tree:
 - `templates/CLAUDE.md`, `templates/mediawiki/{CLAUDE.md,settings.json}` — starters dropped by `/wmf-claude:init-project`.
 - `README.md` (how to use it), `SECURITY.md` (audit surface: what Claude can and cannot reach), `docs/security-rationale.md` (the long-form why), `docs/local-testing.md` (local-wiki and Docker modes), `docs/advanced.md` (all flags, env vars, updating, custom profiles, submitting patches, troubleshooting).
 - `setup.sh` — checkout install: preflight deps, then `bin/wmf-claude-build` + `bin/wmf-claude-setup`. It does not touch `~/.claude/settings.json`; `bin/claude` applies the tool layer per launch instead.
-- `mcp-phabricator/`, `gerrit-mcp-server/` — MCP server submodules.
+- `mcp-phabricator/`, `gerrit-mcp-server/`, `gitlab-mcp-server/` — MCP server submodules.
 
 ## Tests
 

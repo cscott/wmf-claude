@@ -18,6 +18,7 @@
 #                                           # (bin/launch-docker-broker, for custom compose-file/workdir)
 #   bin/claude --ide                        # connect to the open JetBrains/VS Code plugin window (opens its
 #                                           # localhost port; runs with signal_mode allow_all this session)
+#   bin/claude --local-web --landlock-only  # Linux: work around nolabs-ai/nono#1786 (weakens egress; see --help)
 #   bin/claude --allow ~/src/other-repo --  # grant nono access to additional paths
 #   bin/claude --help                       # show wrapper options and exit
 #   WMF_CLAUDE_PROFILE=wmf-data-scientist bin/claude   # load profiles/<name>.json (default wmf-engineer)
@@ -82,6 +83,11 @@ Wrapper flags:
                        opens its localhost port and runs with signal_mode allow_all
                        for this session. Automatic when CLAUDE_CODE_SSE_PORT is set
                        (the plugin, and the IDE's own terminal, set it).
+  --landlock-only      Linux only: needed for any flag that opens a localhost port,
+                       because nono denies those connects (nolabs-ai/nono#1786).
+                       Runs nono with --sandbox-policy landlock, which allows UDP to
+                       any host and TCP to any host on an open port. Refuses ports
+                       80 and 443; --local-web defaults to 8080.
   -h, --help           show this help
 
 Passthrough (split at --):
@@ -136,6 +142,7 @@ WANT_DOCKER=false
 WANT_MINIMAX=false
 WANT_LOCAL_DB=false
 WANT_IDE=false
+WANT_LANDLOCK_ONLY=false
 ALLOW_POST_HOSTS="" # set by --allow-post=HOST[,HOST]
 LOCAL_DB_PORT=""    # empty -> 3306; --local-db=3307 overrides
 DOCKER_SERVICE=""   # set by --docker=SERVICE -> bin/claude manages the broker
@@ -171,6 +178,8 @@ for arg in "${NONO_ARGS[@]}"; do
     DOCKER_EGRESS="${arg#--egress=}"
   elif [[ "$arg" == "--ide" ]]; then
     WANT_IDE=true
+  elif [[ "$arg" == "--landlock-only" ]]; then
+    WANT_LANDLOCK_ONLY=true
   else
     FILTERED_NONO_ARGS+=("$arg")
   fi
@@ -217,6 +226,81 @@ for arg in "${NONO_ARGS[@]}"; do
       ;;
   esac
 done
+
+# On Linux, nono >= 0.74 denies every localhost connect() in proxy mode except
+# to its own proxy port, so --open-port has no effect (nolabs-ai/nono#1786).
+# --landlock-only works around this with `--sandbox-policy landlock`. That
+# policy removes the seccomp network layer: UDP to any host is then allowed,
+# and TCP to any host on an open port or on the proxy port. Thus it is opt-in,
+# and it refuses 80 and 443, which would let all HTTPS bypass the allowlist.
+# Remove this block when nolabs-ai/nono#1786 is fixed.
+IS_LINUX=false
+[[ "$(uname -s)" == "Linux" ]] && IS_LINUX=true
+USER_SANDBOX_POLICY=false
+USER_OPEN_PORTS=()
+prev_arg=''
+for arg in "${NONO_ARGS[@]}"; do
+  case "$arg" in
+    --sandbox-policy|--sandbox-policy=*) USER_SANDBOX_POLICY=true ;;
+    --open-port=*) USER_OPEN_PORTS+=("${arg#--open-port=}") ;;
+  esac
+  [[ "$prev_arg" == "--open-port" ]] && USER_OPEN_PORTS+=("$arg")
+  prev_arg=$arg
+done
+WANTS_LOCALHOST=false
+if $WANT_LOCAL_WEB || $WANT_LOCAL_DB || $WANT_DOCKER || $WANT_IDE \
+   || (( ${#USER_OPEN_PORTS[@]} > 0 )); then
+  WANTS_LOCALHOST=true
+fi
+LOCAL_WEB_DEFAULT_PORTS="80,443,8080"
+LANDLOCK_NONO_ARGS=()
+if $WANT_LANDLOCK_ONLY; then
+  if ! $IS_LINUX; then
+    echo "error: --landlock-only is for Linux only (nolabs-ai/nono#1786 does not affect macOS)" >&2
+    exit 1
+  fi
+  if $USER_SANDBOX_POLICY; then
+    echo "error: --landlock-only sets --sandbox-policy; do not pass both" >&2
+    exit 1
+  fi
+  IFS=',' read -ra _LANDLOCK_PORTS <<<"$LOCAL_WEB_PORTS"
+  for port in "${_LANDLOCK_PORTS[@]}" "${USER_OPEN_PORTS[@]}"; do
+    if [[ "$port" =~ ^0*(80|443)$ ]]; then
+      echo "error: --landlock-only refuses port $port: without the seccomp layer, the sandbox" >&2
+      echo "       could reach any host on it, which bypasses the domain allowlist" >&2
+      exit 1
+    fi
+  done
+  LOCAL_WEB_DEFAULT_PORTS="8080"
+  if $WANTS_LOCALHOST || [[ -n "${CLAUDE_CODE_SSE_PORT:-}" ]]; then
+    LANDLOCK_NONO_ARGS=(--sandbox-policy landlock)
+    warn "--landlock-only: nono's seccomp network layer is off (nolabs-ai/nono#1786)."
+    echo "      UDP to any host, and TCP to any host on an open port, are allowed this session." >&2
+    echo "      A prompt-injected session can use them to send data out. See SECURITY.md." >&2
+    # Same shape as the --docker egress acknowledgment: once, on a terminal only.
+    LANDLOCK_ACK_FILE="$HOME/.config/wmf-claude/landlock-only-ack"
+    if [[ ! -f "$LANDLOCK_ACK_FILE" && -t 0 && -t 1 ]]; then
+      read -r -p "Press Enter to acknowledge (asked once): "
+      STARTUP_NOTICE=0  # read while the prompt waited
+      mkdir -p "$(dirname "$LANDLOCK_ACK_FILE")"
+      touch "$LANDLOCK_ACK_FILE"
+    fi
+  else
+    note "--landlock-only has no effect without a flag that opens a localhost port"
+  fi
+elif $IS_LINUX && ! $USER_SANDBOX_POLICY; then
+  if $WANTS_LOCALHOST; then
+    echo "error: on Linux, nono cannot open localhost ports with this profile (nolabs-ai/nono#1786):" >&2
+    echo "       every connect() to them fails with EACCES." >&2
+    echo "       To work around it, add --landlock-only. That weakens the sandbox for the session:" >&2
+    echo "       UDP to any host, and TCP to any host on an open port, are then allowed." >&2
+    exit 1
+  fi
+  # The IDE plugin sets this and cannot pass wrapper flags, so do not refuse.
+  if [[ -n "${CLAUDE_CODE_SSE_PORT:-}" ]]; then
+    warn "IDE mode cannot connect on Linux (nolabs-ai/nono#1786); relaunch with --landlock-only"
+  fi
+fi
 
 # `claude -p` never redraws the terminal, so notices stay readable there: no
 # update prompt, no pause. Stderr may still be a TTY, hence an arg scan.
@@ -427,7 +511,7 @@ fi
 # value is validated as a TCP port before it reaches the nono command line.
 LOCAL_WEB_NONO_ARGS=()
 if $WANT_LOCAL_WEB; then
-  IFS=',' read -ra _LOCAL_WEB_PORTS <<<"${LOCAL_WEB_PORTS:-80,443,8080}"
+  IFS=',' read -ra _LOCAL_WEB_PORTS <<<"${LOCAL_WEB_PORTS:-$LOCAL_WEB_DEFAULT_PORTS}"
   for port in "${_LOCAL_WEB_PORTS[@]}"; do
     validate_tcp_port --local-web "$port"
     LOCAL_WEB_NONO_ARGS+=(--open-port "$port")
@@ -1150,6 +1234,7 @@ if $WANT_DOCKER; then
   session+=("--docker${DOCKER_SERVICE:+=$DOCKER_SERVICE} (egress ${DOCKER_EGRESS:-unrestricted})")
 fi
 [[ -n "$IDE_PORT" ]] && session+=("--ide=$IDE_PORT (signal_mode allow_all)")
+(( ${#LANDLOCK_NONO_ARGS[@]} > 0 )) && session+=("--landlock-only (no seccomp net filter)")
 grant_flag='' last_flag='' tilde='~'
 for a in "${NONO_ARGS[@]}"; do
   if [[ -n "$grant_flag" ]]; then
@@ -1198,6 +1283,7 @@ NONO_CMD=(nono run --profile "$PROFILE_PATH" \
   "${LOGIN_BIND_NONO_ARGS[@]}" \
   "${DOCKER_BROKER_NONO_ARGS[@]}" \
   "${IDE_NONO_ARGS[@]}" \
+  "${LANDLOCK_NONO_ARGS[@]}" \
   "${NONO_ARGS[@]}" \
   -- "$SCRIPT_DIR/bin/launch-claude.sh" --plugin-dir "$SCRIPT_DIR" \
   "${SETTINGS_CLAUDE_ARGS[@]}" \

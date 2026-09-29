@@ -45,6 +45,26 @@ Residual risk: while set, the sandboxed agent can reach *any* local service on
 browser sessions carry this same local-service reach on top of the CDP port.
 Bounded, and kept off the static profile so it applies only to opt-in sessions.
 
+### Linux: `--landlock-only`
+
+On Linux, nono 0.74 and later always installs a seccomp-notify listener in
+proxy mode (nolabs-ai/nono#1631), so the destination of each connect is
+checked, not only its port. That listener allows `connect()` only to the
+proxy's own port and ignores `--open-port`, so every localhost connect fails
+with `EACCES` ([nolabs-ai/nono#1786](https://github.com/nolabs-ai/nono/issues/1786)).
+`nono why` still reports ALLOWED, because it reads the capability set.
+
+`bin/claude --landlock-only` passes `--sandbox-policy landlock`, which removes
+the seccomp layer. It also removes the static seccomp baseline that denies UDP
+and raw sockets. Landlock filters TCP by port only, so the session can then
+reach any host on an open port or on the proxy's port, and send UDP anywhere.
+For a prompt-injected session that is an exfiltration channel, which is why
+the flag is opt-in and not automatic, and the first use asks for a one-time
+acknowledgment, as `--docker` without `--egress` does. It refuses 80 and 443, where ordinary
+HTTPS clients would bypass the allowlist without trying. Without the flag,
+`bin/claude` refuses localhost-port flags on Linux rather than start a session
+whose ports cannot work. Remove the flag when #1786 is fixed.
+
 ## Method-restricted (read-only) domains
 
 Every static host that does not need to write is allow-listed for read methods

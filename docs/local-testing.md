@@ -27,6 +27,18 @@ output is plain text you can `/compact` away.
 access. It does mean the session can reach any other local service on those
 ports, not just the wiki.
 
+**On Linux, add `--landlock-only`.** nono denies every localhost connect in
+this profile's proxy mode, so `--open-port` has no effect
+([nolabs-ai/nono#1786](https://github.com/nolabs-ai/nono/issues/1786)).
+`bin/claude` refuses `--local-web`, `--chrome`, `--local-db`, `--docker`, and
+`--ide` on Linux without it. The flag weakens egress for the session, and it
+refuses ports 80 and 443 (see [SECURITY.md](../SECURITY.md)), so point it at
+your wiki's port:
+
+```bash
+claude --local-web --landlock-only      # Linux: opens 8080 only
+```
+
 ### Tier 2 — chrome-devtools MCP
 
 For screenshots, console errors, accessibility snapshots, and click-through

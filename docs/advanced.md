@@ -20,6 +20,7 @@ unknown options and do nothing:
 | `--minimax` | Allow egress to `api.minimax.io` (MiniMax models) for this session. Not in the static profile. |
 | `--allow-post=HOSTS` | Allow POST (and every other method) to hosts that the profile keeps read-only, for this session. Comma-separated; a host under a profile wildcard works (`--allow-post=test.wikipedia.org`), as does the wildcard itself (`--allow-post='*.wikidata.org'`). A host that the profile does not list read-only is refused, and so are phabricator and gitlab (all methods there would open writes such as `git push`). |
 | `--local-db[=PORT]` | Open the local MariaDB/MySQL port (default 3306) for this session. Not in the static profile. |
+| `--landlock-only` | **Linux only.** Required with any flag that opens a localhost port, until [nolabs-ai/nono#1786](https://github.com/nolabs-ai/nono/issues/1786) is fixed. Runs nono with `--sandbox-policy landlock`, which weakens egress (see [SECURITY.md](../SECURITY.md)). Refuses ports 80 and 443; `--local-web` defaults to 8080. |
 | `--ide` | Connect to the open JetBrains/VS Code plugin window: opens its localhost port and runs with `signal_mode: allow_all`. Automatic when `CLAUDE_CODE_SSE_PORT` is set: the plugin sets it when it launches `claude`, and in the IDE's own terminal. |
 
 **nono flags** go before `--`; everything after `--` is passed to Claude:

@@ -198,12 +198,11 @@ project `.mcp.json`, and an `env` block in a `settings.json`. Remove the token
 there. The value `${PHABRICATOR_API_TOKEN}` is fine: it expands inside the
 sandbox, where the token is blank.
 
-**`setup.sh` says nono is too old.** Upgrade it first, then re-run:
-
-```bash
-brew upgrade nono     # or a fresh .deb / .rpm from the nono releases page
-./setup.sh
-```
+**`setup.sh` says nono is too old.** On Debian or Ubuntu, and on macOS with
+Homebrew, `setup.sh` offers the upgrade before it stops. Elsewhere, download a
+newer package from the
+[nono releases page](https://github.com/nolabs-ai/nono/releases), install it,
+then re-run `./setup.sh`.
 
 **`--chrome` fails to connect.** The MCP attaches to a Chrome started *outside*
 the sandbox. Run `bin/launch-test-chrome` in a separate terminal first.

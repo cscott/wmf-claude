@@ -826,6 +826,13 @@ out="$(cd "$DOCKER_CWD" && PATH="$FAKE_REPO/bin:$PATH" \
 if grep -q 'no broker handshake' <<<"$out"; then
   pass "bare --docker with no broker errors clearly"; else fail "bare --docker did not error on missing broker"; fi
 
+# WMF_DOCKER_HANDSHAKE moves the attach-mode handshake path (the Lima guest
+# launcher runs the broker as another user and publishes the file elsewhere).
+out="$(cd "$DOCKER_CWD" && WMF_DOCKER_HANDSHAKE="$DOCKER_CWD/elsewhere.json" PATH="$FAKE_REPO/bin:$PATH" \
+  bash "$FAKE_REPO/bin/claude" --docker 2>&1 || true)"
+if grep -q "no broker handshake at $DOCKER_CWD/elsewhere.json" <<<"$out"; then
+  pass "WMF_DOCKER_HANDSHAKE selects the attach-mode handshake file"; else fail "WMF_DOCKER_HANDSHAKE was ignored"; fi
+
 # --docker after `--` is a claude arg, not a wrapper flag.
 out="$(cd "$DOCKER_CWD" && PATH="$FAKE_REPO/bin:$PATH" \
   bash "$FAKE_REPO/bin/claude" -- --docker 2>&1)"

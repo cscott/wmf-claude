@@ -127,6 +127,28 @@ claude --chrome      # screenshots, console errors, a11y tree, click-throughs
 can't run inside the sandbox. Its debug port is unauthenticated, so **use
 throwaway dev-wiki accounts only**.
 
+## Lima VM mode (for SRE/security work)
+
+When the threat model says a rogue agent must have no path to the host at
+all, run the whole thing — nono, Claude Code, the MCP servers, the Docker
+broker — inside one persistent Lima VM. No host mounts, no port forwards;
+code moves in and out as git bundles, and Claude runs as an unprivileged
+`agent` user with no route to the Docker socket. Opt-in; plain `claude` is
+unchanged.
+
+```bash
+bin/wmf-claude-vm create                    # once; asks for your Phabricator username
+bin/wmf-claude-vm login                     # once: open the URL on the host, paste the code
+bin/wmf-claude-vm push ~/src/mediawiki/core
+bin/wmf-claude-vm claude core
+bin/wmf-claude-vm pull core                 # the agent's branches land in vm/* of the pushed repo
+bin/wmf-claude-vm review core <branch>      # then checkout or discard it
+```
+
+`./setup.sh` offers a `claude-vm` alias for `bin/wmf-claude-vm`. Threat
+model, Docker inside the VM, and the smoke test:
+[`docs/lima-vm.md`](docs/lima-vm.md).
+
 ## Bugs and questions
 
 Bugs and feature requests go to the
@@ -144,6 +166,7 @@ Wikimedia Slack.
 |---|---|
 | [`SECURITY.md`](SECURITY.md) | What Claude can and cannot reach, and the residual risks |
 | [`docs/local-testing.md`](docs/local-testing.md) | Local-wiki tiers and Docker setup in full |
+| [`docs/lima-vm.md`](docs/lima-vm.md) | Running everything inside a Lima VM: what it adds, what it does not |
 | [`docs/advanced.md`](docs/advanced.md) | All flags, env vars, updating, custom profiles, troubleshooting |
 | [`docs/security-rationale.md`](docs/security-rationale.md) | Why each security choice was made |
 | [`skills/`](skills/), [`agents/`](agents/) | The skills and agents themselves |

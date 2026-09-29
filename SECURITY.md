@@ -143,6 +143,21 @@ That allowlist is **not** an RCE boundary: `composer` and `npm` run scripts from
 the checkout and `php` runs arbitrary code. The host is the boundary.
 [Full analysis](docs/security-rationale.md#docker-exec-broker).
 
+### Lima VM mode (opt-in)
+
+`bin/wmf-claude-vm` puts a VM around all of the above for SRE and security
+work. Inside the guest nothing changes: the same profile, the same tool layer,
+the same broker. What the VM adds is a kernel boundary with **no host mounts,
+no port forwards**, no agent or X11 forwarding, a root-owned nftables rule
+that blocks the host, the LAN and other private ranges, and a split into two guest users —
+`engineer` (sudo, `docker`) and `agent` (neither), which is what keeps the
+Docker socket out of Claude's reach, since nono does not mediate AF_UNIX
+`connect()` on Linux. Code crosses the boundary only as git bundles, pulled
+back into remote-tracking `vm/*` branches for review. What it does not cover — the token lives in
+the VM, containers are not nono-sandboxed, NAT still reaches the host's LAN
+address, Docker is rootful — is in [`docs/lima-vm.md`](docs/lima-vm.md).
+`tests/test-lima.sh` asserts the template's shape.
+
 ## Residual risks
 
 What the sandbox does *not* protect against, even with no flags.
@@ -160,6 +175,7 @@ What the sandbox does *not* protect against, even with no flags.
 ```bash
 ./tests/test-profile.sh     # sandbox behaviour (cannot run inside a sandbox)
 ./tests/test-templates.sh   # manifest, frontmatter, permission-rule shapes
+./tests/test-lima.sh        # Lima VM mode: template shape, pinned installs, launcher invariants
 ```
 
 This file describes intent. To audit what nono actually enforces — including

@@ -1,0 +1,396 @@
+#!/bin/bash
+# Run wmf-claude inside a Lima VM: a VM boundary around the nono sandbox, for
+# SRE and security work. Opt-in; plain bin/claude stays the default. The VM
+# has no host mounts and no port forwards, so code moves by explicit copy.
+# Read docs/lima-vm.md first.
+#
+# Usage:
+#   bin/wmf-claude-vm create [limactl create flags]  # create the VM, install wmf-claude into it
+#   bin/wmf-claude-vm update                         # refresh the in-VM wmf-claude from this checkout's HEAD
+#   bin/wmf-claude-vm login                          # sign Claude Code in, as the agent (once per VM)
+#   bin/wmf-claude-vm push DIR [NAME]                # copy a git repo into the agent's workspace (git bundle)
+#   bin/wmf-claude-vm claude NAME [bin/claude args]  # run sandboxed Claude Code in workspace NAME
+#   bin/wmf-claude-vm pull NAME [DEST]               # fetch the agent's branches into vm/* of the repo NAME was pushed from (or DEST)
+#   bin/wmf-claude-vm review NAME BRANCH             # show what vm/BRANCH adds (git log -p)
+#   bin/wmf-claude-vm checkout NAME BRANCH           # create local BRANCH from vm/BRANCH, switch to it
+#   bin/wmf-claude-vm discard NAME BRANCH            # delete vm/BRANCH
+#   bin/wmf-claude-vm shell [--agent] [-- CMD...]    # engineer shell in the VM (or as the agent); or run CMD
+#   bin/wmf-claude-vm status | start | stop
+#   bin/wmf-claude-vm delete | reset                 # remove the VM (reset: then create it again)
+#
+#   WMF_CLAUDE_VM=<name>   Lima instance name (default: wmf-claude)
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=bin/lib-output.sh
+source "$ROOT/bin/lib-output.sh"
+
+VM="${WMF_CLAUDE_VM:-wmf-claude}"
+TEMPLATE="$ROOT/lima/wmf-claude.yaml"
+# Paths inside the guest. The engineer is the Lima default user (see the
+# template); /opt/wmf-claude is a symlink to the installed tree.
+INSTALL=/opt/wmf-claude
+ENGINEER_HOME=/home/engineer
+AGENT=agent
+AGENT_HOME=/home/agent
+
+usage() {
+  sed -n '2,/^set -euo/{/^set -euo/d;s/^# \{0,1\}//;p;}' "$0"
+}
+
+die() { printf 'error: %s\n' "$1" >&2; exit 1; }
+need() {
+  local c
+  for c in "$@"; do
+    command -v "$c" >/dev/null 2>&1 || die "$c is required (see docs/lima-vm.md)"
+  done
+}
+# Workspace names are paths under ~agent/work: letters, digits, . _ - and /.
+valid_name() { [[ "$1" =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ && "$1" != *..* ]]; }
+
+[[ "$VM" =~ ^[A-Za-z0-9_.-]+$ ]] || die "WMF_CLAUDE_VM='$VM' is not a valid instance name"
+
+vm_exists() { limactl list --format '{{.Name}}' 2>/dev/null | grep -qx "$VM"; }
+vm_status() { limactl list --format '{{.Status}}' "$VM" 2>/dev/null || true; }
+require_running() {
+  vm_exists || die "VM '$VM' does not exist; create it: bin/wmf-claude-vm create"
+  [[ "$(vm_status)" == Running ]] || die "VM '$VM' is not running; start it: bin/wmf-claude-vm start"
+}
+# A command in the guest as the engineer. limactl shell quotes each argument.
+guest() { limactl shell --workdir "$ENGINEER_HOME" "$VM" -- "$@"; }
+# The same, as the agent. sudo passes the arguments to execve unchanged.
+guest_agent() { guest sudo -H -u "$AGENT" -- "$@"; }
+# mktemp -d in the guest. Strip a CR in case limactl gives the command a
+# terminal, and refuse any output that is not a path from the template.
+guest_mktemp() {  # $1 template ending in XXXXXX
+  local d
+  d=$(guest mktemp -d "$1" | tr -d '\r')
+  [[ "$d" == "${1%XXXXXX}"?????? && "$d" != *[[:space:]]* ]] || die "mktemp in the guest failed: '$d'"
+  printf '%s\n' "$d"
+}
+host_rev() { git -C "$ROOT" rev-parse --short=12 HEAD; }
+
+# Which host repository each workspace came from, so pull, review, checkout
+# and discard need only the workspace name. One "NAME<TAB>PATH" line each, per VM.
+WS_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/wmf-claude/vm-$VM-workspaces"
+ws_save() {  # $1 NAME  $2 host repository (top level)
+  [[ "$2" != *$'\t'* && "$2" != *$'\n'* ]] || die "cannot record a path with a tab or newline: $2"
+  mkdir -p "$(dirname "$WS_FILE")"
+  { awk -F'\t' -v n="$1" '$1 != n' "$WS_FILE" 2>/dev/null || true
+    printf '%s\t%s\n' "$1" "$2"; } > "$WS_FILE.new"
+  mv "$WS_FILE.new" "$WS_FILE"
+}
+ws_dest() {  # $1 NAME; prints the recorded host repository, or dies
+  local p
+  p=$(awk -F'\t' -v n="$1" '$1 == n { print $2 }' "$WS_FILE" 2>/dev/null | tail -n1)
+  [[ -n "$p" ]] || die "no host repository recorded for '$1'. Name it once: bin/wmf-claude-vm pull $1 ~/src/some-repo"
+  git -C "$p" rev-parse --git-dir >/dev/null 2>&1 || die "$p (recorded for '$1') is not a git repository"
+  printf '%s\n' "$p"
+}
+
+# HEAD of this checkout with the submodules at their recorded commits, as one
+# tarball: no .git, no working-tree files, no node_modules or venvs.
+make_tree_tarball() {  # $1 output path
+  local stage
+  stage=$(mktemp -d)
+  git -C "$ROOT" archive --format=tar HEAD | tar -x -C "$stage"
+  git -C "$ROOT" submodule --quiet foreach --recursive \
+    "mkdir -p \"$stage/\$displaypath\" && git archive --format=tar \$sha1 | tar -x -C \"$stage/\$displaypath\""
+  host_rev > "$stage/.wmf-claude-rev"
+  # No extended attributes: macOS tar stores them (com.apple.provenance) as
+  # headers that GNU tar in the guest warns about, once per file.
+  COPYFILE_DISABLE=1 tar --no-xattrs -czf "$1" -C "$stage" .
+  rm -rf "$stage"
+}
+
+print_next_steps() {
+  echo ""
+  echo "  $(green "The VM is ready.") Next:"
+  echo ""
+  echo "    $(bold "bin/wmf-claude-vm login")                       $(dim "sign Claude Code in (once)")"
+  echo "    $(bold "bin/wmf-claude-vm push ~/src/some-repo")        $(dim "copy a repo in (git bundle)")"
+  echo "    $(bold "bin/wmf-claude-vm claude some-repo")            $(dim "run Claude Code there, sandboxed")"
+  echo "    $(bold "bin/wmf-claude-vm pull some-repo ~/src/some-repo") $(dim "fetch its commits back for review")"
+  echo ""
+  echo "  $(dim "login prints a URL: open it on the host and paste the code back. See docs/lima-vm.md.")"
+  echo ""
+}
+
+cmd_create() {
+  need limactl git tar
+  [[ -f "$TEMPLATE" ]] || die "template missing: $TEMPLATE"
+  vm_exists && die "VM '$VM' exists; use update, or reset to recreate it"
+  step "Creating VM $VM"
+  dim "    Debian 13, no host mounts, no port forwards. The first boot downloads the"; echo ""
+  dim "    image and installs Docker; this takes a few minutes."; echo ""
+  limactl create --tty=false --name "$VM" "$@" "$TEMPLATE"
+  limactl start --tty=false --timeout 20m "$VM"
+  # The readiness probe waits for the provisioning marker; check it here too.
+  local i
+  for i in $(seq 60); do
+    guest test -f /run/wmf-claude/provisioned 2>/dev/null && break
+    sleep 5
+  done
+  guest test -f /run/wmf-claude/provisioned 2>/dev/null \
+    || die "provisioning did not finish; in the VM run: sudo cat /var/log/cloud-init-output.log"
+  # Restart once. Provisioning added the engineer to `docker`, but Lima keeps
+  # one SSH connection open and reuses it, so new shells still have the old
+  # groups. The restart opens a new connection.
+  limactl stop "$VM" >/dev/null
+  limactl start --tty=false "$VM"
+  ok "VM is up"
+  cmd_update
+  print_next_steps
+}
+
+cmd_update() {
+  need limactl git tar
+  require_running
+  if ! git -C "$ROOT" diff --quiet --ignore-submodules=dirty HEAD -- 2>/dev/null; then
+    printf 'note: uncommitted changes in %s are not part of the update; HEAD is\n' "$ROOT" >&2
+  fi
+  step "Uploading wmf-claude $(host_rev) to $VM"
+  local tarball updir
+  tarball=$(mktemp)
+  make_tree_tarball "$tarball"
+  # The engineer runs this tree with sudo, so it goes to a new 0700 directory
+  # in the engineer's home, which the agent cannot enter. Never a fixed /tmp
+  # path: the agent can create one first.
+  updir=$(guest_mktemp "$ENGINEER_HOME/.wmf-claude-update.XXXXXX")
+  limactl copy "$tarball" "$VM:$updir/tree.tgz"
+  rm -f "$tarball"
+  ok "uploaded"
+  # Extract next to the tarball and run the guest installer from the
+  # uploaded tree itself. Interactive: it asks for the Phabricator username.
+  guest bash -c '
+    set -e
+    mkdir "$1/tree"
+    tar -xzf "$1/tree.tgz" -C "$1/tree"
+    rc=0
+    "$1/tree/lima/guest-install.sh" "$1/tree" || rc=$?
+    rm -rf "$1"
+    exit "$rc"
+  ' _ "$updir"
+}
+
+cmd_push() {
+  need limactl git
+  local dir="${1:-}" name="${2:-}" top bundle updir remote
+  [[ -n "$dir" ]] || die "usage: bin/wmf-claude-vm push DIR [NAME]"
+  top=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null) || die "$dir is not a git repository"
+  [[ -n "$name" ]] || name=$(basename "$top")
+  valid_name "$name" || die "invalid NAME '$name' (letters, digits, . _ - and / only)"
+  require_running
+  step "Bundling $top"
+  # A bundle carries commits and refs only: no .git/config, hooks or untracked files.
+  bundle=$(mktemp)
+  git -C "$top" bundle create "$bundle" --branches --tags HEAD >/dev/null 2>&1 \
+    || { rm -f "$bundle"; die "git bundle failed in $top (no commits?)"; }
+  ok "$(du -h "$bundle" | cut -f1) bundle of $(git -C "$top" rev-parse --abbrev-ref HEAD) @ $(git -C "$top" rev-parse --short HEAD)"
+  # A new directory (mktemp -d), readable by the agent, writable only by the
+  # engineer. A fixed /tmp path could be a symlink that the agent made.
+  updir=$(guest_mktemp /tmp/wmf-claude-push.XXXXXX)
+  guest chmod 0755 "$updir"
+  remote="$updir/push.bundle"
+  limactl copy "$bundle" "$VM:$remote"
+  rm -f "$bundle"
+  step "Importing into $AGENT_HOME/work/$name (as $AGENT)"
+  # Runs as the agent, in the agent's own repository. An existing workspace
+  # gets the refs under the `host` remote; nothing is checked out over the
+  # agent's work.
+  guest_agent bash -c '
+    set -e
+    b="$1"; dest="$HOME/work/$2"
+    g() { git -c core.hooksPath=/dev/null -c core.fsmonitor=false -c advice.defaultBranchName=false "$@"; }
+    if [ -e "$dest" ]; then
+      [ -d "$dest/.git" ] || { echo "error: $dest exists and is not a git repository" >&2; exit 1; }
+      g -C "$dest" bundle verify "$b" >/dev/null
+      g -C "$dest" fetch --quiet --no-tags "$b" "+refs/heads/*:refs/remotes/host/*"
+      echo "    + updated remote host/* in $dest; in the VM: git checkout -B <branch> host/<branch>"
+    else
+      mkdir -p "$(dirname "$dest")"
+      g clone --quiet --origin host "$b" "$dest"
+      echo "    + cloned into $dest"
+    fi
+  ' _ "$remote" "$name"
+  guest rm -rf "$updir"
+  ws_save "$name" "$top"
+}
+
+cmd_pull() {
+  need limactl git
+  local name="${1:-}" dest="${2:-}" flat remote bundle
+  [[ -n "$name" ]] || die "usage: bin/wmf-claude-vm pull NAME [DEST]"
+  valid_name "$name" || die "invalid NAME '$name'"
+  if [[ -n "$dest" ]]; then
+    dest=$(git -C "$dest" rev-parse --show-toplevel 2>/dev/null) || die "$2 is not a git repository"
+    ws_save "$name" "$dest"
+  else
+    dest=$(ws_dest "$name")
+  fi
+  require_running
+  step "Exporting $name from the VM (as $AGENT, hooks off)"
+  # The bundle is written by the agent in the agent's home; the engineer
+  # copies it out. Git never runs in the agent's repository as the engineer.
+  flat="${name//\//_}"
+  remote="$AGENT_HOME/work/.pull/$flat.bundle"
+  guest_agent bash -c '
+    set -e
+    mkdir -p "$HOME/work/.pull"
+    git -c core.hooksPath=/dev/null -c core.fsmonitor=false -c core.pager=cat \
+      -C "$HOME/work/$1" bundle create -q "$2" --branches --tags HEAD
+    chmod 0644 "$2"
+  ' _ "$name" "$remote"
+  bundle=$(mktemp)
+  limactl copy "$VM:$remote" "$bundle"
+  guest_agent rm -f "$remote"
+  step "Fetching into vm/* of $dest"
+  git -C "$dest" bundle verify "$bundle" >/dev/null 2>&1 \
+    || { rm -f "$bundle"; die "the bundle does not verify against $dest"; }
+  # Remote-tracking refs, as if from a remote named `vm`, so git branch -r,
+  # log and switch work on them as usual. --prune drops the vm/* branches
+  # that no longer exist in the VM. No remote goes into .git/config.
+  git -C "$dest" fetch --quiet --no-tags --prune "$bundle" "+refs/heads/*:refs/remotes/vm/*"
+  rm -f "$bundle"
+  ok "fetched; nothing was checked out or merged"
+  echo ""
+  git -C "$dest" for-each-ref --format='      %(refname:lstrip=2)  %(objectname:short)  %(contents:subject)' refs/remotes/vm/
+  echo ""
+  dim "    The agent wrote these commits. Treat them as untrusted: review the diff"; echo ""
+  dim "    before you merge, and look for files that run on build or commit."; echo ""
+  echo ""
+  dim "    bin/wmf-claude-vm review|checkout|discard $name <branch>"; echo ""
+}
+
+# review, checkout and discard: thin wrappers over git in the workspace's host
+# repository, for the vm/* branches that pull fetched. Only checkout changes
+# the working tree.
+vm_branch() {  # $1 NAME  $2 BRANCH; sets dest, dies if vm/BRANCH is missing
+  [[ -n "$1" && -n "$2" ]] || die "usage: bin/wmf-claude-vm $cmd NAME BRANCH"
+  dest=$(ws_dest "$1")
+  git -C "$dest" rev-parse -q --verify "refs/remotes/vm/$2" >/dev/null && return 0
+  die "no vm/$2 in $dest. It has: $(git -C "$dest" branch -r --list 'vm/*' | tr -d ' ' | tr '\n' ' ')"
+}
+cmd_review() {
+  local dest
+  vm_branch "${1:-}" "${2:-}"
+  # What the agent's branch has that the checkout's HEAD does not.
+  git -C "$dest" log -p --stat "HEAD..vm/$2"
+}
+cmd_checkout() {
+  local dest
+  vm_branch "${1:-}" "${2:-}"
+  if git -C "$dest" rev-parse -q --verify "refs/heads/$2" >/dev/null; then
+    die "$2 exists in $dest. Update it yourself, e.g. git merge --ff-only vm/$2"
+  fi
+  git -C "$dest" switch -c "$2" --no-track "vm/$2"
+}
+cmd_discard() {
+  local dest
+  vm_branch "${1:-}" "${2:-}"
+  git -C "$dest" branch -rd "vm/$2"
+}
+
+cmd_claude() {
+  need limactl
+  local name="${1:-}"
+  [[ -n "$name" ]] || die "usage: bin/wmf-claude-vm claude NAME [bin/claude args...]  (NAME: a pushed workspace)"
+  valid_name "$name" || die "invalid NAME '$name'"
+  shift
+  require_running
+  exec limactl shell --workdir "$ENGINEER_HOME" "$VM" -- "$INSTALL/lima/guest-claude.sh" "$name" "$@"
+}
+
+# /login cannot run in the sandbox on Linux: Claude Code binds an ephemeral
+# callback port, and nono allows no bind without a port grant. `claude auth
+# login` signs in without a model or tools, so it runs outside nono, as the
+# agent, with the same fixed PATH as lima/guest-claude.sh. It does not mark
+# the first-run onboarding as done, and the onboarding asks for a login
+# again, in the sandbox. So set hasCompletedOnboarding too. ~/.claude.json
+# is a symlink; edit its target.
+cmd_login() {
+  need limactl
+  require_running
+  guest_agent env -C "$AGENT_HOME" \
+    PATH="/usr/local/bin:/usr/bin:/bin:$AGENT_HOME/.local/bin" claude auth login
+  guest_agent bash -c '
+    set -e
+    f=$(readlink -f "$HOME/.claude.json")
+    jq ".hasCompletedOnboarding = true" "$f" > "$f.new"
+    mv "$f.new" "$f"
+  '
+  ok "signed in; sandboxed sessions skip the first-run screens"
+}
+
+# shell [--agent] [-- CMD...]: an interactive shell, or one command, in the
+# VM as the engineer (or as the agent).
+cmd_shell() {
+  need limactl
+  require_running
+  local as_agent=false
+  if [[ "${1:-}" == "--agent" ]]; then as_agent=true; shift; fi
+  [[ "${1:-}" == "--" ]] && shift
+  if (( $# == 0 )); then
+    if $as_agent; then exec limactl shell --workdir "$ENGINEER_HOME" "$VM" -- sudo -H -u "$AGENT" -i; fi
+    exec limactl shell --workdir "$ENGINEER_HOME" "$VM"
+  fi
+  if $as_agent; then exec limactl shell --workdir "$ENGINEER_HOME" "$VM" -- sudo -H -u "$AGENT" -- "$@"; fi
+  exec limactl shell --workdir "$ENGINEER_HOME" "$VM" -- "$@"
+}
+
+cmd_status() {
+  need limactl
+  if ! vm_exists; then
+    echo "VM '$VM': not created (bin/wmf-claude-vm create)"
+    return 0
+  fi
+  limactl list "$VM"
+  [[ "$(vm_status)" == Running ]] || return 0
+  echo ""
+  guest bash -c '
+    printf "  wmf-claude in VM: %s\n" "$(cat /opt/wmf-claude/.wmf-claude-rev 2>/dev/null || echo not-installed)"
+    printf "  nono:             %s\n" "$(nono --version 2>/dev/null || echo missing)"
+    printf "  docker:           %s\n" "$(docker --version 2>/dev/null || echo missing)"
+    printf "  agent in docker:  %s\n" "$(id -nG agent 2>/dev/null | grep -qw docker && echo YES-FIX-THIS || echo no)"
+    printf "  host mounts:      %s\n" "$(findmnt -rn -t virtiofs,9p,fuse.sshfs 2>/dev/null | wc -l | tr -d " ")"
+    printf "  host block (nft): %s\n" "$(sudo nft list table inet wmf_claude_hostblock >/dev/null 2>&1 && echo loaded || echo MISSING)"
+    printf "  workspaces:       %s\n" "$(ls /home/agent/work 2>/dev/null | grep -v "^\.pull$" | tr "\n" " ")"
+  '
+  printf '  host HEAD:        %s\n' "$(host_rev)"
+}
+
+cmd_delete() {
+  need limactl
+  if ! vm_exists; then
+    echo "VM '$VM' does not exist"
+    return 0
+  fi
+  echo "This deletes VM '$VM': Claude's login, every workspace and every image in it."
+  echo "Pull what you need first: bin/wmf-claude-vm pull NAME"
+  local reply
+  read -rp "Type the VM name to confirm: " reply
+  [[ "$reply" == "$VM" ]] || die "not confirmed"
+  limactl delete --force "$VM"
+}
+
+cmd="${1:-help}"
+shift || true
+case "$cmd" in
+  create) cmd_create "$@" ;;
+  update) cmd_update ;;
+  login)  cmd_login ;;
+  push)   cmd_push "$@" ;;
+  pull)   cmd_pull "$@" ;;
+  review) cmd_review "$@" ;;
+  checkout) cmd_checkout "$@" ;;
+  discard) cmd_discard "$@" ;;
+  claude) cmd_claude "$@" ;;
+  shell)  cmd_shell "$@" ;;
+  status) cmd_status ;;
+  start)  need limactl; vm_exists || die "VM '$VM' does not exist; create it: bin/wmf-claude-vm create"; limactl start --tty=false "$VM" ;;
+  stop)   need limactl; limactl stop "$VM" ;;
+  delete) cmd_delete ;;
+  reset)  cmd_delete; cmd_create "$@" ;;
+  -h|--help|help) usage ;;
+  *) die "unknown command '$cmd' (see bin/wmf-claude-vm --help)" ;;
+esac

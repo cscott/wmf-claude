@@ -54,6 +54,9 @@ threat model, so there is no supported way to pass them.
 | `WMF_CLAUDE_SKIP_UPDATE` | Skip the update check and prompt entirely |
 | `WMF_CLAUDE_NONO_VERBOSE` | Show nono's banner and its exit summary of denied paths (off by default: most denials there are expected) |
 | `WMF_CLAUDE_SKIP_CHROME` | Skip building the chrome-devtools MCP during setup |
+| `WMF_CLAUDE_SKIP_BUILD` | `bin/wmf-claude-setup` only: skip `bin/wmf-claude-build`. The Lima guest uses it, where the tree belongs to another user |
+| `WMF_DOCKER_HANDSHAKE` | Bare `--docker` (attach mode): read the broker handshake from this path instead of the runtime dir. Set by the Lima guest launcher; unset before the sandbox starts |
+| `WMF_CLAUDE_VM` | `bin/wmf-claude-vm`: the Lima instance name (default `wmf-claude`) |
 
 ## Startup notices and the status line
 
@@ -87,6 +90,25 @@ WMF_CLAUDE_PROFILE=wmf-data-scientist claude
 copied into `~/.config/nono/profiles/`. A custom profile should still
 `extends: claude-code`, which resolves against the installed `nolabs-ai/claude`
 pack.
+
+## Lima VM mode
+
+`bin/wmf-claude-vm` runs everything inside a Lima VM with no host mounts and
+no port forwards — a second boundary around nono for SRE and security work.
+It is a separate entry point, not a `bin/claude` flag:
+
+| Command | Effect |
+|---|---|
+| `create [limactl create flags]` | Create the VM from `lima/wmf-claude.yaml`, then `update` |
+| `update` | Upload this checkout's HEAD (submodules included) and reinstall it in the guest |
+| `push DIR [NAME]` | Git-bundle a repo into `/home/agent/work/NAME` |
+| `claude NAME [bin/claude args]` | Sandboxed session in that workspace, as the `agent` user. `--docker=SERVICE` starts the broker as the engineer and implies `--landlock-only`; `--chrome` and `--ide` are refused |
+| `pull NAME [DEST]` | Fetch the agent's branches into `vm/*` (remote-tracking refs) of the repo NAME was pushed from, or of DEST; nothing is checked out |
+| `review NAME BRANCH`, `checkout NAME BRANCH`, `discard NAME BRANCH` | Show what `vm/BRANCH` adds, create a local branch from it, or delete it (plain git in NAME's host repo) |
+| `shell [--agent] [-- CMD...]` | Engineer shell (sudo, docker), or a shell as `agent`; with `-- CMD`, run just that command |
+| `status`, `start`, `stop`, `delete`, `reset` | Lifecycle; `delete` asks for the VM name |
+
+Threat model, first login and Docker inside the VM: [`lima-vm.md`](lima-vm.md).
 
 ## Workspace layout
 

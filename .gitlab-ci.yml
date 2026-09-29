@@ -21,4 +21,5 @@ test:
     - nono pull nolabs-ai/claude --silent
   script:
     - ./tests/test-templates.sh
+    - ./tests/test-lima.sh
     - ./tests/test-profile.sh

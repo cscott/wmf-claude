@@ -1,0 +1,223 @@
+# Lima template for wmf-claude VM mode (bin/wmf-claude-vm). Read docs/lima-vm.md.
+#
+# The VM is a second boundary around the nono sandbox, not a replacement for
+# it. Keep it closed: no host mounts, no port forwards, no agent or X11
+# forwarding, no Rosetta (it adds a host share). `plain: true` makes Lima skip
+# its own mounts, dynamic port forwarding, containerd and the guest agent. The
+# explicit keys below say the same thing, so a change to `plain` alone does
+# not open them. Validate with: limactl validate lima/wmf-claude.yaml
+minimumLimaVersion: "2.0.0"
+plain: true
+
+# Debian 13 (trixie) genericcloud, one versioned release, with the sha512
+# digests that Lima 2.2.0 ships in templates/_images/debian-13.yaml. Never a
+# `latest` or `daily` URL: a moving URL makes the digest a moving target. To
+# bump, take the URL and the digest for the same release from
+# https://cloud.debian.org/images/cloud/trixie/<release>/SHA512SUMS.
+images:
+- location: "https://cloud.debian.org/images/cloud/trixie/20260712-2537/debian-13-genericcloud-amd64-20260712-2537.qcow2"
+  arch: "x86_64"
+  digest: "sha512:7ae53e9dbee282bfc16f289dec483dde3a8598769c38a267948310f7a2a52c662620198603bc52c142627efba379863d16079698a10b34102d55bcedd40e8d32"
+- location: "https://cloud.debian.org/images/cloud/trixie/20260712-2537/debian-13-genericcloud-arm64-20260712-2537.qcow2"
+  arch: "aarch64"
+  digest: "sha512:8543d795f2fde630eb66c492f245a8c1da19dedc636e0a8e7b3d0f95920e1a05aa911ef2d82d177d41cc53ced5fccbd2a3945d07fa5e15018914c4d864bb07ed"
+
+# Image builds are the reason Docker is in the VM; give them room. Override
+# at create time: bin/wmf-claude-vm create --cpus 8 --memory 16 --disk 100
+cpus: 4
+memory: "8GiB"
+disk: "60GiB"
+
+# No host directory enters the VM. Code moves by explicit copy
+# (bin/wmf-claude-vm push / pull). Lima's default is to mount ~ read-only.
+mounts: []
+
+# Docker runs its own containerd.
+containerd:
+  system: false
+  user: false
+
+# In plain mode Lima forwards no TCP port except SSH. This rule gives the same
+# result when plain mode is off: ignore every guest port.
+portForwards:
+- guestIP: "0.0.0.0"
+  proto: any
+  ignore: true
+
+ssh:
+  loadDotSSHPubKeys: false
+  forwardAgent: false
+  forwardX11: false
+  forwardX11Trusted: false
+
+# The Lima default user is the engineer: sudo, docker group, drives Docker
+# from a VM shell. Claude runs as `agent`, a second user that the provisioning
+# script creates: no sudo, not in `docker`.
+user:
+  name: engineer
+  home: /home/engineer
+
+provision:
+- mode: system
+  script: |
+    #!/bin/bash
+    # Root provisioning for the wmf-claude VM. Lima runs it at every boot, so
+    # each step is idempotent and cheap when there is nothing to do.
+    set -euo pipefail
+    export DEBIAN_FRONTEND=noninteractive
+    ENGINEER="{{.User}}"
+    AGENT=agent
+    BROKER_GROUP=wmfbroker
+
+    # Two users. `agent` runs Claude Code and has no path to the Docker
+    # socket: no sudo, not in `docker`. nono does not mediate AF_UNIX connect
+    # on Linux, so the socket permissions are the control. The engineer can
+    # read the agent's tree (the Docker broker reads the compose file there);
+    # the agent cannot read the engineer's.
+    if ! id -u "$AGENT" >/dev/null 2>&1; then
+      adduser --disabled-password --gecos 'wmf-claude agent (runs Claude Code)' \
+        --shell /bin/bash "$AGENT"
+    fi
+    getent group "$BROKER_GROUP" >/dev/null || groupadd "$BROKER_GROUP"
+    usermod -aG "$BROKER_GROUP,$AGENT" "$ENGINEER"
+    usermod -aG "$BROKER_GROUP" "$AGENT"
+    for g in sudo docker; do
+      if getent group "$g" >/dev/null && id -nG "$AGENT" | grep -qw "$g"; then
+        gpasswd -d "$AGENT" "$g" >/dev/null
+      fi
+    done
+    # Root acts on the two home directories only. /home is root-owned, so the
+    # agent cannot swap its home for a symlink. Root never touches a path
+    # under the agent's home: the agent can replace those. guest-install.sh
+    # creates ~/work as the agent.
+    chmod 0750 "/home/$AGENT" "$(getent passwd "$ENGINEER" | cut -d: -f6)"
+
+    # Base packages: the wmf-claude build needs node, npm and python3-venv;
+    # bin/claude needs git, jq and curl; the host block needs nftables.
+    PKGS=(ca-certificates curl git jq python3 python3-venv nodejs npm nftables)
+    MISSING=()
+    for p in "${PKGS[@]}"; do dpkg -s "$p" >/dev/null 2>&1 || MISSING+=("$p"); done
+    if (( ${#MISSING[@]} > 0 )); then
+      apt-get update -q
+      apt-get install -y -q --no-install-recommends "${MISSING[@]}"
+    fi
+
+    # Docker, rootful, from Docker's own repository, which ships the engine
+    # with the compose and buildx plugins. Only the engineer joins `docker`.
+    # docs/lima-vm.md explains why rootless Docker was not used.
+    if [[ ! -f /etc/apt/keyrings/docker.asc ]]; then
+      install -d -m 0755 /etc/apt/keyrings
+      curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
+      chmod 0644 /etc/apt/keyrings/docker.asc
+    fi
+    if [[ ! -f /etc/apt/sources.list.d/docker.sources ]]; then
+      . /etc/os-release
+      cat > /etc/apt/sources.list.d/docker.sources <<SOURCES
+    Types: deb
+    URIs: https://download.docker.com/linux/debian
+    Suites: $VERSION_CODENAME
+    Components: stable
+    Architectures: $(dpkg --print-architecture)
+    Signed-By: /etc/apt/keyrings/docker.asc
+    SOURCES
+      apt-get update -q
+    fi
+    DOCKER_PKGS=(docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin)
+    MISSING=()
+    for p in "${DOCKER_PKGS[@]}"; do dpkg -s "$p" >/dev/null 2>&1 || MISSING+=("$p"); done
+    if (( ${#MISSING[@]} > 0 )); then
+      apt-get install -y -q --no-install-recommends "${MISSING[@]}"
+    fi
+    usermod -aG docker "$ENGINEER"
+    systemctl enable --now docker >/dev/null 2>&1
+
+    # /run/wmf-claude holds the Docker broker handshake: the engineer writes
+    # it, the agent reads it (group wmfbroker, setgid). Recreated at boot.
+    cat > /etc/tmpfiles.d/wmf-claude.conf <<TMPFILES
+    d /run/wmf-claude 2750 $ENGINEER $BROKER_GROUP -
+    TMPFILES
+    systemd-tmpfiles --create /etc/tmpfiles.d/wmf-claude.conf
+
+    # Host and LAN block. Lima's user-mode network puts the host at the
+    # gateway (host.lima.internal) and a DNS forwarder in its own subnet, and
+    # NATs the rest through the host, so the host's LAN address, the LAN and
+    # any VPN are reachable too. This refuses new connections from the guest,
+    # and from its containers, to private and link-local addresses out of the
+    # default interface. DNS and DHCP to Lima's subnet pass. Replies to
+    # connections the host opened (SSH) pass. Docker's bridges are other
+    # interfaces, so they are not affected.
+    # No `flush ruleset`: a reload must not remove Docker's own rules.
+    # nftables.service loads the file at boot, before Docker starts.
+    DEV=$(ip -4 route show default | awk '{print $5; exit}')
+    NET=$(ip -4 -o route show dev "$DEV" scope link | awk '{print $1; exit}')
+    AGENT_UID=$(id -u "$AGENT")
+    if [[ -n "$DEV" && -n "$NET" ]]; then
+      cat > /etc/nftables.conf <<NFT
+    #!/usr/sbin/nft -f
+    # Written by the wmf-claude VM provisioning at boot. Do not edit.
+    # Blocks new connections out of $DEV to private and link-local addresses.
+    # DNS and DHCP to Lima's subnet ($NET) are allowed. The agent (uid
+    # $AGENT_UID) gets TCP 80 and 443 only.
+    table inet wmf_claude_hostblock
+    delete table inet wmf_claude_hostblock
+    table inet wmf_claude_hostblock {
+      set private4 {
+        type ipv4_addr; flags interval
+        elements = { 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16 }
+      }
+      set private6 {
+        type ipv6_addr; flags interval
+        elements = { fc00::/7, fe80::/10 }
+      }
+      chain block {
+        ct state established,related accept
+        ip daddr $NET udp dport { 53, 67 } accept
+        ip daddr $NET tcp dport 53 accept
+        ip daddr @private4 counter reject
+        meta l4proto { tcp, udp } ip6 daddr @private6 counter reject
+      }
+      # The agent (Claude, nono's proxy, the MCP servers) needs HTTPS only.
+      # This also binds a session with --landlock-only, which lets nono
+      # allow UDP to all hosts and TCP on an open port to all hosts.
+      chain agent_egress {
+        ct state established,related accept
+        tcp dport { 80, 443 } accept
+        counter reject
+      }
+      chain output {
+        type filter hook output priority filter; policy accept;
+        oifname "$DEV" jump block
+        oifname "$DEV" meta skuid $AGENT_UID jump agent_egress
+      }
+      chain forward {
+        type filter hook forward priority filter; policy accept;
+        oifname "$DEV" jump block
+      }
+    }
+    NFT
+      nft -f /etc/nftables.conf
+      systemctl enable nftables >/dev/null 2>&1
+    else
+      echo "wmf-claude: no default route yet; host block not written this boot" >&2
+    fi
+
+    # sudo -u agent shares the engineer's terminal. Stop a process on that
+    # terminal from pushing input into the engineer's shell (TIOCSTI).
+    echo 'dev.tty.legacy_tiocsti = 0' > /etc/sysctl.d/90-wmf-claude.conf
+    sysctl -q -w dev.tty.legacy_tiocsti=0 2>/dev/null || true
+
+    touch /run/wmf-claude/provisioned
+
+probes:
+- mode: readiness
+  description: wmf-claude guest provisioning
+  script: |
+    #!/bin/bash
+    set -eu
+    test -f /run/wmf-claude/provisioned
+    id -u agent >/dev/null
+    ! id -nG agent | grep -qw docker
+    systemctl is-active --quiet docker
+    # Probes run as the Lima user, not root.
+    sudo -n nft list table inet wmf_claude_hostblock >/dev/null
+  hint: "Provisioning did not finish. In the VM: sudo cat /var/log/cloud-init-output.log"

@@ -300,34 +300,22 @@ coverage of older and current Brave installs.
 
 ## Expected denies
 
-`filesystem.suppress_save_prompt`.
+`filesystem.suppress_save_prompt` is `["/"]`: nono never offers, at exit, to
+save a denial as a grant. The sandbox still denies the access, and the denial
+diagnostic still prints to stderr.
 
-Claude Code itself probes
-`Library/Application Support/{Google/Chrome,Google/Chrome Beta,Google/Chrome Canary,Chromium,Microsoft Edge,BraveSoftware/Brave-Browser}/DevToolsActivePort`
-at startup to auto-discover a running Chromium-family browser with
-`--remote-debugging-port` open (classic `chrome-launcher` /
-`chrome-remote-interface` behaviour). The Claude binary also embeds `/home/...`
-paths from its CI builder, which Bun's runtime stats during identifier
-resolution.
-
-All of these reads are correctly denied by the profile — but without
-intervention nono would offer to save them as grants on every first run, which
-is a confusing first-time-user experience for a denial that is working as
-designed. `filesystem.suppress_save_prompt` silences the save-profile dialog for
-these paths; the sandbox still denies the reads and the denial diagnostic still
-prints to stderr. Arc, Vivaldi, and Opera are listed alongside the
-Chromium-family paths because the base `deny_browser_data_macos` group sometimes
-surfaces them in the same batched prompt even though the current Claude binary
-doesn't appear to probe them directly.
-
-`~/.local/state/claude/locks` and `~/.CFUserTextEncoding` are also suppressed.
-Both are listed as granted (`r+w` and `r` respectively) in the runtime
-capability set, but nono still reports them as denied at shutdown and offers to
-save them as grants — most likely a child process at teardown not inheriting the
-dynamic grants, or a read that races with `Applying sandbox...`. The reads
-aren't breaking anything we can observe; suppressing keeps the first-run prompt
-clean while the underlying inherited-grant question gets investigated
-separately.
+The prompt was confusing, and it was risky. Claude Code probes paths that the
+profile denies on purpose: the `DevToolsActivePort` file of each
+Chromium-family browser (to find one with `--remote-debugging-port` open), and
+`/home/...` paths from its CI builder, which Bun stats during identifier
+resolution. nono also reports some granted paths (`~/.local/state/claude/locks`)
+as denied at teardown. Each of these came back as a "grant?" prompt, and one
+keystroke there writes `filesystem.bypass_protection` into the user's profile,
+which defeats the deny. An earlier version suppressed a curated list of paths;
+the prompt then still fired for anything off the list (for example, a stderr
+line that nono read as a write to `/bin/bash`). A needed grant goes in
+the profile or on the command line (`bin/claude --allow DIR -- ...`), where
+it can be reviewed.
 
 ## Why each find deny needs two rules
 

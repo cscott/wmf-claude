@@ -125,20 +125,18 @@ assert_status "~/Library/Application Support/Signal read denied" "denied" "$(why
 # iCloud Drive sync.
 assert_status "~/Library/Mobile Documents read denied" "denied" "$(why_path "$HOME/Library/Mobile Documents" read)"
 
-# --- Filesystem: every denied path is also save-prompt suppressed ---
-# A path in deny but absent from suppress_save_prompt produces a one-keystroke
-# [g] grant prompt at runtime that bakes filesystem.bypass_protection into the
-# user's profile, defeating the deny. Anything we deliberately deny must also be
-# suppressed so nono never offers to grant it.
+# --- Filesystem: the save-profile prompt is off ---
+# nono offers, at exit, to save each denial as a grant. One keystroke there
+# bakes filesystem.bypass_protection into the user's profile and defeats the
+# deny, and the prompt confuses users. "/" suppresses it for every path; the
+# denials and their stderr diagnostic stay.
 echo ""
-echo "--- Filesystem: denies are save-prompt suppressed ---"
-unsuppressed=$(jq -r '(.filesystem.deny // []) - (.filesystem.suppress_save_prompt // []) | .[]' "$PROFILE" 2>/dev/null)
-if [[ -z "$unsuppressed" ]]; then
-  green "PASS: every filesystem.deny path is in suppress_save_prompt"
+echo "--- Filesystem: save-profile prompt suppressed ---"
+if [[ "$(jq -c '.filesystem.suppress_save_prompt' "$PROFILE" 2>/dev/null)" == '["/"]' ]]; then
+  green "PASS: suppress_save_prompt is [\"/\"] (no grant prompt for any denial)"
   ((PASS++))
 else
-  red "FAIL: deny paths missing from suppress_save_prompt (grantable at runtime):"
-  printf '  %s\n' $unsuppressed
+  red "FAIL: suppress_save_prompt must be [\"/\"]"
   ((FAIL++))
 fi
 

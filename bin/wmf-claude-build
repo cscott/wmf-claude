@@ -11,7 +11,8 @@ source "$ROOT/bin/lib-output.sh"
 
 # Init submodules if a colleague cloned without --recurse-submodules.
 step "Locating submodule source"
-if [[ -f "$ROOT/mcp-phabricator/package.json" && -f "$ROOT/gerrit-mcp-server/requirements.txt" ]]; then
+if [[ -f "$ROOT/mcp-phabricator/package.json" && -f "$ROOT/gerrit-mcp-server/requirements.txt" \
+      && -f "$ROOT/gitlab-mcp-server/requirements.txt" ]]; then
   ok "Submodules present"
 elif [[ -e "$ROOT/.git" ]]; then
   (cd "$ROOT" && git submodule update --init --recursive --quiet)
@@ -50,13 +51,17 @@ ok "Dependencies installed"
 
 # Native wheels (cryptography, pydantic-core, ...) come prebuilt from PyPI, so
 # no compiler is needed. requirements.txt is hash-locked; --require-hashes enforces it.
-step "Setting up gerrit-mcp-server"
-if command -v uv &>/dev/null; then
-  (cd "$ROOT/gerrit-mcp-server" && uv venv -q --allow-existing && uv pip install -q --require-hashes -r requirements.txt)
-else
-  (cd "$ROOT/gerrit-mcp-server" && python3 -m venv .venv && .venv/bin/pip install -q --no-deps --require-hashes -r requirements.txt)
-fi
-ok "Dependencies installed"
+setup_python_mcp() {
+  local dir="$ROOT/$1"
+  step "Setting up $1"
+  if command -v uv &>/dev/null; then
+    (cd "$dir" && uv venv -q --allow-existing && uv pip install -q --require-hashes -r requirements.txt)
+  else
+    (cd "$dir" && python3 -m venv .venv && .venv/bin/pip install -q --no-deps --require-hashes -r requirements.txt)
+  fi
+  ok "Dependencies installed"
+}
+setup_python_mcp gerrit-mcp-server
 
 # Static config, but it lives in the submodule (which the parent can't commit
 # into), so generate it if absent rather than tracking it.
@@ -87,6 +92,9 @@ CONF
 else
   ok "gerrit_config.json already exists"
 fi
+
+# No config file: the server reads only environment variables.
+setup_python_mcp gitlab-mcp-server
 
 # chrome-devtools MCP. Built unless WMF_CLAUDE_SKIP_CHROME; it stays opt-in at
 # runtime via `bin/claude --chrome`. Attaches to an external Chrome, no download.

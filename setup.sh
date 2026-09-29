@@ -103,7 +103,7 @@ echo ""
 dim "  This will:"; echo ""
 dim "    - Pull the nolabs-ai/claude nono pack (Claude Code integration)"; echo ""
 dim "    - Vendor MCP server dependencies (npm + pip/uv) in this checkout"; echo ""
-dim "    - Register phabricator + gerrit MCP servers globally in Claude Code"; echo ""
+dim "    - Register phabricator, gerrit, and gitlab MCP servers globally in Claude Code"; echo ""
 dim "    - Install a 'claude' alias (~/.zshrc, ~/.bashrc, or fish conf.d)"; echo ""
 echo ""
 read -rp "  Press Enter to continue, Ctrl-C to abort: " _

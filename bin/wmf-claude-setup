@@ -179,6 +179,15 @@ claude mcp add --scope user gerrit \
   "$ROOT/gerrit-mcp-server/gerrit_mcp_server/main.py" stdio >/dev/null 2>&1
 ok "gerrit registered"
 
+# Anonymous: no GITLAB_PRIVATE_TOKEN, so the server reads public projects only.
+claude mcp remove --scope user gitlab >/dev/null 2>&1 || true
+claude mcp add --scope user gitlab \
+  -e "PYTHONPATH=$ROOT/gitlab-mcp-server/" \
+  -e "PYTHONDONTWRITEBYTECODE=1" \
+  -- "$ROOT/gitlab-mcp-server/.venv/bin/python" \
+  "$ROOT/gitlab-mcp-server/gitlab_mcp_server/main.py" >/dev/null 2>&1
+ok "gitlab registered"
+
 # Write the config bin/claude --chrome passes via --mcp-config. Never registered
 # globally, so the CDP-controlled-browser surface stays off other sessions.
 step "Configuring chrome-devtools MCP"

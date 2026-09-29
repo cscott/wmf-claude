@@ -4,3 +4,6 @@
 [submodule "gerrit-mcp-server"]
 	path = gerrit-mcp-server
 	url = https://gitlab.wikimedia.org/kharlan/gerrit-mcp-server
+[submodule "gitlab-mcp-server"]
+	path = gitlab-mcp-server
+	url = https://gitlab.wikimedia.org/xcollazo/gitlab-mcp-server

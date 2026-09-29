@@ -12,9 +12,9 @@ and little else; SSH keys, credentials, and browser profiles are denied. That
 meaningfully narrows what a mistake or a prompt injection can reach. See
 [`SECURITY.md`](SECURITY.md) for limitations.
 
-Phabricator and Gerrit MCP servers are preloaded and set up for anonymous use.
-Claude can read public tasks and changes; writing tasks or pushing patches
-fails.
+Phabricator, Gerrit, and GitLab MCP servers are preloaded and set up for
+anonymous use. Claude can read public tasks, changes, and merge requests;
+writing tasks or pushing patches fails.
 
 ## Install
 
@@ -23,7 +23,7 @@ git clone --recurse-submodules https://gitlab.wikimedia.org/repos/product-safety
 cd wmf-claude
 ./setup.sh
 source ~/.zshrc     # or ~/.bashrc — picks up the new `claude` alias
-claude mcp list     # should list phabricator and gerrit
+claude mcp list     # should list phabricator, gerrit, and gitlab
 ```
 
 Now run `claude` from any project directory and it starts sandboxed. `setup.sh`

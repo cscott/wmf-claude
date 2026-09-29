@@ -52,6 +52,7 @@ threat model, so there is no supported way to pass them.
 | `WMF_CLAUDE_PROFILE` | Load `profiles/<name>.json` instead of `wmf-engineer` |
 | `WMF_CLAUDE_NO_PAUSE` | Skip the Enter pause that follows startup notices. (`WMF_CLAUDE_QUIET`, which hid the old banner, is now a no-op.) |
 | `WMF_CLAUDE_SKIP_UPDATE` | Skip the update check and prompt entirely |
+| `WMF_CLAUDE_NONO_VERBOSE` | Show nono's banner and its exit summary of denied paths (off by default: most denials there are expected) |
 | `WMF_CLAUDE_SKIP_CHROME` | Skip building the chrome-devtools MCP during setup |
 
 ## Startup notices and the status line
@@ -175,6 +176,14 @@ blocked: the profile allows `git-upload-pack` (fetch) there, not
 `git-receive-pack`.
 
 ## Troubleshooting
+
+**Something fails with "Permission denied" or "Operation not permitted".**
+Relaunch with `WMF_CLAUDE_NONO_VERBOSE=1 claude` and repeat the step. At exit,
+nono lists the paths it denied. Most are expected (`~/.ssh`, browser
+profiles, `/home` paths the Claude binary probes). Ignore its "Fix flags"
+line: it suggests grants such as `--read ~`, which open far more than the
+failing step needs. Grant the narrowest path instead, with
+`claude --read DIR -- ...` or `--allow DIR`.
 
 **MCP servers registered twice.** If you previously added the Phabricator or
 Gerrit MCP servers at project scope, they conflict with the global registration:

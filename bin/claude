@@ -98,6 +98,7 @@ Environment:
   WMF_CLAUDE_PROFILE=<name>   load profiles/<name>.json (default: wmf-engineer)
   WMF_CLAUDE_NO_PAUSE=1       skip the Enter pause after startup notices
   WMF_CLAUDE_SKIP_UPDATE=1    skip update-staleness notices
+  WMF_CLAUDE_NONO_VERBOSE=1   show nono's banner and exit summary (denied paths)
 
 Refuses --capability-elevation, --trust-override, --dangerously-skip-permissions.
 For Claude Code's own flags: claude -- --help
@@ -1271,7 +1272,14 @@ if (( STARTUP_NOTICE && ! PRINT_MODE )) && [[ -r /dev/tty && -t 0 && -t 2 && -z 
   printf '\n' >&2
 fi
 
-NONO_CMD=(nono run --profile "$PROFILE_PATH" \
+# nono's banner, status lines and exit summary are off by default. Claude
+# Code redraws over the banner anyway, and the exit summary lists expected
+# denials (~/.ssh, browser profiles) with "Fix flags" that would open them.
+# WMF_CLAUDE_NONO_VERBOSE=1 brings them back, for debugging a denial.
+NONO_OUTPUT_ARGS=(--silent)
+[[ -n "${WMF_CLAUDE_NONO_VERBOSE:-}" ]] && NONO_OUTPUT_ARGS=()
+
+NONO_CMD=(nono run --profile "$PROFILE_PATH" "${NONO_OUTPUT_ARGS[@]}" \
   --read "$SCRIPT_DIR" \
   "${GERRIT_LOG_NONO_ARGS[@]}" \
   "${CHROME_DEVTOOLS_ALLOWS[@]}" \

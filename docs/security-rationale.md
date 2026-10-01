@@ -166,7 +166,9 @@ traffic, not a blanket no-POST property of the agent.
 To read the method and path
 of an HTTPS request nono must terminate TLS itself (any entry with endpoint
 rules takes the `requires_intercept` path). It mints a cert from an ephemeral
-CA and injects that CA into the child's trust env
+CA (valid for 7 days: `bin/claude` passes `--proxy-ca-validity 7`, because an
+expired CA breaks interception until a restart,
+[nolabs-ai/nono#1681](https://github.com/nolabs-ai/nono/issues/1681)) and injects that CA into the child's trust env
 (`SSL_CERT_FILE`/`NODE_EXTRA_CA_CERTS`/`CURL_CA_BUNDLE`), so curl, Node, and
 Python trust it with no flag and no prompt. Four consequences: nono sees the
 plaintext of traffic to these hosts, including all wiki and GitLab traffic;

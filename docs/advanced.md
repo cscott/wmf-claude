@@ -215,6 +215,13 @@ newer package from the
 [nono releases page](https://github.com/nolabs-ai/nono/releases), install it,
 then re-run `./setup.sh`.
 
+**HTTPS to wikis or GitLab fails with `certificate has expired`.** The
+session's TLS-intercept CA has expired. Hosts without interception, such as
+`gerrit.wikimedia.org`, still work. nono cannot replace the CA in a running
+session ([nolabs-ai/nono#1681](https://github.com/nolabs-ai/nono/issues/1681)),
+so restart Claude. `bin/claude` makes the CA valid for 7 days. For a longer
+session, pass `claude --proxy-ca-validity DAYS -- ...` (at most 365).
+
 **`--chrome` fails to connect.** The MCP attaches to a Chrome started *outside*
 the sandbox. Run `bin/launch-test-chrome` in a separate terminal first.
 

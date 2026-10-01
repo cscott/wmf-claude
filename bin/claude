@@ -448,6 +448,18 @@ validate_tcp_port() {  # $1 flag  $2 value
 LOGIN_BIND_NONO_ARGS=()
 [[ "$(uname -s)" == "Darwin" ]] && LOGIN_BIND_NONO_ARGS=(--listen-port 49152)
 
+# The TLS-intercept CA is valid for 1 day by default. When it expires, all
+# intercepted hosts fail with "certificate has expired" until a restart: nono
+# cannot replace the CA in a running session (nolabs-ai/nono#1681). 7 days
+# covers a long session. nono rejects a repeated flag, so an engineer's own
+# value replaces this one. Remove this when #1681 is fixed.
+PROXY_CA_NONO_ARGS=(--proxy-ca-validity 7)
+for arg in "${NONO_ARGS[@]}"; do
+  case "$arg" in
+    --proxy-ca-validity|--proxy-ca-validity=*) PROXY_CA_NONO_ARGS=() ;;
+  esac
+done
+
 # --local-db: open the local MariaDB/MySQL port for this session only.
 # --open-port is localhost-only; the static profile opens no port.
 LOCAL_DB_NONO_ARGS=()
@@ -1289,6 +1301,7 @@ NONO_CMD=(nono run --profile "$PROFILE_PATH" "${NONO_OUTPUT_ARGS[@]}" \
   "${ALLOW_POST_NONO_ARGS[@]}" \
   "${LOCAL_DB_NONO_ARGS[@]}" \
   "${LOGIN_BIND_NONO_ARGS[@]}" \
+  "${PROXY_CA_NONO_ARGS[@]}" \
   "${DOCKER_BROKER_NONO_ARGS[@]}" \
   "${IDE_NONO_ARGS[@]}" \
   "${LANDLOCK_NONO_ARGS[@]}" \

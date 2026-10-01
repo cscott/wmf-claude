@@ -26,8 +26,12 @@ source ~/.zshrc     # or ~/.bashrc — picks up the new `claude` alias
 claude mcp list     # should list phabricator, gerrit, and gitlab
 ```
 
-Now run `claude` from any project directory and it starts sandboxed. `setup.sh`
-is interactive, safe to re-run, and prompts for your Phabricator username.
+Now run `claude` from any project directory and it starts sandboxed. You should see the text "`WMF nono sandbox`", confirming that your session is sandboxed.
+
+Note: either restart all open terminals, or run the appropriate `source` command in each.
+
+`setup.sh` is interactive, safe to re-run, and prompts for your Phabricator username.
+
 
 **Prerequisites:** nono 0.78+, Claude Code, Node + npm, Python 3,
 [uv](https://docs.astral.sh/uv/) (optional), jq, git. `setup.sh` checks for each

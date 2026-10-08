@@ -543,8 +543,8 @@ For a shared file, `skills/run-tests/SKILL.md` being the one case here.
    form for setups where `phpunit.xml` is committed. A patch (§6.2):
    `test-coverage/SKILL.md`, `agents/test-writer.md` and
    `templates/mediawiki/` teach the same form, so the correction is
-   plausibly right for every backend, and it is offered upstream as
-   `sbx/upstream/PHAB-TASK-5.md`. The patch stays until upstream takes it.
+   plausibly right for every backend, and it goes upstream as a merge
+   request. The patch stays until upstream takes it.
 
 ### 6.4 Audit of the shared files this work already changed
 
@@ -575,9 +575,14 @@ fixes, neither sbx-specific:
 Neither file is shipped into a sandbox, so neither mechanism above can even
 reach them; the kit reads `wiring/settings-merge.json` at build time
 (`kit.py:534`) and gets the fix from the repo. Keeping the fixes means nono
-gets them too, which is the point. They are written up for upstream, with
-the measurements and a patch against `main`, as
-`sbx/upstream/PHAB-TASK-4.md`.
+gets them too, which is the point.
+
+**Update, rebase onto upstream `main` (nono 0.78):** upstream made both
+fixes itself, more thoroughly (`find * -exec*` and `find -exec*`, plus
+`-fls`). The rebase takes upstream's `wiring/settings-merge.json` and
+drops this branch's version and its `SECURITY.md` text. The task and patch
+for it are deleted from `sbx/upstream/`. Only one part is still open:
+whether the "Linux glob caveat" is stale (`sbx/upstream/PHAB-TASK-4.md`).
 The one fork-only piece is `SECURITY.md`'s new opening paragraph, which
 points the reader at `sbx/SECURITY.md`; it is a paragraph to drop when
 merging, not a mechanism to build.
@@ -630,7 +635,8 @@ that disagreed about which sandbox they describe was the failure mode
   (NOTES.md §91–§93).
 - **Done:** the blind acceptance runs in fresh sandboxes (§9), five of them
   on three repo sets.
-- **Done:** the upstream write-ups: `sbx/upstream/PHAB-TASK-1.md` to `-5.md`,
+- **Done:** the upstream write-ups: `sbx/upstream/PHAB-TASK-1.md` to `-5.md`
+  (4 is now cut down and 5 is gone; see §6.3 and §6.4),
   each with a tested patch, for the engineer to file (§6.3, §6.4, §6.5, and
   two bugs the acceptance runs found).
 - **Not done:** §5.6 (the dependency walk). It is a `sbx/NOTES.md` to-do,

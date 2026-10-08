@@ -10548,18 +10548,22 @@ shortcut. Full transcript: `responses38.txt`. Results:
       state the sbx version in its setup report — the fact that made
       every dated measurement in this file need its own date, since
       behavior has changed between sbx releases more than once.
-- [ ] **File the five tasks in `sbx/upstream/`** (§94). Each
+- [ ] **File the tasks in `sbx/upstream/`** (§94). Each
       `PHAB-TASK-<n>.md` is a Phabricator task in the write-phab-task
-      form, and each has a tested `PHAB-ATTACHMENT-<n>.patch`: (1) the
-      REST header-case bug in core (§90 finding B); (2) the empty
-      `MW_SCRIPT_PATH` guard in `wdio-mediawiki` (design §6.5); (3)
-      Popups' `mw-node-qunit` false green (§93 finding A); (4) the
-      `wiring/settings-merge.json` fixes (§70, design §6.4); (5) the
-      `run-tests` PHPUnit entrypoint (design §6.3). cananian files them;
-      the Phabricator tool here is read-only. Add each T-number to
-      `sbx/upstream/README.md`. When upstream takes a fix, delete that
-      pair; for 5, delete
-      `sbx/patches/plugin/01-run-tests-composer-entrypoint.patch` too.
+      form: (1) the REST header-case bug in core (§90 finding B); (2) the
+      empty `MW_SCRIPT_PATH` guard in `wdio-mediawiki` (design §6.5); (3)
+      Popups' `mw-node-qunit` false green (§93 finding A); (4) whether
+      the Linux glob caveat is stale (§70.4) -- re-measure first, it has
+      no patch. 1-3 each have a tested `PHAB-ATTACHMENT-<n>.patch`.
+      cananian files them; the Phabricator tool here is read-only. Add
+      each T-number to `sbx/upstream/README.md`. When upstream takes a
+      fix, delete that pair.
+      Two former tasks are gone (rebase onto upstream `main`,
+      2026-10-08): the `wiring/settings-merge.json` fixes, which upstream
+      made itself, and the `run-tests` PHPUnit entrypoint, which goes
+      upstream as a merge request. Until it lands, keep
+      `sbx/patches/plugin/01-run-tests-composer-entrypoint.patch`; delete
+      it in the rebase that brings in the upstream change.
 - [ ] **Find out why a container start can run no startup command — at
       the next upgrade** (§97). `sbx-translate` came up on 2026-09-19
       with no git daemon, because the startup dispatcher never ran.
@@ -10578,8 +10582,8 @@ shortcut. Full transcript: `responses38.txt`. Results:
          exec` (plain `exec` re-runs the dispatcher and spoils it).
       3. Repeat one start with `wmf-sbx exec` alone, for explanation 3.
       4. Keep both sandboxes until the check is done. If the answer is a
-         regression, file it upstream; that makes six tasks with
-         `sbx/upstream/`'s five.
+         regression, file it upstream, as one more task in
+         `sbx/upstream/`.
 - [ ] **Check the CLAUDE.md edits at the next sbx release upgrade**
       (§95, §96). Wait for a v0.44 or v0.45 *release*; do not move to a
       pre-release for this [cananian, 2026-09-19]. §96 measured only

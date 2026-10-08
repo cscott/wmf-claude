@@ -33,6 +33,26 @@ def patch_offline(testcase):
     testcase.addCleanup(patcher.stop)
 
 
+def patch_host_probes(testcase, settings=True):
+    """No main() test may read the state of the host it runs on. main()
+    runs `wmf-sbx settings list` and the host MCP preflight, and both
+    call real programs. In a sandbox there is no `sbx`, so both are
+    skipped. On a host they read the real daemon, the built submodules
+    and the `node` on PATH, and a node below the floor stops the create.
+    Stub the MCP preflight to "no servers". Stub the settings read to
+    "could not read" too, unless `settings` is False because the test
+    gives main() a `run` that answers it."""
+    patcher = mock.patch.object(
+        c, "ensure_host_mcp_servers", lambda **kw: [])
+    patcher.start()
+    testcase.addCleanup(patcher.stop)
+    if settings:
+        patcher = mock.patch.object(
+            c.settings_mod, "read_settings", lambda *a, **kw: None)
+        patcher.start()
+        testcase.addCleanup(patcher.stop)
+
+
 class CloneUrlTests(unittest.TestCase):
     def test_gerrit(self):
         self.assertEqual(
@@ -1442,6 +1462,7 @@ class MainDryRunTests(unittest.TestCase):
             )
         os.makedirs(os.path.join(self.tmp.name, "Cite"))  # pre-existing checkout
         patch_offline(self)
+        patch_host_probes(self)
 
     def _run_main(self, argv):
         out, err = io.StringIO(), io.StringIO()
@@ -1760,6 +1781,7 @@ class MainSettingsPreflightTests(unittest.TestCase):
             )
         os.makedirs(os.path.join(self.tmp.name, "Cite"))
         patch_offline(self)
+        patch_host_probes(self, settings=False)
 
     def _run_main(self, argv, settings_rows):
         settings_json = json.dumps(settings_rows)
@@ -1899,6 +1921,7 @@ class MainRunTests(unittest.TestCase):
             )
         os.makedirs(os.path.join(self.tmp.name, "Cite"))  # pre-existing checkout
         patch_offline(self)
+        patch_host_probes(self, settings=False)
         # main() now touches durable host state (wmf_sbx_state) and, via
         # the opportunistic prune, real `.git/config` files. Point the
         # state directory at a tempdir so these tests can never reach the

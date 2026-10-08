@@ -110,18 +110,36 @@ Measured in `wmf-claude-sbx` on 2026-10-08 (Ubuntu 26.04 guest, kernel
   CPU-bound work is about 21 times slower than native (a 2 GB sha256: 30 s
   in the guest, 1.4 s native). Expect a full Lima Ubuntu boot (systemd,
   cloud-init) to take minutes, not seconds.
-- Lima 2.2.1 (GitHub release tarball) installs and runs. Two blocks:
-  `LIMA_HOME` must be short, because the socket path must be less than
-  108 characters (the scratchpad path is too long; `/tmp/lh` works); and
-  the network policy blocks `cloud-images.ubuntu.com`, so `limactl start
-  template:default` cannot download its image. Lima did not refuse to
-  start because KVM was missing before it stopped on the download; that
-  it falls back to TCG is not yet confirmed.
+- Lima 2.2.1 (GitHub release tarball, unpacked in the scratchpad) runs
+  a full Ubuntu 26.04 VM here under TCG. Lima logs "/dev/kvm is not
+  available. Disabling KVM. Expect very poor performance" and starts
+  QEMU with `-accel tcg,thread=multi`. Measured with `--cpus=2
+  --memory=2 --disk=20 --vm-type=qemu template:default`:
+  - first `limactl start`: about 6 min (guest boot 4 min 37 s, almost all
+    in userspace: systemd and cloud-init; plus about 70 s to download
+    nerdctl);
+  - `limactl stop`: 14 s; the next `limactl start`: 98 s (guest boot
+    1 min 32 s);
+  - `limactl shell probe -- CMD`: less than 1 s; sudo works in the guest;
+  - QEMU RSS: 2 to 2.7 GB.
+- Guest egress goes through the sbx proxy (a guest `curl -sI https://...`
+  shows `HTTP/1.0 200 Connection established`), so the sbx network
+  policy also applies to the nested VM.
+- Things to know:
+  - Set `LIMA_HOME` to a short path. The socket path must be less than
+    108 characters, and the scratchpad path is too long. `/tmp/lh` works.
+  - The engineer allowed `cloud-images.ubuntu.com` in the network
+    policy. Without it, the image download fails with 403.
+  - QEMU came from apt (`sudo apt-get install qemu-system-x86
+    qemu-utils`). Only the sandbox system has it.
+  - The first try, with `--cpus=4 --memory=4`, killed the whole sbx
+    microVM: probably the host OOM killer, after the 865 MB image
+    download completed. The cause is not confirmed. Use small VMs, stop
+    them when you do not use them, and keep one VM at a time.
 
-So a TCG-only smoke test of `lima.py` against real `limactl` is possible
-here, if the engineer allows `cloud-images.ubuntu.com`. Timing and
-performance measurements (phases 0, A1, B1) are not: TCG numbers say
-nothing about KVM.
+So the write-test-fix cycle can include real `limactl` and real VMs
+here, slowly. Timing and performance measurements (phases 0, A1, B1) must
+still run on the host: TCG numbers say nothing about KVM.
 
 It can do the code work: the new modules with a fake `limactl` in the
 unit tests, the rebase onto !127, and the sbx test suite

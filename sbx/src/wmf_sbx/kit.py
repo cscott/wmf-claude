@@ -7,8 +7,8 @@ Three additive layers:
   1. BASE_PACKAGES / EXTRA_DOMAINS / REPO_ENVIRONMENT_VARS below -- the
      parts every WMF engineer doing MediaWiki dev needs, upstreamed here
      so they don't drift per-user.
-  2. Wiki-family network domains pulled dynamically from
-     profiles/wmf-engineer.json's network.allow_domain (wiki_family_domains)
+  2. Wiki-family and named Wikimedia network domains pulled dynamically
+     from profiles/wmf-engineer.json's network.allow_domain (wiki_family_domains)
      -- one source of truth instead of a second hand-copied list that can
      go stale (see sbx/NOTES.md #8/#14).
   3. Per-user extras from ~/.config/wmf-sbx/repos.yaml's
@@ -484,27 +484,50 @@ EXTRA_DOMAINS = [
 # selenium harness reads. The same path Quibble uses.
 CHROME_BIN = "/usr/bin/chromium"
 
-# Every current wiki-family domain in profiles/wmf-engineer.json's
-# allow_domain contains "wik" as a substring (wikipedia, wikidata, ...,
-# wiktionary, mediawiki) -- see sbx/DESIGN-kit-generation.md for why this
-# is more robust than listing each TLD out.
-_WIKI_DOMAIN_RE = re.compile(r"^\*\.[\w-]*wik[\w-]*\.\w+$")
+# The Wikimedia hosts the kit takes from profiles/wmf-engineer.json's
+# allow_domain. Every wiki family contains "wik" (wikipedia, wikidata, ...,
+# wiktionary, mediawiki) -- see sbx/DESIGN-kit-generation.md for why that is
+# more robust than listing each TLD out. The profile names each
+# *.wikimedia.org host instead of a wildcard, and phab.wmfusercontent.org
+# serves Phabricator files, so both suffixes count too. A plain entry and an
+# endpoint-scoped {domain, endpoints} entry count the same: sbx has no
+# method or path rules, so a host that nono keeps read-only is fully open
+# here (sbx/SECURITY.md §1).
+_WIKI_DOMAIN_RE = re.compile(
+    r"^(?:\*\.[\w-]*wik[\w-]*\.\w+"
+    r"|(?:\*\.)?[\w.-]+\.(?:wikimedia|wmfusercontent)\.org)$"
+)
 
-# Used only if profiles/wmf-engineer.json can't be read at all, so kit
-# generation degrades gracefully instead of failing outright.
+# Used only if profiles/wmf-engineer.json can't be read, or yields no
+# Wikimedia host, so kit generation degrades gracefully instead of leaving
+# the sandbox with no wikis and no Gerrit.
 _FALLBACK_WIKI_DOMAINS = frozenset([
     "*.wikipedia.org", "*.wikivoyage.org", "*.wikibooks.org", "*.wikiquote.org",
-    "*.wikidata.org", "*.wikifunctions.org", "*.wiktionary.org",
-    "*.wikiversity.org", "*.wikisource.org", "*.mediawiki.org", "*.wikimedia.org",
+    "*.wikidata.org", "*.wikifunctions.org", "*.wiktionary.org", "*.wikinews.org",
+    "*.wikiversity.org", "*.wikisource.org", "*.mediawiki.org",
+    "gerrit.wikimedia.org", "phabricator.wikimedia.org", "gitlab.wikimedia.org",
+    "commons.wikimedia.org", "meta.wikimedia.org", "upload.wikimedia.org",
+    "doc.wikimedia.org", "integration.wikimedia.org", "phab.wmfusercontent.org",
 ])
 
 
+def _allow_domain_host(entry):
+    """The host of one allow_domain entry: the string itself, or the
+    `domain` of an endpoint-scoped object. None for anything else."""
+    if isinstance(entry, str):
+        return entry
+    if isinstance(entry, dict) and isinstance(entry.get("domain"), str):
+        return entry["domain"]
+    return None
+
+
 def wiki_family_domains(profile_path=DEFAULT_PROFILE_PATH):
-    """Pull the Wikimedia-wiki-family domains out of the nono profile's
-    network.allow_domain list. Only plain hostname strings are considered
-    -- sbx kit specs don't support the endpoint-scoped {domain, endpoints}
-    shape some profile entries use, and those entries (doc sites, etc.)
-    aren't MediaWiki-specific anyway."""
+    """Pull the Wikimedia hosts out of the nono profile's
+    network.allow_domain list: the wiki-family wildcards, and every named
+    *.wikimedia.org and *.wmfusercontent.org host. Endpoint-scoped entries
+    give their `domain`; sbx kit specs have no endpoint rules, so the host
+    is allowed whole. Other hosts (doc sites, codesearch, the Anthropic
+    API) are not MediaWiki-specific and are left out."""
     try:
         with open(profile_path, encoding="utf-8") as f:
             profile = json.load(f)
@@ -516,7 +539,17 @@ def wiki_family_domains(profile_path=DEFAULT_PROFILE_PATH):
         )
         return sorted(_FALLBACK_WIKI_DOMAINS)
     allow_domain = profile.get("network", {}).get("allow_domain", [])
-    return sorted(d for d in allow_domain if isinstance(d, str) and _WIKI_DOMAIN_RE.match(d))
+    hosts = {_allow_domain_host(d) for d in allow_domain}
+    found = sorted(h for h in hosts if h and _WIKI_DOMAIN_RE.match(h))
+    if not found:
+        print(
+            f"warning: {profile_path} lists no Wikimedia host in "
+            "network.allow_domain; falling back to a static wiki-family "
+            "domain list, which may be stale",
+            file=sys.stderr,
+        )
+        return sorted(_FALLBACK_WIKI_DOMAINS)
+    return found
 
 
 def plugin_version(manifest_path=PLUGIN_MANIFEST):
@@ -774,9 +807,14 @@ def settings_patch(wiring_dir=WIRING_DIR):
     sbx/DESIGN-plugin-integration.md §6 Q5 -- so the denies buy something
     real; the rest would be noise in a file the engineer may well read.
 
-    One trap that finding also turned up: a single-slash absolute pattern
-    matches nothing, so anything filesystem-absolute added to the nono
-    list later needs `//`. Nothing in it is absolute today.
+    One trap that finding also turned up: a single-slash absolute path
+    pattern matches nothing, so a filesystem-absolute `Read`/`Edit` rule
+    needs `//`. The nono list uses that form today (`Read(//**/*.pem)`,
+    `Read(//**/.env*)`, ...), and those rules apply in the sandbox too: the
+    agent cannot Read or Edit `<core>/.env` through its tools.
+    wmf-sbx-setup writes that file as root, not through a tool, so setup
+    is not affected. `Bash(/usr/bin/security:*)` is a command rule, not a
+    path, and its single slash is correct.
     """
     patch = dict(_read_wiring("enabled-plugin.json", wiring_dir))
     deny = list(

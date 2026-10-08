@@ -60,6 +60,17 @@ So:
   read-only rules for the eight documentation hosts have no equivalent
   here, and nothing intercepts TLS — which also means none of nono's
   TLS-interception costs apply.
+- **The Wikimedia hosts nono keeps read-only are fully open here.** Since
+  nono 0.78, `profiles/wmf-engineer.json` scopes the wiki families and most
+  named `*.wikimedia.org` hosts to GET/HEAD, and it has no
+  `*.wikimedia.org` wildcard. `kit.wiki_family_domains()` takes every
+  wiki-family wildcard and every named `*.wikimedia.org` and
+  `*.wmfusercontent.org` host from that list, plain or endpoint-scoped,
+  and the kit allows each host whole: a sandbox can POST to
+  `en.wikipedia.org` or `phabricator.wikimedia.org`. The old wildcard
+  allowed the same, and more. A chapter wiki or other `*.wikimedia.org`
+  host that the profile does not name is no longer in the kit's list
+  (sbx's own local defaults were not checked for it).
 - The default rows are `source: local`, i.e. per-machine. Another
   engineer's, or an org policy's, may differ. Kit-declaring the registries
   we actually depend on is still worth doing as documentation; it can never

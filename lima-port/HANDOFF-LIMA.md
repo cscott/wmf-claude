@@ -30,6 +30,23 @@ and changed and pushed nothing. Claims are labelled:
 - **RAN**: run on a scratch copy.
 - **VERIFY**: inferred. Measure it before you rely on it.
 
+**Measurement run, 2026-10-08.** A later session ran most of the D11
+and D12 items on real VMs, and read the Lima `v2.2.1` source (commit
+`27bc4c4b`). Those items are now labelled **RAN** or **READ** in place.
+Environment: Lima 2.2.1, QEMU 8.2.2, Ubuntu 24.04 x86_64 host on ext4,
+Ubuntu 24.04 minimal cloud guest (cloud-init 26.1, kernel 6.8). The
+host had **no KVM**, so QEMU used TCG (software emulation, about 20
+times slower). Use those times only to compare with each other. Not run
+there: macOS, `vz`, HVF, APFS clonefile, Btrfs or XFS reflinks, and
+anything that needs the guest to reach the internet. Record these
+results in `sbx/NOTES.md` when the port lands.
+
+**Lima v2.2.1 renamed the instance files.** The boot disk is
+`~/.lima/<name>/disk`, and the downloaded image is `image` until
+`EnsureDisk` renames it. `diffdisk` and `basedisk` are legacy names
+that Lima migrates at start (READ, `pkg/limatype/filenames`). This
+document uses the new names.
+
 ## 0. Goal, starting point, scope
 
 **Starting point.** `work/cscott/sbx` is already rebased onto current
@@ -103,7 +120,8 @@ template**, and we do not propose them upstream (§12).
   ignores `mounts` entirely (READ, Lima docs).
 - An optional sudo-capable agent that runs without nono (D9).
 - For `--sudo` sandboxes: the QEMU driver, run through a wrapper that
-  adds `restrict=on` and a single `guestfwd` to a host proxy (D11).
+  adds `restrict=on` and a single `guestfwd` (`cmd:` form) to a host
+  proxy (D11).
 
 **Mode shape.** His mode is one persistent VM with many workspaces. Ours
 is one VM per sandbox, cloned from a cached image, as sbx was.
@@ -157,8 +175,8 @@ answer).
 **D1. How the golden image is built. OPEN; recommendation A.**
 
 - **A:** boot a builder instance from Kosta's pinned Debian
-  genericcloud image, run the image provisioning (§5.2), run
-  `cloud-init clean` (VERIFY the flags), stop, and export the disk. It
+  genericcloud image, run the image provisioning (§5.2), seal its
+  identity (§5.2; flags RAN), stop, and export the disk. It
   works with Lima by construction and keeps a digest-pinned base.
 - **B (later):** mmdebstrap (the modern debootstrap: rootless,
   reproducible) inside mkosi for a bootable image. The bootloader,
@@ -176,14 +194,15 @@ backing path.
 Superseded for QEMU after the MVP by D12.
 
 - Since v2.0, Lima gives every instance a full standalone disk: it
-  renames or converts `basedisk` into `diffdisk`, and `vz` converts
-  qcow2 to raw (READ, the companion note citing Lima PR #4206 and issue
-  #2579).
+  renames or converts `image` into `disk`, and `vz` converts qcow2 to
+  raw (READ, the companion note citing Lima PR #4206 and issue #2579;
+  the QEMU driver only renames, READ in v2.2.1).
 - The MVP accepts that. `create` points `images:` at the golden image
-  file and lets Lima copy it. Phase 0 must still VERIFY that a local
-  path is accepted as `location` (the companion note's H1). If it is
-  not, copy the golden image over the new instance's `diffdisk` after
-  `limactl create` (the note's method B, without the overlay).
+  file and lets Lima copy it. A local path works as `location` (H1,
+  RAN on QEMU): a bare absolute path or an absolute `file://` URL. Lima
+  copies it with `continuity/fs.CopyFile`, decompresses it if the
+  extension or magic says so, and never symlinks it. A digest is
+  optional (READ, `pkg/downloader/downloader.go:625-680`).
 - Record the time and bytes of a create on `vz` and on QEMU. That is
   the baseline D12 has to beat.
 - `limactl clone` of a stopped template instance is no longer the plan.
@@ -359,6 +378,12 @@ four ways:
   for 9p on QEMU before trusting either. With `--sudo` this test is
   **the** control; if a mount type fails it, that type is unusable in
   `--sudo` mode.
+  - **9p on QEMU passes (RAN).** Lima starts QEMU with
+    `-virtfs local,…,security_model=none,readonly=on` for a
+    `writable: false` mount. Guest root's `mount -o remount,rw`
+    succeeds and the mount shows `rw`, but a write still fails with
+    `Read-only file system`, and the host file is unchanged.
+  - virtiofs on `vz`: not yet run.
 - **Clones:** `git clone --shared` from the mount, so alternates point
   into the read-only objects, as sbx did. This brings back the host-gc
   hazard, so **`suspend_gc`/`resume_gc` stay** (reversing the first
@@ -395,46 +420,98 @@ stronger than contained mode, whose controls live in the guest.
   to contact the host and no guest IP packets will be routed over the
   host to the outside", and it "does not affect any explicitly set
   forwarding rules". The second quote is READ, as cited in QEMU bug
-  #1696746; VERIFY the first against the guest's QEMU documentation.
-- `guestfwd=tcp:<guest-ip>:<port>-<target>`: guest connections to one
-  virtual address go to a host socket.
+  #1696746. The behaviour in the first is RAN (table below).
+- `guestfwd=tcp:<guest-ip>:<port>-cmd:<command>`: QEMU starts
+  `<command>` once for **each** guest connection to that virtual
+  address, with the connection on its stdin and stdout.
 
-With `restrict=on,guestfwd=tcp:192.168.5.100:3128-tcp:127.0.0.1:<proxy port>`:
+**Use the `cmd:` form, not `tcp:` (RAN).** An earlier draft used
+`guestfwd=…-tcp:127.0.0.1:<port>`. That form connects one QEMU chardev
+to the target, once, and does not reconnect. The first guest CONNECT
+worked. Then a second CONNECT (to a host the proxy denies) reached QEMU
+but never reached the proxy as a new request, three more got no answer,
+and the host had zero connections to the proxy port. A proxy needs one
+host connection per guest connection. A single shared stream is also a
+risk: a later request can go into an earlier, allowed tunnel. With
+`cmd:socat - TCP:127.0.0.1:<port>`, three CONNECTs in sequence each
+reached the proxy (200), a denied host got 403, and five at the same
+time all got 200. `cmd:` needs `socat` (or `nc`) on the host. Keep the
+command a fixed string that the wrapper writes; no guest data goes into
+it.
+
+With `restrict=on,guestfwd=tcp:192.168.5.100:3128-cmd:socat - TCP:127.0.0.1:<proxy port>`
+(all RAN, after guest root ran `iptables -t nat -F; iptables -F;
+nft flush ruleset`):
+
+| Probe from the guest | Without `restrict` | With `restrict=on` |
+| --- | --- | --- |
+| host loopback service via `host.lima.internal` | **reached** | refused |
+| `192.168.5.2:22` | — | refused |
+| external TCP `140.82.112.3:443` | — | `Network is unreachable` |
+| slirp DNS `192.168.5.3:53`, UDP and TCP | — | no answer / refused |
+| host's nameserver (`8.8.8.8:53` UDP) | — | unreachable |
+| `guestfwd` address `192.168.5.100:3128` | — | connects |
+| proxy stopped, then a CONNECT | — | fails (curl exit 56): fail-closed |
+| `limactl shell`, SSH, ControlMaster | works | works |
+| 9p mount | works | works |
+| boot scripts and all Lima readiness checks | pass | pass |
+| guest port 4000 forwarded to host `127.0.0.1:4000` | — | works |
+
+So:
 
 - the proxy is the guest's only way out;
 - `host.lima.internal` (host loopback) is cut;
 - a proxy that is down means no network: this fails closed;
 - Lima's SSH is a host-to-guest forward, so `limactl shell`, the git
-  helper and the 9p mounts keep working.
+  helper, port forwarding and the 9p mounts keep working. Nothing Lima
+  needs depends on outbound routing.
 
 **Injecting it.** Lima has no setting for `-netdev` options. Lima does
 document `QEMU_SYSTEM_X86_64` / `QEMU_SYSTEM_AARCH64` (READ) for the
-QEMU binary path. `sbx/helpers/wmf-sbx-qemu`:
+QEMU binary path, and v2.2.1 honours it (RAN). Lima's command line has
+exactly one user-mode network (RAN):
+
+```
+-netdev user,id=net0,net=192.168.5.0/24,dhcpstart=192.168.5.15,hostfwd=tcp:127.0.0.1:<port>-:22
+-device virtio-net-pci,netdev=net0,mac=…
+```
+
+If `networks:` names a Lima `user-v2` network, Lima uses
+`-netdev socket,…` instead (READ, `pkg/driver/qemu/qemu.go:789-796`).
+
+`sbx/helpers/wmf-sbx-qemu`:
 
 - finds Lima's `-netdev user,…` argument, appends `restrict=on` and the
   `guestfwd`, and execs the real QEMU;
 - refuses to start (exit non-zero) if it finds no `-netdev user`, or
   more than one, or any second network device. A silent pass-through
   would leave the guest unfiltered;
+- **passes Lima's probe calls through unchanged.** Before the boot,
+  Lima runs the same binary as `--version`, `-M none -accel help`,
+  `-M none -netdev help` and `-cpu help -machine …` (READ,
+  `qemu.go:296-350, 1256`). Apply the one-`-netdev user` rule only to
+  the call that boots a VM (for example, one with `-pidfile` or
+  `-qmp`). A test wrapper that applied it to every call refused
+  `-netdev help`; Lima only warned, because it uses that output only for
+  `socket_vmnet` (`qemu.go:837`). A refused `-accel help` stops the
+  start. `--version` passed through (RAN);
 - `wmf-sbx start`/`resume` set the variable for `limactl start` on
   `--sudo` sandboxes only.
 
-VERIFY in phase A1:
-
-- Lima's exact QEMU command line (`ps` on a running instance): that the
-  QEMU driver uses slirp with `hostfwd` for SSH, as believed;
-- that nothing else Lima needs (the guest agent, time sync, boot-time
-  provisioning) depends on outbound routing;
-- that Lima's `qemu --version` probe passes through the wrapper.
+A host without KVM needs no wrapper for acceleration: Lima v2.2.1
+falls back to TCG itself (READ, `qemu.go:1191`; RAN). Lima 1.2.1 did
+not.
 
 Longer term, file a Lima feature request for a native egress-proxy or
 `restrict` option, and drop the wrapper when it lands.
 
-**DNS.** The guest should not need DNS: the proxy resolves hostnames for
-`CONNECT`. Set Lima's `hostResolver.enabled: false`. Then VERIFY whether
-slirp's internal DNS still answers with `restrict=on`. If it does, DNS
-tunnelling is still open, and must be closed (by `dns=` pointing
-nowhere, or a wrapper option) before `--sudo` counts as filtered.
+**DNS.** The guest does not need DNS: the proxy resolves hostnames for
+`CONNECT`. With `restrict=on`, slirp's DNS at `192.168.5.3` does not
+answer on UDP or TCP (RAN), so DNS tunnelling at the slirp level is
+closed. Set Lima's `hostResolver.enabled: false` anyway. The host
+resolver works by a guest iptables DNAT from `192.168.5.3:53` to
+`192.168.5.2:<port>` (host loopback; RAN), which `restrict=on` cuts,
+so with it on every lookup waits for a timeout.
 
 **The proxy.**
 
@@ -473,9 +550,10 @@ QEMU only. DECIDED; after the MVP.**
 
 **Why.** A full copy per sandbox costs gigabytes of disk and the time to
 write them, on every `create`. An overlay stores only the blocks one
-sandbox changes. The companion note's evidence: before Lima v2.0,
-`diffdisk` was a qcow2 overlay on `basedisk`, and a fresh instance used
-about 196 KB.
+sandbox changes. Before Lima v2.0, `diffdisk` was a qcow2 overlay on
+`basedisk`, and a fresh instance used about 196 KB. Measured on Lima
+2.2.1 with method B: 196 KiB after create, 20 MiB after first boot,
+and about 220 MiB after the guest wrote 200 MiB (RAN).
 
 **Why QEMU only.** Only the QEMU driver boots qcow2. `vz` and `krunkit`
 need raw disks, and Lima converts qcow2 to raw for them (READ, the
@@ -484,27 +562,42 @@ keeps the MVP's full copy. QEMU now carries two advantages, D11 and
 D12, and the user's choice on macOS is: `vz` for speed and virtiofs,
 QEMU for the host-side firewall and cheap disks.
 
-**The mechanism** (the companion note's procedure):
+**The mechanism** (the companion note's procedure, method B; RAN on
+Lima 2.2.1, all seven success checks pass):
 
 1. The golden image is a qcow2 file with no backing file, written once
    by `image build` from a builder VM, then made read-only
    (`chmod a-w`) and **never booted again**.
 2. Each sandbox gets
    `qemu-img create -f qcow2 -F qcow2 -b <absolute golden path> <overlay>`.
-   The backing path must be absolute, because Lima copies or moves the
-   file into `~/.lima/<name>/`, where a relative path would no longer
-   resolve.
-3. Attach it by method A or method B:
-   - **Method A** (try first): name the overlay as the instance's
-     `images:` location. This depends on Lima keeping the qcow2 header
-     intact through download, rename and resize (the note's H1–H5).
-   - **Method B** (fallback): `limactl create`, then replace `diffdisk`
-     with the overlay and `qemu-img resize` it to the `disk:` size. This
-     depends only on H4–H6.
+   The backing path must be absolute, so that the overlay resolves
+   from `~/.lima/<name>/`.
+3. Attach it by **method B**: `limactl create` with a **placeholder**
+   image, then replace `~/.lima/<name>/disk` with the overlay. The
+   placeholder is one shared empty qcow2 with no backing file
+   (`qemu-img create -f qcow2 placeholder.qcow2 1G`, 196 KiB), so
+   `create` does not copy the golden file only for us to delete it.
+   Create plus swap took about 80 ms, and the new `disk` was 196 KiB
+   (RAN). At `limactl start`, Lima resizes `disk` to the `disk:` size
+   with `qemu-img resize`, and the backing file stays (RAN). You can
+   also give the overlay its final size at `qemu-img create`.
+   - **Method A is not possible** on Lima v2.2.1. The QEMU driver's
+     `EnsureDisk` calls `AcceptableAsBaseDisk`, which refuses any image
+     with a backing file, a qcow2 external data file, or VMDK extents
+     (READ, `pkg/qemuimgutil/qemuimgutil.go:246-295`). `create` fails
+     with "must not have a backing file" (RAN). The check is
+     deliberate: it closes the CVE-2023-32684 class.
+   - Method B works because Lima checks only at create time. At start,
+     `prepareDisk` reads the virtual size and nothing else (READ,
+     `pkg/instance/start.go:511`). Lima still expects overlays on
+     migrated instances: a legacy `basedisk` "may remain as qcow2
+     backing file" (READ, `filenames.go:43`).
 4. `create` verifies the result:
-   `qemu-img info --backing-chain ~/.lima/<name>/diffdisk` must name the
-   golden file. If it does not, fail the create; do not fall back
-   silently to a flattened disk.
+   `qemu-img info --backing-chain ~/.lima/<name>/disk` must name the
+   golden file, after create and again after the first start. If it
+   does not, fail the create; do not fall back silently to a flattened
+   disk. On a running instance, add `-U` (`--force-share`), or
+   `qemu-img` cannot get the lock.
 
 **What this changes in our design:**
 
@@ -515,34 +608,34 @@ QEMU for the host-side firewall and cheap disks.
   **corrupts every overlay on it**.
 - **`image rm`/`prune` refuse an image that any sandbox's overlay
   names.** Check the state files, or `qemu-img info` on each instance's
-  `diffdisk`.
+  `disk`.
 - **The cache must not move.** The absolute path is baked into every
   overlay. If it ever has to move, use
   `qemu-img rebase -u -b <new path> -F qcow2` on each overlay.
 - **Identity sealing in the golden image is now required, not tidy:**
-  truncate `/etc/machine-id`, remove `/etc/ssh/ssh_host_*`, and run
-  `cloud-init clean` before the image is frozen. Each overlay then gets
-  its own identity at first boot from Lima's per-instance cidata (the
-  note's H6). §5.2 already lists this; D12 makes it a tested
-  requirement.
-- **`status` checks** that a QEMU sandbox's `diffdisk` still names its
+  see §5.2 for the commands (RAN). Each overlay then gets its own
+  machine-id and SSH host keys at first boot from Lima's per-instance
+  cidata (the note's H6, RAN). D12 makes this a tested requirement.
+- **`status` checks** that a QEMU sandbox's `disk` still names its
   golden image, and that the golden file is read-only and unchanged
   (record its checksum at build).
-- **Lima upgrades:** this relies on undocumented Lima internals
-  (`EnsureDisk`). Record the Lima version the overlay path was tested
-  with. `create` warns on a different Lima version until the D12 tests
+- **Lima upgrades:** this relies on undocumented Lima internals: the
+  backing-file check runs at create but not at start. A later Lima can
+  add it to the start path, and method B then fails. Tested with Lima
+  2.2.1. `create` warns on a different Lima version until the D12 tests
   are rerun on it.
-- **Before writing code,** answer the companion note's source questions
-  from Lima's v2 tree (`pkg/driverutil`, `pkg/qemu`, `pkg/downloader`,
-  `pkg/imgutil`). Does the QEMU driver ever call `ConvertToRaw`? Does
-  the downloader accept a local path, and does it copy, clonefile or
-  symlink it? Does Lima inspect or flatten a qcow2 that has a backing
-  file?
+- **Never accept an overlay or a golden image from outside.** Method B
+  goes around Lima's backing-file check. That is safe only because our
+  code makes the overlay and our builder makes the golden image.
+- **The source questions are answered** in the companion note (READ,
+  Lima v2.2.1): the QEMU driver never converts to raw; the downloader
+  copies a local path; Lima rejects a backing file at create and never
+  flattens it.
 
 **Optional, for `vz`:** cheaper full copies. On APFS, `cp -c` makes an
 instant clonefile copy that shares unchanged blocks. On Btrfs or XFS,
 `cp --reflink=always` does the same on Linux. Copying a stopped raw
-golden disk this way into a new instance's `diffdisk` (method B) would
+golden disk this way into a new instance's `disk` (method B) would
 give `vz` sandboxes most of D12's benefit. Not planned; listed for when
 `vz` create time matters.
 
@@ -626,13 +719,22 @@ key.
   `--sudo` sandboxes. For contained sandboxes, bake their apt
   dependencies in, and pre-install Chrome for Testing (about 420 MB), or
   use the install broker (D9).
-- **Identity sealed, as the last step before the builder VM stops:**
-  truncate `/etc/machine-id`, remove `/etc/ssh/ssh_host_*`, and run
-  `cloud-init clean` (VERIFY the flags). Copies and D12 overlays then
-  get their own machine-id and host keys at first boot. The tests check
-  that two sandboxes differ.
-- Export: `qemu-img convert -O qcow2` from the builder's `diffdisk` if
-  it is raw. Then `qemu-img info` must show no backing file.
+- **Identity sealed, as the last step before the builder VM stops**
+  (RAN, cloud-init 26.1):
+  ```bash
+  sudo rm -f /etc/ssh/ssh_host_*
+  sudo cloud-init clean --logs --seed --machine-id
+  ```
+  `--machine-id` writes `uninitialized` to `/etc/machine-id`, and
+  systemd makes a new one at next boot. `cloud-init clean` does **not**
+  remove SSH host keys, so remove them yourself (`--configs
+  ssh_config` removes the sshd config drop-in, not the keys). Copies
+  and D12 overlays then get their own machine-id and host keys at first
+  boot. The tests check that two sandboxes differ. Check the flags
+  again on Debian's cloud-init version.
+- Export: `qemu-img convert -O qcow2` from the builder's `disk` if it
+  is raw. Then `qemu-img info` must show no backing file. On QEMU the
+  builder's `disk` is already qcow2 if the base image was (RAN).
 
 ### 5.3 The per-sandbox Lima template
 
@@ -836,7 +938,6 @@ denies for Gerrit's write tools upstream.
 - the proxy filters by hostname only, so uploads to an allowed host
   remain an exfiltration path. Method and path rules in the proxy are
   the planned fix (D11);
-- DNS through slirp, if `restrict=on` leaves it answering (D11, VERIFY);
 - every in-guest control is advisory: nft, the two-user split, file
   ownership;
 - the guest side of ssh, scp and git is hostile;
@@ -865,7 +966,7 @@ Test counts are READ from `sbx/tests/`.
 | `settings.py`, `refresh_claude_md.py`, `helpers/wmf-sbx-mcp-proxy`, `helpers/wmf-sbx-gateway-tools`, `patches/sbx-claude-md/` | delete | 17 + 12 + 43 |
 | new: `git-remote-wmfsbx`, `image.py`, `template.py`, `lima.py` (a fakeable `limactl` wrapper) | new, MVP | — |
 | new: `helpers/wmf-sbx-qemu` (the D11 wrapper), `proxy.py` (proxy lifecycle, allowlist assembly, guest proxy config) | new, track A | — |
-| new: `disk.py` (overlay create, attach by method A or B, backing-chain verification, in-use checks for `image rm`/`prune`) | new, track B | — |
+| new: `disk.py` (overlay create, attach by method B with a placeholder image, backing-chain verification, in-use checks for `image rm`/`prune`) | new, track B | — |
 
 ## 11. Phases and exit criteria
 
@@ -877,9 +978,11 @@ phase A3. Every sandbox gets a full copy of the golden image (D2).
 0. **Measure** (no code). Exit: results in `sbx/NOTES.md`, and D1, D3–D6
    answered.
    - that a local golden file works as `images: location` (H1 in the
-     companion note), and the time and bytes of a full-copy create on
-     `vz` and on QEMU: the baseline for track B;
-   - **the read-only bypass test** for virtiofs on `vz` and 9p on QEMU;
+     companion note): **done**, works on QEMU (RAN). Still to do: the
+     time and bytes of a full-copy create on `vz` and on QEMU with KVM
+     or HVF, the baseline for track B;
+   - **the read-only bypass test** for virtiofs on `vz` and 9p on QEMU:
+     **9p on QEMU passes** (RAN, D10). virtiofs on `vz` is still to do;
    - that `sudo` fails inside a nono session;
    - `safe.directory` and uid readability on mounts;
    - tty-less binary `limactl shell`;
@@ -919,16 +1022,24 @@ Do them in either order, or in parallel.
 **Track A: `--sudo` (D9 + D11)**
 
 - **A1. Measure D11** (no code). Exit: results in `sbx/NOTES.md`.
+  Mostly **done** on Linux with TCG (RAN; results in D11):
   - Lima's QEMU command line (`ps`): one `-netdev user`, SSH by
-    `hostfwd`;
-  - with `restrict=on` added by hand: SSH, `limactl shell` and 9p still
-    work; nothing Lima needs breaks;
-  - **DNS with `restrict=on` and `hostResolver` off**: does slirp still
-    answer? If yes, find the setting that stops it;
-  - `guestfwd` to a host port carries a `CONNECT` through;
+    `hostfwd`. **Done**: as believed;
+  - with `restrict=on` added: SSH, `limactl shell` and 9p still work;
+    nothing Lima needs breaks. **Done**: all work, and port forwarding
+    too;
+  - **DNS with `restrict=on`**: does slirp still answer? **Done**: no,
+    on UDP or TCP;
+  - `guestfwd` to a host port carries a `CONNECT` through. **Done**:
+    only with the `cmd:` form; the `tcp:` form carries one connection
+    only;
   - `host.lima.internal` and a non-allowlisted host are unreachable,
-    even after `sudo nft flush ruleset` in the guest;
-  - Claude Code works through `HTTPS_PROXY`.
+    even after `sudo nft flush ruleset` in the guest. **Done**:
+    unreachable;
+  - Claude Code works through `HTTPS_PROXY`. **Still to do** (needs a
+    host where the guest may reach the internet);
+  - still to do: the same on macOS with HVF, and a check that the
+    wrapper refuses a `user-v2` network.
 - **A2. Wrapper and proxy:** `helpers/wmf-sbx-qemu`, `proxy.py`, the
   allowlist assembly, the guest proxy config, and `start`/`stop`/`rm`
   managing the proxy. Exit: the `start` probes (§4) pass; the wrapper's
@@ -942,18 +1053,21 @@ Do them in either order, or in parallel.
 
 - **B1. Research and measure** (no code). Answer the companion note's
   source questions from Lima's v2 tree. Run its procedure on Linux and
-  on macOS with `vmType: qemu`, by method A, then method B if A fails.
-  Exit: its seven success checks recorded in `sbx/NOTES.md`, with the
-  Lima, QEMU and host versions and which of H1–H6 held:
+  on macOS with `vmType: qemu`. **Done on Linux with TCG** (READ and
+  RAN; results in the companion note): method A is refused by Lima,
+  method B passes all seven checks, and H1–H4 and H6 held. Still to do:
+  macOS with `vmType: qemu`. Exit: its seven success checks recorded in
+  `sbx/NOTES.md`, with the Lima, QEMU and host versions and which of
+  H1–H6 held:
   - the backing file survives create and start;
-  - a fresh `diffdisk` is MB, not GB;
+  - a fresh `disk` is MB, not GB;
   - the guest boots, and the shell, mounts and SSH work;
   - two overlays run at once;
   - each has its own machine-id and host keys;
   - writes stay in their own overlay, and the golden checksum is
     unchanged;
   - stop, start and delete work, and delete leaves the golden image.
-- **B2. Implement:** `disk.py` with the chosen method; `create`
+- **B2. Implement:** `disk.py` with method B and a placeholder image; `create`
   verifies the backing chain and fails rather than flatten; the
   in-use checks for `image rm`/`prune`; the `status` checks; the
   Lima-version warning. Exit: unit tests with sample `qemu-img info`
@@ -999,33 +1113,35 @@ and their own tests, and the docs say why.
 - a feature request for a supported shared-base-disk option on QEMU (an
   overlay on a named read-only image). Lima v2.0 removed overlays to cut
   differencing I/O, and sharing one basedisk was never implemented
-  (READ, PR #4206 via the companion note). A supported option would
-  replace D12's reliance on undocumented `EnsureDisk` behaviour.
+  (READ, PR #4206 via the companion note). Lima v2.2.1 also refuses a
+  backing file at create, on purpose (READ), so the request must keep
+  that protection: only an image that the user names in the instance
+  config, never one that a downloaded image names. A supported option
+  would replace D12's reliance on the create-only check (method B).
 
 ## 13. Still unverified
 
 These items are listed above; this collects them.
 
-- **Lima:** a local image path as `location` (H1, needed by the MVP);
-  read-only enforcement per mount type; whether the guest
-  agent adds port forwards; tty-less binary `limactl shell`; the
-  `limactl edit` mount flags; one image booting under both drivers.
-- **Lima + QEMU disks (D12, phase B1):** the companion note's H2–H6
-  (header kept on copy, rename not convert on QEMU, resize safe on an
-  overlay, no format check rejects it, a clean boot with a new identity)
-  and its source questions.
-- **Lima + QEMU network (D11, phase A1):** Lima's exact `-netdev user` line and
-  SSH by `hostfwd`; nothing in Lima needing outbound routing; the
-  `--version` probe through the wrapper; slirp DNS under `restrict=on`;
-  `guestfwd` to a host TCP port; the full `restrict` wording in QEMU's
-  docs.
+- **Lima:** read-only enforcement for virtiofs on `vz` (9p on QEMU
+  passes, RAN); whether the guest agent adds port forwards; tty-less
+  binary `limactl shell`; the `limactl edit` mount flags; one image
+  booting under both drivers.
+- **Lima + QEMU disks (D12, phase B1):** method B on macOS with
+  `vmType: qemu`, and on KVM or HVF for real times. On Linux with TCG,
+  H1–H4 and H6 held, H5 failed (method A refused), and the source
+  questions are answered (RAN, READ).
+- **Lima + QEMU network (D11, phase A1):** the same tests on macOS with
+  HVF; the wrapper's refusal of a `user-v2` network. On Linux with TCG
+  the rest is done (RAN).
 - **Claude Code:** works through `HTTPS_PROXY`.
 - **nono:** chaining to an upstream proxy (only if contained mode ever
   uses D11).
 - **nono:** that `sudo` fails inside a session; `extends` by path; bind
   for `composer serve`.
 - **Claude Code:** `setup-token` and refresh-token rotation.
-- **cloud-init:** the `clean` flags.
+- **cloud-init:** the `clean` flags on Debian's version (RAN on
+  Ubuntu's cloud-init 26.1, §5.2).
 - **Other:** Chrome headless under nono; `uploadpack.packObjectsHook`
   ignored on the guest's git; host `git maintenance` and alternates.
 
@@ -1038,6 +1154,9 @@ Sources consulted:
   issue #2580.
 - Lima: network overview, user-v2 and VMNet pages (no egress
   controls); environment-variables page (`QEMU_SYSTEM_*`).
+- Lima v2.2.1 source (commit `27bc4c4b`): `pkg/driver/qemu`,
+  `pkg/driverutil`, `pkg/qemuimgutil`, `pkg/downloader`,
+  `pkg/instance`, `pkg/limatype/filenames`.
 - QEMU: bug #1696746 (quotes the `-netdev user,restrict=on`
   documentation); the system invocation page.
 - CVE-2023-32684 (osv.dev).

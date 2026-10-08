@@ -934,6 +934,59 @@ for d in "$REPO_ROOT"/skills/*/; do
 done
 
 echo ""
+echo "--- wmf-claude-setup: config.json helpers ---"
+# Load only config_get and config_set: the rest of the script installs
+# things. Point HOME at a temporary directory.
+CFG_HOME="$(mktemp -d)"
+cfg_fns="$(awk '/^config_get\(\) \{/,/^}/; /^config_set\(\) \{/,/^}/' "$REPO_ROOT/bin/wmf-claude-setup")"
+cfg() {
+  HOME="$CFG_HOME" bash -c "
+    source '$REPO_ROOT/bin/lib-output.sh'
+    WMF_CLAUDE_CONFIG_DIR=\"\$HOME/.config/wmf-claude\"
+    WMF_CLAUDE_CONFIG=\"\$WMF_CLAUDE_CONFIG_DIR/config.json\"
+    $cfg_fns
+    \"\$@\"" cfg "$@"
+}
+CFG_FILE="$CFG_HOME/.config/wmf-claude/config.json"
+if [[ -z "$(cfg config_get phabricatorUsername)" ]]; then
+  pass "config_get prints nothing when there is no config file"
+else
+  fail "config_get printed a value with no config file"
+fi
+if cfg config_set phabricatorUsername alice >/dev/null \
+   && [[ "$(cfg config_get phabricatorUsername)" == "alice" ]]; then
+  pass "config_set stores a value that config_get reads back"
+else
+  fail "config_set/config_get round trip failed"
+fi
+printf '{"other": 1, "phabricatorUsername": "alice"}' >"$CFG_FILE"
+if cfg config_set phabricatorUsername bob >/dev/null \
+   && [[ "$(jq -c . "$CFG_FILE")" == '{"other":1,"phabricatorUsername":"bob"}' ]]; then
+  pass "config_set keeps the other keys"
+else
+  fail "config_set dropped or changed other keys: $(cat "$CFG_FILE")"
+fi
+printf 'not json' >"$CFG_FILE"
+if ! cfg config_set phabricatorUsername carol >/dev/null \
+   && [[ "$(cat "$CFG_FILE")" == "not json" ]]; then
+  pass "config_set does not write over a file that is not valid JSON"
+else
+  fail "config_set wrote over an invalid JSON file"
+fi
+if [[ -z "$(cfg config_get phabricatorUsername)" ]]; then
+  pass "config_get prints nothing for a file that is not valid JSON"
+else
+  fail "config_get printed a value from an invalid JSON file"
+fi
+printf '{"phabricatorUsername": 42}' >"$CFG_FILE"
+if [[ -z "$(cfg config_get phabricatorUsername)" ]]; then
+  pass "config_get ignores a value that is not a string"
+else
+  fail "config_get printed a value that is not a string"
+fi
+rm -rf "$CFG_HOME"
+
+echo ""
 echo "--- bin/claude update prompt ---"
 # The prompt only fires on a tty, so these drive bin/claude through a real pty.
 # What matters is not the happy path but the guards: an install on a feature

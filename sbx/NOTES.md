@@ -9251,6 +9251,91 @@ shortcut. Full transcript: `responses38.txt`. Results:
   actual copy, and the immediately following `exec ... test -f &&
   echo copied` printed `copied` on the first try.
 
+## 104. Rebase onto upstream 0.78 main, and the upstream MRs — host-verified, MRs OPEN **[2026-10-08]**
+
+`work/cscott/sbx` is rebased onto upstream `main` 10aefc1 (nono 0.78),
+following `HANDOFF.md` (in cananian's checkout, not committed). The
+pre-rebase tip is kept as `work/cscott/sbx-pre-rebase` (f312704).
+Host-verified: the unit suite (1027 OK, `responses43.txt` and later),
+`tests/test-templates.sh`, both SessionStart diffs, the kit domains read
+from the 0.78 profile, and HANDOFF §5's live sandbox check.
+`tests/test-profile.sh` fails on the host on both trees for a reason
+outside this branch: nono refuses the profile with "Landlock deny-overlap
+is not enforceable on Linux", because the deny on
+`~/.cargo/credentials(.toml)` sits under the `~/.cargo` allow of
+`group:rust_runtime`. That is upstream's to fix (a #WMF-Claude task).
+
+### 104.1 The upstream merge requests
+
+The backend-neutral parts of the branch went upstream as three MRs, each
+cut from upstream `main` 10aefc1, with no `sbx/` files. The source
+branches are in cananian's fork; the same commits are in the sandbox
+clone as `mr/*`.
+
+| MR | Source branch | Commits | What |
+|---|---|---|---|
+| [!132](https://gitlab.wikimedia.org/repos/product-safety-and-integrity/wmf-claude/-/merge_requests/132) | `session-start-seam` | 9d6ba6f, 7fbd0bd | HANDOFF MR A + B: `standalone-vuln-audit` in `package.json` and the hook, the three-way skill-list test; then the SessionStart backend seam, `hooks/context/nono/`, the byte-identical fixtures |
+| [!131](https://gitlab.wikimedia.org/repos/product-safety-and-integrity/wmf-claude/-/merge_requests/131) | `setup-config` | 94f6f15 | HANDOFF MR C: the Phabricator username in `~/.config/wmf-claude/config.json` |
+| [!130](https://gitlab.wikimedia.org/repos/product-safety-and-integrity/wmf-claude/-/merge_requests/130) | `run-tests-entrypoint` | 7f61e7e | HANDOFF MR D: `composer phpunit:entrypoint` in `run-tests` |
+
+Check their status (read-only, works from a sandbox):
+
+```bash
+P='https://gitlab.wikimedia.org/api/v4/projects/repos%2Fproduct-safety-and-integrity%2Fwmf-claude'
+for m in 130 131 132; do
+  curl -s "$P/merge_requests/$m" \
+    | jq -r '"!\(.iid) \(.state) \(.merge_commit_sha // .squash_commit_sha // "-") \(.title)"'
+done
+```
+
+The MR versions differ from what the branch carries:
+
+- **!132 has no `WMF_CLAUDE_DOCKER_MODE`.** It could not be justified
+  upstream without sbx, and sbx does not need it: the kit leaves it
+  unset, and with no broker URL the hook already emits no `mwdocker`
+  block. The branch's `session-start.sh` still has the
+  `broker|native|none` switch and its tests.
+- **!132 checks the backend name** against `^[a-z0-9][a-z0-9_-]*$`, so
+  that it cannot select a file outside `hooks/context/`. `sbx` passes.
+  Its header comments are rewritten in STE.
+- **!131 writes to `$HOME/.config/wmf-claude`**, not
+  `$XDG_CONFIG_HOME/wmf-claude`, to match the rest of the repo (the
+  sandboxed agent cannot write there). It adds six tests of
+  `config_get`/`config_set` in `tests/test-templates.sh`. Its comments
+  are rewritten in STE.
+- **!130 is the plugin patch applied unchanged.** It was not run
+  against a live wiki: in the wmf-claude sandbox, core's skins are
+  symlinks to host paths that are not mounted, so `phpunit:config`
+  fails before PHPUnit starts.
+
+### 104.2 What to do when each one merges
+
+Rebase `work/cscott/sbx` onto the new upstream `main`. Per MR:
+
+- **!132:** take upstream's `bin/session-start.sh`,
+  `hooks/context/nono/*`, `tests/fixtures/session-start/*`, and the
+  seam and skill-list sections of `tests/test-templates.sh`; drop the
+  branch's versions. Then decide about `WMF_CLAUDE_DOCKER_MODE`: the
+  simplest course is to drop it from the branch too (and the `native`
+  tests, and its sentence in `CLAUDE.md`), since nothing sets it. Keep
+  `sbx/plugin-overlay/hooks/context/sbx/`. Re-check that a kit hook
+  still prints "sandboxed by sbx" and none of nono's GET-only,
+  `--allow-post` or `--local-db` text
+  (`PluginTreeTests.test_the_shipped_hook_speaks_for_the_sbx_backend`).
+- **!131:** take upstream's `bin/wmf-claude-setup` and README
+  paragraph; drop 18dcfc7's versions.
+- **!130:** **delete
+  `sbx/patches/plugin/01-run-tests-composer-entrypoint.patch` in the
+  same rebase.** Once upstream has the change, the patch no longer
+  applies and the kit build fails. Update `sbx/upstream/README.md`'s
+  MR D line and `sbx/DESIGN-testing-instructions.md` §2.1 to say it
+  landed.
+
+If a reviewer asks for changes, amend the `mr/*` commit (or the fork
+branch), not `work/cscott/sbx`; the branch picks the result up at the
+rebase. After all three merge, the only non-`sbx/` diffs left against
+upstream should be `SECURITY.md`'s pointer paragraph and `.gitignore`.
+
 ## Still to do
 
 - [x] Implement `sbx/DESIGN-setup-steps.md` — everything after the
@@ -10721,3 +10806,5 @@ shortcut. Full transcript: `responses38.txt`. Results:
 - [ ] Store the user's model preference persistently.
 - [ ] Right now the first time we --resume we get a "update installed,
       restart to update" message from claude.  Fix that.
+- [ ] **Follow the upstream MRs** (§104): !130, !131, !132. Check their
+      state with §104.1's loop; rebase per §104.2 as each one merges.

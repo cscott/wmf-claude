@@ -3,6 +3,8 @@
   python3 -m unittest discover -s sbx/tests -v
 """
 
+import contextlib
+import io
 import json
 import os
 import re
@@ -52,6 +54,51 @@ class WikiFamilyDomainsTests(unittest.TestCase):
                 k.wiki_family_domains(path),
                 ["*.mediawiki.org", "*.wikinews.org", "*.wikipedia.org", "*.wiktionary.org"],
             )
+
+    def test_reads_the_domain_of_endpoint_scoped_entries(self):
+        # The profile scopes the wiki families and most Wikimedia hosts to
+        # GET/HEAD with {domain, endpoints} objects. sbx has no endpoint
+        # rules, so the kit takes the host whole.
+        get = [{"method": "GET", "path": "/**"}]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write_profile(tmp, [
+                "gerrit.wikimedia.org",
+                {"domain": "*.wikipedia.org", "endpoints": get},
+                {"domain": "phabricator.wikimedia.org", "endpoints": get},
+                {"domain": "phab.wmfusercontent.org", "endpoints": get},
+                {"domain": "docs.python.org", "endpoints": get},
+                {"domain": "codesearch.wmcloud.org", "endpoints": get},
+                {"endpoints": get},
+            ])
+            self.assertEqual(
+                k.wiki_family_domains(path),
+                ["*.wikipedia.org", "gerrit.wikimedia.org",
+                 "phab.wmfusercontent.org", "phabricator.wikimedia.org"],
+            )
+
+    def test_a_profile_with_no_wikimedia_host_falls_back(self):
+        # An empty result would leave the sandbox with no wikis and no
+        # Gerrit, and no test of the kit spec would notice.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write_profile(tmp, ["api.anthropic.com"])
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                domains = k.wiki_family_domains(path)
+            self.assertIn("gerrit.wikimedia.org", domains)
+            self.assertIn("*.wikipedia.org", domains)
+            self.assertIn("no Wikimedia host", err.getvalue())
+
+    def test_the_real_profile_gives_the_wikis_and_gerrit(self):
+        # The other tests use fixture profiles, so a change in the shape of
+        # profiles/wmf-engineer.json passed them all once, while the kit
+        # lost every wiki. Read the real file, with no fallback.
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            domains = k.wiki_family_domains()
+        self.assertEqual(err.getvalue(), "")
+        for host in ("gerrit.wikimedia.org", "*.wikipedia.org",
+                     "*.mediawiki.org", "phabricator.wikimedia.org",
+                     "gitlab.wikimedia.org", "doc.wikimedia.org"):
+            self.assertIn(host, domains)
+        self.assertNotIn("api.anthropic.com", domains)
 
     def test_missing_profile_falls_back(self):
         domains = k.wiki_family_domains("/nonexistent/profile.json")
@@ -614,6 +661,12 @@ class PluginTreeTests(unittest.TestCase):
             # The environment bullets come from the same backend directory.
             self.assertIn("composer serve", done.stdout)
             self.assertNotIn("no sandbox context", done.stderr)
+            # Nor any nono-only claim: method rules, launcher flags, or MCP
+            # servers the kit does not register.
+            for nono_only in ("read-only (GET/HEAD)", "--allow-post",
+                              "--local-db", "bin/claude --local-web",
+                              "mcp__gitlab__", "wmf-engineer profile"):
+                self.assertNotIn(nono_only, done.stdout)
 
     def test_a_version_bump_that_misses_the_wiring_is_caught_here(self):
         # installed-plugin.json spells the version out and has no $VERSION
@@ -925,9 +978,11 @@ class SettingsPatchTests(unittest.TestCase):
         # engineer may well read.
         self.assertEqual(set(patch["permissions"]), {"deny"})
         self.assertNotIn("sandbox", patch)
-        # A single-slash absolute pattern matches nothing (§6 Q5).
+        # A single-slash absolute path pattern matches nothing (§6 Q5).
+        # Only file rules take a path: `Bash(/usr/bin/security:*)` is a
+        # command, and its single slash is correct.
         for rule in deny:
-            self.assertNotRegex(rule, r"\(/[^/]")
+            self.assertNotRegex(rule, r"^(?:Read|Edit|Write)\(/[^/]")
 
     def test_no_rule_is_spelled_in_a_way_claude_code_skips(self):
         """A rejected rule is skipped, not enforced -- §70.

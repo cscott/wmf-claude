@@ -1,16 +1,16 @@
-Title: wmf-claude: The `find -exec` deny rules in settings-merge.json never apply, and the `Write(...)` denies are dead
+Title: wmf-claude: The "Linux glob caveat" may be stale: `Read` glob denies fired on Linux under Claude Code 2.1.269
 
 ## Summary
 
-`wiring/settings-merge.json` spells its `find` rules `Bash(find:* -exec*)`. Claude Code rejects that form ("the `:*` pattern must be at the end") and skips a rejected rule, so `find -exec`, `-execdir`, `-delete`, `-ok`, `-okdir` and `-fprint` are denied in no backend, and the eight `find:* -…` allow rules do not match either. Separately, the eight `Write(...)` deny rules are never consulted, because `Edit(path)` is the rule that covers every file-editing tool; Claude Code says so on stderr at every startup.
+`docs/security-rationale.md` ("Linux glob caveat") says Claude Code ignores glob patterns in `Read` and `Edit` rules on Linux, and `bin/wmf-claude-setup` warns about it on every Linux install. On Claude Code 2.1.269 on Linux, `Read(**/*.pem)` and `Read(**/*.env)` did deny a Read of `deep/nested/secret.pem` and of `sample.env`. If the caveat no longer holds, the document and the warning understate what the tool layer does on Linux.
 
 ## Technical notes
 
-`:*` is a prefix match and may only end a pattern. The spelling that matches is `Bash(find *-exec*)`: it catches `find . -exec …` and the path-less `find -exec …`, and leaves `find . -name …` allowed. Measured against Claude Code 2.1.269. The `Edit(...)` denies on the same paths stay, and they already cover the Write tool, so removing the `Write(...)` lines removes no protection.
+Measured in an sbx sandbox (`sbx/NOTES.md` §70.4) with the deny list of the time, which used the relative `**/` form. Upstream `main` now uses the absolute `//**/` form (`Read(//**/*.pem)`, `Edit(//**/.env*)`, …), which was not measured. Upstream's text quotes a startup warning ("On Linux, glob patterns in Edit/Read rules will be ignored"), so some Claude Code version prints it. Re-measure on the current Claude Code, with the shipped `wiring/settings-merge.json`, before filing: check whether the warning still prints, and whether a Read and an Edit of a nested `.pem` and `.env` are denied.
 
-The attached patch (PHAB-ATTACHMENT-4.patch, against `main`) fixes the 14 `find` rules, removes the 8 `Write(...)` rules, and updates `SECURITY.md` to match. It also rewrites the "Linux caveat" paragraph: under 2.1.269 on Linux, `Read(**/*.pem)` and `Read(**/*.env)` do deny `deep/nested/secret.pem` and `sample.env`, so the glob rules now fire there. `bin/wmf-claude-setup` still prints the Linux warning; whether to keep it is a separate decision.
+The `find -exec` and `Write(...)` parts of the original task are fixed upstream and are not part of this one.
 
 ## Acceptance criteria
 
-- [ ] With the shipped settings, `find . -exec true \;` is denied and `find . -name x` is allowed, and Claude Code prints no "pattern must be at the end" or "`Write(...)` is not matched" warnings at startup.
-- [ ] `SECURITY.md` describes the rules as they are.
+- [ ] `docs/security-rationale.md` states which Claude Code versions ignore `Read`/`Edit` globs on Linux, as measured.
+- [ ] `bin/wmf-claude-setup` prints its Linux warning only if the measurement still supports it.

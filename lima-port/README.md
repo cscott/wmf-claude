@@ -98,6 +98,31 @@ sbx microVM. So phases 0, A1 and B1 (the measurements on real VMs) run on
 the host. Write the exact commands for the engineer to run, and ask them
 to paste the output back.
 
+Measured in `wmf-claude-sbx` on 2026-10-08 (Ubuntu 26.04 guest, kernel
+7.0.12, 16 vCPU):
+
+- No `/dev/kvm`, and no `vmx`/`svm` CPU flag (only `hypervisor`). The sbx
+  microVM does not expose nested virtualisation, so KVM is not possible.
+  `qemu-system-x86_64 -accel kvm` fails with "Could not access KVM kernel
+  module".
+- QEMU 10.2.1 (apt) with `-accel tcg` works. An Ubuntu 7.0 kernel with a
+  busybox initramfs reaches userspace in about 4 s of wall-clock time.
+  CPU-bound work is about 21 times slower than native (a 2 GB sha256: 30 s
+  in the guest, 1.4 s native). Expect a full Lima Ubuntu boot (systemd,
+  cloud-init) to take minutes, not seconds.
+- Lima 2.2.1 (GitHub release tarball) installs and runs. Two blocks:
+  `LIMA_HOME` must be short, because the socket path must be less than
+  108 characters (the scratchpad path is too long; `/tmp/lh` works); and
+  the network policy blocks `cloud-images.ubuntu.com`, so `limactl start
+  template:default` cannot download its image. Lima did not refuse to
+  start because KVM was missing before it stopped on the download; that
+  it falls back to TCG is not yet confirmed.
+
+So a TCG-only smoke test of `lima.py` against real `limactl` is possible
+here, if the engineer allows `cloud-images.ubuntu.com`. Timing and
+performance measurements (phases 0, A1, B1) are not: TCG numbers say
+nothing about KVM.
+
 It can do the code work: the new modules with a fake `limactl` in the
 unit tests, the rebase onto !127, and the sbx test suite
 (`python3 -m unittest discover -s sbx/tests`). Keep the tests hermetic:

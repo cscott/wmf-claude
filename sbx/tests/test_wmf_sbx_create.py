@@ -33,22 +33,25 @@ def patch_offline(testcase):
     testcase.addCleanup(patcher.stop)
 
 
-def patch_host_probes(testcase, settings=True):
+def patch_host_probes(testcase, settings=True, skills=True):
     """No main() test may read the state of the host it runs on. main()
-    runs `wmf-sbx settings list` and the host MCP preflight, and both
-    call real programs. In a sandbox there is no `sbx`, so both are
-    skipped. On a host they read the real daemon, the built submodules
-    and the `node` on PATH, and a node below the floor stops the create.
-    Stub the MCP preflight to "no servers". Stub the settings read to
-    "could not read" too, unless `settings` is False because the test
-    gives main() a `run` that answers it."""
-    patcher = mock.patch.object(
-        c, "ensure_host_mcp_servers", lambda **kw: [])
-    patcher.start()
-    testcase.addCleanup(patcher.stop)
+    runs `wmf-sbx settings list`, `sbx create --help` and the host MCP
+    preflight, and all three call real programs. In a sandbox there is no
+    `sbx`, so they get no answer. On a host they read the real daemon,
+    the built submodules and the `node` on PATH, and a node below the
+    floor stops the create. Stub the MCP preflight to "no servers". Stub
+    the settings read to "could not read", and the skills probe to the
+    flag that current sbx takes. Set `settings` or `skills` to False when
+    the test gives main() a `run` that answers that call."""
+    patchers = [mock.patch.object(
+        c, "ensure_host_mcp_servers", lambda **kw: [])]
     if settings:
-        patcher = mock.patch.object(
-            c.settings_mod, "read_settings", lambda *a, **kw: None)
+        patchers.append(mock.patch.object(
+            c.settings_mod, "read_settings", lambda *a, **kw: None))
+    if skills:
+        patchers.append(mock.patch.object(
+            c, "supported_skills_flag", lambda **kw: "--skills=off"))
+    for patcher in patchers:
         patcher.start()
         testcase.addCleanup(patcher.stop)
 
@@ -1614,7 +1617,7 @@ class MainDryRunTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn(f"{skins_dir} -> {skins_dir} (raw path)", err)
         tail = err.rsplit("sbx create", 1)[-1]
-        self.assertRegex(tail, r"--name sbx-cite claude")
+        self.assertRegex(tail, r"--name sbx-cite --skills=off claude")
         self.assertNotIn(" -p ", tail)
         # Every extra is mounted ':ro' whether or not the user asked for it;
         # the suffix only selects the parallel-tree strategy, and this one
@@ -1921,7 +1924,7 @@ class MainRunTests(unittest.TestCase):
             )
         os.makedirs(os.path.join(self.tmp.name, "Cite"))  # pre-existing checkout
         patch_offline(self)
-        patch_host_probes(self, settings=False)
+        patch_host_probes(self, settings=False, skills=False)
         # main() now touches durable host state (wmf_sbx_state) and, via
         # the opportunistic prune, real `.git/config` files. Point the
         # state directory at a tempdir so these tests can never reach the

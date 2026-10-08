@@ -2,36 +2,64 @@
 # SessionStart hook for the wmf-claude plugin.
 # stdout from this hook is added as context for Claude (per Claude Code docs),
 # so use it to remind the model about the available skills, agents, and the
-# nono sandbox boundary it's running inside.
+# sandbox boundary it's running inside.
+#
+# Some bullets are true only for one sandbox backend. A wrong SessionStart
+# block is worse than a missing one: the model then believes false things
+# about its own environment. Thus the backend bullets are not in this script.
+# They are in hooks/context/<backend>/:
+#
+#   sandbox.txt      what enforces the boundary, and what to do when it stops you
+#   environment.txt  which MCP servers exist, and how to test a local wiki
+#
+# WMF_CLAUDE_SANDBOX_BACKEND selects the directory. The default is `nono`.
+# The nono files hold the text that this script had inline, so the default
+# output does not change. For an unknown backend, the hook emits neither
+# file and writes a warning to stderr. It does not fall back to text about a
+# different sandbox.
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONTEXT_DIR="$SCRIPT_DIR/../hooks/context"
+
+BACKEND="${WMF_CLAUDE_SANDBOX_BACKEND:-nono}"
+
+# Emit one backend context file. If the file is not there, emit nothing and
+# write a warning to stderr. The engineer sees stderr; the model does not read
+# it as context. A backend name is one path segment, so that it cannot select
+# a file outside hooks/context/.
+emit_context() {
+  local name="$1" file="$CONTEXT_DIR/$BACKEND/$1.txt"
+  if [[ "$BACKEND" =~ ^[a-z0-9][a-z0-9_-]*$ && -r "$file" ]]; then
+    cat "$file"
+  else
+    echo "wmf-claude session-start: no $name context for backend '$BACKEND'" \
+         "(expected $file); omitting that block" >&2
+  fi
+}
+
 cat <<'CONTEXT'
 You are running inside the wmf-claude environment for Wikimedia Foundation engineering work:
 
-- The session is sandboxed by nono (OS-level enforcement). Network, filesystem, and process access is restricted to the wmf-engineer profile. Do not suggest workarounds to escape the sandbox; if a path or domain is denied, surface that to the user.
-- Outbound HTTP is read-only (GET/HEAD) for the wikis, Wikimedia subdomains, codesearch, and docs sites: a POST, PUT, or DELETE there gets a `403` from the nono proxy. So does any URL path with `%2F`, `%25`, or `;`, even on GET (put such titles in the query string, e.g. `api.php?titles=AC/DC`). Only `gerrit.wikimedia.org`, the Anthropic hosts, and the local wiki accept all methods. If a task really needs POST to a read-only host, ask the engineer to relaunch with `bin/claude --allow-post=HOST`; do not work around it.
+CONTEXT
+
+emit_context sandbox
+
+cat <<'CONTEXT'
 - The wmf-claude Claude Code plugin is loaded. Available namespaced skills include /wmf-claude:write-commit-msg, /wmf-claude:stage-hunks, /wmf-claude:write-phab-task, /wmf-claude:review-patch, /wmf-claude:vuln-audit, /wmf-claude:standalone-vuln-audit, /wmf-claude:init-project, /wmf-claude:check-nono-update, /wmf-claude:trace-prod-route, and (for MediaWiki repos) /wmf-claude:run-tests, /wmf-claude:test-coverage, /wmf-claude:lint, /wmf-claude:manual-test, /wmf-claude:compare-rebase, /wmf-claude:perf-audit. Agents include gerrit-reviewer, jupyter-notebook, mediawiki-dev, mediawiki-explore, test-writer.
 - Questions about wmf-claude go to #ai-coding in Wikimedia Slack (https://wikimedia.enterprise.slack.com/archives/C0ATKE72JG6); bugs and feature requests go to the #WMF-Claude workboard (https://phabricator.wikimedia.org/tag/wmf-claude/). If a wmf-claude bug blocks the engineer, point them at the workboard. When a repo has no CLAUDE.md, suggest /wmf-claude:init-project to bootstrap one.
-- Phabricator, Gerrit, and GitLab MCP servers are registered. Prefer mcp__phabricator__phabricator_get_task to verify Bug: references in commit messages, and mcp__gerrit__get_commit_message to preserve Change-Id when amending Gerrit-pushed commits. Use the mcp__gitlab__* tools to read gitlab.wikimedia.org merge requests, comments, diffs, and files.
-- Verifying a change against the local wiki is tiered to save context. Prefer Tier 1 first: curl + `/w/api.php` for HTTP status, redirects, rendered HTML, and API responses. It loads no MCP and its output is discardable. Tier 1 needs the session launched with `bin/claude --local-web` (opens localhost web ports; a plain session can't reach the wiki at all). Escalate to the chrome-devtools MCP only for pixels, the accessibility tree, console errors, network traces, or real interaction. See /wmf-claude:manual-test for the full ladder.
-- The local MariaDB port is closed unless the session was launched with `bin/claude --local-db`. A `DBConnectionError` or "database overloaded" in a plain session means exactly that: ask the engineer to relaunch with `--local-db`; do not debug LocalSettings or the wiki.
-- chrome-devtools MCP is opt-in per session. The points below only apply when the engineer launched with `bin/claude --chrome` (mcp__chrome-devtools__* tools present); plain `bin/claude` sessions can ignore them.
-  - Prefer the chrome-devtools MCP tools over Bash(playwright)/Bash(agent-browser) when they're present.
 CONTEXT
-# Where the browser runs: on the host, Chrome started by the engineer; in a
-# Lima VM, a headless Chromium that bin/claude-vm started for the session
-# (lima/guest-claude.sh sets WMF_CLAUDE_CHROME_IN_VM), kept to loopback.
-if [[ -n "${WMF_CLAUDE_CHROME_IN_VM:-}" ]]; then
-  cat <<'CONTEXT'
-  - The MCP attaches to a headless Chromium that `claude-vm claude NAME --chrome` started inside the VM for this session, as its own user; it stops with the session. If the MCP cannot connect, tell the engineer to restart the session with `--chrome` and read the browser log it prints.
-  - CDP on 127.0.0.1:9222 is unauthenticated. Any credentials submitted via fill_form / evaluate_script are exposed to other local processes — use throwaway dev-wiki accounts only.
-  - The browser reaches loopback only: the guest firewall rejects everything else, so it shows the local wiki and nothing outside the VM. An external URL fails by design; do not retry it or look for a way around it.
-CONTEXT
-else
-  cat <<'CONTEXT'
-  - The MCP attaches to a Chrome started outside the sandbox by `bin/launch-test-chrome` (Chrome can't run inside — IOKit denied). If the engineer hasn't started it, the MCP will fail to connect — tell them to run `bin/launch-test-chrome` in another terminal.
-  - CDP on 127.0.0.1:9222 is unauthenticated. Any credentials submitted via fill_form / evaluate_script are exposed to other local processes — use throwaway dev-wiki accounts only.
-  - The attached Chrome's network is NOT restricted by nono. Only navigate to URLs the engineer has explicitly authorized (their local wiki, Wikimedia domains) — never arbitrary external sites, and don't issue outbound fetch() calls via evaluate_script either.
-CONTEXT
-fi
+
+emit_context environment
+
+# Where the browser runs, for a backend that has a browser block: on the
+# host, Chrome started by the engineer (chrome.txt); in a Lima VM, a headless
+# Chromium that bin/claude-vm started for the session (chrome-vm.txt;
+# lima/guest-claude.sh sets WMF_CLAUDE_CHROME_IN_VM), kept to loopback.
+chrome=chrome
+[[ -n "${WMF_CLAUDE_CHROME_IN_VM:-}" ]] && chrome=chrome-vm
+[[ -r "$CONTEXT_DIR/$BACKEND/$chrome.txt" ]] && emit_context "$chrome"
+
 cat <<'CONTEXT'
 - `git add -p` and other interactive git commands cannot work as the Bash tool has no TTY on stdin, so their hunk loops read EOF and abort having staged nothing. To reorganise code into atomic commits, never use destructive commands like `git reset --hard` or `git clean`, and never re-type changes from memory to rebuild them as that discards reviewed, tested work. Stage arbitrary hunks non-destructively with a `git diff` → edit the patch → `git apply --cached` round-trip, to only touch the index and leave the working tree intact. See /wmf-claude:stage-hunks for the full recipe.
 - Wikimedia commit-message convention: subject is "component: Subject"; trailers in order are Assisted-by:, Bug:, Change-Id: (added by the Gerrit commit-msg hook). The Assisted-by: trailer uses Linux-kernel short form — just the model name, e.g. "Assisted-by: Claude Opus 4.7". No email angle brackets, no "(1M context)" or other parentheticals. Do not use Co-Authored-By: in commit bodies for Wikimedia repos.

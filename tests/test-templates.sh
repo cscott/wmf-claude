@@ -856,6 +856,24 @@ else
 fi
 
 echo ""
+echo "--- skill list consistency ---"
+# The skill list lives in three places (skills/, package.json artifacts, and
+# the session-start hook). It has drifted before. Assert all three agree.
+hook_out="$(bash "$REPO_ROOT/bin/session-start.sh" 2>/dev/null)"
+for d in "$REPO_ROOT"/skills/*/; do
+  name="$(basename "$d")"
+  [[ -f "$d/SKILL.md" ]] || continue
+  listed=1
+  jq -e --arg p "skills/$name/SKILL.md" \
+     'any(.artifacts[]; .path == $p)' "$REPO_ROOT/package.json" >/dev/null || listed=0
+  if [[ "$listed" == 1 ]] && grep -q "/wmf-claude:$name" <<<"$hook_out"; then
+    pass "skill listed in package.json and session-start: $name"
+  else
+    fail "skill missing from package.json artifacts or session-start: $name"
+  fi
+done
+
+echo ""
 echo "--- bin/claude update prompt ---"
 # The prompt only fires on a tty, so these drive bin/claude through a real pty.
 # What matters is not the happy path but the guards: an install on a feature

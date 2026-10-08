@@ -41,7 +41,7 @@ Two artifacts in one tree:
 
 ## Gotchas
 
-- **Skill list lives in three places**: `skills/<name>/`, `package.json` `artifacts`, and `bin/session-start.sh`. Keep all three in sync when adding or removing a skill.
+- **Skill list lives in three places**: `skills/<name>/`, `package.json` `artifacts`, and `bin/session-start.sh`. Keep all three in sync when adding or removing a skill — `tests/test-templates.sh` asserts they agree.
 - **Don't deny the keychain Mach services or exclude `claude_code_macos`.** Claude Code logs in through the keychain; denying breaks `/login`. A closure attempt is recorded in `docs/security-rationale.md#keychain-access` — read it before retrying.
 - **The tool layer is applied per launch, never installed.** `bin/claude` passes `--settings <repo>/wiring/settings-merge.json` to the sandboxed Claude Code (`SETTINGS_CLAUDE_ARGS`). Nothing writes `~/.claude/settings.json` — deliberately, so the denies bind wmf-claude sessions and leave the engineer's other Claude Code sessions alone. `package.json` deliberately does **not** declare it as a `json_merge` wiring directive any more (a test asserts this): a pack install would otherwise put the rules into the engineer's global settings, which per-launch replaced. A future pack needs `bin/claude` to be the launcher, not a settings merge.
 - **Two layers of permission control.** The nono profile (`profiles/wmf-engineer.json`) is OS-level; `wiring/settings-merge.json` adds Claude-Code-tool-level denies, applied per launch by `bin/claude` via `--settings` (e.g. `Bash(ssh:*)`, `Read(**/*.pem)`, `Edit(~/.claude/**)`). When changing one, consider whether the other should change too.

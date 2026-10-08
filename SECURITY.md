@@ -1,5 +1,13 @@
 # Security model
 
+**This document is about the nono backend** — `bin/claude`,
+`profiles/wmf-engineer.json`, `wiring/settings-merge.json` — which is what
+`setup.sh` installs and what WMF engineers run today. The in-progress
+Docker Sandboxes (`sbx`) backend under `sbx/` has a **separate** threat
+model in `sbx/SECURITY.md`. The guarantees differ on every axis —
+filesystem, root, network, SSH — and merging the two would leave a reader
+unsure which set they have. Do not read a claim here as applying there.
+
 **The short version:** Claude Code runs under a kernel-enforced sandbox —
 Seatbelt on macOS, Landlock on Linux. It reads and writes the directory you
 launched it from, talks to Wikimedia sites and the Claude API, and little else.

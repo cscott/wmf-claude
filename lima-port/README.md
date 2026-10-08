@@ -98,6 +98,12 @@ sbx microVM. So phases 0, A1 and B1 (the measurements on real VMs) run on
 the host. Write the exact commands for the engineer to run, and ask them
 to paste the output back.
 
+Most of A1 and B1 already ran on 2026-10-08, in a cloud session that
+could run Lima on QEMU (Linux, no KVM). The results are in both task
+documents, marked **RAN** and **READ**, and the items still to do (for
+example macOS, `vz`, and Claude Code through the proxy) are marked in
+§11 and §13 of `HANDOFF-LIMA.md`.
+
 It can do the code work: the new modules with a fake `limactl` in the
 unit tests, the rebase onto !127, and the sbx test suite
 (`python3 -m unittest discover -s sbx/tests`). Keep the tests hermetic:

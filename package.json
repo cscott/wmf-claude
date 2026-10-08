@@ -10,6 +10,8 @@
     { "type": "plugin", "path": ".claude-plugin/plugin.json" },
     { "type": "plugin", "path": "hooks/hooks.json" },
     { "type": "plugin", "path": "bin/session-start.sh" },
+    { "type": "plugin", "path": "hooks/context/nono/sandbox.txt" },
+    { "type": "plugin", "path": "hooks/context/nono/environment.txt" },
     { "type": "plugin", "path": "bin/launch-claude.sh" },
     { "type": "plugin", "path": "bin/statusline.sh" },
     { "type": "plugin", "path": "bin/launch-test-chrome" },

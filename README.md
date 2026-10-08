@@ -31,6 +31,10 @@ Now run `claude` from any project directory and it starts sandboxed. You should 
 Note: either restart all open terminals, or run the appropriate `source` command in each.
 
 `setup.sh` is interactive, safe to re-run, and prompts for your Phabricator username.
+It saves the username to `~/.config/wmf-claude/config.json`, so a re-run doesn't ask again.
+Nothing in that file is a credential: the Phabricator MCP server reads public data
+anonymously, and the username is only the default "my tasks" filter. Edit or delete
+the file freely; setup rewrites it.
 
 
 **Prerequisites:** nono 0.78+, Claude Code, Node + npm, Python 3,

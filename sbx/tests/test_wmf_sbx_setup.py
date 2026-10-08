@@ -35,6 +35,26 @@ def setUpModule():
     unittest.addModuleCleanup(patch.stop)
 
 
+def patch_sandbox_home(testcase):
+    """Point SANDBOX_HOME and the paths under it at a temporary directory.
+
+    The real values are under /home/agent. On a host that directory does
+    not exist, so a makedirs there fails. In a sandbox it does exist, so a
+    test that does not patch it writes into the real sandbox home. Return
+    the temporary directory."""
+    tmp = tempfile.TemporaryDirectory()
+    testcase.addCleanup(tmp.cleanup)
+    patcher = unittest.mock.patch.multiple(
+        s,
+        SANDBOX_HOME=tmp.name,
+        ORIGINALS_DIR=os.path.join(tmp.name, ".sbx-originals"),
+        HELPER_SOURCE_DIR=os.path.join(tmp.name, "bin"),
+    )
+    patcher.start()
+    testcase.addCleanup(patcher.stop)
+    return tmp.name
+
+
 class FakeCompletedProcess:
     def __init__(self, returncode):
         self.returncode = returncode
@@ -986,6 +1006,9 @@ class VerifyTests(unittest.TestCase):
 
 
 class SetupRepoTests(unittest.TestCase):
+    def setUp(self):
+        patch_sandbox_home(self)
+
     def test_repo_under_host_home_is_cloned_then_remounted(self):
         with tempfile.TemporaryDirectory() as tmp:
             literal = os.path.join(tmp, "home", "Wikimedia", "Cite")
@@ -1150,6 +1173,7 @@ class MainLoggingTests(unittest.TestCase):
     crash in the setup itself still produces a report."""
 
     def setUp(self):
+        patch_sandbox_home(self)
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.log_dir = os.path.join(self.tmp.name, "log")
@@ -1277,6 +1301,9 @@ class StartDaemonTests(unittest.TestCase):
 
 
 class MainTests(unittest.TestCase):
+    def setUp(self):
+        patch_sandbox_home(self)
+
     def _run_main(self, argv, run=None, popen=None):
         run = run or (lambda argv: FakeCompletedProcess(0))
         popen = popen or (lambda *a, **kw: None)

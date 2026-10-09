@@ -172,13 +172,15 @@ host proxy 127.0.0.1:<port> ◄─guestfwd─   192.168.5.100:3128 = the guest's
 Each decision is marked **DECIDED** or **OPEN** (needs cananian's
 answer).
 
-**D1. How the golden image is built. OPEN; recommendation A.**
+**D1. How the golden image is built. DECIDED 2026-10-09: A now, B later.**
 
 - **A:** boot a builder instance from Kosta's pinned Debian
   genericcloud image, run the image provisioning (§5.2), seal its
   identity (§5.2; flags RAN), stop, and export the disk. It
-  works with Lima by construction and keeps a digest-pinned base.
-- **B (later):** mmdebstrap (the modern debootstrap: rootless,
+  works with Lima by construction and keeps a digest-pinned base. The
+  MR !127 baseline (§11, phase 1) booted and provisioned this base
+  under Lima 2.2.1 (RAN). **Chosen for the MVP.**
+- **B (later, as a reproducibility upgrade):** mmdebstrap (the modern debootstrap: rootless,
   reproducible) inside mkosi for a bootable image. The bootloader,
   kernel, cloud-init and both arches are then ours to get right, and it
   must run on Linux (a Lima builder on macOS).
@@ -207,10 +209,10 @@ Superseded for QEMU after the MVP by D12.
   the baseline D12 has to beat.
 - `limactl clone` of a stopped template instance is no longer the plan.
 
-**D3. Package-registry egress in a contained session. OPEN.**
+**D3. Package-registry egress in a contained session. DECIDED 2026-10-09: the new profile.**
 
 This applies only to contained sandboxes (D9). With `--sudo` the agent
-has no nono, and egress is open. Recommendation: a purpose-named
+has no nono, and egress is open. Decision: a purpose-named
 `profiles/wmf-mediawiki.json` with **GET/HEAD-only** rules for
 packagist, the npm registry, the GitHub hosts composer uses, and the
 Cypress and Chrome-for-testing hosts. VERIFY whether nono's `extends`

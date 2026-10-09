@@ -11,19 +11,15 @@ blocks before anything is destroyed.
 
 import contextlib
 import io
-import json
 import os
 import shutil
 import subprocess
 import sys
-import tempfile
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-import wmf_sbx.remotes as remotes_mod  # noqa: E402
 import wmf_sbx.rm as rm  # noqa: E402
-import wmf_sbx.state as state_mod  # noqa: E402
 
 HAVE_GIT = shutil.which("git") is not None
 

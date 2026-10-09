@@ -450,6 +450,10 @@ four ways:
   default user, which also gets the host uid, must then have a different
   uid, so the template sets `user.uid` for it; and `safe.directory` in
   `/etc/gitconfig` is still set, as defence in depth.
+  Later, with image caching (the original `sbx/NOTES.md` item 4), the
+  host uid can be part of the key of a cached per-working-directory
+  image. Then the agent setup can move into that cached image, while the
+  golden image stays free of any uid.
 - **nono grant (contained mode):** the launcher adds
   `--read /run/wmf-sbx/host/…` for each mount.
 - **The mount set is fixed at create.** Adding a repo later means
@@ -1049,8 +1053,23 @@ phase A3. Every sandbox gets a full copy of the golden image (D2).
      bytes plus CR, NUL and ^Z went host to guest and back with the same
      SHA-256 and byte count. Lima's warnings go to stderr only;
    - port 4000 bind and connect under nono: **done** (RAN; D5);
-   - headless Chrome under nono: **still to do** (needs the
-     Chrome-for-Testing download hosts);
+   - headless Chrome under nono: **done** (RAN, Chrome for Testing
+     `chrome-headless-shell` 155.0.8059.39, in the MR !127 Debian VM, as
+     the agent, with the real `wmf-engineer` profile, `--open-port 4000`,
+     landlock-only and `--read` on the Chrome directory). It loads a page
+     from a server on 127.0.0.1:4000 in the same sandbox and runs its
+     JavaScript, **only with `--no-sandbox`**. With Chrome's own sandbox
+     it stops: "No usable sandbox": the setuid helper cannot work under
+     nono's NoNewPrivs, and it finds no usable user namespaces. So nono
+     is the only sandbox around the browser; the karma and wdio configs
+     must pass `--no-sandbox`. The download needs
+     `googlechromelabs.github.io` (version list) and
+     `storage.googleapis.com` (the files), as in the sbx kit. Debian 13
+     needs 16 shared libraries for it (`ldd`; the `t64` names for
+     `libatk1.0-0`, `libatk-bridge2.0-0`, `libasound2`, `libatspi2.0-0`).
+     Also found: the profile denies reading `/etc/mime.types`, so
+     Python's `http.server` fails to serve files in the sandbox (a test
+     harness problem, not a MediaWiki one);
    - whether the guest agent adds port forwards: **done** (RAN; D10).
 1. **Rebase onto !127** (latest revision). RAN on the 2026-09-29 patch:
    it conflicts with main only in `CLAUDE.md`, and our rebased files

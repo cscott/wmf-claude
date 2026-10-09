@@ -9444,6 +9444,54 @@ Found on the way:
   Kosta), and the sbx plugin overlay and patches, which belong to the
   session (phase 6).
 
+## 107. Phase 3 of the Lima port: the sandbox lifecycle **[2026-10-09]**
+
+Decision (cananian): **Lima only from phase 3.** The verbs keep no
+Docker path; the `sbx-docker-final` branch has the Docker backend.
+Branch `lima-port`, commits f788b81 (template), b0809e1 (lifecycle) and
+the exec fix after it.
+
+What there is now:
+
+- `template.py` + `sandbox-provision.sh`: the per-sandbox Lima config
+  (closed like Kosta's; `plain: false`; read-only git-dir mounts under
+  `/run/wmf-sbx/host/`; Lima's user `engineer` at uid 59998) and
+  Kosta's security provisioning (no sudo/docker for the agent, the host
+  and LAN block, agent egress TCP 80/443, no TIOCSTI). A loopback proxy
+  in the host's proxy variables gets exactly its port through the
+  block.
+- `vm.py`: instance `wmf-sbx-NAME`, create/start/stop/delete, agent
+  commands, and six invariants that `create`, `start` and `status`
+  check.
+- `state.py`: `backend: "lima"`, the image key, the driver, the repos;
+  `require()` refuses a name with no state file (or a Docker one).
+- Verbs: `create`, `start`, `stop`, `status`, `ls`, `exec`, `cp`, `rm`,
+  `image`, `resolve`, `ls-remotes`. `resume`/`run`: "not ported yet"
+  (phase 6). `bin/wmf-sbx` never calls Docker `sbx`.
+
+Real round trip (Linux, QEMU TCG, Lima 2.2.1, image d16a1c5496fa83fe):
+
+- `create --no-deps --image ... --name demo ~/repos/demo`: 313 s (the
+  2.4 GiB copy, the resize to 60 GiB and the first boot). All six
+  invariants ok.
+- `exec`: runs as `agent`, uid 30033 (the host's), only group `agent`,
+  the fixed PATH; `sudo` asks for a password; exit status 7 came back
+  as 7. `--engineer -w /tmp` is refused.
+- `cp`: a 300 KB binary and a directory tree in and back out; SHA-256
+  equal; owner `agent` in the guest.
+- `stop` + `start`: 126 s; invariants ok after the reboot.
+- `rm`: "n" leaves everything; "y" deletes the VM and the state;
+  `rm golden` (a Lima VM that wmf-sbx did not make) is refused.
+
+Found: `exec` without `-w` ran in the primary workspace, which does not
+exist in the VM before phase 4 clones it (env exit 125). It now falls
+back to the agent's home for the default only.
+
+Left for later phases: mounts and host remotes (4), MediaWiki setup and
+Node 22 (5), the session (6). The Docker-only helpers in `create.py`
+(kit, ports, `sbx` calls) are now dead code with their tests; delete
+them in C1.
+
 ## Still to do
 
 - [x] Implement `sbx/DESIGN-setup-steps.md` — everything after the

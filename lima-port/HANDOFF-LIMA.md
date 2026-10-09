@@ -1124,6 +1124,10 @@ phase A3. Every sandbox gets a full copy of the golden image (D2).
    The `sbx-docker-final` branch keeps the Docker backend for anyone
    who needs a root agent before track A. Until phase 6, `resume` and
    `run` refuse with "not ported yet" rather than call Docker `sbx`.
+   **Done on Linux/QEMU, 2026-10-09** (`sbx/NOTES.md` §107): `create`,
+   `start`, `stop`, `status`, `ls`, `exec`, `cp`, `rm` on Lima
+   (`vm.py`, `template.py`, the verbs, a plain `bin/wmf-sbx`). The real
+   round trip passed; `vz` is on the Mac list.
 4. **Git transport and mounts.** Exit:
    - after a host `git fetch`, the agent sees the new commit with no
      host action;

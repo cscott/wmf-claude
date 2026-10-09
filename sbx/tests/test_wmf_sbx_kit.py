@@ -431,10 +431,12 @@ class MediawikiEnvVarsTests(unittest.TestCase):
 
 class HelperScriptTests(unittest.TestCase):
 
-    def test_the_shipped_names_are_the_ones_the_setup_script_installs(self):
+    def test_git_safe_reset_ships_with_git_review_check(self):
         # git-safe-reset calls git-review-check by bare name, so shipping
         # one without the other is a runtime failure, not a missing nicety.
-        self.assertEqual(tuple(k.HELPER_SCRIPTS), tuple(setup_mod.HELPER_SCRIPTS))
+        # The image build installs them (image.helper_files).
+        self.assertIn("git-safe-reset", k.HELPER_SCRIPTS)
+        self.assertIn("git-review-check", k.HELPER_SCRIPTS)
 
     def test_each_helper_comes_from_its_own_directory(self):
         # The names come from two trees: sbx/bin/ for what engineers also

@@ -402,7 +402,9 @@ four ways:
   is not reachable from the host. Without the rule, the same server was
   forwarded to the host's 127.0.0.1:4000 at once. Keep the rule.
 - **Mount type pinned, never reverse-sshfs:** `virtiofs` on `vz`, `9p`
-  (Lima's QEMU default) on Linux. Our tests assert both.
+  (Lima's QEMU default) on Linux. Our tests assert both. A 9p mount has
+  `cache: none`, and the guest has Debian's generic kernel, not the
+  cloud kernel (§6.1, RAN in phase 4).
 - **What to mount:** each repo's **git dir only**, not the worktree.
   Resolve it on the host with `git rev-parse --git-common-dir`, so
   worktrees and submodule gitdirs resolve. Mount it read-only at
@@ -846,6 +848,35 @@ At create, as agent:
 After the host fetches, the agent runs `git safe-reset local` (or
 `git fetch local`) and sees it at once. Nothing to push.
 
+**As built (phase 4, `repos.py`, `sandbox-repos.sh`):**
+
+- The clone is on the branch the host checkout is on, or detached at
+  its commit. The mount is the repository's git dir (`git rev-parse
+  --git-common-dir`), so a worktree's branch is cloned from the main
+  repository's git dir.
+- One root script makes the clone directories (missing parents owned
+  by the agent) and the `/etc/gitconfig` `safe.directory` entries; one
+  script per owner clones. The clone at a host path under `/tmp`,
+  `/run`, `/home/agent`, ... is refused (D8: the VM uses those paths,
+  and `/tmp` is a tmpfs).
+- A `:ro` repo is cloned by `engineer`. The agent can read it, and
+  cannot write it. It gets a host remote too, because its clone also
+  borrows the host's objects (so gc stays off for it).
+- **The guest needs the generic Debian kernel.** The genericcloud
+  image's cloud kernel has no 9p and no virtiofs: Lima writes the
+  fstab entries, and nothing mounts (RAN). The golden image now has
+  `linux-image-<arch>` and no cloud kernel; the build checks the
+  modules, and an invariant checks that every fstab mount is mounted.
+- **9p needs `cache: none`.** With Lima's default for a read-only 9p
+  mount (`fscache`), the guest still read a loose ref after the host
+  moved it into `packed-refs`, so `git fetch local` missed the host's
+  commit (RAN). With `cache: none`, a plain commit, `pack-refs`, a full
+  repack and `gc --prune=now` on the host were each seen at once, and
+  `git log --all` over the mount took 0.5 s. The template sets it for
+  every 9p mount, and `check_template` requires it. Lima writes the
+  option to fstab at boot, so `limactl edit` takes effect only at the
+  boot after the next one.
+
 ### 6.2 VM → host: `git-remote-wmfsbx`
 
 URLs have the form `wmfsbx://<name>/<absolute path>`.
@@ -854,11 +885,18 @@ URLs have the form `wmfsbx://<name>/<absolute path>`.
   refuses `git-receive-pack`, so the remote is fetch-only.
 - It runs
   `limactl shell --workdir / <name> -- sudo -H -u agent git -c core.hooksPath=/dev/null -c core.fsmonitor=false upload-pack <path>`.
-- git ignores `uploadpack.packObjectsHook` from repository config
-  (VERIFY on the guest's version).
+- git ignores `uploadpack.packObjectsHook` from repository config (RAN,
+  git 2.47 in the guest: the agent set it in the clone's config, the
+  host fetched, and the hook did not run).
+- The helper does not pass `GIT_PROTOCOL` to the VM, so upload-pack
+  speaks protocol v0, which git accepts over `connect`. A fetch of one
+  commit took 1.5 s (TCG).
 - In a `--sudo` sandbox, treat the server as hostile (D9) and keep the
   host's git current.
-- VERIFY that a tty-less `limactl shell` passes binary data cleanly.
+- A tty-less `limactl shell` passes binary data cleanly (RAN, phase 0).
+- A `:ro` clone is the engineer's: upload-pack opens it as `PATH/.git`,
+  so `/etc/gitconfig` has `safe.directory` for that path too (RAN:
+  without it, "dubious ownership", and the `rm` guard refused).
 
 `git fetch <name>`, `git safe-reset <name>`, `git-review-check` and the
 `rm` guard work as today. Port code goes: `refresh_host_port`,
@@ -1135,6 +1173,16 @@ phase A3. Every sandbox gets a full copy of the golden image (D2).
    - the `rm` guard works;
    - host gc is suspended while the sandbox lives and restored after;
    - the static template test passes.
+   **Done on Linux/QEMU, 2026-10-09** (`sbx/NOTES.md` §108): the
+   read-only git-dir mounts, the clones at the host paths, the `:ro`
+   clones, `git-remote-wmfsbx`, the host remotes and gc suspension
+   (`repos.py`, `sandbox-repos.sh`, `remote_helper.py`). From a clean
+   image: `create` 247 s, then `lima-port/checks/phase4.sh` 18 of 18
+   ok, and `rm` left the host config clean. Found and fixed: the cloud
+   kernel has no 9p (the image now has the generic kernel); 9p needs
+   `cache: none`; a `:ro` clone needs `safe.directory` for `PATH/.git`;
+   an image built from a checkout without its submodules had no MCP
+   servers. `vz` is on the Mac list.
 5. **MediaWiki setup.** Exit: `wmf-sbx create Translate` serves
    `Special:Version`.
    **Node 22 is required** (cananian, 2026-10-09). Debian 13 has Node 20
@@ -1169,6 +1217,13 @@ QEMU and macOS versions with the results.
   sandboxes from it on `vz` have different machine-ids and host keys.
 - **Phase 3:** the lifecycle round trip (`create`, `start`, `stop`,
   `exec`, `cp`, `rm`) on `vz`.
+- **Phase 4:** the git-dir mounts on `vz` (virtiofs): they mount; a
+  host commit, `pack-refs`, a full repack and `gc --prune=now` are each
+  seen at once by `git fetch local` in the guest (9p needed
+  `cache: none` for this; virtiofs may have its own cache setting);
+  `lima-port/checks/phase4.sh` does these checks: the agent cannot write the
+  mount, guest root's `remount,rw` cannot either, `git fetch NAME` and
+  the `rm` guard work.
 - **Phase 7:** the blind run of `DESIGN-testing-instructions.md` §9 in
   a contained sandbox on `vz`.
 - **Track A (A1):** the D11 measurements on macOS QEMU with HVF:
@@ -1298,10 +1353,12 @@ and their own tests, and the docs say why.
 
 These items are listed above; this collects them.
 
-- **Lima:** read-only enforcement for virtiofs on `vz` (9p on QEMU
-  passes, RAN); whether the guest agent adds port forwards; tty-less
-  binary `limactl shell`; the `limactl edit` mount flags; one image
-  booting under both drivers.
+- **Lima:** read-only enforcement and freshness for virtiofs on `vz`
+  (9p on QEMU passes both with `cache: none`, RAN); one image booting
+  under both drivers. Done: the guest agent adds no port forward past
+  the ignore rule; tty-less binary `limactl shell`; `limactl edit
+  --set '.mounts[]…'` changes the mounts (it takes effect at the second
+  boot, RAN).
 - **Lima + QEMU disks (D12, phase B1):** method B on macOS with
   `vmType: qemu`, and on KVM or HVF for real times. On Linux with TCG,
   H1–H4 and H6 held, H5 failed (method A refused), and the source
@@ -1317,8 +1374,9 @@ These items are listed above; this collects them.
 - **Claude Code:** `setup-token` and refresh-token rotation.
 - **cloud-init:** the `clean` flags on Debian's version (RAN on
   Ubuntu's cloud-init 26.1, §5.2).
-- **Other:** Chrome headless under nono; `uploadpack.packObjectsHook`
-  ignored on the guest's git; host `git maintenance` and alternates.
+- **Other:** host `git maintenance` and alternates. Done: Chrome
+  headless under nono (only with `--no-sandbox`);
+  `uploadpack.packObjectsHook` is ignored by the guest's git (RAN).
 
 Sources consulted:
 

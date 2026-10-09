@@ -588,7 +588,8 @@ points the reader at `sbx/SECURITY.md`; it is a paragraph to drop when
 merging, not a mechanism to build.
 
 **Stays, and should not be reverted.** The rest of 45aa2c8: the
-backend-aware `bin/session-start.sh`, `WMF_CLAUDE_DOCKER_MODE`, the
+backend-aware `bin/session-start.sh` (now upstream MR !132;
+`WMF_CLAUDE_DOCKER_MODE` was removed in that rebase), the
 `standalone-vuln-audit` registration it fixed, and the
 `tests/test-templates.sh` assertions that keep the three skill lists in
 agreement. That commit is the seam that makes a second backend possible at

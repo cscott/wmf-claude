@@ -9439,7 +9439,8 @@ Found on the way:
   (`DESIGN-setup-steps.md` §7.2 measured 22 on Ubuntu). **Decision
   (cananian): install Node 22** in phase 5, decoupled from the OS
   version: nave, fresh-node, or a pinned newer Debian/Ubuntu package
-  (HANDOFF-LIMA.md §11, phase 5).
+  (HANDOFF-LIMA.md §11, phase 5). **Superseded by §109:** CI uses Node
+  24, and the image has one global Node 24.18.0.
 - Not done in phase 2: `status` (phase 3), `vz` (the Mac list for
   Kosta), and the sbx plugin overlay and patches, which belong to the
   session (phase 6).
@@ -9561,6 +9562,45 @@ Clean run from the rebuilt image (`f0d9a41e9170ed39`, kernel
 
 Left: the nono `--read /run/wmf-sbx/host/…` grant comes with the session
 (phase 6). Host `git maintenance` and alternates are still unverified.
+
+## 109. Node 24.18.0 in the golden image **[2026-10-09]**
+
+WMF CI uses Node 24, not 22 (READ, integration/config, 2026-10-09):
+
+- `zuul/layout.yaml`: "our current CI testing targets are Node 24".
+  `mediawiki-node24` runs on the `node24-*` images, 24.18.0 (194
+  references); `mediawiki-node26` (26.8.2) is under `experimental`,
+  "Not-yet-supported language runtimes". Node 22: 0 references.
+- codesearch `deployed`, `"node":` in `package.json` (no node_modules,
+  no bundled libs): 24 lines in 19 repositories. MobileFrontend
+  `24.18.0` exactly (`engines` and `.nvmrc`), citoid `24`, cxserver,
+  Function Orchestrator and function-schemata `>=24`, Popups
+  `>=20.19.5`, CirrusSearch, Wikibase parts, change-propagation and
+  iPoid `>=20`/`>=18`; restbase, parsoid, mobileapps and
+  push-notifications name Node 6 to 12 (dead pins). Core names none.
+- wmf-claude: mcp-phabricator `>=20`; chrome-devtools-mcp 0.23.0
+  `^20.19 || ^22.12 || >=23`; the other two MCP servers are Python.
+
+Decision (cananian agreed to the recommendation): **one global Node, the
+CI version**, from the nodejs.org tarball, not nave/fresh-node/Debian
+experimental. The reasons and the as-built details are in HANDOFF-LIMA.md
+§11 phase 5. Commit 66e9c80: `image.NODE_VERSION = "24.18.0"`, the
+checksum from `SHASUMS256.txt` in the image inputs, `/opt/node/v24.18.0`
+linked into `/usr/local/bin`, Debian's `nodejs`/`npm` dropped, a build
+check and an eighth invariant ("the agent's node is the image's").
+
+Checked on the real VM (image `d5e6f00d95b56cee`, QEMU TCG):
+
+- `image build`: 2088 s, 6 min less than with Debian's node-* packages.
+  The build step printed `node v24.18.0, npm 11.16.0`.
+- `create`: 246 s; the eight invariants ok.
+- As the agent: `node` is `/usr/local/bin/node` ->
+  `/opt/node/v24.18.0/bin/node`; no Debian `nodejs`, no `node-*`
+  package. mcp-phabricator is built and runs on v24.18.0.
+- BoilerPlate `npm ci` + `npm test` as the agent: pass (154 s).
+
+To do (phase 5): npm prints an "update available" notice. Set
+`update-notifier=false` in the global npmrc (`/opt/node/v*/etc/npmrc`).
 
 ## Still to do
 

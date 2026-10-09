@@ -14,13 +14,13 @@ COMMANDS = {
     "create": "wmf_sbx.create",
     "exec": "wmf_sbx.exec",
     "image": "wmf_sbx.image",
+    "ls": "wmf_sbx.ls",
     "ls-remotes": "wmf_sbx.ls_remotes",
-    "refresh-claude-md": "wmf_sbx.refresh_claude_md",
     "resolve": "wmf_sbx.resolve",
-    "resume": "wmf_sbx.resume",
     "rm": "wmf_sbx.rm",
-    "run": "wmf_sbx.run",
     "start": "wmf_sbx.start",
+    "status": "wmf_sbx.status",
+    "stop": "wmf_sbx.stop",
 }
 
 

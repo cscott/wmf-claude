@@ -84,6 +84,10 @@ from . import resolve as resolve_mod
 from . import settings as settings_mod
 from . import setup as setup_mod
 from . import state as state_mod
+from . import image as image_mod
+from . import lima as lima_mod
+from . import template as template_mod
+from . import vm as vm_mod
 
 CLONE_URL_BUILDERS = {
     "gerrit": lambda path: f"https://gerrit.wikimedia.org/r/{path}",
@@ -1834,8 +1838,28 @@ def print_run_reminder(name):
     )
 
 
-def main(argv=None, run=subprocess.run):
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+def lima_sandbox_names(lima, env=None):
+    """Names that are taken: every wmf-sbx state file, and every Lima
+    instance named wmf-sbx-NAME."""
+    names = set(state_mod.list_names(env))
+    names |= {n[len(vm_mod.PREFIX):] for n in lima.instances() if n.startswith(vm_mod.PREFIX)}
+    return names
+
+
+def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
+         inputs_fn=None, prompt=input, now=None):
+    """`wmf-sbx create` on Lima (lima-port/HANDOFF-LIMA.md §4, phase 3).
+
+    1. resolve the repos and walk the dependencies (unchanged);
+    2. find the golden image in the cache, or build it (image.py);
+    3. generate the sandbox's Lima config (template.py);
+    4. save the state, then create and boot the VM, which copies the
+       golden image (D2) and runs the provisioning;
+    5. check the security invariants.
+
+    Phase 4 adds the read-only mounts of the git dirs and the host
+    remotes; phase 5 the MediaWiki setup; phase 6 the session."""
+    parser = argparse.ArgumentParser(description="Create a wmf-sbx sandbox (a Lima VM).")
     parser.add_argument(
         "primary", help="Repo for the sandbox's primary workspace; append ':ro' for read-only"
     )
@@ -1844,73 +1868,54 @@ def main(argv=None, run=subprocess.run):
         help="Additional repos to make available in the sandbox; append ':ro' for read-only"
     )
     parser.add_argument("--name", help="Sandbox name (default: derived from the primary repo)")
-    parser.add_argument(
-        "--kit",
-        help="Path to the sbx kit (default: 'kit:' in the config if set, "
-        "else a MediaWiki kit is generated -- see sbx/DESIGN-kit-generation.md)",
-    )
-    parser.add_argument(
-        "--kit-out", metavar="DIR",
-        help="Write the generated kit to DIR and leave it there, instead of "
-        "a temporary directory that is deleted after `sbx create` (for "
-        "`sbx kit validate DIR`). No effect with an explicit --kit",
-    )
     parser.add_argument("--config", default=resolve_mod.DEFAULT_CONFIG)
     parser.add_argument(
         "--no-deps", action="store_true",
-        help="Mount only the repos named on the command line -- no MediaWiki "
+        help="Use only the repos named on the command line -- no MediaWiki "
         "dependency walk, no implicit core/Vector",
     )
-    parser.add_argument(
-        "--no-dev", action="store_true",
-        help="Skip 'dev-requires' when walking dependencies",
-    )
-    parser.add_argument(
-        "--no-suggests", action="store_true",
-        help="Skip 'suggests' when walking dependencies",
-    )
-    parser.add_argument(
-        "--reset-all", action="store_true",
-        help="Reset every clone to upstream master, including the repos you "
-        "named on the command line (by default those keep the branch your "
-        "host checkout was on)",
-    )
-    parser.add_argument(
-        "--no-remotes", action="store_true",
-        help="Don't touch any host .git/config: print the `git remote add` "
-        "commands instead, and skip the cleanup pass for removed sandboxes",
-    )
-    parser.add_argument(
-        "--no-mcp", action="store_true",
-        help="Don't register the Phabricator/Gerrit MCP servers on the host "
-        "and don't wire them into the generated kit",
-    )
+    parser.add_argument("--no-dev", action="store_true",
+                        help="Skip 'dev-requires' when walking dependencies")
+    parser.add_argument("--no-suggests", action="store_true",
+                        help="Skip 'suggests' when walking dependencies")
+    parser.add_argument("--reset-all", action="store_true",
+                        help="Reset every clone to upstream master (used by the "
+                        "MediaWiki setup, phase 5)")
+    parser.add_argument("--no-remotes", action="store_true",
+                        help="Don't touch any host .git/config (phase 4)")
+    parser.add_argument("--vm-type", choices=sorted(template_mod.MOUNT_TYPES),
+                        help="Lima driver (default: vz on macOS, qemu elsewhere)")
+    parser.add_argument("--cpus", type=int, default=template_mod.DEFAULT_CPUS)
+    parser.add_argument("--memory", default=template_mod.DEFAULT_MEMORY,
+                        help=f"default {template_mod.DEFAULT_MEMORY}")
+    parser.add_argument("--disk", default=template_mod.DEFAULT_DISK,
+                        help=f"default {template_mod.DEFAULT_DISK}")
+    parser.add_argument("--image", metavar="KEY",
+                        help="use this cached golden image (`wmf-sbx image ls`) "
+                        "instead of the one for the current inputs")
+    parser.add_argument("--sudo", action="store_true",
+                        help="give the agent sudo (not yet: track A, D9/D11)")
     parser.add_argument(
         "--dry-run", action="store_true",
-        help="Print the resolution plan and the sbx command; clone nothing, run nothing"
+        help="Print the plan, the image key and the Lima config; build, clone "
+        "and create nothing"
     )
     args = parser.parse_args(argv)
+    lima = lima or lima_mod.Limactl(run=run)
+    env = os.environ if env is None else env
 
-    settings_values = settings_mod.read_settings(WMF_SBX, run=run)
-    if settings_values is None:
-        _warn(
-            "could not read sbx settings (`wmf-sbx settings list --json` "
-            "failed); skipping the ssh-forwarding/kit/proxy preflight checks"
-        )
-    else:
-        settings_warnings, settings_errors = settings_mod.preflight(
-            settings_values, check_kit=args.kit is None,
-        )
-        for w in settings_warnings:
-            _warn(w)
-        if settings_errors:
-            for e in settings_errors:
-                print(color_mod.error(f"error: {e}"), file=sys.stderr)
-            return 1
+    def say(msg):
+        print(color_mod.dim(msg), file=sys.stderr)
+
+    if args.sudo:
+        print(color_mod.error(
+            "error: --sudo is not ported yet: it needs the QEMU egress proxy "
+            "(lima-port/HANDOFF-LIMA.md D9, D11, track A). Use the "
+            "sbx-docker-final branch for a root agent until then."), file=sys.stderr)
+        return 1
 
     try:
         config = resolve_mod.load_config(args.config)
-        kit = args.kit or config.get("kit")
         split = [split_ro_suffix(spec) for spec in [args.primary] + args.extra]
         resolved = [resolve_repo(spec, args.config) for spec, _is_ro in split]
         origins_by_path = {}
@@ -1925,36 +1930,9 @@ def main(argv=None, run=subprocess.run):
         print(color_mod.error(f"error: {e}"), file=sys.stderr)
         return 1
 
-    if args.reset_all and kit is not None:
-        # The flag rides in the generated plan, and an explicit --kit brings
-        # its own; there is nothing here to put it in.
-        print(
-            "warning: --reset-all has no effect with an explicit --kit (the "
-            "kit carries its own wmf-sbx-plan.json)",
-            file=sys.stderr,
-        )
-
-    if args.no_mcp and kit is not None:
-        # Nothing to opt out of: the host-side registration and the proxy
-        # entries both hang off the generated kit.
-        print(
-            "warning: --no-mcp has no effect with an explicit --kit (that "
-            "kit decides its own MCP wiring)",
-            file=sys.stderr,
-        )
-
-    if args.kit_out and kit is not None:
-        print(
-            "warning: --kit-out has no effect with an explicit --kit (there "
-            "is no generated kit to write)",
-            file=sys.stderr,
-        )
-
     for (spec, is_ro), (canonical, path, needs_clone) in zip(split, resolved):
         ro_note = " (read-only)" if is_ro else ""
         chain = origins_by_path.get(path)
-        # Name where a repo the user never typed came from -- a bare extra
-        # line in the plan is not self-explanatory.
         via = f" [via {' -> '.join(c.rsplit('/', 1)[-1] for c in chain)}]" if chain else ""
         if canonical is None:
             print(f"  {spec} -> {path} (raw path){ro_note}{via}", file=sys.stderr)
@@ -1962,234 +1940,71 @@ def main(argv=None, run=subprocess.run):
             status = "needs clone" if needs_clone else "exists"
             print(f"  {spec} -> {canonical} -> {path} ({status}){ro_note}{via}", file=sys.stderr)
     if origins_by_path:
-        print(
-            f"  ({len(origins_by_path)} of these {len(resolved)} were "
-            f"discovered by the dependency walk; --no-deps skips it)",
-            file=sys.stderr,
-        )
-
+        print(f"  ({len(origins_by_path)} of these {len(resolved)} were discovered "
+              f"by the dependency walk; --no-deps skips it)", file=sys.stderr)
     if unreachable:
-        # A rate-limited or offline walk produces a plausible-looking
-        # closure that is quietly missing repos -- which surfaces much
-        # later as inexplicable failures inside the sandbox. The plan above
-        # is printed either way (that's what --dry-run is for), but a real
-        # create stops here rather than building something half-wired.
-        listed = "\n".join(f"    {canonical}" for canonical in sorted(unreachable))
-        print(
-            f"warning: {len(unreachable)} manifest(s) could not be fetched, so the "
-            f"plan above may be missing repos:\n{listed}",
-            file=sys.stderr,
-        )
+        listed = "\n".join(f"    {c}" for c in sorted(unreachable))
+        print(f"warning: {len(unreachable)} manifest(s) could not be fetched, so the "
+              f"plan above may be missing repos:\n{listed}", file=sys.stderr)
         if not args.dry_run:
-            print(
-                color_mod.error(
-                    "error: refusing to create a sandbox from an incomplete dependency "
-                    "closure. Gerrit rate-limits bursts of manifest fetches (HTTP 429, "
-                    "retry-after 60) -- wait a minute and re-run, or pass --no-deps to "
-                    "mount only the repos you name."
-                ),
-                file=sys.stderr,
-            )
+            print(color_mod.error(
+                "error: refusing to create a sandbox from an incomplete dependency "
+                "closure. Wait a minute and re-run, or pass --no-deps."), file=sys.stderr)
             return 1
 
-    primary_canonical, primary_dir, _ = resolved[0]
-    extra_dirs = [path for _canonical, path, _needs_clone in resolved[1:]]
-    readonly_dirs = {
-        path for (_spec, is_ro), (_canonical, path, _needs_clone) in zip(split, resolved) if is_ro
-    }
-    # Typed by hand, as opposed to found by the dependency walk --
-    # expand_dependencies records an origin chain only for what it
-    # discovered, so an empty chain is exactly "you asked for this one".
-    # These keep their host branch instead of being reset to upstream
-    # master; see wmf_sbx_setup.repos_to_leave_alone.
-    requested_dirs = {
-        path for _canonical, path, _needs_clone in resolved if path not in origins_by_path
-    }
-
-    # `sbx create`'s primary-workspace positional is unconditionally
-    # read/write (see this module's docstring), so a ':ro' on the primary
-    # can only ever be the in-sandbox remount -- which the sandboxed agent
-    # can undo with `sudo mount -o remount,rw` (see build_sbx_command).
-    # Say so rather than letting it look enforced.
-    if primary_dir in readonly_dirs:
-        print(
-            f"warning: ':ro' on the primary workspace ({primary_dir}) cannot be "
-            "enforced -- `sbx create` always mounts the primary read/write, so "
-            "this is only an accident guard the sandbox can lift (see "
-            "sbx/NOTES.md #22). Pass it as an extra instead if it must be "
-            "genuinely read-only.",
-            file=sys.stderr,
-        )
-
-    conflict = find_nested_mount_conflict([primary_dir] + extra_dirs)
+    _primary_canonical, primary_dir, _ = resolved[0]
+    conflict = find_nested_mount_conflict([path for _c, path, _n in resolved])
     if conflict is not None:
         ancestor, descendant = conflict
-        print(
-            color_mod.error(
-                f"error: {descendant!r} is inside {ancestor!r} -- sbx does not support "
-                "mounting one workspace/bind mount inside another. Narrow one of the "
-                "paths, or drop the redundant one."
-            ),
-            file=sys.stderr,
-        )
-        # The conflicting path may be one the user never typed -- e.g.
-        # mounting ~/Wikimedia/Extensions wholesale while depending on
-        # Translate discovers ULS *inside* that mount. Silently dropping
-        # the discovered repo would surface later as failing tests in the
-        # sandbox, so this fails; the least it can do is explain itself.
-        for path in (descendant, ancestor):
-            chain = origins_by_path.get(path)
-            if chain:
-                print(
-                    f"  {path} wasn't named on the command line: it was pulled "
-                    f"in as a dependency ({' -> '.join(chain)}). "
-                    f"--no-deps mounts only what you name.",
-                    file=sys.stderr,
-                )
+        print(color_mod.error(
+            f"error: {descendant!r} is inside {ancestor!r} -- narrow one of the "
+            "paths, or drop the redundant one."), file=sys.stderr)
         return 1
 
-    # No explicit --kit and no 'kit:' in the config: generate a MediaWiki
-    # kit rather than requiring one -- see sbx/DESIGN-kit-generation.md.
-    # canonicals_for_kit also identifies raw-path arguments (is_raw_path)
-    # that happen to be a known repo via the config's exact rules, so kit
-    # environment variables like MW_CORE_REPO still get wired up for
-    # invocations that predate repos.yaml existing.
-    # realpath: every repo directory below is realpath'd, and host_home is
-    # what they are made relative to when the parallel tree is laid out
-    # (parallel_path). A symlinked $HOME against realpath'd repos would
-    # put every repo "outside host_home" and silently lose the parallel
-    # path. Same reason the repos are realpath'd -- sbx/NOTES.md §66.
-    host_home = os.path.realpath(os.path.expanduser("~"))
-    port = None
-    generated_kit_dir = None
-    mcp_servers = []
-    if kit is None:
-        # First, because what the host will actually serve decides both
-        # what the kit registers and what --static-mcp may name. Under
-        # --dry-run this only *reads* the host: what it would register,
-        # without registering it.
-        if args.no_mcp:
-            print(color_mod.dim(
-                "+ (--no-mcp: no host-side MCP servers, no proxy in the kit)"),
-                  file=sys.stderr)
+    try:
+        taken = lima_sandbox_names(lima, env)
+        name_source = (resolved[0][0] if resolved[0][0] is not None
+                       else os.path.basename(primary_dir))
+        name = args.name or unique_sandbox_name(
+            default_sandbox_name(name_source), taken, prompt=prompt)
+        state_mod.validate_name(name)
+        vm_mod.instance_name(name)
+        if args.name and name in taken:
+            raise vm_mod.VmError(f"a sandbox named {name!r} exists already")
+
+        # The golden image: the cache entry for the current inputs, built
+        # when it is missing (phase 2), or the one --image names.
+        if args.image:
+            key = args.image
+            image_mod.verify_entry(key, env)
+            with open(os.path.join(image_mod.entry_dir(key, env), "manifest.json"),
+                      encoding="utf-8") as f:
+                arch = json.load(f)["inputs"]["arch"]
         else:
-            # --dry-run runs the identical preflight and stops on the
-            # identical conditions; it just doesn't `mcp add`. That's the
-            # point -- "would this create work?" has to include this.
-            try:
-                mcp_servers = ensure_host_mcp_servers(
-                    run=run, register=not args.dry_run)
-            except McpPreflightError:
-                return 1
-            if args.dry_run:
-                print(color_mod.dim(
-                    f"+ (would register on the host: "
-                    f"{', '.join(mcp_servers) or 'nothing'})"),
-                      file=sys.stderr)
+            inputs = (inputs_fn or image_mod.image_inputs)()
+            key = image_mod.cache_key(inputs)
+            arch = inputs["arch"]
+            cached = os.path.isdir(image_mod.entry_dir(key, env))
+            say(f"+ golden image {key} ({'in the cache' if cached else 'to build'})")
+            if not args.dry_run:
+                (build or image_mod.build)(inputs, lima=lima, run=run, env=env, log=say)
+        golden = image_mod.golden_path(key, env)
 
-        # Fixed, not picked: this only has to be free inside this one
-        # sandbox's own network namespace, never across sandboxes -- see
-        # publish_daemon_port for how the *host*-side port (which does need
-        # to avoid cross-sandbox collisions) gets chosen, separately.
-        port = kit_mod.DEFAULT_DAEMON_PORT
-        resolved_for_kit = canonicals_for_kit(resolved, config.get("rules", []))
-        plan = kit_mod.build_plan(
-            resolved_for_kit,
-            host_home=host_home,
-            daemon_port=port,
-            readonly_dirs=readonly_dirs,
-            links=link_plan(resolved_for_kit, overrides=config.get("link_overrides") or {}),
-            primary=primary_dir,
-            upstreams=upstream_plan(resolved_for_kit, run=run),
-            requested=requested_dirs,
-            reset_all=args.reset_all,
-        )
-        spec = kit_mod.build_kit_spec(
-            resolved_for_kit,
-            extra_environment=config.get("extra_environment", {}),
-            extra_packages=config.get("extra_packages", []),
-            readonly_dirs=readonly_dirs,
-            host_home=host_home,
-            daemon_port=port,
-            plan=plan,
-            mcp_servers=mcp_servers,
-        )
-        if args.dry_run:
-            print(
-                color_mod.dim(
-                    "+ (no --kit given and no 'kit:' in the config; would generate "
-                    "this MediaWiki kit:)"
-                ),
-                file=sys.stderr,
-            )
-            print(color_mod.dim(kit_mod.dump_kit_yaml(spec)), file=sys.stderr, end="")
-            print(
-                color_mod.dim("+ (and this wmf-sbx-plan.json alongside it:)")
-                + "\n" + json.dumps(plan, indent=2),
-                file=sys.stderr,
-            )
-            if mcp_servers:
-                # The spec above only names wmf-sbx-mcp.json; the file is
-                # where the --tools allowlist actually lives, so a dry run
-                # that wants to check what the agent may call has to be
-                # able to see it without generating a kit.
-                print(
-                    color_mod.dim(
-                        "+ (and this wmf-sbx-mcp.json, the proxy registrations "
-                        "-- `--tools` is the allowlist:)"
-                    ) + "\n" + json.dumps(kit_mod.mcp_config(mcp_servers),
-                                          indent=2, sort_keys=True),
-                    file=sys.stderr,
-                )
-        if args.kit_out:
-            # Written even under --dry-run, and never cleaned up: the point
-            # of the flag is a kit directory that outlives `sbx create`, so
-            # `sbx kit validate` has something to read.
-            kit = os.path.abspath(os.path.expanduser(args.kit_out))
-            kit_mod.write_kit_dir(spec, kit, plan=plan, mcp_servers=mcp_servers)
-            print(color_mod.dim(f"+ (generated kit written to {kit})"), file=sys.stderr)
-        elif not args.dry_run:
-            generated_kit_dir = tempfile.mkdtemp(prefix="wmf-sbx-kit-")
-            kit_mod.write_kit_dir(spec, generated_kit_dir, plan=plan,
-                                  mcp_servers=mcp_servers)
-            kit = generated_kit_dir
-
-    name_source = primary_canonical if primary_canonical is not None else os.path.basename(primary_dir)
-    # Collision-check only the derived default -- an explicit --name is a
-    # deliberate choice, and `sbx create` already reports a clear error if
-    # that one turns out to be taken.
-    name = args.name or unique_sandbox_name(default_sandbox_name(name_source), existing_sandbox_names())
-    skills_flag = supported_skills_flag(run=run)
-    if skills_flag is None:
-        # Warn rather than fail: this is 0.42.1's real state, the fallback
-        # (wmf-sbx-setup's read-only remount) is already in place, and
-        # refusing to create a sandbox over a cross-sandbox risk the user
-        # can't do anything about from here would be theatre. Loud,
-        # though -- the gap is invisible otherwise, and it's the one a
-        # reader of SECURITY.md §7.6 needs to know is still open.
-        print(
-            "! this sbx has no --skills/--no-share-skills flag, so the "
-            "shared agent-skills store will be mounted writable "
-            "(sbx/SECURITY.md §7.6). wmf-sbx-setup remounts it read-only "
-            "from inside, which the agent can lift; upgrade to 0.43+ for "
-            "the host-side fix (docker/sbx-releases#506).",
-            file=sys.stderr,
-        )
-    cmd = build_sbx_command(name, kit, primary_dir, extra_dirs,
-                            static_mcp=mcp_servers, skills_flag=skills_flag)
+        tmpl = template_mod.sandbox_template(
+            golden, arch, gitdirs=(), vm_type=args.vm_type, cpus=args.cpus,
+            memory=args.memory, disk=args.disk,
+            proxy_ports=template_mod.loopback_proxy_ports(env),
+            ca_files=image_mod.extra_ca_files(env))
+    except (state_mod.StateError, vm_mod.VmError, image_mod.ImageError,
+            template_mod.TemplateError, lima_mod.LimaError) as e:
+        print(color_mod.error(f"error: {e}"), file=sys.stderr)
+        return 1
 
     if args.dry_run:
-        print(color_mod.dim("+ " + " ".join(cmd)), file=sys.stderr)
-        if port is not None:
-            print(
-                "\n" + color_mod.dim(
-                    f"+ wmf-sbx ports {name} --publish {port}"
-                    "  (after creation, to expose the git daemon on an "
-                    "auto-assigned host port -- see "
-                    "sbx/DESIGN-parallel-clone-tree.md §3)"
-                ),
-                file=sys.stderr,
-            )
+        say(f"+ would create sandbox {name!r} (Lima instance {vm_mod.instance_name(name)}) "
+            f"with this config:")
+        print(color_mod.dim(image_mod.yaml.safe_dump(tmpl, sort_keys=False)),
+              file=sys.stderr, end="")
         return 0
 
     try:
@@ -2200,67 +2015,35 @@ def main(argv=None, run=subprocess.run):
         print(color_mod.error(f"error: {e}"), file=sys.stderr)
         return 1
 
-    if not args.no_remotes:
-        # Opportunistic: sweep out remotes belonging to sandboxes that were
-        # destroyed by something other than `wmf-sbx-rm` (a plain `sbx rm`,
-        # `sbx logout`). Cheap, never prompts, and it's what keeps a leaked
-        # remote from outliving its sandbox long enough for the host port to
-        # be recycled onto an unrelated one -- the failure mode
-        # sbx/DESIGN-host-remotes.md §2 is written around.
-        prune_removed_sandboxes(run=run)
+    # The state first: a create that fails half-way leaves a VM that
+    # `wmf-sbx rm NAME` can then remove.
+    stamp = (now or datetime.datetime.now(datetime.timezone.utc)).isoformat(timespec="seconds")
+    state = state_mod.new_state(
+        name, created=stamp, primary_dir=primary_dir, image=key,
+        vm_type=tmpl["vmType"], repos=[path for _c, path, _n in resolved])
+    state_mod.save(state, env)
+    try:
+        vm_mod.create(name, tmpl, lima=lima, log=say)
+    except (vm_mod.VmError, lima_mod.LimaError) as e:
+        print(color_mod.error(f"error: {e}"), file=sys.stderr)
+        print(f"  the state is kept; `wmf-sbx rm {name}` removes what was made.",
+              file=sys.stderr)
+        return 1
 
-    print(color_mod.dim("+ " + " ".join(cmd)), file=sys.stderr)
-    env = os.environ.copy()
-    # Defense in depth on top of the wmf-sbx wrapper (see build_sbx_command
-    # and sbx/NOTES.md #8): still strip SSH_AUTH_SOCK here too, in case
-    # this script is ever changed to call sbx directly again.
-    env.pop("SSH_AUTH_SOCK", None)
-    result = color_mod.run_with_color(cmd, env=env, run=run)
-    if generated_kit_dir is not None:
-        # sbx create only reads --kit at creation time (see CLAUDE.md
-        # "Gotchas"); nothing inside the running sandbox needs it afterward.
-        shutil.rmtree(generated_kit_dir, ignore_errors=True)
-    if port is not None:
-        # Only for a kit we generated -- an explicit --kit has no
-        # wmf-sbx-setup in it and so no report to miss.
-        #
-        # Before the returncode check, not after: a create that failed *in*
-        # the setup step is exactly when its report matters most. quiet on
-        # that path, though -- a create that died earlier may have left no
-        # sandbox to exec into, and "couldn't read the report" is not the
-        # news then.
-        report_setup_problems(name, run=run, quiet=result.returncode != 0)
-    if result.returncode != 0:
-        return result.returncode
-    if port is not None:
-        # The startup step has done this already, or is doing it now; this
-        # run is what shows the engineer the result (§95).
-        amend_workspace_claude_md(name, run=run)
-
-    if port is not None:
-        # The generated kit declares this port itself, so this is usually
-        # just a lookup; an explicit --kit that doesn't declare it still
-        # gets the publish (see ensure_published_host_port).
-        host_port = ensure_published_host_port(name, port, run=run)
-        if host_port is not None:
-            candidates = parallel_tree_remotes(
-                host_home, name, resolved, host_port, readonly_dirs
-            )
-            if args.no_remotes:
-                print_remote_add_reminder(candidates)
-            else:
-                add_host_remotes(
-                    name, candidates, port, host_port, run=run,
-                    primary_dir=primary_dir,
-                )
-        else:
-            print(
-                f"warning: could not determine the published host port for "
-                f"the sandbox's git daemon (sandbox port {port}) -- run "
-                f"`wmf-sbx ports {name} --json` yourself to find it.",
-                file=sys.stderr,
-            )
-    print_run_reminder(name)
+    from . import start as start_mod
+    print(f"{name}: created; checking it", file=sys.stderr)
+    if not start_mod.check(name, lima=lima):
+        print(color_mod.error(f"error: {name} breaks a security invariant; do not use "
+                              f"it. `wmf-sbx rm {name}`."), file=sys.stderr)
+        return 1
+    print(f"\nSandbox {name} is ready (Lima instance {vm_mod.instance_name(name)}).\n"
+          f"  wmf-sbx exec {name} -- CMD     run a command as the agent\n"
+          f"  wmf-sbx status {name}          check it\n"
+          f"  wmf-sbx stop|start {name}\n"
+          f"  wmf-sbx rm {name}\n"
+          f"Not yet on Lima: the repo mounts and host remotes (phase 4), the "
+          f"MediaWiki setup (phase 5), and `wmf-sbx resume` (phase 6).",
+          file=sys.stderr)
     return 0
 
 

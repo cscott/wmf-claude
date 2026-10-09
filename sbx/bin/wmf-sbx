@@ -1,121 +1,70 @@
 #!/usr/bin/env bash
-# wmf-sbx: the ONLY supported way to invoke Docker Sandboxes (`sbx`) for
-# this project. Never call `sbx` directly -- see sbx/NOTES.md #8.
+# wmf-sbx: MediaWiki development sandboxes in Lima VMs.
 #
-# For eleven verbs (cp, create, exec, image, ls-remotes, refresh-claude-md, resolve,
-# resume, rm, run, start) this file also redirects to the matching, smarter `wmf-sbx-<verb>`
-# wrapper instead of running the raw `sbx` verb -- see the
-# REDIRECT_VERBS block below and sbx/NOTES.md "wmf-sbx redirects".
-# `wmf-sbx --upstream ...` bypasses that and reaches raw `sbx` for any
-# verb, same as every invocation did before this existed.
+# A plain dispatcher: `wmf-sbx VERB ARGS...` runs the wmf-sbx-VERB script
+# next to this file. There is no Docker sbx any more
+# (lima-port/HANDOFF-LIMA.md §4; the sbx-docker-final branch keeps the
+# Docker backend). Every verb that acts on a sandbox requires its state
+# file, so wmf-sbx never touches a Lima VM it did not make.
 #
-# `sbx` forwards the host's SSH agent into every sandbox whenever
-# SSH_AUTH_SOCK is set in the invoking shell's environment, with no
-# per-invocation opt-out (docker/sbx-releases#305, dups #115 and #121;
-# Docker promised on 2026-07-03 to make this opt-in, but as of this
-# writing all three issues are still open). Forwarding appears sticky to
-# whatever environment the sbx daemon itself was started with -- and that
-# daemon can be started implicitly by *any* sbx subcommand, not just `sbx
-# create` -- so stripping SSH_AUTH_SOCK only around `sbx create` is not
-# sufficient once a daemon has ever been started with it set. The only
-# reliable fix is to guarantee SSH_AUTH_SOCK is absent from every single
-# sbx invocation, forever. That is what this wrapper does.
-#
-# If `sbx` is ever run directly with SSH_AUTH_SOCK set -- including by
-# something else on your system starting the daemon first -- the running
-# daemon may keep forwarding your real SSH agent into every sandbox until
-# it is stopped and restarted cleanly, and `sbx daemon stop` kills every
-# running sandbox without letting it save state. Add `alias sbx=wmf-sbx`
-# (or an equivalent shell function) to your shell rc so a bare `sbx`
-# typed out of habit still comes through here.
+#   wmf-sbx create PRIMARY [EXTRA...]   make a sandbox (a Lima VM)
+#   wmf-sbx start|stop|status NAME      boot, stop, check
+#   wmf-sbx exec NAME -- CMD...         run a command as the agent
+#   wmf-sbx cp SRC DST                  copy; one side is NAME:PATH
+#   wmf-sbx rm NAME                     remove the VM, state and remotes
+#   wmf-sbx ls                          list the sandboxes
+#   wmf-sbx image build|ls|rm|prune     the golden image
+#   wmf-sbx resolve | ls-remotes        repo resolution, host remotes
 set -euo pipefail
-
-# Strip before any exec below, including the smart-wrapper redirect just
-# below -- this file's whole job is guaranteeing SSH_AUTH_SOCK is absent
-# from every sbx invocation, and the redirect exits via `exec` too.
+# Kept from the Docker backend: an SSH agent socket has no business in
+# any command this starts.
 unset SSH_AUTH_SOCK
 
-# `wmf-sbx-<verb>` exists for these `sbx` verbs and adds real
-# safety/smarts on top of the plain verb (unfetched-commit guards, remote
-# repointing, mount restore, daemon-wait, path-shortcut NAME resolution,
-# ...). Typing the natural `wmf-sbx create ...` should reach that smart
-# wrapper, not go straight to raw `sbx create ...` and skip all of it --
-# so redirect here unless the engineer explicitly asked for the raw
-# behavior with `--upstream`. `sbx/NOTES.md` "wmf-sbx redirects".
-#
-# This has to happen before the real-`sbx`-on-PATH lookup below: a
-# redirect never touches the real binary at all (the wmf-sbx-<verb>
-# script it execs into is the one that invokes `sbx`, via its own
-# `wmf-sbx --upstream ...` call), so requiring a real `sbx` on PATH just
-# to redirect would make every one of these verbs depend on an install
-# step it doesn't actually need.
-REDIRECT_VERBS="cp create exec image ls-remotes refresh-claude-md resolve resume rm run start"
+VERBS="cp create exec image ls ls-remotes resolve rm start status stop"
+NOT_YET="resume run"
+RETIRED="refresh-claude-md settings ports policy kit secret"
 
-if [ "${1:-}" = "--upstream" ]; then
-  shift
-elif [ $# -gt 0 ]; then
-  for verb in $REDIRECT_VERBS; do
-    if [ "$1" = "$verb" ]; then
-      shift
-      # realpath, not the bare script path: this wrapper is reached
-      # through a symlink (a ~/.local/bin entry, or a symlinked
-      # checkout) as often as not, and the sibling wmf-sbx-<verb>
-      # scripts live next to the real file, not the link. Same
-      # resolution the self-loop guard below already relies on, and the
-      # precedent documented in wmf-sbx-start's own header (sbx/NOTES.md
-      # §66).
-      self=$(readlink -f -- "${BASH_SOURCE[0]}")
-      dir=$(dirname -- "$self")
-      sibling="$dir/wmf-sbx-$verb"
-      if [ ! -x "$sibling" ]; then
-        sibling=$(command -v "wmf-sbx-$verb") || {
-          echo "wmf-sbx: can't find 'wmf-sbx-$verb' next to this script" \
-               "($dir) or on PATH -- is the install incomplete? Falling" \
-               "back to raw 'sbx $verb' would skip its safety checks, so" \
-               "refusing instead." >&2
-          exit 1
-        }
-      fi
-      exec "$sibling" "$@"
-    fi
-  done
-fi
-
-# Everything past this point actually needs the real binary: --upstream
-# was given, or the verb (if any) isn't one of the ones redirected above.
-real_sbx=$(command -v sbx) || {
-  echo "wmf-sbx: no 'sbx' binary found on PATH" >&2
-  exit 127
+usage() {
+  sed -n '2,/^set -euo/{/^set -euo/d;s/^# \{0,1\}//;p;}' "${BASH_SOURCE[0]}"
 }
-if [ "$(readlink -f -- "$real_sbx")" = "$(readlink -f -- "${BASH_SOURCE[0]}")" ]; then
-  echo "wmf-sbx: PATH resolves 'sbx' back to this wrapper -- check for a" >&2
-  echo "  'sbx' alias or symlink pointing at wmf-sbx ahead of the real sbx" >&2
-  echo "  binary on PATH." >&2
-  exit 1
-fi
 
-# `sbx --cloud ...` (new in 0.42.0) runs the sandbox on Docker-managed
-# infrastructure instead of this laptop. Everything this project assumes
-# stops holding there: the workspace bind mounts and the whole parallel
-# tree are local paths, the git daemon is reached over 127.0.0.1, and the
-# security review in SECURITY.md is about a VM on the engineer's own
-# machine. Uploading a WMF checkout -- and whatever unpushed work is in
-# it -- to a third party's compute is a decision to make deliberately,
-# not one to reach by typing a flag in the wrong terminal.
-for arg in "$@"; do
-  case "$arg" in
-    --) break ;;                       # everything after this is the agent's
-    --cloud|--cloud=*)
-      if [ "${WMF_SBX_ALLOW_CLOUD:-}" != "1" ]; then
-        echo "wmf-sbx: refusing '--cloud': it runs the sandbox on Docker's" >&2
-        echo "  infrastructure, which sends the workspace off this machine." >&2
-        echo "  The mounts, the git daemon, and SECURITY.md all assume local." >&2
-        echo "  Set WMF_SBX_ALLOW_CLOUD=1 if you mean it (still via wmf-sbx," >&2
-        echo "  so SSH_AUTH_SOCK stays stripped)." >&2
+verb="${1:-}"
+case " $VERBS " in
+  *" $verb "*)
+    shift
+    # realpath: this script is often reached through a symlink, and the
+    # wmf-sbx-VERB scripts are next to the real file (sbx/NOTES.md §66).
+    self=$(readlink -f -- "${BASH_SOURCE[0]}")
+    sibling="$(dirname -- "$self")/wmf-sbx-$verb"
+    if [ ! -x "$sibling" ]; then
+      sibling=$(command -v "wmf-sbx-$verb") || {
+        echo "wmf-sbx: can't find 'wmf-sbx-$verb' next to this script or on PATH;" \
+             "is the install incomplete?" >&2
         exit 1
-      fi
-      ;;
-  esac
-done
+      }
+    fi
+    exec "$sibling" "$@"
+    ;;
+esac
 
-exec "$real_sbx" "$@"
+case " $NOT_YET " in
+  *" $verb "*)
+    echo "wmf-sbx: '$verb' is not ported to Lima yet (lima-port/HANDOFF-LIMA.md" \
+         "§11, phase 6). Use 'wmf-sbx exec NAME -- CMD' for now." >&2
+    exit 1
+    ;;
+esac
+case " $RETIRED " in
+  *" $verb "*)
+    echo "wmf-sbx: '$verb' belonged to the Docker sbx backend and is retired." >&2
+    exit 1
+    ;;
+esac
+
+if [ -z "$verb" ] || [ "$verb" = "-h" ] || [ "$verb" = "--help" ] || [ "$verb" = "help" ]; then
+  usage
+  [ -n "$verb" ]
+  exit $?
+fi
+echo "wmf-sbx: unknown verb '$verb'. Verbs: $VERBS" >&2
+exit 1

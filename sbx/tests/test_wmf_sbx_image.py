@@ -383,6 +383,21 @@ class CacheTests(TempEnv):
 
 # -- the build sequence ---------------------------------------------------
 
+class SubmoduleTests(unittest.TestCase):
+
+    def check(self, stdout):
+        return image.check_submodules("/repo", run=lambda argv, **kw: Done(stdout=stdout))
+
+    def test_checked_out_submodules_pass(self):
+        self.check(" e54c722 gerrit-mcp-server (heads/main)\n"
+                   "+cee06f2 mcp-phabricator (v1-2-gcee06f2)\n")
+
+    def test_a_submodule_that_is_not_checked_out_stops_the_build(self):
+        with self.assertRaisesRegex(image.ImageError, "gitlab-mcp-server.*submodule update"):
+            self.check(" e54c722 gerrit-mcp-server (heads/main)\n"
+                       "-e88d8e8 gitlab-mcp-server\n")
+
+
 class FakeLima:
     """Records the calls; `image-build.sh` exits with `build_rc`."""
 

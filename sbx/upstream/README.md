@@ -24,7 +24,6 @@ not as a task here. Two former tasks are gone for that reason:
   Only the Linux glob question (task 4) is left.
 - `run-tests` and `vendor/bin/phpunit`: this is MR D, sent as
   [!130](https://gitlab.wikimedia.org/repos/product-safety-and-integrity/wmf-claude/-/merge_requests/130)
-  (see `sbx/NOTES.md` §104). The fix is
-  `sbx/patches/plugin/01-run-tests-composer-entrypoint.patch`, which the
-  kit applies until upstream takes it. Delete that patch in the same
-  rebase that brings in the upstream change, or the kit build fails.
+  (see `sbx/NOTES.md` §104). The `lima-port` branch carries !130, so
+  `sbx/patches/plugin/01-run-tests-composer-entrypoint.patch` is
+  deleted. The kit now ships upstream's `run-tests` unchanged.

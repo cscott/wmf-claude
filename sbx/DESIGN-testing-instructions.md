@@ -74,8 +74,8 @@ There is no `phpunit.xml` (core ships `phpunit.xml.template`, not a `.dist`),
 so PHPUnit loads no bootstrap and dies with `Class "MediaWikiUnitTestCase"
 not found`, which reads as a broken checkout. `composer
 phpunit:entrypoint --` generates the config first. **The failing form is
-what `skills/run-tests/SKILL.md` currently tells Claude to do** (§6.3,
-correction 3).
+what `skills/run-tests/SKILL.md` told Claude to do** (§6.3, correction 3).
+Fixed by upstream MR !130, which the `lima-port` branch carries.
 
 ### 2.2 `npm ci` fails wherever cypress is a devDependency
 
@@ -616,7 +616,9 @@ that disagreed about which sandbox they describe was the failure mode
   deletion of the VisualEditor report (§6.5), the overlay (§6.1) and the
   patch mechanism (§6.2), and the refactor of §6.4: the sbx context files
   are in the overlay, correction 1 of §6.3 came with them, and correction 3
-  is `sbx/patches/plugin/01-run-tests-composer-entrypoint.patch`. Also
+  was `sbx/patches/plugin/01-run-tests-composer-entrypoint.patch`, now
+  upstream MR !130, which the `lima-port` branch carries (the patch is
+  deleted). Also
   §5.1, §5.2, §5.5 and all of §5.4: the setup script runs `npm ci` in every
   clone, generates `phpunit.xml`, and writes core's
   `.api-testing.config.json`; the kit exports `MW_SCRIPT_PATH=/`,

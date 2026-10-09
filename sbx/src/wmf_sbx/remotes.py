@@ -1,37 +1,37 @@
 #!/usr/bin/env python3
 """Adding, re-pointing, and removing the host-side git remotes -- named
 the same as the sandbox itself, e.g. `sbx-cite` (see remote_name_for) --
-that make a sandbox's parallel clone tree fetchable from the host. See
-sbx/DESIGN-host-remotes.md §3-§5 and sbx/DESIGN-parallel-clone-tree.md §3.
+that make a sandbox's clones fetchable from the host. See
+sbx/DESIGN-host-remotes.md §3-§5. On Lima the URL is
+wmfsbx://NAME/PATH, served by git-remote-wmfsbx (remote_helper.py,
+lima-port/HANDOFF-LIMA.md §6.2); the Docker backend used a git daemon on
+a published port.
 
 Two things here are load-bearing and non-obvious:
 
 **Ownership is a config marker, not the URL.** A remote is ours iff
-`remote.<remote>.wmfSbxSandbox` equals the sandbox name. Matching on the
-recorded URL instead would be wrong: `wmf-sbx-resume` has to re-publish
-the daemon's port after `sbx stop`, which legitimately changes the URL
-(§15.4), so a URL mismatch would make us disown our own remote and leak
-it forever -- and a leaked remote is actively dangerous, because host
-ports get recycled and a later unrelated sandbox can end up serving it.
-The marker is a two-sided record: the state file says where to look, the
-repo itself says "yes, this one is ours."
+`remote.<remote>.wmfSbxSandbox` equals the sandbox name. The marker is a
+two-sided record: the state file says where to look, the repo itself
+says "yes, this one is ours." (With Docker it also had to survive a URL
+change: the daemon's host port changed after `sbx stop`, and host ports
+are recycled. A wmfsbx:// URL does not change, but a leaked remote named
+like a later sandbox would still reach that sandbox.)
 
 **`--no-tags`.** Tags live in one flat namespace per repository, so a
 default fetch from a sandbox would drop the sandbox's tags straight into
 the host repo's refs/tags/*, indistinguishable from real ones. Branches
 are namespaced under refs/remotes/<name>/* and are fine.
 
-sync_remotes() is deliberately shaped so `wmf-sbx-resume` can call it
-unchanged with fresh URLs: an existing remote that carries our marker is
-re-pointed with `git remote set-url` rather than skipped.
+sync_remotes() re-points an existing remote that carries our marker
+with `git remote set-url`, rather than skipping it.
 
 **Suspending gc is part of the same lifecycle.** The sandbox's clone of a
 host repo is a `git clone --shared`: its .git/objects/info/alternates
-points back at the host's object store, and it holds no second copy of
-those objects (wmf_sbx_setup.clone_into_parallel_tree explains why). The
-read-only remount inside the sandbox stops the *sandbox* corrupting that,
-but not the engineer -- a `git gc` in the host repo can collect objects
-the sandbox clone is still reading through the alternate, and the first
+points back at the host's object store, through the read-only mount of
+the host's git dir, and it holds no second copy of those objects
+(repos.py). The read-only mount stops the *sandbox* corrupting that, but
+not the engineer -- a `git gc` in the host repo can collect objects the
+sandbox clone is still reading through the alternate, and the first
 symptom is a broken sandbox. So a repo we register a remote in also gets
 gc.auto=0 / gc.pruneExpire=never, with the previous values stashed in the
 repo's own config under wmfSbx.saved*, restored when the last sandbox
@@ -231,16 +231,15 @@ def sync_remotes(name, candidates, run=subprocess.run, warn=None):
     """Add (or re-point) one `<name>` remote per candidate.
 
     `candidates` is a list of dicts with hostDir/remote/url/sandboxPath
-    and an optional readOnly flag -- see
-    wmf_sbx_create.parallel_tree_remotes. Returns (remotes, skipped) in
+    -- see repos.remote_candidates. A ':ro' repo gets a remote too: its
+    clone in the VM also borrows the host's objects. Returns (remotes, skipped) in
     the shape wmf_sbx_state stores: `remotes` lists only what we actually
     added or adopted, so cleanup can never try to remove something we
     never created.
 
     Everything is best-effort. By the time this runs the sandbox already
     exists, and a config lock or a read-only repo is not a reason to fail
-    the whole `create` -- warn, record what worked, carry on. That's the
-    same posture publish_daemon_port already takes.
+    the whole `create` -- warn, record what worked, carry on.
     """
     warn = warn or (lambda msg: None)
     remotes, skipped = [], []
@@ -249,13 +248,6 @@ def sync_remotes(name, candidates, run=subprocess.run, warn=None):
         remote = cand["remote"]
         url = cand["url"]
 
-        if cand.get("readOnly"):
-            # A ':ro' repo's parallel path is a bind mount of the original
-            # (wmf_sbx_setup.bind_into_parallel_tree), so a remote there
-            # would point the host repo at itself over the loopback: no new
-            # objects, ever, just confusion.
-            skipped.append({"hostDir": host_dir, "reason": "readonly-bind"})
-            continue
         if not is_git_repo(host_dir, run=run):
             skipped.append({"hostDir": host_dir, "reason": "not-a-git-repo"})
             continue
@@ -382,10 +374,10 @@ def remove_remotes(state, run=subprocess.run, warn=None, dry_run=False):
 
 
 def unfetched_tips(state, run=subprocess.run):
-    """Commits the sandbox's daemon is serving that the host repo has
-    never seen -- i.e. work that `sbx rm` would destroy irrecoverably,
-    since under sbx/DESIGN-parallel-clone-tree.md the agent's commits live
-    only in the sandbox's own overlay filesystem.
+    """Commits the sandbox's clones have that the host repo has never
+    seen -- i.e. work that `wmf-sbx rm` would destroy irrecoverably, since
+    the agent's commits live only on the VM's disk. `git ls-remote` of a
+    wmfsbx:// URL runs upload-pack in the VM, so the VM must run.
 
     Returns (findings, unreachable): findings is
     [(hostDir, remote, [sha, ...]), ...]; unreachable is
@@ -405,7 +397,7 @@ def unfetched_tips(state, run=subprocess.run):
             unreachable.append((host_dir, remote, (listed.stderr or "").strip()))
             continue
         refs = _parse_ls_remote(listed.stdout)
-        # Everything the sandbox got *from* somewhere else. `git daemon`
+        # Everything the sandbox got *from* somewhere else. upload-pack
         # advertises the whole of refs/, remote-tracking refs included, so
         # a sandbox that fetched Gerrit more recently than the host looks
         # like a pile of unfetched work -- 14 tips across two repos, in

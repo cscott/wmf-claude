@@ -13,7 +13,8 @@ The rules, which `check_template()` asserts, and the tests too:
   rosetta, no extra networks;
 - `plain: false`, because plain mode ignores `mounts` (D10);
 - every mount is read-only, under /run/wmf-sbx/host/, of a git dir, with
-  `mountType` 9p on QEMU and virtiofs on vz, never reverse-sshfs;
+  `mountType` 9p on QEMU and virtiofs on vz, never reverse-sshfs; a 9p
+  mount has no guest cache;
 - Lima's user (`engineer`) has a uid that is neither the host's (the
   agent has that, D10) nor the image builder's.
 """
@@ -51,6 +52,19 @@ def mount_point(host_gitdir):
     """Where a host git dir appears in the guest: the same path, under
     /run/wmf-sbx/host/ (D10)."""
     return HOST_MOUNT_ROOT + os.path.abspath(host_gitdir)
+
+
+def mount(gitdir, vm_type):
+    """The Lima mount of one host git dir: read-only, under
+    /run/wmf-sbx/host/. On QEMU (9p), with no guest cache: with Lima's
+    default for a read-only 9p mount (`fscache`), the guest still read a
+    loose ref that the host had moved into packed-refs, so `git fetch
+    local` missed a host commit (RAN, phase 4)."""
+    m = {"location": os.path.abspath(gitdir), "mountPoint": mount_point(gitdir),
+         "writable": False}
+    if MOUNT_TYPES[vm_type] == "9p":
+        m["9p"] = {"cache": "none"}
+    return m
 
 
 def loopback_proxy_ports(env=None):
@@ -96,8 +110,7 @@ def sandbox_template(golden_path, arch, gitdirs=(), vm_type=None, cpus=DEFAULT_C
         "memory": memory,
         "disk": disk,
         "mountType": MOUNT_TYPES[vm_type],
-        "mounts": [{"location": os.path.abspath(g), "mountPoint": mount_point(g),
-                    "writable": False} for g in gitdirs],
+        "mounts": [mount(g, vm_type) for g in gitdirs],
         "containerd": {"system": False, "user": False},
         "portForwards": [{"guestIP": "0.0.0.0", "proto": "any", "ignore": True}],
         "ssh": {"loadDotSSHPubKeys": False, "forwardAgent": False,
@@ -118,6 +131,14 @@ def sandbox_template(golden_path, arch, gitdirs=(), vm_type=None, cpus=DEFAULT_C
         tmpl["caCerts"] = {"files": [os.path.abspath(f) for f in ca_files]}
     check_template(tmpl, host_uid=host_uid)
     return tmpl
+
+
+def is_git_dir_name(path):
+    """True for a path that names a git dir: `.git`, a bare `NAME.git`, or
+    a submodule's git dir under `.git/modules/`. The worktree is never
+    mounted (D10)."""
+    path = path.rstrip("/")
+    return path.endswith(".git") or "/.git/modules/" in path
 
 
 def check_template(tmpl, host_uid=None):
@@ -147,10 +168,12 @@ def check_template(tmpl, host_uid=None):
             bad(f"mount {loc} must have writable: false")
         if not (m.get("mountPoint") or "").startswith(HOST_MOUNT_ROOT + "/"):
             bad(f"mount {loc} must be under {HOST_MOUNT_ROOT}/")
-        if os.path.basename(loc.rstrip("/")) != ".git" and not loc.endswith(".git"):
+        if not is_git_dir_name(loc):
             bad(f"mount {loc} is not a git dir")
         if os.path.abspath(loc) in (home, "/"):
             bad(f"mount {loc} is a home or root directory")
+        if tmpl.get("mountType") == "9p" and (m.get("9p") or {}).get("cache") != "none":
+            bad(f"9p mount {loc} must have cache: none (a cached view goes stale)")
     user = tmpl.get("user") or {}
     if user.get("uid") in (None, host_uid, image_mod.BUILDER_UID):
         bad("Lima's user needs its own uid: not the host's (the agent's) nor the builder's")

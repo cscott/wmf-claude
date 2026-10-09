@@ -27,6 +27,7 @@ from . import resolve as resolve_mod
 from . import state as state_mod
 from . import image as image_mod
 from . import lima as lima_mod
+from . import mediawiki as mediawiki_mod
 from . import remotes as remotes_mod
 from . import repos as repos_mod
 from . import template as template_mod
@@ -431,9 +432,10 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
        golden image (D2) and runs the provisioning;
     6. check the security invariants;
     7. clone the repos in the VM at their host paths (D8), and add the
-       host remotes, which also suspend gc (repos.py, remotes.py).
+       host remotes, which also suspend gc (repos.py, remotes.py);
+    8. the MediaWiki setup, as the agent (mediawiki.py, setup.py --lima).
 
-    Phase 5 adds the MediaWiki setup; phase 6 the session."""
+    Phase 6 adds the session."""
     parser = argparse.ArgumentParser(description="Create a wmf-sbx sandbox (a Lima VM).")
     parser.add_argument(
         "primary", help="Repo for the sandbox's primary workspace; append ':ro' for read-only"
@@ -454,8 +456,8 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
     parser.add_argument("--no-suggests", action="store_true",
                         help="Skip 'suggests' when walking dependencies")
     parser.add_argument("--reset-all", action="store_true",
-                        help="Reset every clone to upstream master (used by the "
-                        "MediaWiki setup, phase 5)")
+                        help="Reset every clone to upstream master, the repos "
+                        "named on the command line too")
     parser.add_argument("--no-remotes", action="store_true",
                         help="Don't touch any host .git/config: no remote "
                         "to fetch the sandbox's work, and gc is not suspended")
@@ -617,11 +619,14 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
     # The clones in the VM, then the host remotes. Requested repos keep
     # the host's branch; dependencies go to upstream master, and
     # --reset-all resets every repo (DESIGN-setup-steps.md §8.1).
-    keep = set() if args.reset_all else (
-        {path for _c, path, _n in resolved if path not in origins_by_path} | {primary_dir})
+    requested = {path for _c, path, _n in resolved if path not in origins_by_path}
+    keep = set() if args.reset_all else requested | {primary_dir}
     readonly = {path for (_spec, is_ro), (_c, path, _n) in zip(split, resolved) if is_ro}
+    # Raw paths get their canonical names here (.gitreview, the config's
+    # rules), for the upstream URLs and the MediaWiki roles (core, links).
+    resolved_for_kit = canonicals_for_kit(resolved, config.get("rules", []))
     try:
-        upstreams = upstream_plan([(c, p) for c, p, _n in resolved], run=run)
+        upstreams = upstream_plan(resolved_for_kit, run=run)
         repos_mod.clone_in_vm(name, repos, upstreams, keep, readonly=readonly,
                               lima=lima, env=env)
     except (repos_mod.RepoError, lima_mod.LimaError) as e:
@@ -639,6 +644,20 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         state["remotes"], state["skipped"] = added, skipped
         state_mod.save(state, env)
 
+    plan = mediawiki_mod.build_plan(
+        resolved_for_kit,
+        links=link_plan(resolved_for_kit, overrides=config.get("link_overrides") or {}),
+        readonly=readonly, requested=requested, primary=primary_dir,
+        reset_all=args.reset_all)
+    try:
+        mediawiki_mod.run_setup(name, plan, lima=lima, env=env)
+    except (mediawiki_mod.SetupError, lima_mod.LimaError) as e:
+        print(color_mod.error(f"error: {e}"), file=sys.stderr)
+        print(f"  The VM, the clones and the host remotes are kept; fix the "
+              f"problem with `wmf-sbx exec {name} -- ...`, or `wmf-sbx rm {name}`.",
+              file=sys.stderr)
+        return 1
+
     print(f"\nSandbox {name} is ready (Lima instance {vm_mod.instance_name(name)}).\n"
           f"  wmf-sbx exec {name} -- CMD     run a command as the agent\n"
           f"  wmf-sbx status {name}          check it\n"
@@ -646,8 +665,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
           f"  wmf-sbx rm {name}\n"
           + ("" if args.no_remotes else
              f"  git fetch {name}               (on the host, in a repo) the agent's work\n")
-          + "Not yet on Lima: the MediaWiki setup (phase 5), and `wmf-sbx resume` "
-          "(phase 6).",
+          + "Not yet on Lima: `wmf-sbx resume` and the Claude session (phase 6).",
           file=sys.stderr)
     return 0
 

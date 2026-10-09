@@ -168,6 +168,8 @@ SANDBOX_CLAUDE_BIN = os.path.join(SANDBOX_HOME, ".local", "bin", "claude")
 # reports for duty (the kit's own startup log is
 # /var/log/sbx-kit-startup.log), so it's the first place anyone looks.
 LOG_DIR = "/var/log"
+# On Lima the script runs as the agent, which cannot write /var/log.
+LIMA_LOG_DIR = os.path.join("/home/agent", ".wmf-sbx")
 SETUP_LOG_NAME = "wmf-sbx-setup.log"
 SETUP_STATUS_NAME = "wmf-sbx-setup.status"
 
@@ -1568,14 +1570,38 @@ def install_helper_scripts(run=subprocess.run, source_dir=None,
     return installed
 
 
+def running_as_agent():
+    """True when this script already runs as SANDBOX_USER: on Lima it runs
+    as the agent (`--lima`, lima-port/HANDOFF-LIMA.md §7), where sudo is
+    not available and not needed."""
+    try:
+        return os.geteuid() == pwd.getpwnam(SANDBOX_USER).pw_uid
+    except KeyError:
+        return False
+
+
+def give_to_agent(path, run=subprocess.run):
+    """chown a file this script wrote to SANDBOX_USER. Nothing to do when
+    the script runs as the agent: the file is the agent's already."""
+    if running_as_agent():
+        return
+    result = run(["sudo", "chown", f"{SANDBOX_USER}:{SANDBOX_USER}", path])
+    if result.returncode != 0:
+        print(f"warning: could not chown {path} (exit {result.returncode})", file=sys.stderr)
+
+
 def as_agent(argv, cwd=None, run=subprocess.run):
-    """Run argv as SANDBOX_USER with its own $HOME.
+    """Run argv as SANDBOX_USER with its own $HOME. When the script runs
+    as the agent already, argv runs directly (with the script's own
+    environment, which on Lima has the proxy variables).
 
     -H is load-bearing, not tidiness: this script runs as root, and
     without it git, composer, and npm all write their caches and config
     into /root, and the files they create in the clone come out root-owned
     -- undoing clone_into_parallel_tree's chown and leaving a checkout the
     agent can't write."""
+    if running_as_agent():
+        return run(list(argv), cwd=cwd)
     return run(["sudo", "-u", SANDBOX_USER, "-H"] + argv, cwd=cwd)
 
 
@@ -1777,9 +1803,7 @@ def write_composer_local(core_path, parsoid_checkout=False, run=subprocess.run):
         return False
     with open(path, "w", encoding="utf-8") as f:
         f.write(contents)
-    result = run(["sudo", "chown", f"{SANDBOX_USER}:{SANDBOX_USER}", path])
-    if result.returncode != 0:
-        print(f"warning: could not chown {path} (exit {result.returncode})", file=sys.stderr)
+    give_to_agent(path, run=run)
     print(f"wrote {path}", file=sys.stderr)
     return True
 
@@ -1862,9 +1886,7 @@ def write_env_file(core_path, params, uid=None, gid=None, run=subprocess.run):
         return False
     with open(path, "w", encoding="utf-8") as f:
         f.write(contents)
-    result = run(["sudo", "chown", f"{SANDBOX_USER}:{SANDBOX_USER}", path])
-    if result.returncode != 0:
-        print(f"warning: could not chown {path} (exit {result.returncode})", file=sys.stderr)
+    give_to_agent(path, run=run)
     print(f"wrote {path}", file=sys.stderr)
     return True
 
@@ -1945,9 +1967,7 @@ def write_api_testing_config(core_path, params, run=subprocess.run):
         return False
     with open(path, "w", encoding="utf-8") as f:
         f.write(contents)
-    result = run(["sudo", "chown", f"{SANDBOX_USER}:{SANDBOX_USER}", path])
-    if result.returncode != 0:
-        print(f"warning: could not chown {path} (exit {result.returncode})", file=sys.stderr)
+    give_to_agent(path, run=run)
     print(f"wrote {path}", file=sys.stderr)
     return True
 
@@ -2256,7 +2276,7 @@ def plan_from_argv(argv):
 
 
 def mediawiki_setup(plan, core_path, core_readonly, links, clones, warnings,
-                    parsoid_path=None, run=subprocess.run):
+                    parsoid_path=None, run=subprocess.run, reset=True):
     """Everything after the parallel tree: reset the dependency clones,
     wire the extensions into core, install their PHP deps, and install a
     wiki. Returns 0, or 1 if one of the core steps failed.
@@ -2276,6 +2296,8 @@ def mediawiki_setup(plan, core_path, core_readonly, links, clones, warnings,
     warnings: a list this appends one line to per
     non-fatal problem, so the summary at the end of a very long `sbx
     create` log names them all in one place.
+    reset: False skips the `git safe-reset` of the dependency clones; on
+    Lima, sandbox-repos.sh has done it when it cloned them.
     parsoid_path: this sandbox's writable
     gerrit:mediawiki/services/parsoid clone, if any.
     link_parsoid_checkout points LocalSettings.php at it once
@@ -2295,8 +2317,8 @@ def mediawiki_setup(plan, core_path, core_readonly, links, clones, warnings,
         return 0
     if core_readonly:
         print(
-            f"{core_path} is a read-only bind mount of the host's core; "
-            "skipping the MediaWiki setup (drop the ':ro' on core to get it)",
+            f"{core_path} is read-only (':ro'); skipping the MediaWiki setup "
+            "(drop the ':ro' on core to get it)",
             file=sys.stderr,
         )
         return 0
@@ -2305,7 +2327,7 @@ def mediawiki_setup(plan, core_path, core_readonly, links, clones, warnings,
     # Per-repo steps: warn and continue. One extension whose composer
     # update fails shouldn't cost the engineer the whole sandbox -- it can
     # be fixed in place, from inside.
-    for literal_path, work, reset_remote in clones:
+    for literal_path, work, reset_remote in (clones if reset else []):
         if literal_path in keep:
             print(
                 f"{work}: named on the command line, so keeping the host's "
@@ -2637,6 +2659,10 @@ def main(argv=None, run=subprocess.run, popen=subprocess.Popen, log_dir=LOG_DIR)
         # A startup step with its own status file: the setup log is the
         # record of the run that built the sandbox.
         return run_claude_md(argv[1:], log_dir=log_dir)
+    lima = argv[:1] == ["--lima"]
+    if lima and log_dir == LOG_DIR:
+        log_dir = LIMA_LOG_DIR
+        os.makedirs(log_dir, exist_ok=True)
     restoring = argv[:1] == ["--restore"]
     log_name = RESTORE_LOG_NAME if restoring else SETUP_LOG_NAME
     status_name = RESTORE_STATUS_NAME if restoring else SETUP_STATUS_NAME
@@ -2648,6 +2674,8 @@ def main(argv=None, run=subprocess.run, popen=subprocess.Popen, log_dir=LOG_DIR)
     try:
         if restoring:
             status = run_restore(argv[1:], run=run)
+        elif lima:
+            status = run_lima_setup(argv[1:], run=run, log=log)
         else:
             status = run_setup(argv, run=run, popen=popen, log=log)
     except Exception:  # noqa: BLE001 - the report is the whole point
@@ -2668,6 +2696,67 @@ def main(argv=None, run=subprocess.run, popen=subprocess.Popen, log_dir=LOG_DIR)
             os.path.join(log_dir, status_name), status, log.problems,
             log_path=log.path,
         )
+    return status
+
+
+def lima_repo_roles(plan):
+    """(core_path, core_readonly, links, clones, parsoid_path) from a Lima
+    plan. On Lima each clone is at the host path (D8), so the work path is
+    the plan's path. A ':ro' clone is the engineer's: it can be linked and
+    read, but composer and npm cannot write it, so it is not in clones."""
+    core_path, core_readonly, parsoid_path = None, False, None
+    links, clones = [], []
+    for repo in plan["repos"]:
+        path, is_ro = repo["path"], bool(repo.get("readOnly"))
+        if not is_ro:
+            clones.append((path, path, None))
+        if repo.get("canonical") == CORE_CANONICAL:
+            core_path, core_readonly = path, is_ro
+        elif repo.get("linkName") and repo.get("linkDir"):
+            links.append((repo["linkDir"], repo["linkName"], path))
+        if repo.get("canonical") == PARSOID_CANONICAL and not is_ro:
+            parsoid_path = path
+    return core_path, core_readonly, links, clones, parsoid_path
+
+
+def load_lima_plan(path):
+    """A Lima plan (create.py's lima_plan): a JSON object with `repos`."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            plan = json.load(f)
+    except (OSError, ValueError) as e:
+        raise RuntimeError(f"could not read the plan file {path}: {e}") from None
+    if not isinstance(plan, dict) or not isinstance(plan.get("repos"), list):
+        raise RuntimeError(f"{path}: expected a JSON object with a 'repos' list")
+    if plan.get("version") != PLAN_VERSION:
+        raise RuntimeError(f"{path}: plan version {plan.get('version')!r}, "
+                           f"want {PLAN_VERSION}")
+    return plan
+
+
+def run_lima_setup(argv, run=subprocess.run, log=None):
+    """`--lima PLAN.json`: the MediaWiki setup in a Lima sandbox, run by
+    `wmf-sbx create` as the agent, outside nono, before the first session
+    (lima-port/HANDOFF-LIMA.md §7, D7). The clones, the remotes and the
+    resets are done already (sandbox-repos.sh)."""
+    if len(argv) != 1:
+        print("usage: wmf-sbx-setup --lima PLAN.json", file=sys.stderr)
+        return 1
+    try:
+        plan = load_lima_plan(argv[0])
+    except RuntimeError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    core_path, core_readonly, links, clones, parsoid_path = lima_repo_roles(plan)
+    warnings = []
+    status = mediawiki_setup(plan, core_path, core_readonly, links, clones, warnings,
+                             parsoid_path=parsoid_path, run=run, reset=False)
+    if warnings:
+        print(f"\n{len(warnings)} step(s) did not succeed:\n"
+              + "\n".join(f"    {w}" for w in warnings), file=sys.stderr)
+        if log is not None:
+            for w in warnings:
+                log.record(f"warning: {w}")
     return status
 
 

@@ -1110,6 +1110,13 @@ phase A3. Every sandbox gets a full copy of the golden image (D2).
    golden image with no backing file boots under `vz` and QEMU; two
    sandboxes from it have different machine-ids and host keys; `status`
    passes.
+   **Done on Linux/QEMU, 2026-10-09** (`sbx/NOTES.md` §106): `wmf-sbx
+   image build|ls|rm|prune` (`image.py`, `lima.py`, `image-build.sh`).
+   Image `d16a1c5496fa83fe`: qcow2, no backing file, mode 0444, 2.3 GiB
+   (20 GiB virtual). Two full-copy sandboxes from it have different
+   machine-ids and host keys; `agent` has the host uid. A second `image
+   build` hits the cache in 2 s. Still to do: `vz` (the Mac list), and
+   `status` (it comes with phase 3).
 3. **Lifecycle:** `create --no-deps`, `start`, `stop`, `exec`, `cp`,
    `rm`. Exit: round trip on `vz` and on QEMU.
 4. **Git transport and mounts.** Exit:

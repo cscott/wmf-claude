@@ -11,8 +11,11 @@ from Kosta's pinned Debian image). In short:
   An entry is `<cache>/images/<key>/` with `golden.qcow2` (mode 0444),
   `golden.sha256` and `manifest.json`. An entry is never written again:
   other inputs make another key. D12's overlays depend on that.
-- Nothing per-host or per-sandbox goes in: no users, no uid, no
-  credentials. The agent gets the host uid at create time (D10).
+- Nothing per-sandbox goes in: no credentials, no workspace. One
+  per-host value does: the `agent` user has the host user's uid and gid
+  (D10), so mounted files are the agent's own. The uid and gid are in the
+  key, so a host with another uid gets another image. On most machines
+  they never change (cananian, 2026-10-09).
 
 `wmf-sbx image build|ls|rm|prune` calls `main()`.
 """
@@ -77,6 +80,11 @@ IMAGE_PACKAGES = list(kit.BASE_PACKAGES) + [
 # and with its own user name, which the build removes again.
 BUILDER_PREFIX = "wmf-sbx-builder-"
 BUILDER_USER = "wmfbuilder"
+# Lima gives its user the host uid unless the template says otherwise.
+# The build then creates `agent` with the host uid, so the builder's user
+# must have another one. (RAN: without this, wmfbuilder got uid 30033.)
+BUILDER_UID = 59999
+AGENT_USER = "agent"
 BUILDER_DISK = "20GiB"
 BUILDER_START_TIMEOUT = "30m"
 
@@ -169,11 +177,25 @@ def _sha256_file(path):
     return h.hexdigest()
 
 
-def image_inputs(arch=None, fetch=_fetch, run=subprocess.run, root=REPO_ROOT):
+def agent_ids(uid=None, gid=None):
+    """The host user's uid and gid, for the agent (D10). Root and the
+    builder's uid are refused."""
+    uid = os.getuid() if uid is None else uid
+    gid = os.getgid() if gid is None else gid
+    if uid == 0 or gid == 0:
+        raise ImageError("run wmf-sbx as your own user, not as root")
+    if uid == BUILDER_UID:
+        raise ImageError(f"uid {uid} is the builder's uid; change BUILDER_UID")
+    return {"name": AGENT_USER, "uid": uid, "gid": gid}
+
+
+def image_inputs(arch=None, fetch=_fetch, run=subprocess.run, root=REPO_ROOT,
+                 uid=None, gid=None):
     """Everything that goes into the image (HANDOFF-LIMA.md §5.1)."""
     arch = arch or host_arch()
     version, checksum = claude_release(arch, fetch=fetch)
     return {
+        "agent": agent_ids(uid, gid),
         "schema": 1,
         "arch": arch,
         "base": base_image(arch),
@@ -312,7 +334,8 @@ def builder_template(inputs):
         "portForwards": [{"guestIP": "0.0.0.0", "proto": "any", "ignore": True}],
         "ssh": {"loadDotSSHPubKeys": False, "forwardAgent": False,
                 "forwardX11": False, "forwardX11Trusted": False},
-        "user": {"name": BUILDER_USER, "home": f"/home/{BUILDER_USER}"},
+        "user": {"name": BUILDER_USER, "home": f"/home/{BUILDER_USER}",
+                 "uid": BUILDER_UID},
     }
 
 
@@ -374,6 +397,8 @@ def build_env(inputs, guest_stage):
         "WMF_SBX_CLAUDE_SHA256": inputs["claude"]["sha256"],
         "WMF_SBX_TREE_REV": inputs["tree"],
         "WMF_SBX_BUILDER_USER": BUILDER_USER,
+        "WMF_SBX_AGENT_UID": str(inputs["agent"]["uid"]),
+        "WMF_SBX_AGENT_GID": str(inputs["agent"]["gid"]),
     }
 
 

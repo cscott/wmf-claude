@@ -55,6 +55,7 @@ def fake_fetch(urls=None):
 def sample_inputs(**changes):
     inputs = {
         "schema": 1, "arch": "x86_64",
+        "agent": {"name": "agent", "uid": 1000, "gid": 1000},
         "base": {"location": "https://example.invalid/debian.qcow2",
                  "arch": "x86_64", "digest": "sha512:" + "c" * 128},
         "packages": ["php", "git"], "nono": "0.78.0",
@@ -154,9 +155,11 @@ class InputTests(unittest.TestCase):
         def run(argv, **kw):
             self.assertEqual(argv[:2], ["git", "-C"])
             return Done(stdout="0123456789ab\n")
-        inputs = image.image_inputs(arch="x86_64", fetch=fake_fetch(), run=run)
-        self.assertEqual(set(inputs), {"schema", "arch", "base", "packages", "nono",
+        inputs = image.image_inputs(arch="x86_64", fetch=fake_fetch(), run=run,
+                                    uid=30033, gid=30033)
+        self.assertEqual(set(inputs), {"schema", "arch", "agent", "base", "packages", "nono",
                                        "claude", "tree", "helpers", "build_script"})
+        self.assertEqual(inputs["agent"], {"name": "agent", "uid": 30033, "gid": 30033})
         self.assertEqual(inputs["nono"], image.nono_version())
         self.assertEqual(inputs["tree"], "0123456789ab")
         self.assertEqual(inputs["claude"]["platform"], "linux-x64")
@@ -172,6 +175,7 @@ class InputTests(unittest.TestCase):
             "base": dict(base["base"], digest="sha512:" + "0" * 128),
             "claude": dict(base["claude"], version="2.1.287"),
             "helpers": {"git-safe-reset": "0" * 64},
+            "agent": dict(base["agent"], uid=501),
         }
         for field, value in changes.items():
             with self.subTest(field=field):
@@ -197,10 +201,24 @@ class BuilderTests(unittest.TestCase):
         t = image.builder_template(inputs)
         self.assertEqual(t["images"], [inputs["base"]])
 
-    def test_the_builder_user_is_not_the_host_user(self):
+    def test_the_builder_user_has_its_own_uid_not_the_hosts(self):
         t = image.builder_template(sample_inputs())
         self.assertEqual(t["user"]["name"], image.BUILDER_USER)
-        self.assertNotIn("uid", t["user"])
+        self.assertEqual(t["user"]["uid"], image.BUILDER_UID)
+
+    def test_the_agent_ids_refuse_root_and_the_builder_uid(self):
+        self.assertEqual(image.agent_ids(1000, 1000), {"name": "agent", "uid": 1000, "gid": 1000})
+        self.assertEqual(image.agent_ids(501, 20)["gid"], 20)
+        for uid, gid in ((0, 1000), (1000, 0), (image.BUILDER_UID, 1000)):
+            with self.subTest(uid=uid, gid=gid), self.assertRaises(image.ImageError):
+                image.agent_ids(uid, gid)
+
+    def test_the_build_script_makes_the_agent_after_removing_the_builder(self):
+        with open(image.BUILD_SCRIPT, encoding="utf-8") as f:
+            script = f.read()
+        made = script.index('useradd -m -u "$WMF_SBX_AGENT_UID" -g "$WMF_SBX_AGENT_GID"')
+        self.assertGreater(made, script.index('userdel -r -f "$WMF_SBX_BUILDER_USER"'))
+        self.assertNotRegex(script[made:], r"usermod[^\n]*agent|sudo")
 
     def test_the_template_is_valid_for_limactl(self):
         if not shutil.which("limactl") or os.geteuid() == 0:

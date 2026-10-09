@@ -1000,6 +1000,29 @@ phase A3. Every sandbox gets a full copy of the golden image (D2).
    commit. The sbx unit suite, `test-templates.sh` and `test-lima.sh`
    pass. `test-profile.sh` fails on Linux for the upstream reason in
    `sbx/NOTES.md` §104, on `main` too.
+   **Baseline: MR !127 booted, unchanged (RAN, 2026-10-09).**
+   `bin/wmf-claude-vm create` from `1a2c0f5`, Lima 2.2.1, QEMU TCG (no
+   KVM). Two test-only changes to a local copy of the template, not
+   committed: `caCerts` for the cloud sandbox's egress CAs, and one
+   nft accept for the sandbox's HTTP proxy at `192.168.5.2`.
+   - Times (TCG): image download and first boot with provisioning
+     11.5 min; the planned restart 2 min; the whole `create` 18 min.
+   - Boundary checks from `docs/lima-vm.md` pass: no host mounts; the
+     agent has no sudo and cannot open the Docker socket; the engineer
+     runs Docker 29.9.0; `192.168.5.2` is refused; the host has only
+     the SSH forward.
+   - **Bug, fixed on `lima-port-base`** (`de6eedb`, its own commit, for
+     Kosta): `guest-install.sh` ran the Claude Code installer as
+     `bash -c 'curl … | bash'` without pipefail, so a failed download
+     printed "installed".
+   - **Proxies do not reach the agent.** The agent steps run through
+     `sudo -u agent env …`, which drops `https_proxy`. On a network
+     that needs a proxy, the Claude Code install and `nono pull` fail.
+     Here they were finished by hand with the proxy variables passed.
+   - **Debian 13 genericcloud has no `iptables`,** so Lima's host
+     resolver (an iptables DNAT) is not set up. DNS still works through
+     slirp, but `host.lima.internal` does not resolve:
+     `docs/lima-vm.md` expects curl exit 7 there, and gets 6.
 2. **Image builder** and `image …`. Exit: a sealed, read-only qcow2
    golden image with no backing file boots under `vz` and QEMU; two
    sandboxes from it have different machine-ids and host keys; `status`

@@ -993,6 +993,13 @@ phase A3. Every sandbox gets a full copy of the golden image (D2).
    it conflicts with main only in `CLAUDE.md`, and our rebased files
    merge onto main + !127 exactly as onto main. Exit: all three suites
    pass. Tag `sbx-docker-final`.
+   **Done 2026-10-09** (`sbx/NOTES.md` §105). The base is the
+   `lima-port-base` branch: main 10aefc1, !127 (rebased, clean), !132,
+   !130, !131, and a lint fix for !127 kept as its own commit. The work
+   is on the `lima-port` branch; `sbx-docker-final` tags its last sbx
+   commit. The sbx unit suite, `test-templates.sh` and `test-lima.sh`
+   pass. `test-profile.sh` fails on Linux for the upstream reason in
+   `sbx/NOTES.md` §104, on `main` too.
 2. **Image builder** and `image …`. Exit: a sealed, read-only qcow2
    golden image with no backing file boots under `vz` and QEMU; two
    sandboxes from it have different machine-ids and host keys; `status`

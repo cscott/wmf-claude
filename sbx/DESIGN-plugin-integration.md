@@ -456,7 +456,8 @@ requires the next.
    Prerequisite for shipping the hook at all. **DONE** 2026-09-11
    (`NOTES.md` §56): `hooks/context/<backend>/{sandbox,environment}.txt`,
    selected by `WMF_CLAUDE_SANDBOX_BACKEND`, plus
-   `WMF_CLAUDE_DOCKER_MODE`; nono output byte-for-byte unchanged;
+   `WMF_CLAUDE_DOCKER_MODE` (removed 2026-10-09: upstream MR !132 has
+   the seam without it); nono output byte-for-byte unchanged;
    generated kits now declare `WMF_CLAUDE_SANDBOX_BACKEND=sbx`. Rather
    than sharing text with `HOME_CLAUDE_MD`, the sbx paragraph points at
    it — repo layout is the kit's story to tell, the boundary is the

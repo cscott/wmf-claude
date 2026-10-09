@@ -133,115 +133,85 @@ class DispatchTests(unittest.TestCase):
             capture_output=True, text=True, env=env,
         )
 
-    def test_redirect_verb_dispatches_to_sibling_not_real_sbx(self):
-        sibling_log = os.path.join(self.work, "create.log")
-        write_recorder(os.path.join(self.work, "wmf-sbx-create"), sibling_log)
-        result = self.run_wmf_sbx(["create", "foo", "--dry-run"])
-        self.assertEqual(result.returncode, 0, result.stderr)
+    def add_sibling(self, verb, directory=None):
+        path = os.path.join(directory or self.work, f"wmf-sbx-{verb}")
+        write_recorder(path, self.sibling_log)
+        return path
+
+    @property
+    def sibling_log(self):
+        return os.path.join(self.work, "sibling.log")
+
+    def test_a_verb_runs_its_sibling_and_never_sbx(self):
+        self.add_sibling("create")
+        r = self.run_wmf_sbx(["create", "--dry-run", "Cite"])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(read_log(self.sibling_log),
+                         [{"name": "wmf-sbx-create", "argv": ["--dry-run", "Cite"],
+                           "ssh_auth_sock": None}])
         self.assertEqual(read_log(self.sbx_log), [])
-        records = read_log(sibling_log)
-        self.assertEqual(len(records), 1)
-        self.assertEqual(records[0]["name"], "wmf-sbx-create")
-        self.assertEqual(records[0]["argv"], ["foo", "--dry-run"])
 
-    def test_upstream_flag_forwards_to_real_sbx_raw(self):
-        sibling_log = os.path.join(self.work, "create.log")
-        write_recorder(os.path.join(self.work, "wmf-sbx-create"), sibling_log)
-        result = self.run_wmf_sbx(["--upstream", "create", "foo"])
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(read_log(sibling_log), [])
-        records = read_log(self.sbx_log)
-        self.assertEqual(len(records), 1)
-        self.assertEqual(records[0]["argv"], ["create", "foo"])
-
-    def test_non_redirect_verb_falls_through_to_real_sbx(self):
-        result = self.run_wmf_sbx(["ls"])
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(read_log(self.sbx_log)[0]["argv"], ["ls"])
-
-    def test_no_args_falls_through(self):
-        result = self.run_wmf_sbx([])
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(read_log(self.sbx_log)[0]["argv"], [])
-
-    def test_help_flag_falls_through(self):
-        result = self.run_wmf_sbx(["--help"])
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(read_log(self.sbx_log)[0]["argv"], ["--help"])
-
-    def test_missing_sibling_errors_without_touching_real_sbx(self):
-        # No wmf-sbx-rm anywhere -- neither co-located nor on PATH.
-        result = self.run_wmf_sbx(["rm", "mw-cite"])
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("wmf-sbx-rm", result.stderr)
+    def test_no_verb_reaches_the_docker_sbx(self):
+        for args in (["ls"], ["--upstream", "rm", "x"], ["policy", "ls"], ["frobnicate"],
+                     ["create", "--cloud"], []):
+            with self.subTest(args=args):
+                self.run_wmf_sbx(args)
         self.assertEqual(read_log(self.sbx_log), [])
+
+    def test_resume_and_run_are_not_ported_yet(self):
+        for verb in ("resume", "run"):
+            with self.subTest(verb=verb):
+                r = self.run_wmf_sbx([verb, "x"])
+                self.assertEqual(r.returncode, 1)
+                self.assertIn("not ported to Lima yet", r.stderr)
+
+    def test_docker_only_verbs_are_retired(self):
+        for verb in ("refresh-claude-md", "settings", "ports"):
+            with self.subTest(verb=verb):
+                r = self.run_wmf_sbx([verb])
+                self.assertEqual(r.returncode, 1)
+                self.assertIn("retired", r.stderr)
+
+    def test_an_unknown_verb_is_an_error(self):
+        r = self.run_wmf_sbx(["frobnicate"])
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("unknown verb", r.stderr)
+
+    def test_help_and_no_args(self):
+        r = self.run_wmf_sbx(["--help"])
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("wmf-sbx create PRIMARY", r.stdout)
+        self.assertEqual(self.run_wmf_sbx([]).returncode, 1)
+
+    def test_missing_sibling_errors(self):
+        r = self.run_wmf_sbx(["start", "x"])
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("can't find 'wmf-sbx-start'", r.stderr)
 
     def test_sibling_found_via_path_fallback(self):
-        # Sibling lives only on PATH, not next to this copy of wmf-sbx --
-        # covers "only wmf-sbx is on the user's PATH" from the to-do.
-        other_dir = os.path.join(self.work, "other")
-        os.makedirs(other_dir)
-        sibling_log = os.path.join(self.work, "exec.log")
-        write_recorder(os.path.join(other_dir, "wmf-sbx-exec"), sibling_log)
-        result = self.run_wmf_sbx(
-            ["exec", "mw-cite", "true"], extra_path=other_dir
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        records = read_log(sibling_log)
-        self.assertEqual(len(records), 1)
-        self.assertEqual(records[0]["argv"], ["mw-cite", "true"])
+        other = os.path.join(self.work, "elsewhere")
+        os.makedirs(other)
+        self.add_sibling("stop", directory=other)
+        r = self.run_wmf_sbx(["stop", "x"], extra_path=other)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(read_log(self.sibling_log)[0]["name"], "wmf-sbx-stop")
 
     def test_symlink_invocation_still_finds_colocated_sibling(self):
-        # Reached through a symlink (a ~/.local/bin entry, or a symlinked
-        # checkout) -- the sibling lookup must resolve back to the real
-        # file's directory, not the symlink's.
-        sibling_log = os.path.join(self.work, "start.log")
-        write_recorder(os.path.join(self.work, "wmf-sbx-start"), sibling_log)
-        link_dir = os.path.join(self.work, "linkdir")
+        self.add_sibling("status")
+        link_dir = os.path.join(self.work, "links")
         os.makedirs(link_dir)
-        link_path = os.path.join(link_dir, "wmf-sbx")
-        os.symlink(self.wmf_sbx, link_path)
-        result = self.run_wmf_sbx(["start", "mw-cite"], binary=link_path)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        records = read_log(sibling_log)
-        self.assertEqual(len(records), 1)
-        self.assertEqual(records[0]["argv"], ["mw-cite"])
+        link = os.path.join(link_dir, "wmf-sbx")
+        os.symlink(self.wmf_sbx, link)
+        r = self.run_wmf_sbx(["status", "x"], binary=link)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(read_log(self.sibling_log)[0]["name"], "wmf-sbx-status")
 
-    def test_ssh_auth_sock_stripped_before_redirect_dispatch(self):
-        # Regression check for the bug this session found: the redirect
-        # exec()s out early, before the point that used to be the only
-        # place SSH_AUTH_SOCK got unset.
-        sibling_log = os.path.join(self.work, "create.log")
-        write_recorder(os.path.join(self.work, "wmf-sbx-create"), sibling_log)
-        result = self.run_wmf_sbx(
-            ["create", "foo"],
-            env_extra={"SSH_AUTH_SOCK": "/tmp/fake-agent.sock"},
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIsNone(read_log(sibling_log)[0]["ssh_auth_sock"])
-
-    def test_ssh_auth_sock_stripped_on_upstream_path(self):
-        result = self.run_wmf_sbx(
-            ["--upstream", "ls"],
-            env_extra={"SSH_AUTH_SOCK": "/tmp/fake-agent.sock"},
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIsNone(read_log(self.sbx_log)[0]["ssh_auth_sock"])
-
-    def test_cloud_flag_still_blocked_on_upstream_path(self):
-        result = self.run_wmf_sbx(["--upstream", "--cloud", "ls"])
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("refusing '--cloud'", result.stderr)
-        self.assertEqual(read_log(self.sbx_log), [])
-
-    def test_cloud_flag_still_blocked_on_fallthrough_path(self):
-        # Not a redirect verb, and not --upstream either -- confirms the
-        # dispatch addition didn't change how a plain, non-redirected
-        # invocation reaches the existing --cloud guard.
-        result = self.run_wmf_sbx(["--cloud", "ls"])
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("refusing '--cloud'", result.stderr)
-        self.assertEqual(read_log(self.sbx_log), [])
+    def test_ssh_auth_sock_is_stripped(self):
+        self.add_sibling("exec")
+        r = self.run_wmf_sbx(["exec", "x", "--", "true"],
+                             env_extra={"SSH_AUTH_SOCK": "/tmp/agent.sock"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIsNone(read_log(self.sibling_log)[0]["ssh_auth_sock"])
 
 
 class RedirectVerbsAgreeTests(unittest.TestCase):
@@ -257,8 +227,8 @@ class RedirectVerbsAgreeTests(unittest.TestCase):
     def redirect_verbs(self):
         with open(REAL_WMF_SBX, encoding="utf-8") as f:
             script = f.read()
-        m = re.search(r'^REDIRECT_VERBS="([^"]*)"', script, re.MULTILINE)
-        self.assertIsNotNone(m, "REDIRECT_VERBS not found in bin/wmf-sbx")
+        m = re.search(r'^VERBS="([^"]*)"', script, re.MULTILINE)
+        self.assertIsNotNone(m, "VERBS not found in bin/wmf-sbx")
         return set(m.group(1).split())
 
     def test_matches_main_module_commands(self):

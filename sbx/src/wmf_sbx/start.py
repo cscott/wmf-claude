@@ -1,74 +1,54 @@
 #!/usr/bin/env python3
-"""Bring a stopped sandbox back to 'running', without attaching an agent.
+"""Start a sandbox's VM, without starting an agent, and check it.
 
-The bug this exists to fix: exiting the claude session inside a sandbox
-does not stop the sandbox -- it stays 'running', and `git fetch
-<name>` on the host keeps working, for a while. But sbx itself
-eventually stops an idle sandbox on its own, moving it to 'stopped', and
-a stopped sandbox publishes no port at all -- the `<name>`
-remotes' git daemon becomes unreachable, and there is no longer a running
-Claude session to ask "did you actually finish?" before it happens.
-
-`wmf-sbx-resume` already does the fix -- start the container back up,
-put its mount layout back (sbx/NOTES.md §40, without which the clones'
-borrowed objects are unreachable), and re-point the `<name>`
-remotes at wherever the daemon's host port landed this time (§34.2) --
-but it goes on to attach an agent, via `wmf-sbx run --name`. That is
-wrong for exactly this recovery case: the engineer isn't trying to talk
-to Claude, just to get `git fetch <name>` working again long
-enough to pull out whatever it left behind. `wmf-sbx-start` is that
-same restore, factored out of `wmf_sbx/resume.py`'s
-`start_and_restore()`, stopping right where the attach would begin.
-
-Safe to run against a sandbox that's already running -- every step it
-takes is idempotent (`start_sandbox` no-ops if it's already up, the
-mount restore checks each mount before making it, `refresh` is a
-best-effort re-point either way).
+`limactl start` on the sandbox's instance, then the security invariants
+(vm.INVARIANTS: the agent has no sudo and the host uid, the host block is
+loaded, the mounts are read-only, TIOCSTI is off). A failed invariant
+is an error: the sandbox is running, but not as wmf-sbx made it.
 
 Usage:
-  wmf-sbx-start [--no-remotes] [--no-restore] [--dry-run] NAME
+  wmf-sbx start NAME
 """
 
 import argparse
-import subprocess
 import sys
 
-from . import resume as resume_mod
+from . import color as color_mod
+from . import lima as lima_mod
 from . import state as state_mod
+from . import vm as vm_mod
 
 
-def main(argv=None, run=subprocess.run, env=None):
+def check(name, lima=None, out=None):
+    """Print the invariants (to stderr unless `out`); return True if all
+    hold."""
+    out = out or sys.stderr
+    ok = True
+    for desc, good in vm_mod.check_invariants(name, lima=lima):
+        mark = color_mod.highlight("ok") if good else color_mod.error("FAIL")
+        print(f"  {mark}  {desc}", file=out)
+        ok = ok and good
+    return ok
+
+
+def main(argv=None, lima=None, env=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("name", help="Sandbox to start")
-    parser.add_argument(
-        "--no-remotes", action="store_true",
-        help="Skip the host-remote re-point; just start the container",
-    )
-    parser.add_argument(
-        "--no-restore", action="store_true",
-        help="Skip re-applying the sandbox's mount layout after the start",
-    )
-    parser.add_argument(
-        "--dry-run", action="store_true",
-        help="Print what would run; start nothing, change nothing",
-    )
+    parser.add_argument("name", help="the sandbox (or a path shortcut such as .)")
     args = parser.parse_args(argv)
-
-    original_name = args.name
     try:
-        args.name = state_mod.resolve_name_arg(args.name, env=env)
-        state_mod.validate_name(args.name)
-    except state_mod.StateError as e:
-        print(f"error: {e}", file=sys.stderr)
+        name, _state = vm_mod.resolve(args.name, env=env)
+        vm_mod.ensure_running(name, lima=lima,
+                              log=lambda m: print(color_mod.dim(m), file=sys.stderr))
+    except (state_mod.StateError, vm_mod.VmError, lima_mod.LimaError) as e:
+        print(color_mod.error(f"error: {e}"), file=sys.stderr)
         return 1
-    if args.name != original_name:
-        print(f"+ resolved {original_name!r} to sandbox {args.name!r}", file=sys.stderr)
-
-    ok = resume_mod.start_and_restore(
-        args.name, no_restore=args.no_restore, no_remotes=args.no_remotes,
-        dry_run=args.dry_run, run=run, env=env,
-    )
-    return 0 if ok else 1
+    print(f"{name}: running; checking it", file=sys.stderr)
+    if not check(name, lima=lima):
+        print(color_mod.error(f"error: {name} breaks a security invariant; do not "
+                              f"use it. `wmf-sbx rm {name}` and create it again."),
+              file=sys.stderr)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

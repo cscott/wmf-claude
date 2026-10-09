@@ -58,7 +58,7 @@ def state_path(name, env=None):
 
 
 def new_state(name, daemon_port=None, host_port=None, created=None, attached=False,
-              primary_dir=None):
+              primary_dir=None, image=None, vm_type=None, repos=None):
     """A fresh, empty state dict. `created` is passed in rather than
     stamped here so callers stay testable without freezing the clock.
 
@@ -92,6 +92,14 @@ def new_state(name, daemon_port=None, host_port=None, created=None, attached=Fal
         "primaryDir": primary_dir,
         "remotes": [],
         "skipped": [],
+        # The Lima backend (lima-port/HANDOFF-LIMA.md): the golden image
+        # the VM was made from (image.py's key; `image rm` refuses an
+        # image that a state file names), the Lima driver, and the host
+        # repositories of the sandbox (phase 4 mounts their git dirs).
+        "backend": "lima",
+        "image": image,
+        "vmType": vm_type,
+        "repos": list(repos or []),
     }
 
 
@@ -127,6 +135,25 @@ def load(name, env=None):
         return None
     except ValueError as e:
         raise StateError(f"{path} is not valid JSON ({e}).") from None
+
+
+def require(name, env=None):
+    """The state of sandbox `name`. Raise StateError if wmf-sbx has none:
+    every verb acts only on a sandbox that wmf-sbx owns, so that `rm`
+    can never touch another Lima VM (lima-port/HANDOFF-LIMA.md §4)."""
+    state = load(validate_name(name), env=env)
+    if state is None:
+        raise StateError(
+            f"{name!r} is not a wmf-sbx sandbox (no {state_path(name, env)}). "
+            f"`wmf-sbx ls` lists them; `limactl list` lists every Lima VM."
+        )
+    if state.get("backend") != "lima":
+        raise StateError(
+            f"{name!r} is a Docker sbx sandbox. This wmf-sbx uses Lima only; "
+            f"use the sbx-docker-final branch to manage it, or remove its "
+            f"state file {state_path(name, env)}."
+        )
+    return state
 
 
 def delete(name, env=None):

@@ -1119,6 +1119,11 @@ phase A3. Every sandbox gets a full copy of the golden image (D2).
    `status` (it comes with phase 3).
 3. **Lifecycle:** `create --no-deps`, `start`, `stop`, `exec`, `cp`,
    `rm`. Exit: round trip on `vz` and on QEMU.
+   **Decision (cananian, 2026-10-09): Lima only, from phase 3.** The
+   verbs move to Lima now; they do not keep a Docker path beside it.
+   The `sbx-docker-final` branch keeps the Docker backend for anyone
+   who needs a root agent before track A. Until phase 6, `resume` and
+   `run` refuse with "not ported yet" rather than call Docker `sbx`.
 4. **Git transport and mounts.** Exit:
    - after a host `git fetch`, the agent sees the new commit with no
      host action;

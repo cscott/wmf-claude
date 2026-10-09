@@ -341,8 +341,17 @@ class ExecTests(Env):
         argv = lima.shells()[-1]
         i = argv.index("--")
         self.assertEqual(argv[i + 1:i + 8], ("sudo", "-H", "-u", "agent", "env", "-C",
-                                             "/home/me/src/demo"))
-        self.assertEqual(argv[-2:], ("git", "status"))
+                                             "/home/agent"))
+        self.assertEqual(argv[i + 9:i + 11], ("sh", "-c"))
+        self.assertEqual(argv[-4:], ("sh", "/home/me/src/demo", "git", "status"))
+
+    def test_an_explicit_workdir_is_used_as_is(self):
+        lima = self.sandbox()
+        self.quiet(exec_mod.main, ["-w", "/srv/x", "sbx-demo", "--", "ls"], lima=lima, env=self.env)
+        argv = lima.shells()[-1]
+        i = argv.index("--")
+        self.assertEqual(argv[i + 6:i + 8], ("-C", "/srv/x"))
+        self.assertEqual(argv[-1], "ls")
 
     def test_exec_returns_the_commands_status(self):
         lima = self.sandbox(lima=FakeLima(rc=7))

@@ -1128,6 +1128,18 @@ phase A3. Every sandbox gets a full copy of the golden image (D2).
    - the static template test passes.
 5. **MediaWiki setup.** Exit: `wmf-sbx create Translate` serves
    `Special:Version`.
+   **Node 22 is required** (cananian, 2026-10-09). Debian 13 has Node 20
+   (phase 2), and MediaWiki CI uses 22. Install a Node that does not
+   depend on the base OS version. Options, from cananian:
+   - **nave** (a Node virtual environment): a per-version Node tree,
+     selected per shell;
+   - **fresh-node**: a container-like Node environment;
+   - a newer Debian or Ubuntu package (for example from `experimental`),
+     pinned with apt preferences so nothing else comes from there.
+   Whichever is used, it goes in the golden image (the image inputs
+   name the Node version, so it is in the cache key), it is checked
+   against a published checksum, and `node`/`npm` on the agent's PATH
+   are 22. Then check `npm ci` and the test suites in core.
 6. **The session.** Exit: MCP calls answer; the SessionStart text is
    the contained variant.
 7. **MVP acceptance:** the blind run of

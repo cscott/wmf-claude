@@ -13,9 +13,11 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
@@ -24,6 +26,7 @@ import wmf_sbx.create as create  # noqa: E402
 import wmf_sbx.exec as exec_mod  # noqa: E402
 import wmf_sbx.image as image  # noqa: E402
 import wmf_sbx.lima as lima_mod  # noqa: E402
+import wmf_sbx.repos as repos  # noqa: E402
 import wmf_sbx.ls as ls  # noqa: E402
 import wmf_sbx.rm as rm  # noqa: E402
 import wmf_sbx.start as start  # noqa: E402
@@ -34,6 +37,25 @@ import wmf_sbx.template as template  # noqa: E402
 import wmf_sbx.vm as vm  # noqa: E402
 
 HOST_UID = os.getuid() or 30033
+
+
+def git_repo(path):
+    """A real repository with one commit, on branch main."""
+    os.makedirs(path)
+    for argv in (["init", "-q", "-b", "main"],
+                 ["-c", "user.name=t", "-c", "user.email=t@example.org",
+                  "commit", "-q", "--allow-empty", "-m", "first"]):
+        subprocess.run(["git", "-C", path] + argv, check=True)
+
+
+def allow_tmp(case):
+    """The tests' repos are under the temporary directory, which
+    repos.check_vm_path refuses (/tmp is a tmpfs in the VM)."""
+    p = mock.patch.object(repos, "RESERVED_PREFIXES",
+                          tuple(x for x in repos.RESERVED_PREFIXES
+                                if not tempfile.gettempdir().startswith(x)))
+    p.start()
+    case.addCleanup(p.stop)
 
 
 class Done:
@@ -202,7 +224,8 @@ class CreateTests(Env):
     def setUp(self):
         super().setUp()
         self.repo = os.path.join(self.tmp, "demo")
-        os.makedirs(os.path.join(self.repo, ".git"))
+        git_repo(self.repo)
+        allow_tmp(self)
         self.config = os.path.join(self.tmp, "repos.yaml")
         self.inputs = {"arch": "x86_64", "k": 1}
         self.built = []

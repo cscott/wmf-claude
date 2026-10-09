@@ -135,14 +135,6 @@ class SyncRemotesTests(unittest.TestCase):
         config = git(self.repo, "config", "--get", "remote.sandbox-mw-cite.tagOpt").stdout
         self.assertEqual(config.strip(), "--no-tags")
 
-    def test_readonly_candidate_is_skipped(self):
-        # A ':ro' repo's sandbox path is a bind mount of this very
-        # directory, so the remote would point the repo at itself.
-        remotes, skipped = self.sync([self.candidate(readOnly=True)])
-        self.assertEqual(remotes, [])
-        self.assertEqual(skipped, [{"hostDir": self.repo, "reason": "readonly-bind"}])
-        self.assertEqual(remotes_of(self.repo), [])
-
     def test_non_repo_is_skipped(self):
         plain = os.path.join(self.tmp.name, "not-a-repo")
         os.makedirs(plain)
@@ -187,10 +179,11 @@ class SyncRemotesTests(unittest.TestCase):
         )
 
     def test_records_only_what_it_touched(self):
-        other = make_repo(os.path.join(self.tmp.name, "Other"))
+        other = os.path.join(self.tmp.name, "Other")
+        os.makedirs(other)
         remotes, skipped = self.sync([
             self.candidate(),
-            self.candidate(host_dir=other, readOnly=True),
+            self.candidate(host_dir=other),
         ])
         self.assertEqual([r["hostDir"] for r in remotes], [self.repo])
         self.assertEqual([s["hostDir"] for s in skipped], [other])

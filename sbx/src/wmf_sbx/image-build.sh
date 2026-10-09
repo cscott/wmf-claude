@@ -115,6 +115,10 @@ rm -f /etc/ssh/ssh_host_*
 rm -f /etc/sudoers.d/90-cloud-init-users
 userdel -r -f "$WMF_SBX_BUILDER_USER" 2>/dev/null || userdel -f "$WMF_SBX_BUILDER_USER"
 cloud-init clean --logs --seed --machine-id
+# CA certificates that the builder got for the build only ($WMF_SBX_CA_CERTS
+# in image.py; cloud-init's names on Debian). The image must not trust them.
+rm -f /usr/local/share/ca-certificates/cloud-init-ca-cert-*.crt
+update-ca-certificates --fresh >/dev/null
 
 # The agent, with the host user's uid and gid (D10), so that files on the
 # read-only mounts are its own, and files it makes have the host's owner.

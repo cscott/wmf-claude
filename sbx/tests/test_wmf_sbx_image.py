@@ -255,6 +255,29 @@ class BuilderTests(unittest.TestCase):
             self.assertGreater(script.index(needle), seal, needle)
         self.assertGreater(seal, script.index('step "helpers"'))
 
+    def test_no_extra_ca_means_no_cacerts_key(self):
+        self.assertEqual(image.extra_ca_files({}), [])
+        self.assertNotIn("caCerts", image.builder_template(sample_inputs()))
+
+    def test_extra_ca_files_go_to_the_builder_and_not_into_the_key(self):
+        with tempfile.TemporaryDirectory() as d:
+            a, b = os.path.join(d, "a.crt"), os.path.join(d, "b.crt")
+            for f in (a, b):
+                open(f, "w").close()
+            files = image.extra_ca_files({image.CA_CERTS_VAR: f"{a}:{b}"})
+            self.assertEqual(files, [a, b])
+            t = image.builder_template(sample_inputs(), files)
+            self.assertEqual(t["caCerts"], {"files": [a, b]})
+            with self.assertRaisesRegex(image.ImageError, "no such file"):
+                image.extra_ca_files({image.CA_CERTS_VAR: os.path.join(d, "missing.crt")})
+
+    def test_the_build_script_removes_the_build_time_cas_when_it_seals(self):
+        with open(image.BUILD_SCRIPT, encoding="utf-8") as f:
+            script = f.read()
+        seal = script.index('step "seal"')
+        self.assertGreater(script.index("rm -f /usr/local/share/ca-certificates/cloud-init-ca-cert-*.crt"), seal)
+        self.assertGreater(script.index("update-ca-certificates --fresh"), seal)
+
     def test_proxies_on_loopback_are_rewritten_for_the_guest(self):
         env = {"https_proxy": "http://127.0.0.1:3128", "HTTP_PROXY": "http://localhost:8080/",
                "no_proxy": "localhost,127.0.0.1", "HOME": "/x",

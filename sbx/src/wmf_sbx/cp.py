@@ -20,8 +20,6 @@ Usage:
 
 import argparse
 import os
-import shlex
-import subprocess
 import sys
 
 from . import color as color_mod

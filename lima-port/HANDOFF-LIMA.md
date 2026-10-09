@@ -209,12 +209,12 @@ Superseded for QEMU after the MVP by D12.
   the baseline D12 has to beat.
 - `limactl clone` of a stopped template instance is no longer the plan.
 
-**D3. Package-registry egress in a contained session. DECIDED 2026-10-09: the new profile.**
+**D3. Package-registry egress in a contained session. DECIDED 2026-10-09: per-session `--allow-domain`, no new profile.**
 
 This applies only to contained sandboxes (D9). With `--sudo` the agent
-has no nono, and egress is open. Decision: a purpose-named
-`profiles/wmf-mediawiki.json` with **GET/HEAD-only** rules for
-packagist, the npm registry, the GitHub hosts composer uses, and the
+has no nono, and egress is open. The first decision was a
+purpose-named `profiles/wmf-mediawiki.json` with **GET/HEAD-only** rules
+for packagist, the npm registry, the GitHub hosts composer uses, and the
 Cypress and Chrome-for-testing hosts. npm needs `--no-audit`.
 **`extends` cannot name a profile by path** (RAN, nono 0.78.0: "invalid
 base profile name '/opt/wmf-claude/profiles/wmf-engineer.json'"). So
@@ -224,6 +224,11 @@ generated from it by a script with a test that they stay in sync; or
 pass the extra hosts per session with `--allow-domain`, as
 `bin/claude --minimax` does. Do not install profiles into
 `~/.config/nono/profiles/` (CLAUDE.md forbids it).
+**Decision (cananian, 2026-10-09): the second option.** The contained
+launcher adds the registry hosts with `--allow-domain` per session, from
+one list in the sbx code with a test. No new profile file. The hosts are
+then visible at launch, and nothing has to stay in sync with
+`wmf-engineer.json`.
 
 **D4. Environment variables. DECIDED (recommendation stands).** Put
 `MW_SERVER`, `MW_SCRIPT_PATH`, `MW_INSTALL_PATH`, `CHROME_BIN`,
@@ -435,9 +440,16 @@ four ways:
   `0700` object directory made `clone --shared` fail at checkout. Git
   makes `0755` object directories and `0444` packs under a `022` umask,
   so normal repositories work; a repository made under umask `077` does
-  not. `create` must check each mount (`find <gitdir> ! -perm -o=r`)
-  and refuse with a clear message, or the agent's uid must equal the
-  host's.
+  not.
+  **Decision (cananian, 2026-10-09): the agent runs with the host
+  user's uid** (and gid). Then mounted files are the agent's own, and
+  files that leave the VM (a tar from the guest, `wmf-sbx cp`) carry the
+  host uid when unpacked on the host. Consequences: the agent is created
+  with `useradd -u <host uid> -g <host gid>` in the per-sandbox setup,
+  not in the golden image (the uid differs between hosts); Lima's
+  default user, which also gets the host uid, must then have a different
+  uid, so the template sets `user.uid` for it; and `safe.directory` in
+  `/etc/gitconfig` is still set, as defence in depth.
 - **nono grant (contained mode):** the launcher adds
   `--read /run/wmf-sbx/host/…` for each mount.
 - **The mount set is fixed at create.** Adding a repo later means

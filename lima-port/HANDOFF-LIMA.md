@@ -215,8 +215,15 @@ This applies only to contained sandboxes (D9). With `--sudo` the agent
 has no nono, and egress is open. Decision: a purpose-named
 `profiles/wmf-mediawiki.json` with **GET/HEAD-only** rules for
 packagist, the npm registry, the GitHub hosts composer uses, and the
-Cypress and Chrome-for-testing hosts. VERIFY whether nono's `extends`
-can name a local profile by path. npm needs `--no-audit`.
+Cypress and Chrome-for-testing hosts. npm needs `--no-audit`.
+**`extends` cannot name a profile by path** (RAN, nono 0.78.0: "invalid
+base profile name '/opt/wmf-claude/profiles/wmf-engineer.json'"). So
+`wmf-mediawiki.json` cannot extend `wmf-engineer.json` in place. Options:
+extend `claude-code` (a pack name) and carry `wmf-engineer`'s rules,
+generated from it by a script with a test that they stay in sync; or
+pass the extra hosts per session with `--allow-domain`, as
+`bin/claude --minimax` does. Do not install profiles into
+`~/.config/nono/profiles/` (CLAUDE.md forbids it).
 
 **D4. Environment variables. DECIDED (recommendation stands).** Put
 `MW_SERVER`, `MW_SCRIPT_PATH`, `MW_INSTALL_PATH`, `CHROME_BIN`,
@@ -228,19 +235,39 @@ harmless.
 
 **D5. Reaching the local wiki.**
 
-- **Contained mode (OPEN):** `--local-web=4000 --landlock-only`
-  (nono#1786), and possibly a bind grant; VERIFY. Recommended as the
-  default for contained `resume`.
+- **Contained mode: `--local-web=4000 --landlock-only`. DECIDED by
+  measurement (RAN, nono 0.78.0, the real `wmf-engineer` profile, as
+  the agent in the MR !127 VM).** A server on 127.0.0.1:4000 and a
+  client, both in the sandbox:
+
+  | nono flags | bind | connect |
+  | --- | --- | --- |
+  | none, or `--open-port 4000` | EACCES | — |
+  | `--listen-port 4000` (± `--open-port`) | yes | **no** (nono#1786) |
+  | `--open-port 4000` + landlock-only | yes | yes |
+
+  No separate bind grant is needed: under `--sandbox-policy landlock`,
+  `--open-port` allows both. `bin/claude --local-web=4000
+  --landlock-only` gives exactly that. Use it as the default for
+  contained `resume`, and drop it when nono#1786 is fixed.
 - **`--sudo` mode:** no nono, so no flag is needed.
 
 **D6. Signing in, per VM. OPEN; recommendation stands.**
 
 - Phase 1 uses Kosta's `claude auth login` flow at create time.
-- Investigate a long-lived token (`claude setup-token` /
-  `CLAUDE_CODE_OAUTH_TOKEN`; VERIFY both against the Claude Code docs).
+- A long-lived token (READ, Claude Code authentication docs,
+  2026-10-09): `claude setup-token` runs the browser flow and prints a
+  **one-year** OAuth token; it saves it nowhere. Set it as
+  `CLAUDE_CODE_OAUTH_TOKEN`. It "can only make model requests": no
+  Remote Control, no claude.ai connectors; local MCP servers work. It
+  ranks above a `/login` credential. Bare mode (`--bare`) ignores it.
+  So one token, made once on the host, could sign in every VM, through
+  D4's `env` key. It is then in a file the agent can read, as a
+  `/login` credential is.
 - Never bake a credential into the image.
 - Never copy one VM's `~/.claude/.credentials.json` into another: the
-  refresh tokens may rotate (VERIFY).
+  refresh tokens may rotate. The docs do not say; this needs a real
+  login to test.
 
 **D7. Repo code outside nono. DECIDED for contained mode; moot with
 `--sudo`.**
@@ -364,8 +391,11 @@ four ways:
   `containerd: {system: false, user: false}`, and the `ssh` forwards off.
   Kosta wrote those explicitly "so a change to `plain` alone does not
   open them", which is the case here. The Lima guest agent comes back
-  (port-forward watcher). VERIFY that it adds no forward past the ignore
-  rule.
+  (port-forward watcher). It adds no forward past the ignore rule (RAN,
+  QEMU, Lima 2.2.1): with the rule, the host agent logs "TCP (except for
+  SSH) and UDP port forwarding is disabled", and a guest server on 4000
+  is not reachable from the host. Without the rule, the same server was
+  forwarded to the host's 127.0.0.1:4000 at once. Keep the rule.
 - **Mount type pinned, never reverse-sshfs:** `virtiofs` on `vz`, `9p`
   (Lima's QEMU default) on Linux. Our tests assert both.
 - **What to mount:** each repo's **git dir only**, not the worktree.
@@ -395,8 +425,19 @@ four ways:
 - **Ownership:** mounted files show host uids. git refuses a repository
   owned by another user (the old `NOTES.md` §21 "dubious ownership"
   incident). Set `safe.directory` for each mount path in
-  `/etc/gitconfig` at create, and confirm the agent's uid can read
-  mode-0700 directories (VERIFY).
+  `/etc/gitconfig` at create (RAN: the agent, uid 2001, gets "dubious
+  ownership" on the 9p mount without it; `git -c safe.directory=*` on
+  the command line did not help `clone --shared`; the system entry
+  does).
+- **Readability: a host file that is not world-readable is invisible to
+  the agent** (RAN, 9p, `security_model=none`). Files show the host uid;
+  the guest's default user has that uid, the agent does not. A blob in a
+  `0700` object directory made `clone --shared` fail at checkout. Git
+  makes `0755` object directories and `0444` packs under a `022` umask,
+  so normal repositories work; a repository made under umask `077` does
+  not. `create` must check each mount (`find <gitdir> ! -perm -o=r`)
+  and refuse with a clear message, or the agent's uid must equal the
+  host's.
 - **nono grant (contained mode):** the launcher adds
   `--read /run/wmf-sbx/host/…` for each mount.
 - **The mount set is fixed at create.** Adding a repo later means
@@ -985,12 +1026,20 @@ phase A3. Every sandbox gets a full copy of the golden image (D2).
      or HVF, the baseline for track B;
    - **the read-only bypass test** for virtiofs on `vz` and 9p on QEMU:
      **9p on QEMU passes** (RAN, D10). virtiofs on `vz` is still to do;
-   - that `sudo` fails inside a nono session;
-   - `safe.directory` and uid readability on mounts;
-   - tty-less binary `limactl shell`;
-   - port 4000 bind and connect under nono;
-   - headless Chrome under nono;
-   - whether the guest agent adds port forwards.
+   - that `sudo` fails inside a nono session: **done** (RAN). nono sets
+     `NoNewPrivs: 1`; sudo in a child process says "The 'no new
+     privileges' flag is set, which prevents sudo from running as root"
+     and exits 1. (nono also refuses `sudo` as the start command, but
+     its own message says that check is deprecated and children
+     bypass it; the flag is the control.);
+   - `safe.directory` and uid readability on mounts: **done** (RAN; D10);
+   - tty-less binary `limactl shell`: **done** (RAN). 8 MB of random
+     bytes plus CR, NUL and ^Z went host to guest and back with the same
+     SHA-256 and byte count. Lima's warnings go to stderr only;
+   - port 4000 bind and connect under nono: **done** (RAN; D5);
+   - headless Chrome under nono: **still to do** (needs the
+     Chrome-for-Testing download hosts);
+   - whether the guest agent adds port forwards: **done** (RAN; D10).
 1. **Rebase onto !127** (latest revision). RAN on the 2026-09-29 patch:
    it conflicts with main only in `CLAUDE.md`, and our rebased files
    merge onto main + !127 exactly as onto main. Exit: all three suites
@@ -1045,6 +1094,30 @@ phase A3. Every sandbox gets a full copy of the golden image (D2).
 7. **MVP acceptance:** the blind run of
    `DESIGN-testing-instructions.md` §9, in a contained sandbox, on `vz`
    and on QEMU.
+
+### Tests that need a Mac (ask Kosta)
+
+cananian works on Linux, so every macOS item is collected here, to ask
+Kosta Harlan to run. Each one is also named in its phase. Record Lima,
+QEMU and macOS versions with the results.
+
+- **Phase 0:** the time and bytes of a full-copy `create` on `vz` (the
+  baseline for track B); the read-only bypass test for virtiofs on `vz`
+  (D10: guest root `mount -o remount,rw`, then a write; the host file
+  must not change).
+- **Phase 2:** the same sealed golden image boots under `vz`, and two
+  sandboxes from it on `vz` have different machine-ids and host keys.
+- **Phase 3:** the lifecycle round trip (`create`, `start`, `stop`,
+  `exec`, `cp`, `rm`) on `vz`.
+- **Phase 7:** the blind run of `DESIGN-testing-instructions.md` §9 in
+  a contained sandbox on `vz`.
+- **Track A (A1):** the D11 measurements on macOS QEMU with HVF:
+  `restrict=on`, the `cmd:` guestfwd, slirp DNS, and that virtiofs is
+  not available (so the mounts are 9p there too).
+- **Track B (B1):** method B on macOS with `vmType: qemu` and HVF, the
+  seven success checks, and real times.
+- **D12, optional:** APFS `cp -c` (clonefile) copies of a stopped raw
+  golden disk into a `vz` instance's `disk`.
 
 ### After the MVP: two independent tracks
 

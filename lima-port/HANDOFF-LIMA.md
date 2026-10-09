@@ -1245,10 +1245,20 @@ Do them in either order, or in parallel.
 
 **After both tracks**
 
-- **C1. Delete** the Docker-backend code: only after A3, because until
-  then the Docker backend is the only way to get a root agent. Rewrite
-  `sbx/README.md` and `sbx/SECURITY.md`. Mark the superseded `DESIGN-*`
-  documents (`DESIGN-template-caching.md` is superseded by §5 and D12).
+- **C1. Delete** the Docker-backend code. **Split and moved earlier
+  (cananian, 2026-10-09).** The first reason to wait (the Docker backend
+  is the only way to get a root agent until A3) no longer holds on this
+  branch: since phase 3 wmf-sbx cannot reach the Docker code, and the
+  `sbx-docker-final` branch keeps it.
+  - **C1a, the code: before phase 4.** Delete the Docker-only modules,
+    functions and their tests (the kit and ports in `kit.py` and
+    `create.py`, `settings.py`, `refresh_claude_md.py`, the MCP proxy
+    and gateway helpers, `resume.py` and `run.py`; phase 6 writes the
+    Lima `resume`).
+  - **C1b, the documents: at phase 7,** when the design stops moving.
+    Rewrite `sbx/README.md` and `sbx/SECURITY.md`. Mark the superseded
+    `DESIGN-*` documents (`DESIGN-template-caching.md` is superseded by
+    §5 and D12).
 - **C2. Later:** method and path rules in the proxy (TLS interception, a
   guest CA), to close the upload-to-allowed-host path (D11). Optionally,
   clonefile or reflink copies for `vz` sandboxes (D12).

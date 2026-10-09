@@ -2070,7 +2070,7 @@ class HostMcpTests(unittest.TestCase):
         # ~/.config/wmf-claude/config.json and $PHABRICATOR_USERNAME, and
         # pass or fail depending on whose machine runs them.
         env = mock.patch.dict(
-            os.environ, {"XDG_CONFIG_HOME": os.path.join(self.root, "xdg")})
+            os.environ, {"HOME": os.path.join(self.root, "home")})
         env.start()
         self.addCleanup(env.stop)
         os.environ.pop("PHABRICATOR_USERNAME", None)
@@ -2161,7 +2161,7 @@ class HostMcpTests(unittest.TestCase):
         """A ~/.config/wmf-claude/config.json, as bin/wmf-claude-setup
         leaves it. `payload` is written raw so a test can hand over
         something that isn't JSON at all."""
-        path = os.path.join(self.root, "xdg", "wmf-claude", "config.json")
+        path = os.path.join(self.root, "home", ".config", "wmf-claude", "config.json")
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             f.write(payload if isinstance(payload, str) else json.dumps(payload))

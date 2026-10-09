@@ -1316,8 +1316,9 @@ def wmf_claude_config(path=None):
     not fail over a config file it does not own.
     """
     if path is None:
-        base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
-        path = os.path.join(base, "wmf-claude", "config.json")
+        # The same path that bin/wmf-claude-setup writes. It does not use
+        # $XDG_CONFIG_HOME, so this must not either.
+        path = os.path.expanduser("~/.config/wmf-claude/config.json")
     try:
         with open(path, encoding="utf-8") as handle:
             data = json.load(handle)

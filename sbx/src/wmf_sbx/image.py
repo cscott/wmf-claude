@@ -53,6 +53,21 @@ BUILD_SCRIPT = os.path.join(os.path.dirname(os.path.realpath(__file__)),
                             "image-build.sh")
 NONO_VERSION_FILE = os.path.join(REPO_ROOT, ".nono-version")
 
+# Node, one version for the whole image, from nodejs.org (cananian,
+# 2026-10-09): the version that WMF CI uses, so that `npm ci` and `npm
+# test` in a repository behave as in CI, and the MCP servers run on it
+# too. CI's images are node24-* at 24.18.0 (integration/config
+# zuul/layout.yaml: "our current CI testing targets are Node 24"; Node
+# 26 is experimental only), and MobileFrontend pins exactly 24.18.0
+# (HANDOFF-LIMA.md §11, phase 5). Not Debian's (Debian 13 has Node 20),
+# and not a version manager (nave, fresh-node): a contained agent cannot
+# download a Node, and every shell would have to select one. The
+# tarball's checksum comes from the release's SHASUMS256.txt and goes
+# into the image inputs, so a new version or a changed tarball gives a
+# new image. Change NODE_VERSION when the CI images change.
+NODE_VERSION = "24.18.0"
+NODE_DIST = "https://nodejs.org/dist"
+
 CLAUDE_RELEASES = "https://downloads.claude.ai/claude-code-releases"
 # `stable`, not `latest`: the image is shared by every sandbox that has the
 # same key, so it takes the release channel that has had more use.
@@ -61,7 +76,9 @@ CLAUDE_CHANNEL = "stable"
 # The packages, after kit.BASE_PACKAGES (the PHP side, unchanged from the
 # Docker kit):
 # - what the wmf-claude build and bin/claude need (lima/wmf-claude.yaml);
-# - Node from Debian (Node 22 is what MediaWiki CI uses);
+# - no Node: it comes from nodejs.org (NODE_VERSION). Debian's `npm`
+#   also brings a few hundred node-* packages;
+# - xz-utils, to unpack the Node tarball;
 # - nftables, for the host block (§5.3);
 # - unzip and zstd, for the helpers;
 # - the shared libraries that Chrome for Testing needs on Debian 13
@@ -69,7 +86,7 @@ CLAUDE_CHANNEL = "stable"
 #   mw-install-browser must find them already here (§5.2).
 IMAGE_PACKAGES = list(kit.BASE_PACKAGES) + [
     "ca-certificates", "curl", "git", "jq", "python3", "python3-venv",
-    "nodejs", "npm", "nftables", "unzip", "zstd",
+    "nftables", "unzip", "xz-utils", "zstd",
     "libnss3", "libnspr4", "libatk1.0-0t64", "libatk-bridge2.0-0t64",
     "libx11-6", "libxcomposite1", "libxdamage1", "libxext6", "libxfixes3",
     "libxrandr2", "libgbm1", "libxcb1", "libxkbcommon0", "libasound2t64",
@@ -122,6 +139,10 @@ def claude_platform(arch):
     return {"x86_64": "linux-x64", "aarch64": "linux-arm64"}[arch]
 
 
+def node_platform(arch):
+    return {"x86_64": "linux-x64", "aarch64": "linux-arm64"}[arch]
+
+
 def base_image(arch=None, template=BASE_TEMPLATE):
     """The pinned base image for `arch`, from Kosta's template:
     {"location": ..., "arch": ..., "digest": ...}."""
@@ -161,6 +182,20 @@ def claude_release(arch, fetch=_fetch, channel=CLAUDE_CHANNEL):
     if not re.match(r"^[0-9a-f]{64}$", checksum):
         raise ImageError(f"no checksum for {plat} in the {version} manifest")
     return version, checksum
+
+
+def node_release(arch, fetch=_fetch, version=NODE_VERSION):
+    """{version, file, sha256} of the Node tarball for `arch`, with the
+    checksum from the release's SHASUMS256.txt."""
+    name = f"node-v{version}-{node_platform(arch)}.tar.xz"
+    checksum = ""
+    for line in fetch(f"{NODE_DIST}/v{version}/SHASUMS256.txt").splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[1] == name:
+            checksum = parts[0]
+    if not re.match(r"^[0-9a-f]{64}$", checksum):
+        raise ImageError(f"no checksum for {name} in Node v{version}'s SHASUMS256.txt")
+    return {"version": version, "file": name, "sha256": checksum}
 
 
 def tree_revision(root=REPO_ROOT, run=subprocess.run):
@@ -209,6 +244,7 @@ def image_inputs(arch=None, fetch=_fetch, run=subprocess.run, root=REPO_ROOT,
         "base": base_image(arch),
         "packages": list(IMAGE_PACKAGES),
         "nono": nono_version(),
+        "node": node_release(arch, fetch=fetch),
         "claude": {"version": version, "platform": claude_platform(arch),
                    "sha256": checksum},
         "tree": tree_revision(root, run=run),
@@ -430,6 +466,9 @@ def build_env(inputs, guest_stage):
         "WMF_SBX_STAGE": guest_stage,
         "WMF_SBX_PACKAGES": " ".join(inputs["packages"]),
         "WMF_SBX_NONO_VERSION": inputs["nono"],
+        "WMF_SBX_NODE_VERSION": inputs["node"]["version"],
+        "WMF_SBX_NODE_FILE": inputs["node"]["file"],
+        "WMF_SBX_NODE_SHA256": inputs["node"]["sha256"],
         "WMF_SBX_CLAUDE_VERSION": inputs["claude"]["version"],
         "WMF_SBX_CLAUDE_PLATFORM": inputs["claude"]["platform"],
         "WMF_SBX_CLAUDE_SHA256": inputs["claude"]["sha256"],

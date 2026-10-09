@@ -128,6 +128,11 @@ INVARIANTS = [
     ("every git dir is mounted",
      "awk '$3==\"9p\"||$3==\"virtiofs\"{print $2}' /etc/fstab | "
      "{ while read -r m; do mountpoint -q \"$(printf '%b' \"$m\")\" || exit 1; done; }"),
+    # Not a security rule, but cheap: the agent's `node` is the image's
+    # pinned Node, not another one earlier on its PATH.
+    ("the agent's node is the image's",
+     f"test \"$(sudo -u agent env PATH={AGENT_PATH} node --version)\" = "
+     "\"v$(jq -r .inputs.node.version /etc/wmf-sbx-image.json)\""),
     ("the agent has the host uid",
      "test \"$(id -u agent)\" = \"$WMF_SBX_HOST_UID\""),
 ]

@@ -28,6 +28,7 @@ export DEBIAN_FRONTEND=noninteractive
 umask 022
 
 : "${WMF_SBX_STAGE:?}" "${WMF_SBX_PACKAGES:?}" "${WMF_SBX_NONO_VERSION:?}"
+: "${WMF_SBX_NODE_VERSION:?}" "${WMF_SBX_NODE_FILE:?}" "${WMF_SBX_NODE_SHA256:?}"
 : "${WMF_SBX_CLAUDE_VERSION:?}" "${WMF_SBX_CLAUDE_PLATFORM:?}" "${WMF_SBX_CLAUDE_SHA256:?}"
 : "${WMF_SBX_TREE_REV:?}" "${WMF_SBX_BUILDER_USER:?}"
 : "${WMF_SBX_AGENT_UID:?}" "${WMF_SBX_AGENT_GID:?}"
@@ -70,6 +71,32 @@ for mod in 9p 9pnet_virtio virtiofs; do
 done
 echo "  ${KVERS[0]}: 9p, 9pnet_virtio, virtiofs"
 apt-get clean
+
+# Node, pinned, from nodejs.org, checked against the checksum in the image
+# inputs (image.py, NODE_VERSION). One copy for all users, owned by root;
+# /usr/local/bin is before /usr/bin on every PATH. The build of the
+# wmf-claude tree below uses it too. Debian's nodejs is not installed.
+step "Node $WMF_SBX_NODE_VERSION"
+NODE_DIR="/opt/node/v$WMF_SBX_NODE_VERSION"
+TMP=$(mktemp -d)
+curl -fsSL --retry 3 -o "$TMP/$WMF_SBX_NODE_FILE" \
+  "https://nodejs.org/dist/v$WMF_SBX_NODE_VERSION/$WMF_SBX_NODE_FILE"
+echo "$WMF_SBX_NODE_SHA256  $TMP/$WMF_SBX_NODE_FILE" | sha256sum -c --strict --quiet -
+rm -rf "$NODE_DIR"
+install -d -m 0755 "$NODE_DIR"
+tar -xJf "$TMP/$WMF_SBX_NODE_FILE" -C "$NODE_DIR" --strip-components=1 --no-same-owner
+rm -rf "$TMP"
+chmod -R u+rwX,go+rX,go-w "$NODE_DIR"
+for b in node npm npx corepack; do
+  ln -sfn "$NODE_DIR/bin/$b" "/usr/local/bin/$b"
+done
+if dpkg -s nodejs >/dev/null 2>&1; then
+  echo "image-build.sh: Debian's nodejs is installed; it must not be" >&2
+  exit 1
+fi
+[[ "$(command -v node)" == /usr/local/bin/node ]]
+[[ "$(node --version)" == "v$WMF_SBX_NODE_VERSION" ]]
+echo "  node $(node --version), npm $(npm --version)"
 
 # nono, pinned and checked against the release's SHA256SUMS.txt, as
 # lima/guest-install.sh does it.

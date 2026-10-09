@@ -34,6 +34,11 @@ class Done:
 
 
 CLAUDE_SHA = "a" * 64
+NODE_SHA = "9" * 64
+NODE_SUMS = (f"{'1' * 64}  node-v{image.NODE_VERSION}-darwin-arm64.tar.gz\n"
+             f"{NODE_SHA}  node-v{image.NODE_VERSION}-linux-x64.tar.xz\n"
+             f"{'2' * 64}  node-v{image.NODE_VERSION}-linux-x64.tar.gz\n"
+             f"{'3' * 64}  node-v{image.NODE_VERSION}-linux-arm64.tar.xz\n")
 
 
 def fake_fetch(urls=None):
@@ -44,6 +49,8 @@ def fake_fetch(urls=None):
         urls.append(url)
         if url.endswith("/stable"):
             return "2.1.286\n"
+        if url == f"{image.NODE_DIST}/v{image.NODE_VERSION}/SHASUMS256.txt":
+            return NODE_SUMS
         if url.endswith("/2.1.286/manifest.json"):
             return json.dumps({"version": "2.1.286", "platforms": {
                 "linux-x64": {"checksum": CLAUDE_SHA},
@@ -59,6 +66,8 @@ def sample_inputs(**changes):
         "base": {"location": "https://example.invalid/debian.qcow2",
                  "arch": "x86_64", "digest": "sha512:" + "c" * 128},
         "packages": ["php", "git"], "nono": "0.78.0",
+        "node": {"version": "24.18.0", "file": "node-v24.18.0-linux-x64.tar.xz",
+                 "sha256": NODE_SHA},
         "claude": {"version": "2.1.286", "platform": "linux-x64", "sha256": CLAUDE_SHA},
         "tree": "0123456789ab", "helpers": {"git-safe-reset": "d" * 64},
         "build_script": "e" * 64,
@@ -141,10 +150,29 @@ class InputTests(unittest.TestCase):
     def test_the_packages_extend_the_kit_and_add_no_docker(self):
         for p in kit.BASE_PACKAGES:
             self.assertIn(p, image.IMAGE_PACKAGES)
-        for p in ("nodejs", "npm", "git", "jq", "curl", "python3-venv", "nftables"):
+        for p in ("git", "jq", "curl", "python3-venv", "nftables", "xz-utils"):
             self.assertIn(p, image.IMAGE_PACKAGES)
+        # Node comes from nodejs.org (NODE_VERSION), never from Debian.
+        for p in ("nodejs", "npm"):
+            self.assertNotIn(p, image.IMAGE_PACKAGES)
         self.assertFalse([p for p in image.IMAGE_PACKAGES if "docker" in p])
         self.assertEqual(len(image.IMAGE_PACKAGES), len(set(image.IMAGE_PACKAGES)))
+
+    def test_node_release_takes_the_tarball_checksum_for_the_arch(self):
+        urls = []
+        self.assertEqual(image.node_release("x86_64", fetch=fake_fetch(urls)), {
+            "version": image.NODE_VERSION,
+            "file": f"node-v{image.NODE_VERSION}-linux-x64.tar.xz", "sha256": NODE_SHA})
+        self.assertEqual(urls, [f"{image.NODE_DIST}/v{image.NODE_VERSION}/SHASUMS256.txt"])
+        self.assertEqual(image.node_release("aarch64", fetch=fake_fetch())["sha256"], "3" * 64)
+
+    def test_node_release_refuses_sums_without_the_tarball(self):
+        with self.assertRaisesRegex(image.ImageError, "no checksum for node-v"):
+            image.node_release("x86_64", fetch=lambda url: "<html>not found</html>")
+
+    def test_node_matches_wmf_ci(self):
+        # WMF CI's images are node24-* at 24.18.0; change both together.
+        self.assertEqual(image.NODE_VERSION, "24.18.0")
 
     def test_the_helpers_are_the_kits_helpers(self):
         self.assertEqual(set(image.helper_files()), set(kit.HELPER_SCRIPTS))
@@ -158,7 +186,8 @@ class InputTests(unittest.TestCase):
         inputs = image.image_inputs(arch="x86_64", fetch=fake_fetch(), run=run,
                                     uid=30033, gid=30033)
         self.assertEqual(set(inputs), {"schema", "arch", "agent", "base", "packages", "nono",
-                                       "claude", "tree", "helpers", "build_script"})
+                                       "node", "claude", "tree", "helpers", "build_script"})
+        self.assertEqual(inputs["node"]["sha256"], NODE_SHA)
         self.assertEqual(inputs["agent"], {"name": "agent", "uid": 30033, "gid": 30033})
         self.assertEqual(inputs["nono"], image.nono_version())
         self.assertEqual(inputs["tree"], "0123456789ab")
@@ -174,6 +203,7 @@ class InputTests(unittest.TestCase):
             "tree": "ba9876543210", "build_script": "f" * 64,
             "base": dict(base["base"], digest="sha512:" + "0" * 128),
             "claude": dict(base["claude"], version="2.1.287"),
+            "node": dict(base["node"], sha256="8" * 64),
             "helpers": {"git-safe-reset": "0" * 64},
             "agent": dict(base["agent"], uid=501),
         }

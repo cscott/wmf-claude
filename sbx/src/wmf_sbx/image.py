@@ -375,9 +375,25 @@ def guest_proxy_env(env=None):
     return out
 
 
+def check_submodules(root=REPO_ROOT, run=subprocess.run):
+    """Raise ImageError for a submodule that is not checked out.
+    `git submodule foreach` skips one without a word, and the image then
+    has an empty MCP server directory (RAN: image d16a1c5496fa83fe has
+    none of the three)."""
+    result = run(["git", "-C", root, "submodule", "status", "--recursive"],
+                 capture_output=True, text=True, check=True)
+    missing = [line.split()[1] for line in result.stdout.splitlines()
+               if line.startswith("-") and len(line.split()) > 1]
+    if missing:
+        raise ImageError(
+            f"submodules not checked out in {root}: {', '.join(missing)}. Run "
+            f"`git -C {root} submodule update --init --recursive`.")
+
+
 def make_tree_tarball(dest, rev, root=REPO_ROOT, run=subprocess.run):
     """HEAD of the checkout, with the submodules at their recorded commits,
     as one tarball (no .git), as bin/wmf-claude-vm does it."""
+    check_submodules(root, run=run)
     stage = tempfile.mkdtemp(prefix="wmf-sbx-tree.")
     try:
         archive = run(["git", "-C", root, "archive", "--format=tar", "HEAD"],

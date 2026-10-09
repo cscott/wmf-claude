@@ -9385,6 +9385,63 @@ Results on `lima-port` (Linux, x86_64):
 Open MR not taken: !102 (jforrester, draft, remote build broker). It
 does not touch Lima, and it conflicts with !127 in `bin/claude`.
 
+## 106. Phase 2 of the Lima port: the golden image builder **[2026-10-09]**
+
+`wmf-sbx image build|ls|rm|prune`, in `sbx/src/wmf_sbx/image.py`,
+`lima.py` and `image-build.sh`, on branch `lima-port` (6406d32, 087dfd6,
+3592303). Decision D1 (A): a Lima builder VM from the Debian 13 image
+that `lima/wmf-claude.yaml` pins. Run in a Claude Code cloud sandbox:
+Linux x86_64, Lima 2.2.1, QEMU 8.2.2 **without KVM** (TCG), so the times
+are slow and only comparable with each other.
+
+What the build does: apt packages (`kit.BASE_PACKAGES` plus the tools,
+Node, nftables and the Chrome for Testing libraries), nono 0.78.0
+(checked against `SHA256SUMS.txt`), Claude Code from the `stable`
+channel (2.1.286, checked against the release manifest; not the
+`install.sh` pipe), the wmf-claude tree at HEAD, built, root-owned, in
+`/opt/wmf-claude.<rev>`, and the helpers in `/usr/local/bin`. Then it
+seals (host keys, `cloud-init clean --logs --seed --machine-id`, the
+builder's user and sudoers file, the build-time CAs) and creates
+`agent` with the host uid and gid (D10). The export is `qemu-img
+convert -O qcow2`; the entry is renamed into place, so a failed build
+leaves nothing.
+
+Results:
+
+- Build: 1563 s (26 min, TCG). Image `d16a1c5496fa83fe`: 2.3 GiB on
+  disk, 20 GiB virtual, qcow2 with no backing file, mode 0444, SHA-256
+  in `golden.sha256`.
+- Two sandboxes (`images:` = the golden file, a full copy as D2 says):
+  `limactl create` 7 s and 10 s (2.4 GiB copy each); both booted to
+  READY in 74 s together. Different machine-ids and ed25519 host keys.
+  `agent` uid 30033 = host uid, no other groups, home 0750; Lima's user
+  `engineer` at the template's `user.uid` 59998. No `wmfbuilder`; no
+  build-time CA left. nono 0.78.0, Claude Code 2.1.286 (the agent can
+  run it), Node v20.19.2, PHP 8.4.26, Composer 2.8.8, all three MCP
+  servers built.
+- `image build` again: "in the cache" in 2 s, no VM. The golden
+  checksum is unchanged after both sandboxes booted from it.
+
+Found on the way:
+
+- **Lima gives its user the host uid** unless the template sets
+  `user.uid`. The first build's `wmfbuilder` got 30033. The builder now
+  uses 59999, and every sandbox template must set another uid too,
+  because `agent` has the host uid.
+- **The network re-signs github.com** (the cloud sandbox's interception
+  CA; a corporate TLS-inspection proxy does the same). The first build
+  stopped at the nono download. `WMF_SBX_CA_CERTS` gives the builder
+  extra CAs through Lima's `caCerts`; the seal removes them.
+- `sudo` in the builder drops the proxy variables (as in the MR !127
+  baseline), so the build passes them explicitly, with a loopback proxy
+  rewritten to 192.168.5.2, as Lima does.
+- **Debian 13 has Node 20**, not the Node 22 that MediaWiki CI uses
+  (`DESIGN-setup-steps.md` §7.2 measured 22 on Ubuntu). Check that
+  core's `npm ci` and tests accept 20 in phase 5, or install Node 22.
+- Not done in phase 2: `status` (phase 3), `vz` (the Mac list for
+  Kosta), and the sbx plugin overlay and patches, which belong to the
+  session (phase 6).
+
 ## Still to do
 
 - [x] Implement `sbx/DESIGN-setup-steps.md` — everything after the

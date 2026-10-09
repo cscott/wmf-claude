@@ -9602,6 +9602,56 @@ Checked on the real VM (image `d5e6f00d95b56cee`, QEMU TCG):
 To do (phase 5): npm prints an "update available" notice. Set
 `update-notifier=false` in the global npmrc (`/opt/node/v*/etc/npmrc`).
 
+## 110. Phase 5 of the Lima port: the MediaWiki setup **[2026-10-09]**
+
+Commits 792ea2d (the setup in the VM) and 3c19c40 (setup.py's Docker-only
+parts deleted).
+
+How it works (lima-port/HANDOFF-LIMA.md §7):
+
+- `create` builds the plan on the host (`kit.build_plan`, with
+  `canonicals_for_kit` and `link_plan`), writes it to
+  `/home/agent/wmf-sbx-plan.json`, and sends `setup.py` on stdin to
+  `python3 - --lima PLAN` as the agent, with the proxy variables,
+  outside nono (D7). `setup.py` is not in the image: a change to it needs
+  no new image.
+- `setup.py --lima` takes core, the links and Parsoid from the plan; each
+  clone is at its host path (D8). It does the links, composer.local.json,
+  `composer update`, `npm ci`, `.env`, the install, phpunit.xml and the
+  api-testing config; it does no clone, remote or reset
+  (sandbox-repos.sh did them). As the agent it runs commands directly,
+  without sudo. Log and status: `/home/agent/.wmf-sbx/`.
+- A failed setup fails the create and keeps the VM, the clones and the
+  host remotes. The steps are idempotent, so the setup can run again.
+
+Real run (QEMU TCG, image `4d253e64ae3ec80d`, `wmf-sbx create
+Translate`): the closure Translate, core, UniversalLanguageSelector,
+Vector; the eight invariants ok; Translate (requested) kept the host's
+branch, the dependencies were reset to origin. The setup, run again on
+the same sandbox with the pruned setup.py: exit 0, no problems, 2353 s.
+Then `composer serve` + `Special:Version` 200, and siteinfo lists
+Translate, UniversalLanguageSelector and Vector. `vendor/` and
+`node_modules/` in core and in both extensions; `.env`,
+`LocalSettings.php`, `phpunit.xml`, `.api-testing.config.json` in core.
+
+Findings:
+
+- **This cloud sandbox's proxy blocks GitHub archive downloads**
+  (`codeload.github.com`, the zipball redirects of `api.github.com`).
+  composer then waits up to 6 minutes per package before it clones from
+  source; for core's ~140 packages that is hours. Not a wmf-sbx problem:
+  composer uses the proxy (`composer diagnose`: "HTTP proxy with https:
+  OK http://192.168.5.2:<port>"), and other networks allow GitHub. For
+  the test, the agent's composer config had `preferred-install: source`.
+  On a network that blocks GitHub archives, set that in the VM
+  (`wmf-sbx exec NAME -- composer config --global preferred-install
+  source`) before the setup.
+- The failure path ran for real (composer killed): create said "the
+  MediaWiki setup failed ... the log is /home/agent/.wmf-sbx/...", rc 1,
+  and kept the sandbox.
+- `npm ci` removes and reinstalls `node_modules` on each run, so a
+  second setup run costs the npm time again.
+
 ## Still to do
 
 - [x] Implement `sbx/DESIGN-setup-steps.md` — everything after the

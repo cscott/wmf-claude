@@ -97,6 +97,14 @@ PROXY_VARS = ("http_proxy", "https_proxy", "no_proxy",
 
 KEY_RE = re.compile(r"^[0-9a-f]{16}$")
 
+# Extra CA certificates for the build only, for a network whose proxy
+# re-signs TLS (a corporate TLS-inspection proxy, or a cloud sandbox: RAN,
+# github.com came back signed by the sandbox's interception CA). A list of
+# host files, separated by ":". Lima installs them in the builder through
+# cloud-init; image-build.sh removes them before it seals, so the image
+# does not trust them and they are not an image input.
+CA_CERTS_VAR = "WMF_SBX_CA_CERTS"
+
 
 class ImageError(Exception):
     """A user-facing failure in an image operation."""
@@ -319,10 +327,21 @@ def builder_name(key):
     return BUILDER_PREFIX + key[:8]
 
 
-def builder_template(inputs):
+def extra_ca_files(env=None):
+    """The absolute paths in $WMF_SBX_CA_CERTS. Each must be a file."""
+    env = os.environ if env is None else env
+    files = [os.path.abspath(os.path.expanduser(p))
+             for p in (env.get(CA_CERTS_VAR) or "").split(":") if p]
+    for f in files:
+        if not os.path.isfile(f):
+            raise ImageError(f"{CA_CERTS_VAR}: no such file: {f}")
+    return files
+
+
+def builder_template(inputs, ca_files=()):
     """The builder's Lima config, as a dict. Closed like Kosta's template:
     plain mode, no mounts, no port forwards, no agent or X11 forwarding."""
-    return {
+    tmpl = {
         "minimumLimaVersion": "2.0.0",
         "plain": True,
         "images": [dict(inputs["base"])],
@@ -337,6 +356,9 @@ def builder_template(inputs):
         "user": {"name": BUILDER_USER, "home": f"/home/{BUILDER_USER}",
                  "uid": BUILDER_UID},
     }
+    if ca_files:
+        tmpl["caCerts"] = {"files": list(ca_files)}
+    return tmpl
 
 
 def guest_proxy_env(env=None):
@@ -437,6 +459,7 @@ def build(inputs=None, lima=None, run=subprocess.run, env=None, log=print,
         return key
 
     name = builder_name(key)
+    ca_files = extra_ca_files(env)
     root = cache_root(env)
     os.makedirs(root, exist_ok=True)
     work = tempfile.mkdtemp(prefix=f".build-{key}.", dir=root)
@@ -446,7 +469,7 @@ def build(inputs=None, lima=None, run=subprocess.run, env=None, log=print,
             lima.delete(name)
         tmpl = os.path.join(work, "builder.yaml")
         with open(tmpl, "w", encoding="utf-8") as f:
-            yaml.safe_dump(builder_template(inputs), f, sort_keys=False)
+            yaml.safe_dump(builder_template(inputs, ca_files), f, sort_keys=False)
         lima.validate(tmpl)
 
         log(f"==> builder {name}: create and boot (Debian {inputs['arch']})")

@@ -1185,18 +1185,49 @@ phase A3. Every sandbox gets a full copy of the golden image (D2).
    servers. `vz` is on the Mac list.
 5. **MediaWiki setup.** Exit: `wmf-sbx create Translate` serves
    `Special:Version`.
-   **Node 22 is required** (cananian, 2026-10-09). Debian 13 has Node 20
-   (phase 2), and MediaWiki CI uses 22. Install a Node that does not
-   depend on the base OS version. Options, from cananian:
-   - **nave** (a Node virtual environment): a per-version Node tree,
-     selected per shell;
-   - **fresh-node**: a container-like Node environment;
-   - a newer Debian or Ubuntu package (for example from `experimental`),
-     pinned with apt preferences so nothing else comes from there.
-   Whichever is used, it goes in the golden image (the image inputs
-   name the Node version, so it is in the cache key), it is checked
-   against a published checksum, and `node`/`npm` on the agent's PATH
-   are 22. Then check `npm ci` and the test suites in core.
+   **Node: DECIDED 2026-10-09, one global Node 24.18.0** (cananian
+   agreed to the recommendation; `sbx/NOTES.md` §109). WMF CI uses
+   Node 24, not 22:
+   - **WMF CI** (integration/config, READ 2026-10-09): `zuul/layout.yaml`
+     says "our current CI testing targets are Node 24". The
+     `mediawiki-node24` jobs run on the `node24-*` images (194 references,
+     at 24.18.0); `mediawiki-node26` is in `experimental` only ("Not-yet-
+     supported language runtimes", 26.8.2); nothing names Node 22.
+   - **Deployed repositories** (codesearch `deployed`, `"node":` in
+     `package.json`, 24 lines in 19 repositories): MobileFrontend pins
+     exactly `24.18.0` (`engines` and `.nvmrc`); citoid `24`; cxserver,
+     Function Orchestrator and function-schemata `>=24`; Popups
+     `>=20.19.5`; CirrusSearch, Wikibase parts, change-propagation and
+     iPoid `>=20` or `>=18`; old services (restbase, parsoid,
+     mobileapps, push-notifications) name Node 6 to 12, which nothing
+     runs. MediaWiki core names no Node. In wmf-claude, mcp-phabricator
+     wants `>=20`, and chrome-devtools-mcp 0.23.0 wants
+     `^20.19 || ^22.12 || >=23`.
+   - **Options** (from cananian): nave (a per-version Node tree,
+     selected per shell), fresh-node (a container-like Node
+     environment), a newer Debian or Ubuntu package pinned with apt
+     preferences, or one global Node.
+   - **Why one global Node:** CI has one Node, so one Node is the right
+     model, and `npm ci`/`npm test` then work in every repository and
+     every non-interactive shell with nothing for the agent to learn. A
+     contained agent cannot download a Node (egress is TCP 80/443
+     through nono), so a version manager would need every version in
+     the image anyway. fresh-node needs a container runtime, which the
+     sandbox does not have. A Debian `experimental` package can bring
+     newer libraries and is not a stable pin; NodeSource adds an apt
+     source and a signing key for nothing the tarball does not give.
+   - **As built:** the nodejs.org tarball of `image.NODE_VERSION`,
+     checked against the checksum from the release's `SHASUMS256.txt`
+     (version and checksum are image inputs, so in the cache key), at
+     `/opt/node/v<version>`, with `node`, `npm`, `npx`, `corepack` in
+     `/usr/local/bin`. Debian's `nodejs` and `npm` are not installed
+     (Debian's `npm` brought a few hundred `node-*` packages). The build
+     and an invariant check that the agent's `node` is the pinned one.
+     24.18.0, not the newest 24.x (24.21.0): CI and MobileFrontend use
+     24.18.0. **Change `NODE_VERSION` when the CI images change.**
+   - **If a repository ever needs another Node:** a second pinned tree
+     under `/opt/node/`, selected by that repository's `.nvmrc` through
+     one wrapper. Not needed now.
 6. **The session.** Exit: MCP calls answer; the SessionStart text is
    the contained variant.
 7. **MVP acceptance:** the blind run of
@@ -1311,9 +1342,20 @@ Do them in either order, or in parallel.
     and gateway helpers, `resume.py` and `run.py`; phase 6 writes the
     Lima `resume`).
   - **C1b, the documents: at phase 7,** when the design stops moving.
-    Rewrite `sbx/README.md` and `sbx/SECURITY.md`. Mark the superseded
-    `DESIGN-*` documents (`DESIGN-template-caching.md` is superseded by
-    §5 and D12).
+    Rewrite `sbx/README.md` and `sbx/SECURITY.md`. The rules for the
+    notes and design documents (cananian, 2026-10-09):
+    - `sbx/NOTES.md` keeps only actionable decisions and findings, and
+      the to-do items that still apply. No history: remove entries for
+      decisions that were changed later, and the Docker-sbx entries that
+      no longer apply.
+    - Remove each `DESIGN-*` document whose design is implemented. Put
+      a short description in a "Design" or "Architecture" section of
+      `sbx/README.md`, where it helps a reader understand the structure
+      of the code. (`DESIGN-template-caching.md` is superseded by §5 and
+      D12.)
+    - Until phase 7, keep the sbx history that the port still uses to
+      understand earlier decisions. Remove what the port no longer
+      needs, as it becomes unnecessary.
 - **C2. Later:** method and path rules in the proxy (TLS interception, a
   guest CA), to close the upload-to-allowed-host path (D11). Optionally,
   clonefile or reflink copies for `vz` sandboxes (D12).

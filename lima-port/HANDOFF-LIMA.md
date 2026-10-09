@@ -942,6 +942,12 @@ Tag the last Docker-backend commit `sbx-docker-final`.
 
 The MediaWiki steps and the alternates verification survive.
 
+**As built (phase 5):** the alternates check is in `sandbox-repos.sh`
+(phase 4). `setup.py` keeps the MediaWiki steps (`--lima`), plus the
+Docker kit's `--settings` and `--mcp`, which phase 6 keeps or deletes.
+`create` sends `setup.py` into the VM on stdin (`mediawiki.py`), so it is
+not in the image.
+
 ## 8. The session
 
 **Contained (`--no-sudo`).** Start from Kosta's `guest-claude.sh`. As
@@ -1228,6 +1234,14 @@ phase A3. Every sandbox gets a full copy of the golden image (D2).
    - **If a repository ever needs another Node:** a second pinned tree
      under `/opt/node/`, selected by that repository's `.nvmrc` through
      one wrapper. Not needed now.
+   **Done on Linux/QEMU, 2026-10-09** (`sbx/NOTES.md` §110): `wmf-sbx
+   create Translate` gives a wiki that serves `Special:Version` (200),
+   with Translate, UniversalLanguageSelector and Vector loaded.
+   `setup.py --lima` runs in the VM as the agent (`mediawiki.py`); the
+   Docker-only parts of `setup.py` are deleted (§7). The global Node is
+   24.18.0, as CI (`sbx/NOTES.md` §109). Found: this cloud sandbox's
+   proxy blocks GitHub archives, so composer was set to
+   `preferred-install: source` for the test.
 6. **The session.** Exit: MCP calls answer; the SessionStart text is
    the contained variant.
 7. **MVP acceptance:** the blind run of

@@ -1,47 +1,33 @@
 #!/usr/bin/env python3
-"""Copy files between a sandbox and the host, resolving a filesystem-path
-shortcut embedded in a NAME:PATH argument first, and waiting for the
-sandbox's mount layout to be back before trusting the copy.
+"""Copy a file or directory between the host and a sandbox.
 
-`sbx cp [flags] SRC DST` requires exactly one of SRC/DST to be written
-SANDBOX:PATH (reference:
-~/Projects/Wikimedia/docs.docker.com/reference/cli/sbx/cp) -- the other
-is an ordinary host path. Plain `sbx cp` knows nothing of the
-`.`/`..`/absolute-path shortcuts `wmf_sbx.state.resolve_name_arg()` adds
-elsewhere (sbx/NOTES.md "Allow shortcut sandbox names"), so
-`wmf-sbx cp foo .:bar` would otherwise reach `sbx` with a literal `.` as
-the sandbox name and fail. This module finds whichever of SRC/DST is
-written NAME:PATH, resolves a path-shaped NAME to the sandbox it names,
-and anchors a relative PATH at that sandbox's primary workspace --
-upstream `sbx cp` requires an absolute container path, and a relative
-one otherwise means nothing to it. The other argument is left entirely
-untouched.
+Exactly one side is written NAME:PATH. A relative PATH is anchored at
+the sandbox's primary workspace, which is at the host's absolute path in
+the VM too (D8). In the VM the copy is done by the agent, in its own
+tree, through a staging directory that the engineer makes in /tmp:
 
-A sandbox `sbx cp` hasn't accessed yet is not running (MEASURED,
-cananian, host, 2026-10-06 -- sbx/NOTES.md #103, and the pre-existing
-#45.1): the first command to touch it starts its container as a side
-effect, same as `sbx exec`, and races the startup dispatcher's restore
-of the mount layout (sbx/NOTES.md #40/#46). `wmf-sbx exec`
-(wmf_sbx.resume.start_and_restore) already waits that race out before
-running its command; plain `sbx cp` does not, so a `cp` run immediately
-after `wmf-sbx create` can report success while the mount underneath it
-is still the stale one `sbx create`'s own setup left behind -- the
-file lands nowhere the next mount swap keeps. This module now runs
-start_and_restore for every sandbox named on either side before handing
-off to upstream `cp`, exactly as `wmf-sbx exec` does for its own target.
+  host -> VM   `limactl copy` into the staging directory (the engineer's,
+               mode 0755), then the agent copies it to PATH;
+  VM -> host   the agent copies PATH into a staging directory of its own
+               (mode 0755), then `limactl copy` brings it out.
+
+Root never writes a path the agent controls: the agent could have made
+it a symlink (lima/guest-install.sh follows the same rule).
 
 Usage:
-  wmf-sbx-cp [-L] [-D] SRC DST
+  wmf-sbx cp SRC DST      # one of them NAME:PATH
 """
 
 import argparse
 import os
+import shlex
 import subprocess
 import sys
 
-from . import create as create_mod
-from . import resume as resume_mod
+from . import color as color_mod
+from . import lima as lima_mod
 from . import state as state_mod
+from . import vm as vm_mod
 
 
 def resolve_cp_arg(arg, env=None):
@@ -94,67 +80,75 @@ def _sandbox_name_in(resolved_arg):
         return None
 
 
-def main(argv=None, run=subprocess.run, env=None):
-    argv = list(sys.argv[1:] if argv is None else argv)
+def _guest_mktemp(name, lima, as_agent):
+    """A new directory in /tmp, mode 0755, made by the engineer or by the
+    agent. Refuse any output that is not such a path."""
+    argv = ["bash", "-c", 'd=$(mktemp -d /tmp/wmf-sbx-cp.XXXXXX) && chmod 0755 "$d" && echo "$d"']
+    if as_agent:
+        argv = vm_mod.agent_argv(argv, workdir="/tmp")
+    out = vm_mod.shell(name, argv, lima=lima).stdout.strip()
+    if not out.startswith("/tmp/wmf-sbx-cp.") or any(c.isspace() for c in out):
+        raise vm_mod.VmError(f"mktemp in the guest failed: {out!r}")
+    return out
 
+
+def copy_in(name, src, dest, lima):
+    if not os.path.exists(src):
+        raise vm_mod.VmError(f"no such file or directory: {src}")
+    stage = _guest_mktemp(name, lima, as_agent=False)
+    base = os.path.basename(os.path.normpath(src))
+    try:
+        lima.copy(src, f"{vm_mod.instance_name(name)}:{stage}/", recursive=os.path.isdir(src))
+        vm_mod.shell(name, vm_mod.agent_argv(
+            ["cp", "-a", "--no-preserve=ownership", f"{stage}/{base}", dest], workdir="/tmp"),
+            lima=lima)
+    finally:
+        vm_mod.shell(name, ["rm", "-rf", stage], lima=lima, check=False)
+
+
+def copy_out(name, src, dest, lima):
+    stage = _guest_mktemp(name, lima, as_agent=True)
+    base = os.path.basename(os.path.normpath(src))
+    try:
+        vm_mod.shell(name, vm_mod.agent_argv(
+            ["bash", "-c", 'cp -a -- "$1" "$2/" && chmod -R a+rX "$2"', "_", src, stage],
+            workdir="/tmp"), lima=lima)
+        is_dir = vm_mod.shell(name, ["test", "-d", f"{stage}/{base}"], lima=lima,
+                              check=False).returncode == 0
+        lima.copy(f"{vm_mod.instance_name(name)}:{stage}/{base}", dest, recursive=is_dir)
+    finally:
+        vm_mod.shell(name, vm_mod.agent_argv(["rm", "-rf", stage], workdir="/tmp"),
+                     lima=lima, check=False)
+
+
+def main(argv=None, lima=None, env=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument(
-        "-L", "--follow-link", action="store_true",
-        help="sbx cp's own flag: follow symbolic links in the source path",
-    )
-    parser.add_argument(
-        "-D", "--debug", action="store_true",
-        help="sbx's own global flag: enable debug logging",
-    )
-    parser.add_argument("src", help="Source: a host path, or SANDBOX:PATH")
-    parser.add_argument("dst", help="Destination: a host path, or SANDBOX:PATH")
+    parser.add_argument("src")
+    parser.add_argument("dst")
     args = parser.parse_args(argv)
-
+    lima = lima or lima_mod.Limactl()
     try:
         src = resolve_cp_arg(args.src, env=env)
         dst = resolve_cp_arg(args.dst, env=env)
-    except state_mod.StateError as e:
-        print(f"error: {e}", file=sys.stderr)
+        names = [_sandbox_name_in(a) for a in (src, dst)]
+        if (names[0] is None) == (names[1] is None):
+            raise vm_mod.VmError("write exactly one of SRC and DST as NAME:PATH")
+        name = names[0] or names[1]
+        vm_mod.resolve(name, env=env)
+        vm_mod.ensure_running(name, lima=lima,
+                              log=lambda m: print(color_mod.dim(m), file=sys.stderr))
+        guest = (dst if names[1] else src).partition(":")[2]
+        if not guest.startswith("/"):
+            # No primary workspace recorded: anchor at the agent's home.
+            guest = os.path.join(vm_mod.AGENT_HOME, guest)
+        if names[1]:
+            copy_in(name, os.path.expanduser(src), guest, lima)
+        else:
+            copy_out(name, guest, os.path.expanduser(dst), lima)
+    except (state_mod.StateError, vm_mod.VmError, lima_mod.LimaError) as e:
+        print(color_mod.error(f"error: {e}"), file=sys.stderr)
         return 1
-
-    for original, resolved in ((args.src, src), (args.dst, dst)):
-        if resolved != original:
-            print(f"+ resolved {original!r} to {resolved!r}", file=sys.stderr)
-
-    # A sandbox `cp` hasn't touched yet is not running -- starting it and
-    # waiting for its mount layout is exactly what `wmf-sbx exec` already
-    # does for its own target (sbx/NOTES.md #45.1/#97); plain `sbx cp`
-    # does neither, and races the restore instead (sbx/NOTES.md #103).
-    # Do it for every sandbox named on either side, in order, before
-    # trusting the copy to either one.
-    names = []
-    for resolved in (src, dst):
-        name = _sandbox_name_in(resolved)
-        if name and name not in names:
-            names.append(name)
-    for name in names:
-        if not resume_mod.start_and_restore(name, run=run, env=env, claude_md=False):
-            print(f"error: could not start sandbox {name!r}", file=sys.stderr)
-            return 1
-
-    cp_flags = []
-    if args.follow_link:
-        cp_flags.append("-L")
-
-    # -D/--debug is `sbx`'s own global flag, not cp's -- it belongs before
-    # the subcommand.
-    #
-    # --upstream comes first, ahead of -D: this module IS wmf-sbx-cp, so
-    # without it a plain `wmf-sbx cp` here would redirect straight back to
-    # this same module and recurse forever (sbx/NOTES.md "wmf-sbx
-    # redirects") -- and bin/wmf-sbx only recognizes --upstream as $1.
-    cmd = (
-        [create_mod.WMF_SBX, "--upstream"] + (["-D"] if args.debug else [])
-        + ["cp"] + cp_flags + [src, dst]
-    )
-
-    print("+ " + " ".join(cmd), file=sys.stderr)
-    return run(cmd).returncode
+    return 0
 
 
 if __name__ == "__main__":

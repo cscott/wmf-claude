@@ -16,7 +16,6 @@ No `.gitreview` is created in these repos, which keeps git-review-check
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
 import unittest
 

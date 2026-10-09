@@ -3,18 +3,14 @@
   python3 -m unittest discover -s sbx/tests -v
 """
 
-import contextlib
-import io
 import os
 import sys
 import tempfile
 import unittest
-from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import wmf_sbx.cp as cp  # noqa: E402
-import wmf_sbx.create as create_mod  # noqa: E402
 import wmf_sbx.state as state_mod  # noqa: E402
 
 

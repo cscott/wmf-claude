@@ -444,16 +444,17 @@ four ways:
   **Decision (cananian, 2026-10-09): the agent runs with the host
   user's uid** (and gid). Then mounted files are the agent's own, and
   files that leave the VM (a tar from the guest, `wmf-sbx cp`) carry the
-  host uid when unpacked on the host. Consequences: the agent is created
-  with `useradd -u <host uid> -g <host gid>` in the per-sandbox setup,
-  not in the golden image (the uid differs between hosts); Lima's
-  default user, which also gets the host uid, must then have a different
-  uid, so the template sets `user.uid` for it; and `safe.directory` in
-  `/etc/gitconfig` is still set, as defence in depth.
-  Later, with image caching (the original `sbx/NOTES.md` item 4), the
-  host uid can be part of the key of a cached per-working-directory
-  image. Then the agent setup can move into that cached image, while the
-  golden image stays free of any uid.
+  host uid when unpacked on the host.
+  **The agent is in the golden image** (cananian, 2026-10-09: the uid
+  changes very rarely, and on most single-user machines never). The host
+  uid and gid are image inputs, so they are in the cache key, and a host
+  with another uid gets another image. `image-build.sh` creates `agent`
+  with them after it removes the builder's user; a group with the gid
+  can exist already (macOS gid 20 is `dialout` on Debian), and is then
+  reused. Lima gives its own user the host uid by default, so every
+  template must set `user.uid` to something else: the builder uses
+  59999 (RAN: without it, the builder's user got 30033, the host uid).
+  `safe.directory` in `/etc/gitconfig` is still set, as defence in depth.
 - **nono grant (contained mode):** the launcher adds
   `--read /run/wmf-sbx/host/…` for each mount.
 - **The mount set is fixed at create.** Adding a repo later means

@@ -16,6 +16,8 @@
 #   WMF_SBX_CLAUDE_SHA256   checksum of that binary, from the release manifest
 #   WMF_SBX_TREE_REV        the wmf-claude revision in tree.tgz
 #   WMF_SBX_BUILDER_USER    Lima's user in the builder; removed at the end
+#   WMF_SBX_AGENT_UID       the host user's uid, for `agent` (D10)
+#   WMF_SBX_AGENT_GID       the host user's gid, for `agent`
 #
 # Proxy variables (http_proxy, https_proxy, no_proxy), if set, are used
 # for every download. The last step seals the identity, so that each
@@ -28,6 +30,7 @@ umask 022
 : "${WMF_SBX_STAGE:?}" "${WMF_SBX_PACKAGES:?}" "${WMF_SBX_NONO_VERSION:?}"
 : "${WMF_SBX_CLAUDE_VERSION:?}" "${WMF_SBX_CLAUDE_PLATFORM:?}" "${WMF_SBX_CLAUDE_SHA256:?}"
 : "${WMF_SBX_TREE_REV:?}" "${WMF_SBX_BUILDER_USER:?}"
+: "${WMF_SBX_AGENT_UID:?}" "${WMF_SBX_AGENT_GID:?}"
 
 [[ "$(id -u)" == 0 ]] || { echo "image-build.sh: run as root" >&2; exit 1; }
 step() { printf '\n==> %s\n' "$*"; }
@@ -112,6 +115,22 @@ rm -f /etc/ssh/ssh_host_*
 rm -f /etc/sudoers.d/90-cloud-init-users
 userdel -r -f "$WMF_SBX_BUILDER_USER" 2>/dev/null || userdel -f "$WMF_SBX_BUILDER_USER"
 cloud-init clean --logs --seed --machine-id
+
+# The agent, with the host user's uid and gid (D10), so that files on the
+# read-only mounts are its own, and files it makes have the host's owner.
+# After the builder's user is gone, so that the uid is free. A group with
+# the gid can exist already (macOS gives users gid 20, which is `dialout`
+# on Debian): then the agent uses it. No sudo, no extra groups; the
+# per-sandbox provisioning sets the rest (HANDOFF-LIMA.md §5.3).
+step "agent (uid $WMF_SBX_AGENT_UID, gid $WMF_SBX_AGENT_GID)"
+if getent passwd "$WMF_SBX_AGENT_UID" >/dev/null; then
+  echo "uid $WMF_SBX_AGENT_UID is in use: $(getent passwd "$WMF_SBX_AGENT_UID")" >&2
+  exit 1
+fi
+getent group "$WMF_SBX_AGENT_GID" >/dev/null || groupadd -g "$WMF_SBX_AGENT_GID" agent
+useradd -m -u "$WMF_SBX_AGENT_UID" -g "$WMF_SBX_AGENT_GID" -s /bin/bash \
+  -c 'wmf-sbx agent (runs Claude Code)' agent
+chmod 0750 /home/agent
 # Give the freed blocks back to the qcow2 file (the drive has discard=on).
 fstrim -av || true
 sync

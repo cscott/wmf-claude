@@ -9336,6 +9336,55 @@ branch), not `work/cscott/sbx`; the branch picks the result up at the
 rebase. After all three merge, the only non-`sbx/` diffs left against
 upstream should be `SECURITY.md`'s pointer paragraph and `.gitignore`.
 
+## 105. Phase 1 of the Lima port: rebase onto main + !127 + !130–!132 **[2026-10-09]**
+
+Phase 1 of `lima-port/HANDOFF-LIMA.md` §11, done in a Claude Code cloud
+session (not in an sbx sandbox). Branches, both pushed to the GitHub
+mirror (`cscott/wmf-claude`):
+
+- `lima-port-base`: upstream `main` 10aefc1, then Kosta's !127 rebased
+  (clean), then !132, !130 and !131 as cherry-picks, then one lint fix
+  for !127 (`23e921c`, kept separate so that it can go to Kosta). !131
+  conflicted with !132 only in `tests/test-templates.sh`: each adds its
+  own section at the same place; both are kept.
+- `lima-port`: `lima-port-base`, then this branch's sbx commits, then the
+  `lima-port/` handoff documents.
+
+What changed in the replay of the 12 sbx commits (§104.2 followed):
+
+- **79189f9 (Seam 1)** is reduced to `hooks/context/sbx/*` and their
+  `package.json` entries. The hook, the nono files, the fixtures and the
+  skill-list test come from !132. `WMF_CLAUDE_DOCKER_MODE` is removed:
+  nothing sets it (the kit asserts that it is unset). Do not drop the
+  commit completely: 0e9d60e and 833633b edit the files it adds.
+- **18dcfc7 (setup config)** is dropped for !131. Consequence:
+  `wmf_claude_config()` in `create.py` read `$XDG_CONFIG_HOME`, which
+  !131 does not use. Fixed in its own commit; the tests isolate the file
+  through `HOME`.
+- **!130:** `sbx/patches/plugin/01-run-tests-composer-entrypoint.patch`
+  is deleted. Without that, 23 kit tests failed ("does not apply").
+- All other sbx commits applied cleanly. After them, `sbx/` was
+  byte-identical to ae82db0, and outside `sbx/` the branch differed
+  from `lima-port-base` only in `SECURITY.md` and `.gitignore`, as §104.2
+  said it would.
+
+Results on `lima-port` (Linux, x86_64):
+
+- `python3 -m unittest discover -s sbx/tests`: 1027 tests, OK.
+- `tests/test-templates.sh`: 279 passed, 0 failed (includes the
+  byte-for-byte SessionStart fixtures).
+- `tests/test-lima.sh`: 102 passed, 0 failed, as a non-root user with
+  `limactl` 2.2.1 and `shellcheck` 0.11.0. Before `23e921c`, two
+  shellcheck checks failed; the CI image installs neither tool, so CI
+  skips them.
+- `tests/test-profile.sh`: fails, for the reason in §104 (nono refuses
+  the profile on Linux: the `~/.cargo/credentials` deny under the
+  `group:rust_runtime` allow). The profile files are the same as on
+  `main`, so this branch does not change the result.
+
+Open MR not taken: !102 (jforrester, draft, remote build broker). It
+does not touch Lima, and it conflicts with !127 in `bin/claude`.
+
 ## Still to do
 
 - [x] Implement `sbx/DESIGN-setup-steps.md` — everything after the

@@ -996,7 +996,7 @@ phase A3. Every sandbox gets a full copy of the golden image (D2).
    **Done 2026-10-09** (`sbx/NOTES.md` §105). The base is the
    `lima-port-base` branch: main 10aefc1, !127 (rebased, clean), !132,
    !130, !131, and a lint fix for !127 kept as its own commit. The work
-   is on the `lima-port` branch; `sbx-docker-final` tags its last sbx
+   is on the `lima-port` branch; the `sbx-docker-final` branch marks its last sbx
    commit. The sbx unit suite, `test-templates.sh` and `test-lima.sh`
    pass. `test-profile.sh` fails on Linux for the upstream reason in
    `sbx/NOTES.md` §104, on `main` too.

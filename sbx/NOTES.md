@@ -9436,8 +9436,10 @@ Found on the way:
   baseline), so the build passes them explicitly, with a loopback proxy
   rewritten to 192.168.5.2, as Lima does.
 - **Debian 13 has Node 20**, not the Node 22 that MediaWiki CI uses
-  (`DESIGN-setup-steps.md` §7.2 measured 22 on Ubuntu). Check that
-  core's `npm ci` and tests accept 20 in phase 5, or install Node 22.
+  (`DESIGN-setup-steps.md` §7.2 measured 22 on Ubuntu). **Decision
+  (cananian): install Node 22** in phase 5, decoupled from the OS
+  version: nave, fresh-node, or a pinned newer Debian/Ubuntu package
+  (HANDOFF-LIMA.md §11, phase 5).
 - Not done in phase 2: `status` (phase 3), `vz` (the Mac list for
   Kosta), and the sbx plugin overlay and patches, which belong to the
   session (phase 6).

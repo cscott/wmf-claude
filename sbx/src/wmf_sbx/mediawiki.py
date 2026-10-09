@@ -40,7 +40,7 @@ def build_plan(resolved_for_kit, links, readonly, requested, primary, reset_all)
 def run_setup(name, plan, lima=None, env=None):
     """Write the plan into the agent's home, and run setup.py --lima as the
     agent. Its output goes to the terminal; the log and the status file
-    are in the VM, in setup.LIMA_LOG_DIR. Raises SetupError on failure."""
+    are in the VM, in setup.LOG_DIR. Raises SetupError on failure."""
     write = vm_mod.agent_argv(
         ["sh", "-c", f"umask 077 && cat > {setup_mod.SANDBOX_PLAN_FILE}"])
     res = vm_mod.shell(name, write, lima=lima, input=json.dumps(plan, indent=2) + "\n",
@@ -55,4 +55,4 @@ def run_setup(name, plan, lima=None, env=None):
     if res.returncode != 0:
         raise SetupError(
             f"the MediaWiki setup failed (exit {res.returncode}); the log is "
-            f"{setup_mod.LIMA_LOG_DIR}/{setup_mod.SETUP_LOG_NAME} in the VM")
+            f"{setup_mod.LOG_DIR}/{setup_mod.SETUP_LOG_NAME} in the VM")

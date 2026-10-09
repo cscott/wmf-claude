@@ -9492,6 +9492,76 @@ Node 22 (5), the session (6). The Docker-only helpers in `create.py`
 (kit, ports, `sbx` calls) are now dead code with their tests; delete
 them in C1.
 
+## 108. Phase 4 of the Lima port: git transport and mounts **[2026-10-09]**
+
+Branch `lima-port`: f2020a9 (kernel), 06cfab2 (phase 4), da89f39
+(submodule check), and the commit that records this.
+
+What there is now (lima-port/HANDOFF-LIMA.md §6):
+
+- `repos.py` + `sandbox-repos.sh`: each repo's git dir (`git rev-parse
+  --git-common-dir`) is mounted read-only under `/run/wmf-sbx/host/`.
+  In the VM, a `git clone --shared` of the mount is at the host path,
+  on the host's branch, with `origin` = upstream and `local` = the
+  mount; dependencies are reset to upstream. A `:ro` repo is cloned by
+  `engineer`, so the agent can read it and not write it.
+- `remote_helper.py` + `bin/git-remote-wmfsbx`: `wmfsbx://NAME/PATH`.
+  `connect git-upload-pack` only; upload-pack runs as the agent through
+  `limactl shell`, hooks off. Push is refused.
+- `create` adds a host remote with the sandbox's name to each repo and
+  suspends gc (`remotes.py`); `rm` removes the remotes and restores gc.
+- A seventh invariant: every git dir in `/etc/fstab` is mounted.
+
+Found on the real VM (Linux, QEMU TCG, Lima 2.2.1):
+
+1. **Debian's cloud kernel has no 9p and no virtiofs.** The first create
+   wrote the fstab entries and mounted nothing, so the clone step
+   stopped ("not mounted"). With `linux-image-amd64` installed and the
+   cloud kernels purged, the mounts came up after a reboot. The golden
+   image now does this, and the build checks the modules (f2020a9).
+   The phase 0 9p measurements had run on an Ubuntu cloud image, whose
+   kernel has 9p.
+2. **9p `fscache` goes stale.** After the host moved a loose ref into
+   `packed-refs`, the guest still read the old loose ref, and `git
+   fetch local` got the old commit. With `9p.cache: none` a host
+   commit, `pack-refs`, a full repack and `gc --prune=now` were each
+   seen at once; `git log --all` over the mount took 0.5 s. Lima writes
+   the option to fstab at boot, so `limactl edit` takes effect one boot
+   later.
+3. **A `:ro` clone needs `safe.directory` for PATH/.git too.**
+   upload-pack opens it by that path; without it, "dubious ownership",
+   and the `rm` guard refused because it could not probe.
+4. **The phase 2 image had no MCP servers.** The checkout that built it
+   had no submodules checked out, and `git submodule foreach` skips
+   those without a word. The build now refuses such a checkout
+   (da89f39).
+
+Checked and fine: the agent cannot write the mount; guest root's
+`remount,rw` shows `rw` but a write fails and the host file does not
+change (the "no mount is writable" invariant then reports FAIL, as it
+should); `uploadpack.packObjectsHook` in the agent's repo config does
+not run on a host fetch; push is refused; the `rm` guard names the
+unfetched commit; host `git safe-reset NAME` works; `rm` leaves the
+host config with no remote, gc key or `wmfSbx` marker.
+
+`lima-port/checks/phase4.sh NAME PRIMARY [RO_REPO]` runs the checks on
+a live sandbox (for Kosta on `vz`, too).
+
+Clean run from the rebuilt image (`f0d9a41e9170ed39`, kernel
+6.12.111+deb13-amd64, the MCP servers in `/opt/wmf-claude.*`):
+
+- `image build`: 2442 s (41 min, TCG; phase 2 took 26 min, without the
+  kernel swap).
+- `create --no-deps --name p4 ~/src/BoilerPlate ~/src/dep:ro`: 247 s,
+  the seven invariants ok, both clones made, both host remotes added,
+  gc suspended in both repos.
+- `lima-port/checks/phase4.sh p4 ~/src/BoilerPlate ~/src/dep`: 18 of
+  18 ok.
+- `rm p4`: the VM, the remotes, the gc keys and the markers are gone.
+
+Left: the nono `--read /run/wmf-sbx/host/…` grant comes with the session
+(phase 6). Host `git maintenance` and alternates are still unverified.
+
 ## Still to do
 
 - [x] Implement `sbx/DESIGN-setup-steps.md` — everything after the

@@ -48,6 +48,27 @@ step "apt packages"
 read -r -a PKGS <<<"$WMF_SBX_PACKAGES"
 apt-get "${APT_OPTS[@]}" update -q
 apt-get "${APT_OPTS[@]}" install -y -q --no-install-recommends "${PKGS[@]}"
+
+# The kernel. Debian's cloud kernel (the genericcloud image has it) has
+# no 9p and no virtiofs, so the git-dir mounts (D10) do not mount: the
+# fstab entries are there, the mount units stay dead (RAN, phase 4).
+# Install the generic kernel and remove every cloud kernel, so that GRUB
+# can boot only the generic one. The running kernel is a cloud kernel;
+# debconf would stop its removal without the answer below.
+step "kernel"
+KARCH=$(dpkg --print-architecture)
+apt-get "${APT_OPTS[@]}" install -y -q --no-install-recommends "linux-image-$KARCH"
+echo 'linux-base linux-base/removing-running-kernel boolean false' | debconf-set-selections
+apt-get "${APT_OPTS[@]}" purge -y -q "linux-image-cloud-$KARCH" 'linux-image-*-cloud-*'
+mapfile -t KVERS < <(ls /lib/modules)
+if [[ ${#KVERS[@]} -ne 1 || "${KVERS[0]}" == *cloud* ]]; then
+  echo "image-build.sh: want one generic kernel, have: ${KVERS[*]}" >&2
+  exit 1
+fi
+for mod in 9p 9pnet_virtio virtiofs; do
+  modinfo -k "${KVERS[0]}" "$mod" >/dev/null
+done
+echo "  ${KVERS[0]}: 9p, 9pnet_virtio, virtiofs"
 apt-get clean
 
 # nono, pinned and checked against the release's SHA256SUMS.txt, as

@@ -13,6 +13,7 @@ COMMANDS = {
     "cp": "wmf_sbx.cp",
     "create": "wmf_sbx.create",
     "exec": "wmf_sbx.exec",
+    "image": "wmf_sbx.image",
     "ls-remotes": "wmf_sbx.ls_remotes",
     "refresh-claude-md": "wmf_sbx.refresh_claude_md",
     "resolve": "wmf_sbx.resolve",

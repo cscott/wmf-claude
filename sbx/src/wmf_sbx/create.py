@@ -27,6 +27,8 @@ from . import resolve as resolve_mod
 from . import state as state_mod
 from . import image as image_mod
 from . import lima as lima_mod
+from . import remotes as remotes_mod
+from . import repos as repos_mod
 from . import template as template_mod
 from . import vm as vm_mod
 
@@ -422,13 +424,16 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
 
     1. resolve the repos and walk the dependencies (unchanged);
     2. find the golden image in the cache, or build it (image.py);
-    3. generate the sandbox's Lima config (template.py);
-    4. save the state, then create and boot the VM, which copies the
+    3. clone the missing repos on the host, and find each repo's git dir;
+    4. generate the sandbox's Lima config (template.py), which mounts the
+       git dirs read-only (D10);
+    5. save the state, then create and boot the VM, which copies the
        golden image (D2) and runs the provisioning;
-    5. check the security invariants.
+    6. check the security invariants;
+    7. clone the repos in the VM at their host paths (D8), and add the
+       host remotes, which also suspend gc (repos.py, remotes.py).
 
-    Phase 4 adds the read-only mounts of the git dirs and the host
-    remotes; phase 5 the MediaWiki setup; phase 6 the session."""
+    Phase 5 adds the MediaWiki setup; phase 6 the session."""
     parser = argparse.ArgumentParser(description="Create a wmf-sbx sandbox (a Lima VM).")
     parser.add_argument(
         "primary", help="Repo for the sandbox's primary workspace; append ':ro' for read-only"
@@ -452,7 +457,8 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
                         help="Reset every clone to upstream master (used by the "
                         "MediaWiki setup, phase 5)")
     parser.add_argument("--no-remotes", action="store_true",
-                        help="Don't touch any host .git/config (phase 4)")
+                        help="Don't touch any host .git/config: no remote "
+                        "to fetch the sandbox's work, and gc is not suspended")
     parser.add_argument("--vm-type", choices=sorted(template_mod.MOUNT_TYPES),
                         help="Lima driver (default: vz on macOS, qemu elsewhere)")
     parser.add_argument("--cpus", type=int, default=template_mod.DEFAULT_CPUS)
@@ -560,13 +566,22 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
                 (build or image_mod.build)(inputs, lima=lima, run=run, env=env, log=say)
         golden = image_mod.golden_path(key, env)
 
+        if not args.dry_run:
+            for canonical, path, needs_clone in resolved:
+                if needs_clone:
+                    do_clone(canonical, path)
+        repos = [repos_mod.host_repo(path, run=run, predicted=args.dry_run and needs_clone)
+                 for _c, path, needs_clone in resolved]
+
         tmpl = template_mod.sandbox_template(
-            golden, arch, gitdirs=(), vm_type=args.vm_type, cpus=args.cpus,
+            golden, arch, gitdirs=repos_mod.git_dirs(repos), vm_type=args.vm_type,
+            cpus=args.cpus,
             memory=args.memory, disk=args.disk,
             proxy_ports=template_mod.loopback_proxy_ports(env),
             ca_files=image_mod.extra_ca_files(env))
     except (state_mod.StateError, vm_mod.VmError, image_mod.ImageError,
-            template_mod.TemplateError, lima_mod.LimaError) as e:
+            template_mod.TemplateError, lima_mod.LimaError, repos_mod.RepoError,
+            LaunchError) as e:
         print(color_mod.error(f"error: {e}"), file=sys.stderr)
         return 1
 
@@ -576,14 +591,6 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         print(color_mod.dim(image_mod.yaml.safe_dump(tmpl, sort_keys=False)),
               file=sys.stderr, end="")
         return 0
-
-    try:
-        for canonical, path, needs_clone in resolved:
-            if needs_clone:
-                do_clone(canonical, path)
-    except LaunchError as e:
-        print(color_mod.error(f"error: {e}"), file=sys.stderr)
-        return 1
 
     # The state first: a create that fails half-way leaves a VM that
     # `wmf-sbx rm NAME` can then remove.
@@ -606,13 +613,41 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         print(color_mod.error(f"error: {name} breaks a security invariant; do not use "
                               f"it. `wmf-sbx rm {name}`."), file=sys.stderr)
         return 1
+
+    # The clones in the VM, then the host remotes. Requested repos keep
+    # the host's branch; dependencies go to upstream master, and
+    # --reset-all resets every repo (DESIGN-setup-steps.md §8.1).
+    keep = set() if args.reset_all else (
+        {path for _c, path, _n in resolved if path not in origins_by_path} | {primary_dir})
+    readonly = {path for (_spec, is_ro), (_c, path, _n) in zip(split, resolved) if is_ro}
+    try:
+        upstreams = upstream_plan([(c, p) for c, p, _n in resolved], run=run)
+        repos_mod.clone_in_vm(name, repos, upstreams, keep, readonly=readonly,
+                              lima=lima, env=env)
+    except (repos_mod.RepoError, lima_mod.LimaError) as e:
+        print(color_mod.error(f"error: {e}"), file=sys.stderr)
+        print(f"  `wmf-sbx rm {name}` removes what was made.", file=sys.stderr)
+        return 1
+    if args.no_remotes:
+        print("warning: --no-remotes: the host cannot fetch from this sandbox, and "
+              "gc stays on in the host repos, so a host `git gc --prune=now` can "
+              "break the clones in the VM.", file=sys.stderr)
+    else:
+        added, skipped = remotes_mod.sync_remotes(
+            name, repos_mod.remote_candidates(name, repos), run=run,
+            warn=lambda m: print(f"warning: {m}", file=sys.stderr))
+        state["remotes"], state["skipped"] = added, skipped
+        state_mod.save(state, env)
+
     print(f"\nSandbox {name} is ready (Lima instance {vm_mod.instance_name(name)}).\n"
           f"  wmf-sbx exec {name} -- CMD     run a command as the agent\n"
           f"  wmf-sbx status {name}          check it\n"
           f"  wmf-sbx stop|start {name}\n"
           f"  wmf-sbx rm {name}\n"
-          f"Not yet on Lima: the repo mounts and host remotes (phase 4), the "
-          f"MediaWiki setup (phase 5), and `wmf-sbx resume` (phase 6).",
+          + ("" if args.no_remotes else
+             f"  git fetch {name}               (on the host, in a repo) the agent's work\n")
+          + "Not yet on Lima: the MediaWiki setup (phase 5), and `wmf-sbx resume` "
+          "(phase 6).",
           file=sys.stderr)
     return 0
 

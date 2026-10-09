@@ -123,6 +123,11 @@ INVARIANTS = [
      "test \"$(sysctl -n dev.tty.legacy_tiocsti)\" = 0"),
     ("no mount is writable",
      "! findmnt -rn -o OPTIONS -t 9p,virtiofs | grep -qE '(^|,)rw(,|$)'"),
+    # Lima writes each mount to /etc/fstab (cloud-init). A kernel with no
+    # 9p leaves the entries there and mounts nothing (RAN, phase 4).
+    ("every git dir is mounted",
+     "awk '$3==\"9p\"||$3==\"virtiofs\"{print $2}' /etc/fstab | "
+     "{ while read -r m; do mountpoint -q \"$(printf '%b' \"$m\")\" || exit 1; done; }"),
     ("the agent has the host uid",
      "test \"$(id -u agent)\" = \"$WMF_SBX_HOST_UID\""),
 ]

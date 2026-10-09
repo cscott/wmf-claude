@@ -51,8 +51,15 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual(t["mounts"][0], {
             "location": "/home/me/src/core/.git",
             "mountPoint": "/run/wmf-sbx/host/home/me/src/core/.git",
-            "writable": False})
+            "writable": False, "9p": {"cache": "none"}})
         self.assertEqual(len(t["mounts"]), 2)
+        self.assertNotIn("9p", make(vm_type="vz", gitdirs=["/h/c/.git"])["mounts"][0])
+
+    def test_git_dir_names(self):
+        for ok in ("/h/c/.git", "/h/c.git", "/h/c/.git/modules/vendor"):
+            self.assertTrue(template.is_git_dir_name(ok), ok)
+        for bad in ("/h/c", "/h/c/.git-not", "/h/modules/x"):
+            self.assertFalse(template.is_git_dir_name(bad), bad)
 
     def test_the_engineer_does_not_get_the_host_uid(self):
         t = make()
@@ -106,6 +113,7 @@ class CheckTests(unittest.TestCase):
             "agent forwarding": lambda t: t["ssh"].update(forwardAgent=True),
             "reverse-sshfs": lambda t: t.update(mountType="reverse-sshfs"),
             "writable": lambda t: t["mounts"][0].update(writable=True),
+            "9p cache": lambda t: t["mounts"][0].pop("9p"),
             "mount point": lambda t: t["mounts"][0].update(mountPoint="/home/me/src/core/.git"),
             "not a git dir": lambda t: t["mounts"][0].update(location="/home/me/src/core"),
             "home": lambda t: t["mounts"].append({"location": os.path.expanduser("~"),

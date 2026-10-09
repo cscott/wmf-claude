@@ -73,10 +73,9 @@ class LimaPlanTests(unittest.TestCase):
         core, core_ro, links, clones, parsoid = setup.lima_repo_roles(plan())
         self.assertEqual((core, core_ro, parsoid), (CORE, False, PARSOID))
         self.assertEqual(links, [("extensions", "Cite", CITE), ("skins", "Vector", VECTOR)])
-        self.assertEqual([c[0] for c in clones], [CORE, CITE, PARSOID])
-        self.assertTrue(all(lit == work for lit, work, _r in clones))
+        self.assertEqual(clones, [CORE, CITE, PARSOID])
 
-    def test_run_lima_setup_skips_the_resets(self):
+    def test_run_lima_setup_runs_the_chain_with_the_roles(self):
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             json.dump(plan(), f)
         self.addCleanup(os.unlink, f.name)
@@ -84,7 +83,6 @@ class LimaPlanTests(unittest.TestCase):
             self.assertEqual(setup.run_lima_setup([f.name]), 0)
         args, kw = mw.call_args
         self.assertEqual(args[1], CORE)
-        self.assertIs(kw["reset"], False)
         self.assertEqual(kw["parsoid_path"], PARSOID)
 
     def test_a_bad_plan_fails(self):
@@ -94,24 +92,8 @@ class LimaPlanTests(unittest.TestCase):
         self.assertEqual(setup.run_lima_setup([f.name]), 1)
         self.assertEqual(setup.run_lima_setup([]), 1)
 
-    def test_mediawiki_setup_without_reset_runs_no_safe_reset(self):
-        calls = []
-
-        def run(argv, **kw):
-            calls.append(list(argv))
-            return Done()
-        clones = [(CITE, CITE, None)]
-        with mock.patch.object(setup, "link_into_core"), \
-                mock.patch.object(setup, "write_composer_local"), \
-                mock.patch.object(setup, "install_mediawiki", return_value=None), \
-                mock.patch.object(setup, "write_env_file"), \
-                mock.patch.object(setup, "parse_install_params", return_value={}):
-            setup.mediawiki_setup(plan(resetAll=True), CORE, False, [], clones, [],
-                                  run=run, reset=False)
-        self.assertFalse([c for c in calls if "safe-reset" in c])
-
     def test_main_lima_logs_in_the_agents_home(self):
-        self.assertEqual(setup.LIMA_LOG_DIR, "/home/agent/.wmf-sbx")
+        self.assertEqual(setup.LOG_DIR, "/home/agent/.wmf-sbx")
         with mock.patch.object(setup, "run_lima_setup", return_value=0) as r:
             self.assertEqual(setup.main(["--lima", "/p.json"], log_dir=None), 0)
         self.assertEqual(r.call_args[0][0], ["/p.json"])

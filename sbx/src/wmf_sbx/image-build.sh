@@ -94,6 +94,9 @@ if dpkg -s nodejs >/dev/null 2>&1; then
   echo "image-build.sh: Debian's nodejs is installed; it must not be" >&2
   exit 1
 fi
+# npm's "new version available" notice is noise for the agent, which
+# cannot update this npm anyway.
+npm config --global set update-notifier false
 [[ "$(command -v node)" == /usr/local/bin/node ]]
 [[ "$(node --version)" == "v$WMF_SBX_NODE_VERSION" ]]
 echo "  node $(node --version), npm $(npm --version)"

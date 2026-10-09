@@ -50,9 +50,16 @@ def main(argv=None, lima=None, env=None):
                 raise vm_mod.VmError(
                     f"--engineer refuses {workdir}: the agent can write there")
             argv_in = cmd
+        elif args.workdir:
+            argv_in = vm_mod.agent_argv(cmd, workdir=args.workdir)
+            workdir = vm_mod.ENGINEER_HOME
         else:
-            workdir = args.workdir or state.get("primaryDir") or vm_mod.AGENT_HOME
-            argv_in = vm_mod.agent_argv(cmd, workdir=workdir)
+            # The primary workspace, where the clone is (D8). Before the
+            # clone exists (phase 4), the agent's home instead.
+            primary = state.get("primaryDir") or vm_mod.AGENT_HOME
+            argv_in = vm_mod.agent_argv(
+                ["sh", "-c", 'cd -- "$1" 2>/dev/null || true; shift; exec "$@"',
+                 "sh", primary] + cmd, workdir=vm_mod.AGENT_HOME)
             workdir = vm_mod.ENGINEER_HOME
         vm_mod.ensure_running(name, lima=lima,
                               log=lambda m: print(color_mod.dim(m), file=sys.stderr))

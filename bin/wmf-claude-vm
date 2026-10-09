@@ -19,6 +19,10 @@
 #   bin/wmf-claude-vm delete | reset                 # remove the VM (reset: then create it again)
 #
 #   WMF_CLAUDE_VM=<name>   Lima instance name (default: wmf-claude)
+
+# The guest and guest_agent scripts are single-quoted on purpose: they get
+# their values as positional arguments, never by expansion on the host.
+# shellcheck disable=SC2016
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -35,7 +39,7 @@ AGENT=agent
 AGENT_HOME=/home/agent
 
 usage() {
-  sed -n '2,/^set -euo/{/^set -euo/d;s/^# \{0,1\}//;p;}' "$0"
+  sed -n '2,/^$/{/^$/d;s/^# \{0,1\}//;p;}' "$0"
 }
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
@@ -126,8 +130,7 @@ cmd_create() {
   limactl create --tty=false --name "$VM" "$@" "$TEMPLATE"
   limactl start --tty=false --timeout 20m "$VM"
   # The readiness probe waits for the provisioning marker; check it here too.
-  local i
-  for i in $(seq 60); do
+  for _ in $(seq 60); do
     guest test -f /run/wmf-claude/provisioned 2>/dev/null && break
     sleep 5
   done

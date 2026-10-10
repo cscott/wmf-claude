@@ -348,8 +348,11 @@ class CreateSessionTests(Env):
                          self.err)
         shells = lima.shells()
         self.assertTrue(any(session.WMF_CLAUDE_SETUP in s for s in shells))
-        # The profile denies ~/.bashrc; the skeleton's copy goes.
-        self.assertTrue(any("rm" in s and "/home/agent/.bashrc" in s for s in shells))
+        # The profile denies ~/.bashrc; it goes, after wmf-claude-setup
+        # (which writes its alias there).
+        setup_at = next(i for i, s in enumerate(shells) if session.WMF_CLAUDE_SETUP in s)
+        rm_at = next(i for i, s in enumerate(shells) if "rm" in s and "/home/agent/.bashrc" in s)
+        self.assertGreater(rm_at, setup_at)
         config = [i for a, i in inputs if i and "phabricatorUsername" in i]
         self.assertEqual(json.loads(config[0]), {"phabricatorUsername": "Tester"})
         plan = json.loads([i for a, i in inputs if i and '"repos"' in i][0])

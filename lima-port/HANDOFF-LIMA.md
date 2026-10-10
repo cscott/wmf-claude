@@ -257,22 +257,56 @@ harmless.
   contained `resume`, and drop it when nono#1786 is fixed.
 - **`--sudo` mode:** no nono, so no flag is needed.
 
-**D6. Signing in, per VM. OPEN; recommendation stands.**
+**D6. Signing in. DECIDED for the MVP (cananian, 2026-10-10): a host
+credential per session; a shared login is the first item after the MVP.**
 
-- Phase 1 uses Kosta's `claude auth login` flow at create time.
-- A long-lived token (READ, Claude Code authentication docs,
-  2026-10-09): `claude setup-token` runs the browser flow and prints a
-  **one-year** OAuth token; it saves it nowhere. Set it as
-  `CLAUDE_CODE_OAUTH_TOKEN`. It "can only make model requests": no
-  Remote Control, no claude.ai connectors; local MCP servers work. It
-  ranks above a `/login` credential. Bare mode (`--bare`) ignores it.
-  So one token, made once on the host, could sign in every VM, through
-  D4's `env` key. It is then in a file the agent can read, as a
-  `/login` credential is.
+A sandbox is made per task and must be quick to make, so a login per VM
+is not acceptable.
+
+- **What Docker sbx did** (`sbx/NOTES.md` §81.4, READ): the Claude login
+  was **on the host**. sbx's egress proxy put it into Anthropic requests,
+  and the sandbox held only a placeholder (`Bearer proxy-managed`). A
+  `/login` started in any sandbox was kept on the host and shared by all
+  sandboxes; when it expired (after days), the next session asked again.
+- **What Claude Code supports** (READ, code.claude.com authentication,
+  env-vars, settings, LLM-gateway pages, 2026-10-10):
+  - `claude setup-token`: a **one-year** OAuth token for
+    `CLAUDE_CODE_OAUTH_TOKEN`; no option for a shorter life; model
+    requests only. Precedence: `ANTHROPIC_AUTH_TOKEN` >
+    `ANTHROPIC_API_KEY` > `apiKeyHelper` > `CLAUDE_CODE_OAUTH_TOKEN` >
+    `/login`.
+  - `apiKeyHelper`: a command whose output is sent as `X-Api-Key` and
+    `Authorization: Bearer`, run again after 5 minutes
+    (`CLAUDE_CODE_API_KEY_HELPER_TTL_MS`) and on a 401/403. Whether it can
+    return a subscription token is not documented.
+  - `CLAUDE_CODE_OAUTH_REFRESH_TOKEN`: `claude auth login` without a
+    browser. Refresh-token rotation is not documented, so copies of one
+    login in many VMs may break each other; the same holds for copying
+    `~/.claude/.credentials.json`.
+  - A gateway that injects the credential: documented for the cloud
+    providers only; for Anthropic's own API "a reachable base URL isn't"
+    a credential, and a subscription login needs an OAuth header the
+    gateway must keep.
+  - A Console API key can have an expiry (3 hours to 30 days, or custom).
+- **The MVP (built, phase 6):** `wmf-sbx resume` takes the host's
+  `$ANTHROPIC_API_KEY`, `$CLAUDE_CODE_OAUTH_TOKEN` or
+  `~/.config/wmf-sbx/claude-oauth-token` (mode 0600, from `claude
+  setup-token`) and gives it to that session only: on stdin into a 0600
+  file in the guest's `/dev/shm`, which the launcher reads and deletes.
+  Never in a command line, never on the VM's disk. The Claude process
+  has it in its environment while it runs. Without one, Claude Code asks
+  for a login, which stays in that VM.
+- **After the MVP (first item, before tracks A and B):** the VM holds no
+  long-lived credential. Options, to measure:
+  - **nono `--credential SERVICE`** ("Inject credentials via reverse
+    proxy", nono 0.78.0 `run --help`): nono's proxy, outside the
+    sandboxed process, adds the credential. Closest to what sbx did, and
+    it is in the VM already;
+  - an `apiKeyHelper` in the VM that gets a short-lived token from the
+    host;
+  - the host proxy of track A injecting it (as sbx did), if Anthropic's
+    API accepts that for a subscription login.
 - Never bake a credential into the image.
-- Never copy one VM's `~/.claude/.credentials.json` into another: the
-  refresh tokens may rotate. The docs do not say; this needs a real
-  login to test.
 
 **D7. Repo code outside nono. DECIDED for contained mode; moot with
 `--sudo`.**
@@ -1000,6 +1034,22 @@ Edit `MEDIAWIKI-TESTING.md` and `HOME_CLAUDE_MD` to be mode-aware: the
 sudo steps apply only with `--sudo`. The `run-tests` plugin patch still
 applies (RAN).
 
+**As built (phase 6, contained mode):** `hooks/context/lima-sbx/` is in
+the upstream tree (cananian, 2026-10-10: edit shared files directly, no
+overlay). The launcher is `session.launcher_argv`; besides the grants
+above it needs `--read` on `/opt/claude-code`, `/opt/node` and
+`/etc/php`, `--read-file` on `/etc/gitconfig` and `/etc/bash.bashrc`,
+`--allow` on `~/.cache` and `~/.npm` (not `~/.config/composer`: the
+profile denies its `auth.json`, and Landlock cannot deny a path under an
+allowed one), the registry `--allow-domain`s (D3), and
+`--upstream-proxy` when the host has a proxy. `COMPOSER_HOME` is
+`~/.cache/composer-home`, in the settings `env`. The agent's
+`~/.claude/CLAUDE.md` is `session.home_claude_md` (no sudo steps). The
+`run-tests` patch is not applied: the plugin overlay and patches are
+gone; check in phase 7 whether that skill needs a change upstream. The
+memory seed (`sbx/reference/claude-memory-seed/`) is not used: it holds
+memories about developing wmf-claude, not general ones.
+
 **MCP.** Upstream's anonymous servers run in the VM. Drop the proxy, the
 host registration and the node ≥ 20.18.1 host check. Propose tool-layer
 denies for Gerrit's write tools upstream.
@@ -1244,6 +1294,23 @@ phase A3. Every sandbox gets a full copy of the golden image (D2).
    `preferred-install: source` for the test.
 6. **The session.** Exit: MCP calls answer; the SessionStart text is
    the contained variant.
+   **Done on Linux/QEMU, 2026-10-10** (`sbx/NOTES.md` §111): `wmf-sbx
+   resume` and `run --name` (`resume.py`, `session.py`);
+   `hooks/context/lima-sbx/`; at create, `wmf-claude-setup` and the
+   session files. In a real session in the VM, under nono, with a test
+   API key: the lima-sbx SessionStart text and `~/.claude/CLAUDE.md` are
+   in the context; `mcp list` shows the three servers connected; a
+   Phabricator tool call returns the task; Claude starts `composer serve`
+   and gets 200 from `Special:Version`; git works; the D4 variables are
+   set; the agent commits as the engineer (`user.name`/`user.email` of
+   the host, in the settings `env`). From a new image, `create` then
+   `resume` passed the same checks, and the host fetched the agent's
+   commit. Found and fixed: the grants that the wmf-engineer profile lacks
+   on Linux (`/etc/php`, `/etc/gitconfig`, `/opt/claude-code`,
+   `/opt/node`, the agent's caches); nono's `--upstream-proxy` for a host
+   proxy; the proxy port baked into the VM. To do in phase 7:
+   `mw-install-browser` and `mw-install-cypress` use sudo (apt, links in
+   `/usr/bin`), which a contained agent does not have.
 7. **MVP acceptance:** the blind run of
    `DESIGN-testing-instructions.md` §9, in a contained sandbox, on `vz`
    and on QEMU.
@@ -1269,6 +1336,10 @@ QEMU and macOS versions with the results.
   `lima-port/checks/phase4.sh` does these checks: the agent cannot write the
   mount, guest root's `remount,rw` cannot either, `git fetch NAME` and
   the `rm` guard work.
+- **Phase 6:** `wmf-sbx resume` on `vz`: the session starts under nono,
+  `mcp list` shows the servers connected, and Claude reaches the wiki
+  (`composer serve`, then `curl $MW_SERVER`). On macOS the agent's
+  paths differ, so check that the grants in `session.py` are enough.
 - **Phase 7:** the blind run of `DESIGN-testing-instructions.md` §9 in
   a contained sandbox on `vz`.
 - **Track A (A1):** the D11 measurements on macOS QEMU with HVF:
@@ -1423,11 +1494,12 @@ These items are listed above; this collects them.
   HVF; the wrapper's refusal of a `user-v2` network. On Linux with TCG
   the rest is done (RAN).
 - **Claude Code:** works through `HTTPS_PROXY`.
-- **nono:** chaining to an upstream proxy (only if contained mode ever
-  uses D11).
+- **nono:** done: `--upstream-proxy HOST:PORT` chains nono's proxy to a
+  host proxy (RAN, phase 6, nono 0.78.0).
 - **nono:** that `sudo` fails inside a session; `extends` by path; bind
   for `composer serve`.
-- **Claude Code:** `setup-token` and refresh-token rotation.
+- **Claude Code:** refresh-token rotation (D6). Done: a session in the
+  VM with a credential passed by `resume` (RAN, phase 6, an API key).
 - **cloud-init:** the `clean` flags on Debian's version (RAN on
   Ubuntu's cloud-init 26.1, §5.2).
 - **Other:** host `git maintenance` and alternates. Done: Chrome

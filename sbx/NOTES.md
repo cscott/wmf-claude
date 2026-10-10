@@ -9655,7 +9655,8 @@ Findings:
 ## 111. Phase 6 of the Lima port: the Claude session **[2026-10-10]**
 
 Commits 3f6864c (resume, session, lima-sbx text), ceba211 (grants),
-51f7753, a7799c4 (Docker kit session code deleted).
+51f7753, a7799c4 (Docker kit session code deleted), 309644f (git
+identity).
 
 How it works (lima-port/HANDOFF-LIMA.md §8, D6):
 
@@ -9704,6 +9705,9 @@ Console API key):
    lima-sbx text says so.
 7. To do in phase 7: `mw-install-browser` and `mw-install-cypress` run
    `sudo` (apt, links in `/usr/bin`), which a contained agent cannot.
+8. **No git identity.** The agent's first commit failed. create now puts
+   the host's `git config user.name`/`user.email` in the settings `env`
+   (`GIT_AUTHOR_*`, `GIT_COMMITTER_*`).
 
 Checked in a real session (the Translate sandbox of §110, the lima-sbx
 files copied in by hand for that test only): the SessionStart text and
@@ -9713,7 +9717,28 @@ Claude started `composer serve` and got 200 from `Special:Version` and
 the extension list (Translate, UniversalLanguageSelector, Vector); git
 works; `MW_SERVER`, `MW_INSTALL_PATH` and `COMPOSER_HOME` are set.
 
-@@RESULTS@@
+End to end from a new image (`8b9df5b59108f599`, with the lima-sbx
+files), `create --no-deps --name p6 ~/src/BoilerPlate ~/src/dep:ro`
+(288 s, with wmf-claude-setup), then `wmf-sbx resume p6 -- -p ...`:
+
+- the SessionStart text (from the image) and `~/.claude/CLAUDE.md` are
+  in the context;
+- the agent committed on a branch in the primary clone, and the host's
+  `git fetch p6` got the commit; `touch` in the `:ro` repo: Permission
+  denied; reading it works;
+- a Phabricator tool call returned T2's title; `-- mcp list`: the three
+  servers connected;
+- `attached` is set after the first conversation; no credential file is
+  left in `/dev/shm`; `rm` works.
+
+Then `create --image ...` again with the cleanup (a7799c4) and the git
+identity (309644f): the agent's commit, with no `-c` options, has the
+host's `user.name` and `user.email` as author and committer.
+
+Unexplained, once: the first `create` of that run stopped at `limactl
+start` (exit 1 after 24 s, while the VM booted, no error in the host
+agent's logs). The next create of the same sandbox worked, and it did not
+happen again.
 
 ## Still to do
 

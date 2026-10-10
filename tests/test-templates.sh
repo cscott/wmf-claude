@@ -389,6 +389,15 @@ out="$(FAKE_NONO_VERSION=0.80.0 run_fake_linux_claude --local-web)"
 if grep -qx 'NONO_ARG: 8080' <<<"$out"; then pass "Linux: nono 0.80 with --local-web launches"; else fail "Linux: nono 0.80 with --local-web was refused"; fi
 out="$(FAKE_NONO_VERSION=0.79.0 run_fake_claude --local-web)"
 if grep -qx 'NONO_ARG: 8080' <<<"$out"; then pass "macOS: nono 0.79 with --local-web launches"; else fail "macOS: nono 0.79 with --local-web was refused"; fi
+out="$(run_fake_linux_claude --local-web=4000,40000-40002)"
+if [[ "$(grep -A1 -x 'NONO_ARG: --open-port' <<<"$out" | grep -xE 'NONO_ARG: [0-9]+' | tr '\n' ' ')" == "NONO_ARG: 4000 NONO_ARG: 40000 NONO_ARG: 40001 NONO_ARG: 40002 " ]] \
+   && grep -q -- '--local-web=4000,40000-40002' <<<"$out"; then
+  pass "Linux: --local-web=LO-HI opens each port in the range and shows the range"
+else
+  fail "Linux: --local-web=LO-HI did not open exactly the range"
+fi
+out="$(run_fake_linux_claude --local-web=10000-30000)"
+if grep -q 'at most 8192 ports' <<<"$out" && ! grep -q '^NONO_ARG:' <<<"$out"; then pass "Linux: --local-web refuses a range of more than 8192 ports"; else fail "Linux: --local-web accepted a huge range"; fi
 for os in Linux Darwin; do
   out="$(FAKE_UNAME=$os run_fake_claude --local-web --landlock-only)"
   if grep -q 'landlock-only was removed' <<<"$out" && ! grep -q '^NONO_ARG:' <<<"$out"; then pass "$os: --landlock-only is refused with a clear message"; else fail "$os: --landlock-only was not refused clearly"; fi

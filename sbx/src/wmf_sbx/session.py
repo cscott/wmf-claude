@@ -50,7 +50,10 @@ WIKI_PORT = 4000
 # - /etc/bash.bashrc: without it each Bash tool call prints a "Permission
 #   denied" line. (~/.bashrc is in the profile's deny list, on purpose, so
 #   its line stays.)
-READ_GRANTS = (template_mod.HOST_MOUNT_ROOT, "/opt/claude-code", "/opt/node", "/etc/php")
+# The setup log, which ~/MEDIAWIKI-TESTING.md points at, and fontconfig,
+# which Chrome reads to lay out text (RAN, phase 7: both were denied).
+READ_GRANTS = (template_mod.HOST_MOUNT_ROOT, "/opt/claude-code", "/opt/node", "/etc/php",
+               setup_mod.LOG_DIR, "/etc/fonts")
 # The agent's home itself is not readable under the profile (only its
 # dot-directories are), so the guide that ~/.claude/CLAUDE.md points at
 # needs its own grant (RAN, phase 7: `cat ~/MEDIAWIKI-TESTING.md` was
@@ -225,9 +228,12 @@ RUNNING_TESTS_MD = """\
 ## Running tests
 
 This sandbox holds its own set of repos; `ls "$MW_INSTALL_PATH"/extensions
-"$MW_INSTALL_PATH"/skins` and `echo "$PARSOID"` show which. Everything is
-installed: `vendor/` and `node_modules/` in every repo, and a SQLite wiki at
-`$MW_INSTALL_PATH` with every checked-out extension and skin loaded.
+"$MW_INSTALL_PATH"/skins` and `echo "$PARSOID"` show which. Setup installed
+`vendor/` and `node_modules/` in every repo, and a SQLite wiki at
+`$MW_INSTALL_PATH` with every checked-out extension and skin loaded. A step
+that failed is listed in `~/.wmf-sbx/wmf-sbx-setup.status`, and
+`~/.wmf-sbx/wmf-sbx-setup.log` says why; read them when something is
+missing, before you try to install it yourself.
 `~/MEDIAWIKI-TESTING.md` is the full guide. Read it before your first test
 run in a session, not after a failure.
 
@@ -304,7 +310,10 @@ def session_env(resolved_for_kit, readonly=(), identity=None):
     """The `env` key of the agent's settings (D4): the wiki and test
     variables, which nono's allow_vars would drop from the environment,
     and the engineer's git identity."""
-    env = {"COMPOSER_HOME": COMPOSER_HOME}
+    # No Composer process timeout: core's `composer test` (parallel-lint)
+    # takes more than the default 300 s in a VM (RAN, phase 7: 22 min under
+    # QEMU without KVM). The Bash tool has its own timeout.
+    env = {"COMPOSER_HOME": COMPOSER_HOME, "COMPOSER_PROCESS_TIMEOUT": "0"}
     env.update(identity or {})
     for canonical, path in resolved_for_kit:
         for var in kit_mod.REPO_ENVIRONMENT_VARS.get(canonical, []):

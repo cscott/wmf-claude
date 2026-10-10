@@ -74,7 +74,7 @@ REPO_ENVIRONMENT_VARS = {
 
 BASE_PACKAGES = [
     "php", "php-intl", "php-mbstring", "php-xml", "php-apcu", "php-curl",
-    "php-sqlite3", "php-zip", "php-gd", "php-imagick", "php-ast",
+    "php-sqlite3", "php-zip", "php-gd", "php-imagick",
     "php-mysql", "composer", "imagemagick", "librsvg2-bin", "diffutils",
     "git-review", "php-wikidiff2",
 ]

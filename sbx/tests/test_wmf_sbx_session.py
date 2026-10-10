@@ -101,6 +101,8 @@ class LauncherTests(unittest.TestCase):
         for path in ("/run/wmf-sbx/host", "/opt/claude-code", "/opt/node", "/etc/php"):
             self.assertIn(("--read", path), pairs)
         self.assertIn(("--read-file", "/etc/gitconfig"), pairs)
+        # The home is not readable under the profile; the guide is granted.
+        self.assertIn(("--read-file", "/home/agent/MEDIAWIKI-TESTING.md"), pairs)
         self.assertIn(("--allow", "/home/agent/.npm"), pairs)
         self.assertNotIn(("--read-file", "/home/agent/.bashrc"), pairs)
         # A deny under an allowed path stops nono (Landlock).
@@ -339,11 +341,15 @@ class CreateSessionTests(Env):
                          self.err)
         shells = lima.shells()
         self.assertTrue(any(session.WMF_CLAUDE_SETUP in s for s in shells))
+        # The profile denies ~/.bashrc; the skeleton's copy goes.
+        self.assertTrue(any("rm" in s and "/home/agent/.bashrc" in s for s in shells))
         config = [i for a, i in inputs if i and "phabricatorUsername" in i]
         self.assertEqual(json.loads(config[0]), {"phabricatorUsername": "Tester"})
         plan = json.loads([i for a, i in inputs if i and '"repos"' in i][0])
         self.assertEqual(plan["session"]["files"][0]["path"], "~/.claude/CLAUDE.md")
         self.assertIn("fetch demo", plan["session"]["files"][0]["content"])
+        self.assertEqual("/home/agent/" + plan["session"]["files"][1]["path"][2:],
+                         session.TESTING_GUIDE_PATH)
         self.assertEqual(state_mod.load("demo", self.env)["readOnly"], [self.ro])
         self.assertIn("wmf-sbx resume demo", self.err)
 

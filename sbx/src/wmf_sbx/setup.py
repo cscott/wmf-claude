@@ -16,13 +16,13 @@ Everything this script prints goes to the terminal and to
 LOG_DIR/wmf-sbx-setup.log; the `error:`/`warning:` lines also go to
 LOG_DIR/wmf-sbx-setup.status.
 
+It also writes the plan's `session` part (session.py): the settings
+`env` and the agent's CLAUDE.md and testing guide. The MCP servers are
+registered by bin/wmf-claude-setup, not here.
+
 It must not import any sibling wmf_sbx module: it runs in the VM alone.
-The --settings and --mcp modes are the Docker kit's; phase 6 (the
-session) decides what of them stays.
 
 Usage: wmf-sbx-setup --lima PLAN.json
-       wmf-sbx-setup --settings PATCH.json [SETTINGS.json]
-       wmf-sbx-setup --mcp SERVERS.json [CLAUDE.json]
 """
 
 import json
@@ -30,7 +30,6 @@ import os
 import pwd
 import re
 import shlex
-import shutil
 import subprocess
 import sys
 import traceback
@@ -38,31 +37,6 @@ import urllib.parse
 
 SANDBOX_HOME = "/home/agent"
 
-
-# Claude Code's user-level settings, which sbx has already written by the
-# time anything here runs (permissions.defaultMode, model, theme...). The
-# kit adds its plugin and its permission denies by *merging* into this
-# file -- see merge_settings and wmf_sbx_kit.settings_patch.
-SANDBOX_SETTINGS_FILE = os.path.join(SANDBOX_HOME, ".claude", "settings.json")
-
-
-# MCP registrations do *not* live in settings.json: `claude mcp add
-# --scope user` writes them into this file's top-level "mcpServers"
-# object, alongside sbx's own `mcp-gateway` entry. We read it to decide
-# whether anything needs doing and mutate it only through the CLI -- the
-# same file holds the session history and the onboarding state, so a
-# botched rewrite is a broken Claude Code, not a missing MCP server.
-SANDBOX_CLAUDE_JSON = os.path.join(SANDBOX_HOME, ".claude.json")
-
-# Where the image puts the agent's `claude`, and *not* anywhere `sudo`
-# will look for it. sudo replaces PATH with its own `secure_path`
-# (MEASURED: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-# :/snap/bin), so the install-time run -- root, through
-# `sudo -u agent -H` -- gets `sudo: claude: command not found` and exit 1
-# even though the very same command works when the agent runs it. That
-# failed a real create at the last install step (sbx/NOTES.md §69). Use
-# the absolute path instead of trying to reinstate a PATH through sudo.
-SANDBOX_CLAUDE_BIN = os.path.join(SANDBOX_HOME, ".local", "bin", "claude")
 
 # Where this script's own narration ends up, and the machine-readable
 # list of its problems. The agent cannot write /var/log.
@@ -115,7 +89,7 @@ INSTALL_SCRIPT_NAME = "mw-install:sqlite"
 
 # Shape from mediawiki-core-clean/.env. Read by `docker compose`, which
 # isn't running here -- the values that make the test harnesses work are
-# the ones build_kit_spec puts in the kit's environment.variables. This
+# the ones in the agent's settings `env` (session.py, D4). This
 # file is still written because it's the documented artifact and it's
 # where an engineer will look. See sbx/DESIGN-setup-steps.md §4.1.
 ENV_TEMPLATE = """\
@@ -134,7 +108,7 @@ MW_DOCKER_GID={gid}
 # The api-testing library's config file (`api-testing/lib/config.js`).
 # Written into the core clone: core's .gitignore already lists this exact
 # name, so `git status` stays clean, and it sits next to
-# LocalSettings.php, whose values it repeats. The kit also exports
+# LocalSettings.php, whose values it repeats. The settings `env` also has
 # API_TESTING_CONFIG_FILE with the absolute path, so an extension's own
 # `npm run api-testing` finds it from outside core. See
 # sbx/DESIGN-testing-instructions.md §5.5.
@@ -300,9 +274,8 @@ def deep_merge(base, patch):
 
     Dicts merge key by key. Lists are **unioned** -- base order first,
     then anything new -- rather than replaced. That is unusual enough to
-    state: the only list the kit patches is `permissions.deny`, where
-    replacing would silently drop a deny the engineer or a future sbx
-    added, and where a duplicate entry is harmless. Scalars are replaced.
+    state: replacing a list would silently drop an entry the engineer
+    added, and a duplicate entry is harmless. Scalars are replaced.
     """
     if isinstance(base, dict) and isinstance(patch, dict):
         merged = dict(base)
@@ -318,11 +291,8 @@ def merge_settings(path, patch, run=subprocess.run):
     """Deep-merge `patch` into the JSON file at `path`, creating it if it
     is not there. Returns True if the file now holds the merged result.
 
-    Idempotent, which it has to be: this runs once at install and again
-    on every container start (see wmf_sbx.kit.settings_merge_argv, which
-    is spelled into both halves of the kit's `setup:` block).
-    Nothing is written when the merge changes nothing, so a restart
-    doesn't churn the file's mtime.
+    Idempotent: nothing is written when the merge changes nothing, so a
+    second setup run doesn't churn the file's mtime.
 
     A file that is there but unreadable or not JSON is left alone and
     reported. Overwriting it would throw away whatever sbx or the
@@ -359,173 +329,6 @@ def merge_settings(path, patch, run=subprocess.run):
     give_to_agent(path, run=run)
     print(f"merged the settings into {path}", file=sys.stderr)
     return True
-
-
-def run_settings(argv, run=subprocess.run):
-    """`wmf-sbx-setup --settings PATCH.json [SETTINGS.json]` -- the step
-    that tells Claude Code the wmf-claude plugin is enabled and ports the
-    parent package's permission denies (sbx/DESIGN-plugin-integration.md
-    §3, Route A).
-
-    It is a merge rather than a `files/home/` drop because sbx writes
-    ~/.claude/settings.json itself and a static file would replace it
-    wholesale -- taking `permissions.defaultMode: bypassPermissions` with
-    it, which would leave the agent asking for approval it has no terminal
-    to get (sbx/NOTES.md §55.1).
-
-    The patch travels as data in the kit rather than as a here-doc in the
-    command, so `settings.json` is inspectable next to the file it
-    patches and the spec stays readable."""
-    if not argv:
-        print("error: --settings wants the path of a JSON patch file",
-              file=sys.stderr)
-        return 1
-    patch_path = argv[0]
-    target = argv[1] if len(argv) > 1 else SANDBOX_SETTINGS_FILE
-    try:
-        with open(patch_path, encoding="utf-8") as f:
-            patch = json.load(f)
-    except (OSError, ValueError) as e:
-        print(f"error: could not read the settings patch {patch_path} ({e})",
-              file=sys.stderr)
-        return 1
-    if not isinstance(patch, dict):
-        print(f"error: {patch_path} is not a JSON object", file=sys.stderr)
-        return 1
-    return 0 if merge_settings(target, patch, run=run) else 1
-
-
-def registered_mcp_servers(path=SANDBOX_CLAUDE_JSON):
-    """The user-scope `mcpServers` object out of ~/.claude.json, or {}.
-
-    A read is all this is: it decides whether `claude mcp add` has
-    anything to do, which is cheaper than `claude mcp get` (that starts
-    the server to health-check it, once per server, on every container
-    start). Unreadable or malformed reads as empty, which costs an
-    already-registered server one failed `add` saying so -- the opposite
-    failure, refusing to register anything because the file looked odd,
-    would leave the sandbox with no MCP at all.
-    """
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, ValueError):
-        return {}
-    servers = data.get("mcpServers") if isinstance(data, dict) else None
-    return servers if isinstance(servers, dict) else {}
-
-
-def mcp_entry_matches(entry, wanted):
-    """True when what is registered is already what the kit wants.
-
-    `claude mcp add` stores `{type, command, args, env}`; only the first
-    three are ours. `args` carries the `--tools` allowlist, so a stale
-    one is precisely the case that must be re-registered rather than
-    left alone -- a shortened allowlist is a policy change."""
-    if not isinstance(entry, dict):
-        return False
-    return (
-        entry.get("type", "stdio") == "stdio"
-        and entry.get("command") == wanted.get("command")
-        and list(entry.get("args") or []) == list(wanted.get("args") or [])
-    )
-
-
-def claude_executable():
-    """The `claude` to run, absolute where we can manage it.
-
-    The agent's own install comes first: this is usually invoked through
-    `sudo -u agent`, whose PATH is sudo's `secure_path` and not the
-    agent's, so a bare `claude` is not found at all (SANDBOX_CLAUDE_BIN).
-    `which` is the fallback for anywhere that isn't a sandbox built from
-    this image -- the unit tests, notably."""
-    if os.access(SANDBOX_CLAUDE_BIN, os.X_OK):
-        return SANDBOX_CLAUDE_BIN
-    return shutil.which("claude") or "claude"
-
-
-def claude_mcp(args, run=subprocess.run, root=None):
-    """`claude mcp ...`, as the agent whose ~/.claude.json it is.
-
-    The install-time run is root (setup.install's default user), and
-    `claude` as root would write the registration into /root/.claude.json,
-    where the agent never sees it. The startup run is already the agent,
-    where the sudo would be a fork for nothing -- hence the euid test."""
-    argv = [claude_executable(), "mcp"] + list(args)
-    if root is None:
-        root = os.geteuid() == 0
-    if root:
-        return as_agent(argv, run=run)
-    return run(argv)
-
-
-def register_mcp_servers(config, path=SANDBOX_CLAUDE_JSON, run=subprocess.run):
-    """Make the user-scope MCP registrations match `config` (the
-    `{name: {command, args}}` mapping wmf_sbx.kit.mcp_config wrote into
-    the kit). Returns True when every server in it is registered.
-
-    Each entry points at the in-sandbox wmf-sbx-mcp-proxy, which speaks to
-    the *host's* real servers through sbx's MCP gateway: the credentials
-    those servers need stay on the host, which is the whole reason the
-    servers are not simply installed in here (sbx/NOTES.md §60-62,
-    DESIGN-plugin-integration.md §5 step 4).
-
-    Idempotent by the same dual-run logic as merge_settings: this runs at
-    install and again on every container start. `claude mcp add` refuses a
-    name that is taken (exit 1), so a changed entry is removed first --
-    there is no `claude mcp set`."""
-    existing = registered_mcp_servers(path)
-    ok = True
-    for name in sorted(config):
-        wanted = config[name]
-        if mcp_entry_matches(existing.get(name), wanted):
-            print(f"the {name} MCP server is already registered", file=sys.stderr)
-            continue
-        if name in existing:
-            # Failure here is not worth reporting on its own: the add
-            # right below says something far more useful if this mattered.
-            claude_mcp(["remove", "--scope", "user", name], run=run)
-        result = claude_mcp(
-            ["add", "--scope", "user", name, "--", wanted["command"]]
-            + list(wanted.get("args") or []),
-            run=run,
-        )
-        if result.returncode != 0:
-            print(f"error: could not register the {name} MCP server "
-                  f"(exit {result.returncode})", file=sys.stderr)
-            ok = False
-        else:
-            print(f"registered the {name} MCP server", file=sys.stderr)
-    return ok
-
-
-def run_mcp(argv, run=subprocess.run):
-    """`wmf-sbx-setup --mcp SERVERS.json [CLAUDE.json]` -- the step that
-    points Claude Code at the host's Phabricator and Gerrit MCP servers
-    through the proxy the kit installed on PATH.
-
-    Like `--settings`, the registrations travel as data in the kit rather
-    than as a here-doc in the spec's command, so the `--tools` allowlist
-    that is the policy decision here (gerrit serves 20 tools, 15 of which
-    write under the engineer's credential) is a readable file in the kit
-    next to the proxy that enforces it."""
-    if not argv:
-        print("error: --mcp wants the path of a JSON registration file",
-              file=sys.stderr)
-        return 1
-    config_path = argv[0]
-    target = argv[1] if len(argv) > 1 else SANDBOX_CLAUDE_JSON
-    try:
-        with open(config_path, encoding="utf-8") as f:
-            config = json.load(f)
-    except (OSError, ValueError) as e:
-        print(f"error: could not read the MCP registrations {config_path} ({e})",
-              file=sys.stderr)
-        return 1
-    if not isinstance(config, dict):
-        print(f"error: {config_path} is not a JSON object", file=sys.stderr)
-        return 1
-    return 0 if register_mcp_servers(config, path=target, run=run) else 1
 
 
 def link_into_core(core_path, links, core_readonly=False):
@@ -1258,15 +1061,11 @@ def run_lima_setup(argv, run=subprocess.run, log=None):
 
 
 def main(argv=None, run=subprocess.run, log_dir=LOG_DIR):
-    """Dispatch on the mode. `--lima` runs with stderr through a SetupLog,
+    """Run `--lima`, with stderr through a SetupLog,
     so everything printed also lands in log_dir/wmf-sbx-setup.log and the
     problems in log_dir/wmf-sbx-setup.status. log_dir=None turns both off
     (the tests)."""
     argv = sys.argv[1:] if argv is None else argv
-    if argv[:1] == ["--settings"]:
-        return run_settings(argv[1:], run=run)
-    if argv[:1] == ["--mcp"]:
-        return run_mcp(argv[1:], run=run)
     if argv[:1] != ["--lima"]:
         print(__doc__.split("Usage: ", 1)[1].rstrip(), file=sys.stderr)
         return 1

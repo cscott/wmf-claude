@@ -210,12 +210,63 @@ your next turn.
 """
 
 
+RUNNING_TESTS_MD = """\
+## Running tests
+
+This sandbox holds its own set of repos; `ls "$MW_INSTALL_PATH"/extensions
+"$MW_INSTALL_PATH"/skins` and `echo "$PARSOID"` show which. Everything is
+installed: `vendor/` and `node_modules/` in every repo, and a SQLite wiki at
+`$MW_INSTALL_PATH` with every checked-out extension and skin loaded.
+`~/MEDIAWIKI-TESTING.md` is the full guide. Read it before your first test
+run in a session, not after a failure.
+
+Before your change, run `git log --oneline origin/master..HEAD` and
+`git status --short` in the repo, and run its suite once, so you know which
+failures were already there.
+
+*If you are working on mediawiki-core*, run PHPUnit from `$MW_INSTALL_PATH`
+through composer, `composer phpunit:entrypoint -- <path>`, and lint with
+`composer test` and `npm test`. Jest is `npm run jest`.
+
+*If you are working on an extension or a skin*, PHPUnit still runs **from
+core**, with a path relative to it:
+`composer phpunit:entrypoint -- extensions/<Name>/tests/phpunit`. Lint runs
+from the repo: `composer test`, `npm test`. Jest runs from the repo, and only
+if its `package.json` has a script for it; core's Jest never runs extension
+tests. QUnit runs from core: `npx grunt karma:chrome --qunit-component=<Name>`.
+
+*If you are working on Parsoid*, it has its own suites, run from `$PARSOID`:
+`composer phpunit`, `composer parserTests`, `composer lint`. The wiki, and
+core's and extensions' PHPUnit runs, use `$PARSOID` and not core's vendor
+copy; `MEDIAWIKI_HAS_INTEGRATION_TESTS=1` in the environment does that for
+unit tests. Do not unset it.
+
+`vendor/bin/phpunit <path>` fails with `Class "MediaWikiUnitTestCase" not
+found` until something generates `phpunit.xml`; the composer script does
+that first.
+
+QUnit and selenium need a browser, which is not installed by default: run
+`mw-install-browser` once (about 1 minute, 420 MB), then start the wiki with
+`composer serve`. Do not change `MW_SCRIPT_PATH`: it is `/` on purpose, as
+in CI.
+
+Cypress e2e tests (Cite's `selenium-test`, for one) can run here, but the
+binary is not installed: `mw-install-cypress <repo>` installs it (about
+800 MB). Install it only when your change is likely to be covered by that
+repo's Cypress specs. Many specs also need extensions that this sandbox may
+not have, and without them the run skips them and passes with 0 tests. If
+you skip Cypress, say so.
+
+`composer phan` reports undeclared classes from sibling extensions that
+`.phan/config.php` names and this sandbox does not have. Those errors are
+not yours.
+"""
+
+
 def home_claude_md(name):
-    """The agent's ~/.claude/CLAUDE.md: the Lima part, then the Docker
-    kit's "Running tests" section, which still applies."""
-    tests = kit_mod.HOME_CLAUDE_MD
-    tests = tests[tests.index("## Running tests"):]
-    return LIMA_HOME_CLAUDE_MD.replace("@NAME@", name) + "\n" + tests
+    """The agent's ~/.claude/CLAUDE.md: the sandbox, the repo layout, the
+    commit rule, and how to run the tests."""
+    return LIMA_HOME_CLAUDE_MD.replace("@NAME@", name) + "\n" + RUNNING_TESTS_MD
 
 
 def session_env(resolved_for_kit, readonly=()):

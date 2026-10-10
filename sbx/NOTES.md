@@ -9698,13 +9698,11 @@ Console API key):
    changed the host proxy's port, and the host block then refused the
    new one. `start` and `resume` now update the provisioning (`limactl
    edit`) before they boot a stopped VM.
-5. `~/.bashrc` is in the profile's deny list, so each Bash tool call
-   prints one "Permission denied" line. Left as is: the deny is
-   deliberate.
+5. `~/.bashrc` is in the profile's deny list. Fixed in §112 item 2.
 6. `/tmp` is write-only in a session (`$TMPDIR` is the readable one); the
    lima-sbx text says so.
-7. To do in phase 7: `mw-install-browser` and `mw-install-cypress` run
-   `sudo` (apt, links in `/usr/bin`), which a contained agent cannot.
+7. `mw-install-browser` and `mw-install-cypress` ran `sudo`. Fixed in
+   §112 item 3.
 8. **No git identity.** The agent's first commit failed. create now puts
    the host's `git config user.name`/`user.email` in the settings `env`
    (`GIT_AUTHOR_*`, `GIT_COMMITTER_*`).
@@ -9739,6 +9737,67 @@ Unexplained, once: the first `create` of that run stopped at `limactl
 start` (exit 1 after 24 s, while the VM booted, no error in the host
 agent's logs). The next create of the same sandbox worked, and it did not
 happen again.
+
+## 112. Phase 7 of the Lima port: the blind acceptance run **[2026-10-10]**
+
+The run: `lima-port/acceptance/` (TESTING.md and how to run it), on QEMU
+TCG, Translate + Cite + Parsoid with `--reset-all`. Run 1's report found
+the problems below; commits d5f7641, 0c655bd and the port-window commit
+fix them. Run 2, in a new sandbox from a new image, is to come.
+
+Findings and decisions:
+
+1. **The profile grants no read of the agent's home**, only of its
+   dot-directories. The session grants `~/MEDIAWIKI-TESTING.md` and
+   `~/.wmf-sbx` (the setup log and status) by name. A file that the
+   engineer copies in needs `--read-file=PATH` on `wmf-sbx resume`.
+2. **No `~/.bashrc`** for the agent: the profile denies it, so the
+   skeleton's copy made every Bash call print "Permission denied".
+   create removes it (§111 item 5 is void).
+3. **Browsers without sudo.** The image has the Chrome and Cypress
+   libraries, Xvfb and xauth. `/usr/bin/chromium` and
+   `/usr/bin/chromedriver` are root's wrappers around links in
+   `~/.cache/wmf-sbx-browser`, which `mw-install-browser` makes. The
+   chromium wrapper adds `--no-sandbox`, and a temporary
+   `--user-data-dir` when the caller gives none: headless Chrome without
+   one does not start under nono ("Failed to create a unique user data
+   directory"), whatever is granted. `/etc/fonts` is granted for text
+   layout. The helpers do not read the dpkg database (nono denies it).
+4. **Local ports (DECIDED by the engineer: window + nftables).** Landlock
+   grants TCP bind and connect one port at a time, and karma (9876),
+   chromedriver, Chrome's DevTools and Cypress listen on a random port.
+   The guest's ephemeral range is narrowed to `template.EPHEMERAL_PORTS`
+   (49152-53247, with `tcp_tw_reuse`), and each session opens 4000, 9876
+   and that window (`bin/claude --local-web=` now takes `LO-HI` ranges,
+   at most 8192 ports) plus `--listen-port 0`. Landlock cannot tell
+   loopback from other hosts; the host block's `agent_egress` chain
+   already limits the agent's off-VM TCP to 80 and 443, so the window
+   reaches loopback only.
+   **Bookmark:** external egress control (nftables in the VM, nono with
+   `--sandbox-policy external` or similar) is planned for `--sudo` mode
+   (track A). Revisit this decision then: with external egress for both
+   modes, the window, `--landlock-only` and the per-port grants may all
+   go.
+5. **php-ast.** Phan 6 needs ast 1.1.3 or later; Debian 13 has 1.1.2, so
+   phan did not run. The image builds php-ast from source at the commit
+   WMF CI pins (`integration/config`, `php-scratch/build-extension-ast`;
+   `image.PHP_AST`). Change it when CI's does.
+6. **Composer's process timeout.** core's `composer test` took 22 min
+   under TCG; the session sets `COMPOSER_PROCESS_TIMEOUT=0`.
+7. **This cloud environment only** (not sandbox bugs): GitHub archive
+   and git downloads go through a per-repo gateway, so composer is set to
+   `preferred-install source` before setup (`p7-create.sh`), and
+   Parsoid's `npm ci` fails on its GitHub git dependency. Source installs
+   are large: core 5.9 GB, Parsoid 5.1 GB, composer cache 4.9 GB (delete
+   it after setup). A create took more than the 2-hour background limit;
+   re-run only the setup step (`mediawiki.run_setup`'s second half).
+8. **Unexplained:** segfaults under TCG with 4 GiB: Claude Code (Bun),
+   jsdoc, one Jest worker. Each passed on a re-run. Not seen yet on
+   real hardware; watch for them on `vz`.
+9. Docs fixed from the report: the setup status file, `$TMPDIR` (not
+   `/tmp`), `CI=true` for wdio, Node 24, one PHPUnit file per run, Jest's
+   5 s timeout on a slow VM, and the timings (a VM is 5 to 20 times
+   slower than the guide's 16-core host).
 
 ## Still to do
 

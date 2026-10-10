@@ -2,8 +2,9 @@
 # Root provisioning for a wmf-sbx sandbox. Lima runs it at every boot, so
 # each step is idempotent and cheap when there is nothing to do.
 # template.py puts it in the instance config, and fills in two values:
-# ENGINEER (Lima's user, the template's `user.name`) and PROXY_PORTS
-# (host TCP ports of a loopback proxy, separated by spaces, or empty).
+# ENGINEER (Lima's user, the template's `user.name`), PROXY_PORTS
+# (host TCP ports of a loopback proxy, separated by spaces, or empty) and
+# EPHEMERAL_PORTS (template.EPHEMERAL_PORTS, "LO HI").
 #
 # The security rules are Kosta's (lima/wmf-claude.yaml): two users, a
 # host and LAN block, the agent limited to TCP 80 and 443, and no TIOCSTI.
@@ -13,6 +14,7 @@ set -euo pipefail
 ENGINEER="@ENGINEER@"
 AGENT=agent
 PROXY_PORTS="@PROXY_PORTS@"
+EPHEMERAL_PORTS="@EPHEMERAL_PORTS@"
 
 id -u "$AGENT" >/dev/null 2>&1 || { echo "wmf-sbx: no user $AGENT in the image" >&2; exit 1; }
 
@@ -92,6 +94,14 @@ fi
 # push input into the engineer's shell.
 echo 'dev.tty.legacy_tiocsti = 0' > /etc/sysctl.d/90-wmf-sbx.conf
 sysctl -q -w dev.tty.legacy_tiocsti=0 2>/dev/null || true
+
+# The ephemeral ports: a window that a session grants whole, for the test
+# tools that listen on a random port (template.EPHEMERAL_PORTS).
+cat > /etc/sysctl.d/91-wmf-sbx-ports.conf <<SYSCTL
+net.ipv4.ip_local_port_range = $EPHEMERAL_PORTS
+net.ipv4.tcp_tw_reuse = 1
+SYSCTL
+sysctl -q -p /etc/sysctl.d/91-wmf-sbx-ports.conf
 
 install -d -m 0755 /run/wmf-sbx
 touch /run/wmf-sbx/provisioned

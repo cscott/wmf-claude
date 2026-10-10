@@ -81,11 +81,23 @@ def loopback_proxy_ports(env=None):
     return sorted(ports)
 
 
+# The guest's ephemeral port range, narrowed so that a session can grant
+# all of it. Landlock grants TCP bind and connect one port at a time, and
+# karma, chromedriver, Chrome's DevTools and Cypress listen on a random
+# port that something else then connects to (RAN, phase 7: every browser
+# suite failed with EACCES). session.py opens this window; the host
+# block's agent_egress chain still limits the agent's off-VM TCP to 80
+# and 443, so the window reaches loopback only. 4096 ports, with
+# tcp_tw_reuse, is enough for outgoing connections too.
+EPHEMERAL_PORTS = (49152, 53247)
+
+
 def provision_script(proxy_ports=()):
     with open(PROVISION_SCRIPT, encoding="utf-8") as f:
         script = f.read()
     return (script.replace("@ENGINEER@", ENGINEER)
-                  .replace("@PROXY_PORTS@", " ".join(str(p) for p in proxy_ports)))
+                  .replace("@PROXY_PORTS@", " ".join(str(p) for p in proxy_ports))
+                  .replace("@EPHEMERAL_PORTS@", "%d %d" % EPHEMERAL_PORTS))
 
 
 def sandbox_template(golden_path, arch, gitdirs=(), vm_type=None, cpus=DEFAULT_CPUS,

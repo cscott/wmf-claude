@@ -139,9 +139,18 @@ class ProvisionTests(unittest.TestCase):
         subprocess.run(["bash", "-n", f.name], check=True)
 
     def test_every_placeholder_is_filled(self):
-        for token in ("@ENGINEER@", "@PROXY_PORTS@"):
+        for token in ("@ENGINEER@", "@PROXY_PORTS@", "@EPHEMERAL_PORTS@"):
             self.assertNotIn(token, self.script())
         self.assertIn('ENGINEER="engineer"', self.script())
+
+    def test_the_ephemeral_window_is_the_one_sessions_open(self):
+        # session.py grants exactly this window; the agent's off-VM TCP
+        # stays limited to 80 and 443, so the window reaches loopback only.
+        lo, hi = template.EPHEMERAL_PORTS
+        self.assertIn(f'EPHEMERAL_PORTS="{lo} {hi}"', self.script())
+        self.assertIn("net.ipv4.ip_local_port_range = $EPHEMERAL_PORTS", self.script())
+        self.assertIn("tcp dport { 80, 443 } accept", self.script())
+        self.assertLessEqual(hi - lo + 1, 8192)  # bin/claude's --local-web range limit
 
     def test_the_proxy_rule_expands_to_valid_nft_syntax(self):
         out = subprocess.run(

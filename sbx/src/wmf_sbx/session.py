@@ -28,6 +28,7 @@ import subprocess
 
 from . import image as image_mod
 from . import kit as kit_mod
+from . import setup as setup_mod
 from . import template as template_mod
 from . import vm as vm_mod
 
@@ -50,7 +51,16 @@ WIKI_PORT = 4000
 #   denied" line. (~/.bashrc is in the profile's deny list, on purpose, so
 #   its line stays.)
 READ_GRANTS = (template_mod.HOST_MOUNT_ROOT, "/opt/claude-code", "/opt/node", "/etc/php")
-READ_FILE_GRANTS = ("/etc/gitconfig", "/etc/bash.bashrc")
+# The agent's home itself is not readable under the profile (only its
+# dot-directories are), so the guide that ~/.claude/CLAUDE.md points at
+# needs its own grant (RAN, phase 7: `cat ~/MEDIAWIKI-TESTING.md` was
+# denied, path_not_granted).
+TESTING_GUIDE_PATH = f"{setup_mod.SANDBOX_HOME}/{kit_mod.TESTING_GUIDE}"
+READ_FILE_GRANTS = ("/etc/gitconfig", "/etc/bash.bashrc", TESTING_GUIDE_PATH)
+# The profile denies ~/.bashrc, so the skeleton's copy makes every Bash
+# call print "/home/agent/.bashrc: Permission denied". The agent needs no
+# .bashrc; create removes it.
+DENIED_DOTFILES = (f"{setup_mod.SANDBOX_HOME}/.bashrc",)
 # Write grants in the agent's home: the caches of composer, npm and the
 # browser installers, which the agent uses in a session (the profile has
 # none; RAN, phase 6). Not ~/.config/composer: the profile denies its
@@ -334,6 +344,10 @@ def wmf_claude_setup(name, username, lima=None, env=None):
                               "-g", vm_mod.AGENT, "/dev/null", log], lima=lima, check=False)
     if res.returncode != 0:
         raise SessionError(f"could not create {log} for the agent")
+    res = vm_mod.shell(name, ["sudo", "rm", "-f", "--"] + list(DENIED_DOTFILES),
+                       lima=lima, check=False)
+    if res.returncode != 0:
+        raise SessionError(f"could not remove {' '.join(DENIED_DOTFILES)}")
     config = json.dumps(phabricator_config(username)) + "\n"
     # The cache directories too: nono may refuse a grant for a path that
     # does not exist (ALLOW_GRANTS).

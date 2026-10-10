@@ -68,6 +68,14 @@ NONO_VERSION_FILE = os.path.join(REPO_ROOT, ".nono-version")
 NODE_VERSION = "24.18.0"
 NODE_DIST = "https://nodejs.org/dist"
 
+# php-ast, built from source as WMF CI builds it (integration/config,
+# dockerfiles/php-scratch/build-extension-ast): Phan 6 needs ast 1.1.3 or
+# later, and Debian 13 has 1.1.2 (RAN, phase 7: `composer phan` refused to
+# start). A commit, not a tag, so that the source cannot change. Change it
+# when CI's does.
+PHP_AST = {"version": "1.1.3", "url": "https://github.com/nikic/php-ast",
+           "commit": "c2faa5d071454ba3c2d0170611e92846ca606bba"}
+
 CLAUDE_RELEASES = "https://downloads.claude.ai/claude-code-releases"
 # `stable`, not `latest`: the image is shared by every sandbox that has the
 # same key, so it takes the release channel that has had more use.
@@ -250,6 +258,7 @@ def image_inputs(arch=None, fetch=_fetch, run=subprocess.run, root=REPO_ROOT,
         "packages": list(IMAGE_PACKAGES),
         "nono": nono_version(),
         "node": node_release(arch, fetch=fetch),
+        "php_ast": dict(PHP_AST),
         "claude": {"version": version, "platform": claude_platform(arch),
                    "sha256": checksum},
         "tree": tree_revision(root, run=run),
@@ -474,6 +483,9 @@ def build_env(inputs, guest_stage):
         "WMF_SBX_NODE_VERSION": inputs["node"]["version"],
         "WMF_SBX_NODE_FILE": inputs["node"]["file"],
         "WMF_SBX_NODE_SHA256": inputs["node"]["sha256"],
+        "WMF_SBX_PHP_AST_URL": inputs["php_ast"]["url"],
+        "WMF_SBX_PHP_AST_COMMIT": inputs["php_ast"]["commit"],
+        "WMF_SBX_PHP_AST_VERSION": inputs["php_ast"]["version"],
         "WMF_SBX_CLAUDE_VERSION": inputs["claude"]["version"],
         "WMF_SBX_CLAUDE_PLATFORM": inputs["claude"]["platform"],
         "WMF_SBX_CLAUDE_SHA256": inputs["claude"]["sha256"],

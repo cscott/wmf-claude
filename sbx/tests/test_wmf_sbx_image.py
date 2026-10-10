@@ -68,6 +68,7 @@ def sample_inputs(**changes):
         "packages": ["php", "git"], "nono": "0.78.0",
         "node": {"version": "24.18.0", "file": "node-v24.18.0-linux-x64.tar.xz",
                  "sha256": NODE_SHA},
+        "php_ast": dict(image.PHP_AST),
         "claude": {"version": "2.1.286", "platform": "linux-x64", "sha256": CLAUDE_SHA},
         "tree": "0123456789ab", "helpers": {"git-safe-reset": "d" * 64},
         "build_script": "e" * 64,
@@ -155,6 +156,10 @@ class InputTests(unittest.TestCase):
         # Node comes from nodejs.org (NODE_VERSION), never from Debian.
         for p in ("nodejs", "npm"):
             self.assertNotIn(p, image.IMAGE_PACKAGES)
+        # php-ast is built from source (PHP_AST): Debian's is too old for Phan 6.
+        self.assertNotIn("php-ast", image.IMAGE_PACKAGES)
+        self.assertEqual(image.build_env(sample_inputs(), "/s")["WMF_SBX_PHP_AST_COMMIT"],
+                         image.PHP_AST["commit"])
         self.assertFalse([p for p in image.IMAGE_PACKAGES if "docker" in p])
         self.assertEqual(len(image.IMAGE_PACKAGES), len(set(image.IMAGE_PACKAGES)))
 
@@ -186,7 +191,8 @@ class InputTests(unittest.TestCase):
         inputs = image.image_inputs(arch="x86_64", fetch=fake_fetch(), run=run,
                                     uid=30033, gid=30033)
         self.assertEqual(set(inputs), {"schema", "arch", "agent", "base", "packages", "nono",
-                                       "node", "claude", "tree", "helpers", "build_script"})
+                                       "node", "php_ast", "claude", "tree", "helpers",
+                                   "build_script"})
         self.assertEqual(inputs["node"]["sha256"], NODE_SHA)
         self.assertEqual(inputs["agent"], {"name": "agent", "uid": 30033, "gid": 30033})
         self.assertEqual(inputs["nono"], image.nono_version())
@@ -314,7 +320,7 @@ class BuilderTests(unittest.TestCase):
         with open(image.BUILD_SCRIPT, encoding="utf-8") as f:
             script = f.read()
         links = re.search(r"^BROWSER_LINKS=(\S+)$", script, re.M).group(1)
-        self.assertIn("flags=' --no-sandbox'", script)
+        self.assertIn(r'"\$bin" --no-sandbox --user-data-dir="\$d" "\$@"', script)
         for name in ("mw-install-browser", "mw-install-cypress"):
             with open(image.helper_files()[name], encoding="utf-8") as f:
                 helper = f.read()

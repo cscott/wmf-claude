@@ -29,6 +29,7 @@ umask 022
 
 : "${WMF_SBX_STAGE:?}" "${WMF_SBX_PACKAGES:?}" "${WMF_SBX_NONO_VERSION:?}"
 : "${WMF_SBX_NODE_VERSION:?}" "${WMF_SBX_NODE_FILE:?}" "${WMF_SBX_NODE_SHA256:?}"
+: "${WMF_SBX_PHP_AST_URL:?}" "${WMF_SBX_PHP_AST_COMMIT:?}" "${WMF_SBX_PHP_AST_VERSION:?}"
 : "${WMF_SBX_CLAUDE_VERSION:?}" "${WMF_SBX_CLAUDE_PLATFORM:?}" "${WMF_SBX_CLAUDE_SHA256:?}"
 : "${WMF_SBX_TREE_REV:?}" "${WMF_SBX_BUILDER_USER:?}"
 : "${WMF_SBX_AGENT_UID:?}" "${WMF_SBX_AGENT_GID:?}"
@@ -70,6 +71,23 @@ for mod in 9p 9pnet_virtio virtiofs; do
   modinfo -k "${KVERS[0]}" "$mod" >/dev/null
 done
 echo "  ${KVERS[0]}: 9p, 9pnet_virtio, virtiofs"
+
+# php-ast, from source at a pinned commit, as WMF CI builds it (image.py
+# PHP_AST): Debian's is too old for Phan 6. The build tools go again.
+step "php-ast $WMF_SBX_PHP_AST_VERSION"
+PHPV=$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')
+BUILD_DEPS=("php$PHPV-dev" build-essential)
+apt-get "${APT_OPTS[@]}" install -y -q --no-install-recommends "${BUILD_DEPS[@]}"
+AST_SRC=$(mktemp -d)
+git clone --quiet "$WMF_SBX_PHP_AST_URL" "$AST_SRC"
+git -C "$AST_SRC" checkout --quiet "$WMF_SBX_PHP_AST_COMMIT"
+(cd "$AST_SRC" && phpize >/dev/null && ./configure --quiet && make --quiet && make install >/dev/null)
+rm -rf "$AST_SRC"
+echo 'extension=ast.so' > "/etc/php/$PHPV/mods-available/ast.ini"
+phpenmod -v "$PHPV" ast
+apt-get "${APT_OPTS[@]}" purge -y -q --auto-remove "${BUILD_DEPS[@]}"
+[[ "$(php -r 'echo phpversion("ast");')" == "$WMF_SBX_PHP_AST_VERSION" ]]
+echo "  ast $(php -r 'echo phpversion("ast");')"
 apt-get clean
 
 # Node, pinned, from nodejs.org, checked against the checksum in the image
@@ -155,24 +173,38 @@ done
 
 # The browser paths that WMF CI uses. The agent has no sudo, so these are
 # root's wrappers around links that mw-install-browser makes in the
-# agent's cache. --no-sandbox: Chrome's own sandbox cannot start under nono
-# (NoNewPrivs, and no user namespaces; HANDOFF-LIMA.md phase 0), so nono is
-# the sandbox around the browser.
+# agent's cache. Under nono (RAN, phase 7):
+# - Chrome's own sandbox cannot start (NoNewPrivs, no user namespaces), so
+#   the chromium wrapper adds --no-sandbox; nono is the sandbox around it.
+# - Headless Chrome without --user-data-dir stops with "Failed to create a
+#   unique user data directory", whatever is granted. karma and
+#   chromedriver always pass one; for any other caller the wrapper makes
+#   one in $TMPDIR and removes it afterwards.
 step "browser wrappers"
 BROWSER_LINKS=/home/agent/.cache/wmf-sbx-browser
-for b in chromium chromedriver; do
-  target=chrome flags=' --no-sandbox'
-  [[ "$b" == chromedriver ]] && target=chromedriver flags=
-  cat > "/usr/bin/$b" <<EOF
+cat > /usr/bin/chromium <<WRAPPER
 #!/bin/sh
-# wmf-sbx: runs the $target that mw-install-browser installs.
-bin=$BROWSER_LINKS/$target
-[ -x "\$bin" ] || { echo "$b: not installed; run mw-install-browser" >&2; exit 127; }
-exec "\$bin"$flags "\$@"
-EOF
-  chmod 0755 "/usr/bin/$b"
-  echo "  /usr/bin/$b"
+# wmf-sbx: runs the Chrome that mw-install-browser installs.
+bin=$BROWSER_LINKS/chrome
+[ -x "\$bin" ] || { echo "chromium: not installed; run mw-install-browser" >&2; exit 127; }
+for a in "\$@"; do
+  case "\$a" in --user-data-dir|--user-data-dir=*) exec "\$bin" --no-sandbox "\$@" ;; esac
 done
+d=\$(mktemp -d "\${TMPDIR:-/tmp}/chromium.XXXXXX") || exit 1
+"\$bin" --no-sandbox --user-data-dir="\$d" "\$@"
+rc=\$?
+rm -rf -- "\$d"
+exit \$rc
+WRAPPER
+cat > /usr/bin/chromedriver <<WRAPPER
+#!/bin/sh
+# wmf-sbx: runs the chromedriver that mw-install-browser installs.
+bin=$BROWSER_LINKS/chromedriver
+[ -x "\$bin" ] || { echo "chromedriver: not installed; run mw-install-browser" >&2; exit 127; }
+exec "\$bin" "\$@"
+WRAPPER
+chmod 0755 /usr/bin/chromium /usr/bin/chromedriver
+echo "  /usr/bin/chromium /usr/bin/chromedriver"
 
 # What went in, for `wmf-sbx status` and for a person who finds the disk.
 install -m 0644 "$WMF_SBX_STAGE/image.json" /etc/wmf-sbx-image.json

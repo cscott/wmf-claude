@@ -22,10 +22,11 @@
 # See sbx/NOTES.md §91 and ~/MEDIAWIKI-TESTING.md §5.6.
 set -uo pipefail
 
-# With these, ldd finds every library and the smoke test passes. GTK 3
-# brings the rest (ATK, Pango, Cairo) as dependencies. Debian 13 names
-# some of them with a `t64` suffix (the 64-bit time_t transition).
-PKGS=(xvfb xauth libgtk-3-0 libnss3 libasound2 libgbm1)
+# The X programs that `cypress verify` and the runs start. The libraries
+# are checked with ldd once the binary is here: the agent cannot read the
+# dpkg database under nono (RAN, phase 7), so a dpkg-query check reports
+# every package as missing.
+PROGRAMS=(Xvfb xauth)
 
 die() { echo "mw-install-cypress: $*" >&2; exit 1; }
 step() { echo "mw-install-cypress: $*" >&2; }
@@ -55,14 +56,11 @@ esac
 export CYPRESS_CACHE_FOLDER="$cache"
 unset CYPRESS_INSTALL_BINARY
 
-# 2. The system packages. The image has them; one that is missing is an
-#    image bug, which the agent cannot fix.
+# 2. The X programs. The image has them; one that is missing is an image
+#    bug, which the agent cannot fix.
 missing=()
-for pkg in "${PKGS[@]}"; do
-  # Not a pipe: dpkg-query fails when one of the two names is unknown, and
-  # pipefail then fails the whole test.
-  status=$(dpkg-query -W -f '${Status}\n' "$pkg" "${pkg}t64" 2>/dev/null)
-  case "$status" in *"ok installed"*) ;; *) missing+=("$pkg") ;; esac
+for prog in "${PROGRAMS[@]}"; do
+  command -v "$prog" >/dev/null || missing+=("$prog")
 done
 [ ${#missing[@]} -eq 0 ] || die "the image lacks ${missing[*]}; report this to" \
   "the engineer (sbx/src/wmf_sbx/image.py IMAGE_PACKAGES) and stop."
@@ -87,7 +85,13 @@ if [ $rc -ne 0 ] || [ ! -x "$cache/$version/Cypress/Cypress" ]; then
       "engineer can widen it, on the host; report the message above and stop."
 fi
 
-# 4. Prove it starts: `verify` runs the binary under Xvfb.
+# 4. The libraries the bundled Electron links against.
+missing=$(ldd "$cache/$version/Cypress/Cypress" 2>/dev/null | awk '/not found/ { print $1 }' | sort -u)
+[ -z "$missing" ] || die "Cypress needs libraries that the image lacks:" \
+  $missing "-- report this to the engineer (sbx/src/wmf_sbx/image.py" \
+  "IMAGE_PACKAGES) and stop."
+
+# 5. Prove it starts: `verify` runs the binary under Xvfb.
 step "checking the binary"
 out=$(cd "$repo" && "$cli" verify 2>&1) || { echo "$out" >&2; die "cypress verify failed"; }
 

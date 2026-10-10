@@ -19,6 +19,13 @@ come from that run, on a 16-core host, with caches warm. Where a command was
 *not* measured, this file says so. The test counts move a little with every
 upstream commit, so a count that is off by one is not a finding.
 
+**Your sandbox may be much slower.** It is a VM, often with 4 CPUs, and
+without hardware virtualisation it runs 5 to 20 times slower than these
+timings. Run suites one at a time, and give long ones (core's `composer
+test`, structure, parser tests) the time they need. A Jest test that fails
+only with `Exceeded timeout of 5000 ms` is a slow machine, not a failure:
+run it again with `-- --testTimeout=60000` before you report it.
+
 ## 0. What the sandbox already did for you
 
 At `sbx create` time:
@@ -195,6 +202,10 @@ ls "$MW_INSTALL_PATH"/tests/phpunit/gen/ | grep <Name>
 composer phpunit:entrypoint -- tests/phpunit/gen/ParserTest_Cite_1_citeParserTests_Test.php   # 1151 tests, 29 s
 ```
 
+Give PHPUnit **one file per run**. With several file arguments, PHPUnit 9
+runs the first and ignores the rest, without a warning. Loop over the files
+instead.
+
 ### Lint and phan — from your repo
 
 ```bash
@@ -270,8 +281,8 @@ from `npm test`. Measured: Vector `npm run test:unit`, 79 tests, 7.8 s.
 
 Some repos run QUnit tests under Node, not in a browser, with
 `mw-node-qunit` (Popups: `npm run test:unit`, also part of its `npm test`).
-**On this sandbox's Node 22 it crashes and still exits 0.** Node 22 has a
-read-only global `navigator`, `mw-node-qunit` 7.0.0 assigns to it, and the
+**On this sandbox's Node (24) it crashes and still exits 0.** Node 21 and
+later have a read-only global `navigator`, `mw-node-qunit` 7.0.0 assigns to it, and the
 script pipes the output into `tap-mocha-reporter`, whose exit status is
 the one you see. The log shows `Cannot set property navigator of
 #<Object> which has only a getter` and ends with `0 passing (NaNms)`. Turn
@@ -555,8 +566,9 @@ it.
    harness for Cypress and report it as equivalent.
 7. **17 REST failures in core's full `npm run api-testing`**, all in
    `tests/api-testing/REST/Creation.js` and `Update.js`: `expected 400 to
-   equal 201` (or 403, 409), with `The "Content-Type" parameter must be
-   set.` The api-testing client sends the header name in lower case. Core
+   equal 201` (or 403, 409). Mocha shows only the status; the response
+   body, which a direct `curl` shows, is `The "Content-Type" parameter must
+   be set.` The api-testing client sends the header name in lower case. Core
    declares `Content-Type` as a header parameter of the page create and
    update handlers (since core commit `0ca91a896ad`, T412668), and
    `ParamValidatorCallbacks::getValue()` looks header parameters up by
@@ -568,7 +580,7 @@ it.
 8. **Other sibling-extension failures** — §3: a structure test, skipped
    selenium tests, an unused phan suppression.
 9. **A script that pipes into a reporter exits 0 when the tests crash** —
-   §3 (Popups' `mw-node-qunit` on Node 22).
+   §3 (Popups' `mw-node-qunit` on Node 21 and later).
 10. **Do not build a jsdom or hand-made stand-in for a browser suite.** A
    harness that loads the sources directly has a different set of modules
    registered than the real page, and it quietly disagrees with the real

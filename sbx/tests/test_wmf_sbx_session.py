@@ -98,7 +98,8 @@ class LauncherTests(unittest.TestCase):
         self.assertIn(("--allow", "/home/me/src/core"), pairs)
         self.assertIn(("--read", "/home/me/src/Vector"), pairs)
         self.assertNotIn(("--allow", "/home/me/src/Cite"), pairs)
-        for path in ("/run/wmf-sbx/host", "/opt/claude-code", "/opt/node", "/etc/php"):
+        for path in ("/run/wmf-sbx/host", "/opt/claude-code", "/opt/node", "/etc/php",
+                     "/home/agent/.wmf-sbx", "/etc/fonts"):
             self.assertIn(("--read", path), pairs)
         self.assertIn(("--read-file", "/etc/gitconfig"), pairs)
         # The home is not readable under the profile; the guide is granted.
@@ -178,6 +179,10 @@ class GitIdentityTests(unittest.TestCase):
                          "ed@example.org")
         values.clear()
         self.assertEqual(session.git_identity(run=run), {})
+
+    def test_composer_scripts_have_no_process_timeout(self):
+        # core's `composer test` outlasts the 300 s default in a VM.
+        self.assertEqual(session.session_env([])["COMPOSER_PROCESS_TIMEOUT"], "0")
 
 
 class ContextTextTests(unittest.TestCase):

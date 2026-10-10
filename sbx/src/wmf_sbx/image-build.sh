@@ -180,6 +180,10 @@ done
 #   unique user data directory", whatever is granted. karma and
 #   chromedriver always pass one; for any other caller the wrapper makes
 #   one in $TMPDIR and removes it afterwards.
+# - Chrome's crash handler wants its database in the config directory,
+#   and the profile denies ~/.config/chromium ("--database is required";
+#   RAN, phase 7 run 2). The wrapper points XDG_CONFIG_HOME, for Chrome
+#   only, at a directory in the agent's cache.
 step "browser wrappers"
 BROWSER_LINKS=/home/agent/.cache/wmf-sbx-browser
 cat > /usr/bin/chromium <<WRAPPER
@@ -187,6 +191,8 @@ cat > /usr/bin/chromium <<WRAPPER
 # wmf-sbx: runs the Chrome that mw-install-browser installs.
 bin=$BROWSER_LINKS/chrome
 [ -x "\$bin" ] || { echo "chromium: not installed; run mw-install-browser" >&2; exit 127; }
+export XDG_CONFIG_HOME=$BROWSER_LINKS/config
+mkdir -p "\$XDG_CONFIG_HOME" || exit 1
 for a in "\$@"; do
   case "\$a" in --user-data-dir|--user-data-dir=*) exec "\$bin" --no-sandbox "\$@" ;; esac
 done

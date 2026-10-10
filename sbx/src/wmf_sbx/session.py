@@ -74,7 +74,7 @@ TESTING_GUIDE_PATH = f"{setup_mod.SANDBOX_HOME}/{kit_mod.TESTING_GUIDE}"
 READ_FILE_GRANTS = ("/etc/gitconfig", "/etc/bash.bashrc", TESTING_GUIDE_PATH)
 # The profile denies ~/.bashrc, so the skeleton's copy makes every Bash
 # call print "/home/agent/.bashrc: Permission denied". The agent needs no
-# .bashrc; create removes it.
+# .bashrc; create removes it, after wmf-claude-setup.
 DENIED_DOTFILES = (f"{setup_mod.SANDBOX_HOME}/.bashrc",)
 # Write grants in the agent's home: the caches of composer, npm and the
 # browser installers, which the agent uses in a session (the profile has
@@ -366,10 +366,6 @@ def wmf_claude_setup(name, username, lima=None, env=None):
                               "-g", vm_mod.AGENT, "/dev/null", log], lima=lima, check=False)
     if res.returncode != 0:
         raise SessionError(f"could not create {log} for the agent")
-    res = vm_mod.shell(name, ["sudo", "rm", "-f", "--"] + list(DENIED_DOTFILES),
-                       lima=lima, check=False)
-    if res.returncode != 0:
-        raise SessionError(f"could not remove {' '.join(DENIED_DOTFILES)}")
     config = json.dumps(phabricator_config(username)) + "\n"
     # The cache directories too: nono may refuse a grant for a path that
     # does not exist (ALLOW_GRANTS).
@@ -384,3 +380,10 @@ def wmf_claude_setup(name, username, lima=None, env=None):
     res = vm_mod.shell(name, argv, lima=lima, input="\n", check=False, capture=False)
     if res.returncode != 0:
         raise SessionError(f"wmf-claude-setup failed in the VM (exit {res.returncode})")
+    # After wmf-claude-setup, which writes its `claude` alias into ~/.bashrc
+    # (RAN, phase 7 run 2: the line was back). Sessions run bin/claude
+    # directly and need no alias.
+    res = vm_mod.shell(name, ["sudo", "rm", "-f", "--"] + list(DENIED_DOTFILES),
+                       lima=lima, check=False)
+    if res.returncode != 0:
+        raise SessionError(f"could not remove {' '.join(DENIED_DOTFILES)}")

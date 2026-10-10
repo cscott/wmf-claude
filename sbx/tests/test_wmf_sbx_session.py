@@ -161,6 +161,23 @@ class SessionFilesTests(unittest.TestCase):
                 self.assertEqual(f.read(), "hi")
 
 
+class GitIdentityTests(unittest.TestCase):
+
+    def test_the_hosts_identity_goes_to_author_and_committer(self):
+        values = {"user.name": "Ed Engineer", "user.email": "ed@example.org"}
+
+        def run(argv, **kw):
+            v = values.get(argv[-1])
+            return subprocess.CompletedProcess(argv, 0 if v else 1, stdout=(v or "") + "\n")
+        ident = session.git_identity(run=run)
+        self.assertEqual(ident["GIT_AUTHOR_NAME"], "Ed Engineer")
+        self.assertEqual(ident["GIT_COMMITTER_EMAIL"], "ed@example.org")
+        self.assertEqual(session.session_env([], identity=ident)["GIT_AUTHOR_EMAIL"],
+                         "ed@example.org")
+        values.clear()
+        self.assertEqual(session.git_identity(run=run), {})
+
+
 class ContextTextTests(unittest.TestCase):
 
     def test_the_lima_sbx_sandbox_text_starts_with_nonos(self):

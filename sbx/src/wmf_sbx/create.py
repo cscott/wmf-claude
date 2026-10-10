@@ -653,8 +653,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
     plan = mediawiki_mod.build_plan(
         resolved_for_kit,
         links=link_plan(resolved_for_kit, overrides=config.get("link_overrides") or {}),
-        readonly=readonly, requested=requested, primary=primary_dir,
-        reset_all=args.reset_all)
+        readonly=readonly, primary=primary_dir)
     plan["session"] = session_mod.session_plan(name, resolved_for_kit, readonly)
     try:
         home = env.get("HOME") or os.path.expanduser("~")

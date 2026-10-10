@@ -35,11 +35,28 @@ WMF_CLAUDE_SETUP = "/opt/wmf-claude/bin/wmf-claude-setup"
 SANDBOX_BACKEND = "lima-sbx"
 WIKI_PORT = 4000
 
-# Read grants that every session needs. nono grants the launch directory
-# only. /opt/claude-code and /opt/node hold the image's Claude Code and
-# Node (/usr/local/bin has only links to them): without them `claude`
-# gets EACCES (RAN, phase 6).
-READ_GRANTS = (template_mod.HOST_MOUNT_ROOT, "/opt/claude-code", "/opt/node")
+# Read grants that every session needs; nono grants the launch directory
+# only, and the wmf-engineer profile has no Linux system paths (RAN,
+# phase 6):
+# - /opt/claude-code and /opt/node hold the image's Claude Code and Node
+#   (/usr/local/bin has only links to them): without them, EACCES;
+# - /etc/php: without it PHP loads no .ini and no extension, and
+#   `composer serve` stops ("iconv OR mbstring ... missing");
+# - /etc/gitconfig: without it every git command stops ("fatal: unknown
+#   error occurred while reading the configuration files"); it also holds
+#   the safe.directory entries (sandbox-repos.sh);
+# - /etc/bash.bashrc: without it each Bash tool call prints a "Permission
+#   denied" line. (~/.bashrc is in the profile's deny list, on purpose, so
+#   its line stays.)
+READ_GRANTS = (template_mod.HOST_MOUNT_ROOT, "/opt/claude-code", "/opt/node", "/etc/php")
+READ_FILE_GRANTS = ("/etc/gitconfig", "/etc/bash.bashrc")
+# Write grants in the agent's home: the caches of composer, npm and the
+# browser installers, which the agent uses in a session (the profile has
+# none; RAN, phase 6). Not ~/.config/composer: the profile denies its
+# auth.json, and Landlock cannot deny a path under an allowed one, so nono
+# refuses to start (RAN). COMPOSER_HOME is under ~/.cache instead.
+ALLOW_GRANTS = tuple(f"{vm_mod.AGENT_HOME}/{p}" for p in (".cache", ".npm"))
+COMPOSER_HOME = f"{vm_mod.AGENT_HOME}/.cache/composer-home"
 
 # The hosts that npm, composer and the browser installers download from
 # (D3, decided: per-session --allow-domain, no new profile). The
@@ -124,8 +141,12 @@ def launcher_argv(state, cred_path=None, launcher_flags=(), claude_args=(),
     for path in state.get("repos") or []:
         if path != primary:
             grants += ["--read" if path in readonly else "--allow", path]
+    for path in ALLOW_GRANTS:
+        grants += ["--allow", path]
     for path in READ_GRANTS:
         grants += ["--read", path]
+    for path in READ_FILE_GRANTS:
+        grants += ["--read-file", path]
     for domain in REGISTRY_DOMAINS:
         grants += ["--allow-domain", domain]
     if proxy:
@@ -200,7 +221,7 @@ def home_claude_md(name):
 def session_env(resolved_for_kit, readonly=()):
     """The `env` key of the agent's settings (D4): the wiki and test
     variables, which nono's allow_vars would drop from the environment."""
-    env = {}
+    env = {"COMPOSER_HOME": COMPOSER_HOME}
     for canonical, path in resolved_for_kit:
         for var in kit_mod.REPO_ENVIRONMENT_VARS.get(canonical, []):
             env[var] = path
@@ -240,8 +261,11 @@ def wmf_claude_setup(name, username, lima=None, env=None):
     if res.returncode != 0:
         raise SessionError(f"could not create {log} for the agent")
     config = json.dumps(phabricator_config(username)) + "\n"
-    write = vm_mod.agent_argv(["sh", "-c", "mkdir -p ~/.config/wmf-claude && "
-                               "cat > ~/.config/wmf-claude/config.json"])
+    # The cache directories too: nono may refuse a grant for a path that
+    # does not exist (ALLOW_GRANTS).
+    write = vm_mod.agent_argv(["sh", "-c", "mkdir -p ~/.config/wmf-claude " + " ".join(
+        shlex.quote(p) for p in ALLOW_GRANTS + (COMPOSER_HOME,))
+        + " && cat > ~/.config/wmf-claude/config.json"])
     vm_mod.shell(name, write, lima=lima, input=config, check=False)
     proxy = image_mod.guest_proxy_env(env)
     argv = vm_mod.agent_argv([WMF_CLAUDE_SETUP], env=dict(

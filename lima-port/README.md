@@ -115,8 +115,11 @@ helper in `sbx/tests/test_wmf_sbx_create.py`, and commits `8c76233` and
 
 - Invoke sbx only as `wmf-sbx`, never bare `sbx`, never `--cloud`.
 - Do not push anywhere unless the engineer asks.
-- Nothing under `sbx/` changes shared plugin files; the default nono
-  SessionStart output stays byte-identical to upstream's.
+- The port may edit shared plugin files directly: it is meant to land
+  upstream, with Kosta's approval (cananian, 2026-10-10), so there is no
+  plugin overlay. But the plain `bin/claude` (nono, no VM) must not
+  break, and the default nono SessionStart output stays byte-identical
+  to upstream's; the suites test both.
 - Comments and commit messages in ASD-STE100, with an
   `Assisted-by: Claude Opus 5.5` trailer and no Co-Authored-By.
 - Commit on a branch before you end each turn, and report the branch,

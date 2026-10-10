@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # mw-install-cypress: install the Cypress binary for one repo in *this*
-# sandbox, and the system packages it needs. Runs INSIDE a sandbox, like
-# mw-install-browser.
+# sandbox. Runs INSIDE a sandbox, as the agent, like mw-install-browser. It
+# needs no sudo.
 #
 # Why this exists: setup runs `npm ci` with CYPRESS_INSTALL_BINARY=0, so a
 # repo that lists cypress (Cite, and others) gets the npm package but not
 # the binary. The binary is about 800 MB unpacked, and most tasks are not
 # covered by a repo's Cypress specs, so the install is on demand. It comes
-# from download.cypress.io and cdn.cypress.io, which the kit allows. The
-# image also misses Xvfb and the GTK, NSS and ALSA libraries that the
-# bundled Electron needs, so apt supplies those.
+# from download.cypress.io and cdn.cypress.io, which the kit allows. Xvfb
+# and the GTK, NSS and ALSA libraries that the bundled Electron needs are
+# in the image (image.py IMAGE_PACKAGES).
 #
 #   mw-install-cypress [<repo>]     # default: the current directory
 #
@@ -22,9 +22,9 @@
 # See sbx/NOTES.md §91 and ~/MEDIAWIKI-TESTING.md §5.6.
 set -uo pipefail
 
-# Measured on a bare ubuntu:26.04 against Cypress 15.20.1: with these, ldd
-# finds every library and the smoke test passes. GTK 3 brings the rest
-# (ATK, Pango, Cairo) as dependencies. See sbx/NOTES.md §92.
+# With these, ldd finds every library and the smoke test passes. GTK 3
+# brings the rest (ATK, Pango, Cairo) as dependencies. Debian 13 names
+# some of them with a `t64` suffix (the 64-bit time_t transition).
 PKGS=(xvfb xauth libgtk-3-0 libnss3 libasound2 libgbm1)
 
 die() { echo "mw-install-cypress: $*" >&2; exit 1; }
@@ -55,27 +55,17 @@ esac
 export CYPRESS_CACHE_FOLDER="$cache"
 unset CYPRESS_INSTALL_BINARY
 
-# 2. The system packages. Ubuntu 24.04 and later renamed some libraries for
-#    the 64-bit time_t transition and left the old name as a virtual
-#    package with no candidate, so retry such a name with a `t64` suffix.
-wanted=()
+# 2. The system packages. The image has them; one that is missing is an
+#    image bug, which the agent cannot fix.
+missing=()
 for pkg in "${PKGS[@]}"; do
   # Not a pipe: dpkg-query fails when one of the two names is unknown, and
   # pipefail then fails the whole test.
   status=$(dpkg-query -W -f '${Status}\n' "$pkg" "${pkg}t64" 2>/dev/null)
-  case "$status" in *"ok installed"*) continue ;; esac
-  candidate=$(apt-cache policy "$pkg" 2>/dev/null | sed -n 's/^  Candidate: //p')
-  if [ -n "$candidate" ] && [ "$candidate" != "(none)" ]; then
-    wanted+=("$pkg")
-  else
-    wanted+=("${pkg}t64")
-  fi
+  case "$status" in *"ok installed"*) ;; *) missing+=("$pkg") ;; esac
 done
-if [ ${#wanted[@]} -gt 0 ]; then
-  step "installing ${wanted[*]}"
-  sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends "${wanted[@]}" >/dev/null \
-    || die "apt-get install failed for: ${wanted[*]}"
-fi
+[ ${#missing[@]} -eq 0 ] || die "the image lacks ${missing[*]}; report this to" \
+  "the engineer (sbx/src/wmf_sbx/image.py IMAGE_PACKAGES) and stop."
 
 # 3. The binary. `cypress install` is a no-op when that version is already
 #    in the cache.

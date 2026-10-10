@@ -91,6 +91,11 @@ IMAGE_PACKAGES = list(kit.BASE_PACKAGES) + [
     "libx11-6", "libxcomposite1", "libxdamage1", "libxext6", "libxfixes3",
     "libxrandr2", "libgbm1", "libxcb1", "libxkbcommon0", "libasound2t64",
     "libatspi2.0-0t64",
+    # The rest of what Chrome for Testing (mw-install-browser) links
+    # against, and Xvfb and GTK 3 for Cypress's Electron
+    # (mw-install-cypress). The agent has no sudo, so they are here.
+    "libcups2t64", "libpango-1.0-0", "libcairo2", "libdbus-1-3", "libdrm2",
+    "libexpat1", "libudev1", "libgtk-3-0t64", "xvfb", "xauth",
 ]
 
 # The builder VM. Closed like Kosta's template (no mounts, no forwards),

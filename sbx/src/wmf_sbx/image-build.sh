@@ -153,6 +153,27 @@ for f in "$WMF_SBX_STAGE"/helpers/*; do
   echo "  /usr/local/bin/$(basename "$f")"
 done
 
+# The browser paths that WMF CI uses. The agent has no sudo, so these are
+# root's wrappers around links that mw-install-browser makes in the
+# agent's cache. --no-sandbox: Chrome's own sandbox cannot start under nono
+# (NoNewPrivs, and no user namespaces; HANDOFF-LIMA.md phase 0), so nono is
+# the sandbox around the browser.
+step "browser wrappers"
+BROWSER_LINKS=/home/agent/.cache/wmf-sbx-browser
+for b in chromium chromedriver; do
+  target=chrome flags=' --no-sandbox'
+  [[ "$b" == chromedriver ]] && target=chromedriver flags=
+  cat > "/usr/bin/$b" <<EOF
+#!/bin/sh
+# wmf-sbx: runs the $target that mw-install-browser installs.
+bin=$BROWSER_LINKS/$target
+[ -x "\$bin" ] || { echo "$b: not installed; run mw-install-browser" >&2; exit 127; }
+exec "\$bin"$flags "\$@"
+EOF
+  chmod 0755 "/usr/bin/$b"
+  echo "  /usr/bin/$b"
+done
+
 # What went in, for `wmf-sbx status` and for a person who finds the disk.
 install -m 0644 "$WMF_SBX_STAGE/image.json" /etc/wmf-sbx-image.json
 

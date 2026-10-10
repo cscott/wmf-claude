@@ -58,7 +58,7 @@ def state_path(name, env=None):
 
 
 def new_state(name, daemon_port=None, host_port=None, created=None, attached=False,
-              primary_dir=None, image=None, vm_type=None, repos=None):
+              primary_dir=None, image=None, vm_type=None, repos=None, read_only=None):
     """A fresh, empty state dict. `created` is passed in rather than
     stamped here so callers stay testable without freezing the clock.
 
@@ -100,6 +100,8 @@ def new_state(name, daemon_port=None, host_port=None, created=None, attached=Fal
         "image": image,
         "vmType": vm_type,
         "repos": list(repos or []),
+        # The ':ro' repos: the session grants them read-only (session.py).
+        "readOnly": list(read_only or []),
     }
 
 

@@ -15,6 +15,7 @@ it calls `limactl` through lima.Limactl, so the tests fake it.
 """
 
 import os
+import re
 import shlex
 import tempfile
 
@@ -78,12 +79,45 @@ def status(name, lima=None):
     return lima.status(instance_name(name))
 
 
-def ensure_running(name, lima=None, log=print):
+PROXY_PORTS_RE = re.compile(r'PROXY_PORTS=\\?"([0-9 ]*)\\?"')
+
+
+def configured_proxy_ports(name, lima, env=None):
+    """The proxy ports in the instance's provisioning, or None if the
+    config cannot be read."""
+    m = PROXY_PORTS_RE.search(lima.config_text(instance_name(name), env))
+    return [int(p) for p in m.group(1).split()] if m else None
+
+
+def refresh_proxy_ports(name, lima, env=None, log=print, running=False):
+    """The host block lets the agent reach the host's loopback proxy on the
+    ports in the provisioning, which create fills in. A proxy whose port
+    changed (a restarted cloud container, RAN) is then refused in the
+    guest. Put the current ports in, on a stopped instance; on a running
+    one, say that a restart is needed. Returns True if it changed."""
+    want = template_mod.loopback_proxy_ports(env)
+    have = configured_proxy_ports(name, lima, env)
+    if have is None or have == want:
+        return False
+    if running:
+        log(f"warning: the host's proxy port is now {' '.join(map(str, want)) or 'none'}, "
+            f"the VM allows {' '.join(map(str, have)) or 'none'}: "
+            f"`wmf-sbx stop {name}` and start it again")
+        return False
+    ports = " ".join(str(p) for p in want)
+    log(f"+ limactl edit {instance_name(name)} (proxy ports {ports or 'none'})")
+    lima.edit(instance_name(name), '.provision[0].script |= sub("PROXY_PORTS=\\"[0-9 ]*\\""; '
+                                   f'"PROXY_PORTS=\\"{ports}\\"")')
+    return True
+
+
+def ensure_running(name, lima=None, log=print, env=None):
     lima = lima or lima_mod.Limactl()
     st = status(name, lima)
     if st is None:
         raise VmError(f"sandbox {name} has no VM ({instance_name(name)}); "
                       f"remove it with `wmf-sbx rm {name}` and create it again")
+    refresh_proxy_ports(name, lima, env=env, log=log, running=st == "Running")
     if st != "Running":
         log(f"+ limactl start {instance_name(name)}")
         lima.start(instance_name(name), timeout=START_TIMEOUT)

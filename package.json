@@ -12,6 +12,8 @@
     { "type": "plugin", "path": "bin/session-start.sh" },
     { "type": "plugin", "path": "hooks/context/nono/sandbox.txt" },
     { "type": "plugin", "path": "hooks/context/nono/environment.txt" },
+    { "type": "plugin", "path": "hooks/context/lima-sbx/sandbox.txt" },
+    { "type": "plugin", "path": "hooks/context/lima-sbx/environment.txt" },
     { "type": "plugin", "path": "bin/launch-claude.sh" },
     { "type": "plugin", "path": "bin/statusline.sh" },
     { "type": "plugin", "path": "bin/launch-test-chrome" },

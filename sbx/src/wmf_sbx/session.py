@@ -24,6 +24,7 @@ import json
 import os
 import shlex
 import stat
+import subprocess
 
 from . import image as image_mod
 from . import kit as kit_mod
@@ -269,10 +270,32 @@ def home_claude_md(name):
     return LIMA_HOME_CLAUDE_MD.replace("@NAME@", name) + "\n" + RUNNING_TESTS_MD
 
 
-def session_env(resolved_for_kit, readonly=()):
+def git_identity(run=subprocess.run):
+    """GIT_AUTHOR_* and GIT_COMMITTER_* from the host's `git config
+    user.name` and `user.email`, or {}. The agent has no identity of its
+    own, so its first commit failed (RAN, phase 6); its commits are the
+    engineer's to review and push. In the settings `env`, not
+    ~/.gitconfig, which nono would need another grant for."""
+    out = {}
+    for key, names in (("user.name", ("GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME")),
+                       ("user.email", ("GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"))):
+        try:
+            res = run(["git", "config", "--get", key], capture_output=True, text=True,
+                      stdin=subprocess.DEVNULL)
+        except OSError:
+            return {}
+        value = (res.stdout or "").strip() if res.returncode == 0 else ""
+        if value:
+            out.update({n: value for n in names})
+    return out
+
+
+def session_env(resolved_for_kit, readonly=(), identity=None):
     """The `env` key of the agent's settings (D4): the wiki and test
-    variables, which nono's allow_vars would drop from the environment."""
+    variables, which nono's allow_vars would drop from the environment,
+    and the engineer's git identity."""
     env = {"COMPOSER_HOME": COMPOSER_HOME}
+    env.update(identity or {})
     for canonical, path in resolved_for_kit:
         for var in kit_mod.REPO_ENVIRONMENT_VARS.get(canonical, []):
             env[var] = path
@@ -281,13 +304,13 @@ def session_env(resolved_for_kit, readonly=()):
     return env
 
 
-def session_plan(name, resolved_for_kit, readonly=()):
+def session_plan(name, resolved_for_kit, readonly=(), identity=None):
     """The `session` part of the plan, which setup.py --lima writes as the
     agent: settings `env`, and files under the agent's home."""
     with open(kit_mod.TESTING_GUIDE_SOURCE, encoding="utf-8") as f:
         guide = f.read()
     return {
-        "env": session_env(resolved_for_kit, readonly),
+        "env": session_env(resolved_for_kit, readonly, identity),
         "files": [
             {"path": "~/.claude/CLAUDE.md", "content": home_claude_md(name)},
             {"path": f"~/{kit_mod.TESTING_GUIDE}", "content": guide},

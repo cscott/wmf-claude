@@ -9794,7 +9794,26 @@ Findings and decisions:
 8. **Unexplained:** segfaults under TCG with 4 GiB: Claude Code (Bun),
    jsdoc, one Jest worker. Each passed on a re-run. Not seen yet on
    real hardware; watch for them on `vz`.
-9. Docs fixed from the report: the setup status file, `$TMPDIR` (not
+9. **Run 2** (sbx-testverify2, new image): karma QUnit passed for
+   Translate, Cite, ULS and Vector, with the port window; PHPUnit, lint,
+   the parser tests and Parsoid lint passed; ULS's Jest passed with
+   `--testTimeout=60000`. Found, and fixed after it:
+   - Chrome's crash handler needs a writable config directory, and the
+     profile denies `~/.config/chromium`: the wrapper sets
+     `XDG_CONFIG_HOME` to `~/.cache/wmf-sbx-browser/config` for Chrome.
+   - `wmf-claude-setup` writes its `claude` alias into `~/.bashrc`, after
+     create had removed it: create now removes it after that step.
+   - phan on Translate was OOM-killed (exit 137) after 3 hours with
+     4 GiB: the default VM memory is now 8 GiB.
+   Not fixed: core's QUnit (`--qunit-component=MediaWiki`) fails with a
+   karma ping timeout ("reconnect failed before timeout of 2000ms")
+   under TCG; check it on real hardware. The run stopped when the test
+   API key ran out of credit, before wdio, Cypress, api-testing and the
+   report. Also seen: QEMU itself segfaulted once, 13 s into a boot
+   (a retry worked; the phase 6 `limactl start` exit 1 may be the same).
+   In `-p` mode, each event of the agent's own Monitor tool starts a new
+   turn, so a run has many results.
+10. Docs fixed from the report: the setup status file, `$TMPDIR` (not
    `/tmp`), `CI=true` for wdio, Node 24, one PHPUnit file per run, Jest's
    5 s timeout on a slow VM, and the timings (a VM is 5 to 20 times
    slower than the guide's 16-core host).

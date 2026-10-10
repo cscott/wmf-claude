@@ -32,7 +32,10 @@ ENGINEER_UID = 59998
 HOST_MOUNT_ROOT = "/run/wmf-sbx/host"
 
 DEFAULT_CPUS = 4
-DEFAULT_MEMORY = "4GiB"
+# 8 GiB: with 4, phan on Translate (core and the extension's
+# dependencies loaded) was OOM-killed (RAN, phase 7 run 2). --memory
+# overrides it.
+DEFAULT_MEMORY = "8GiB"
 DEFAULT_DISK = "60GiB"
 
 MOUNT_TYPES = {"qemu": "9p", "vz": "virtiofs"}

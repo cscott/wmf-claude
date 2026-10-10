@@ -92,7 +92,9 @@ class LauncherTests(unittest.TestCase):
         a = self.argv()
         i = a.index(session.LAUNCHER)
         launcher = a[i:a.index("--", i)]
-        self.assertIn("--local-web=4000", launcher)
+        # The wiki, karma, and the guest's ephemeral window (browser tools).
+        self.assertIn("--local-web=4000,9876,49152-53247", launcher)
+        self.assertIn(("--listen-port", "0"), list(zip(launcher, launcher[1:])))
         self.assertIn("--landlock-only", launcher)
         pairs = list(zip(launcher, launcher[1:]))
         self.assertIn(("--allow", "/home/me/src/core"), pairs)

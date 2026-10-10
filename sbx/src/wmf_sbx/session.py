@@ -36,6 +36,18 @@ LAUNCHER = "/opt/wmf-claude/bin/claude"
 WMF_CLAUDE_SETUP = "/opt/wmf-claude/bin/wmf-claude-setup"
 SANDBOX_BACKEND = "lima-sbx"
 WIKI_PORT = 4000
+KARMA_PORT = 9876
+
+
+def local_ports():
+    """--local-web's list: the wiki, karma, and the guest's ephemeral port
+    window (template.EPHEMERAL_PORTS), where chromedriver, Chrome's DevTools
+    and Cypress listen. With --listen-port 0, a bind to port 0 gets a port
+    in the window, and the window's ports can be connected to. Landlock
+    cannot tell loopback from other hosts; the VM's nftables does (it
+    allows the agent TCP 80 and 443 only, off the VM)."""
+    lo, hi = template_mod.EPHEMERAL_PORTS
+    return f"{WIKI_PORT},{KARMA_PORT},{lo}-{hi}"
 
 # Read grants that every session needs; nono grants the launch directory
 # only, and the wmf-engineer profile has no Linux system paths (RAN,
@@ -165,7 +177,8 @@ def launcher_argv(state, cred_path=None, launcher_flags=(), claude_args=(),
         grants += ["--allow-domain", domain]
     if proxy:
         grants += ["--upstream-proxy", proxy]
-    claude = ([LAUNCHER, f"--local-web={WIKI_PORT}", "--landlock-only"] + grants
+    claude = ([LAUNCHER, f"--local-web={local_ports()}", "--landlock-only",
+               "--listen-port", "0"] + grants
               + list(launcher_flags) + ["--"] + list(claude_args))
     wrapper = ["bash", "-c", CREDENTIAL_WRAPPER, "_", cred_path or ""] + claude
     return vm_mod.agent_argv(wrapper, workdir=primary,

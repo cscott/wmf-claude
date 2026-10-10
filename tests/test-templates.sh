@@ -385,6 +385,17 @@ fi
 if grep -q -- '--landlock-only (no seccomp net filter)' <<<"$out"; then pass "Linux: --landlock-only shows in WMF_CLAUDE_SESSION"; else fail "Linux: --landlock-only missing from WMF_CLAUDE_SESSION"; fi
 out="$(run_fake_linux_claude --local-web=443 --landlock-only)"
 if grep -q 'refuses port 443' <<<"$out" && ! grep -q '^NONO_ARG:' <<<"$out"; then pass "Linux: --landlock-only refuses --local-web=443"; else fail "Linux: --landlock-only accepted --local-web=443"; fi
+out="$(run_fake_linux_claude --local-web=4000,40000-40002 --landlock-only)"
+if [[ "$(grep -A1 -x 'NONO_ARG: --open-port' <<<"$out" | grep -xE 'NONO_ARG: [0-9]+' | tr '\n' ' ')" == "NONO_ARG: 4000 NONO_ARG: 40000 NONO_ARG: 40001 NONO_ARG: 40002 " ]] \
+   && grep -q -- '--local-web=4000,40000-40002' <<<"$out"; then
+  pass "Linux: --local-web=LO-HI opens each port in the range and shows the range"
+else
+  fail "Linux: --local-web=LO-HI did not open exactly the range"
+fi
+out="$(run_fake_linux_claude --local-web=400-500 --landlock-only)"
+if grep -q 'refuses port 443' <<<"$out" && ! grep -q '^NONO_ARG:' <<<"$out"; then pass "Linux: --landlock-only refuses a --local-web range that holds 443"; else fail "Linux: --landlock-only accepted a range that holds 443"; fi
+out="$(run_fake_linux_claude --local-web=10000-30000 --landlock-only)"
+if grep -q 'at most 8192 ports' <<<"$out" && ! grep -q '^NONO_ARG:' <<<"$out"; then pass "Linux: --local-web refuses a range of more than 8192 ports"; else fail "Linux: --local-web accepted a huge range"; fi
 out="$(run_fake_linux_claude --landlock-only --open-port=80 --)"
 if grep -q 'refuses port 80' <<<"$out" && ! grep -q '^NONO_ARG:' <<<"$out"; then pass "Linux: --landlock-only refuses a user --open-port=80"; else fail "Linux: --landlock-only accepted a user --open-port=80"; fi
 out="$(run_fake_linux_claude --landlock-only --sandbox-policy landlock --)"

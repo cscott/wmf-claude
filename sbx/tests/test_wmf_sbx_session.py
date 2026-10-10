@@ -178,7 +178,8 @@ class ContextTextTests(unittest.TestCase):
         out = subprocess.run(["bash", hook], capture_output=True, text=True,
                              env=dict(os.environ, WMF_CLAUDE_SANDBOX_BACKEND="lima-sbx")).stdout
         self.assertIn("disposable Lima VM", out)
-        self.assertIn("composer serve &", out)
+        self.assertIn("composer serve", out)
+        self.assertIn("$TMPDIR", out)
 
 
 class ProxyRefreshTests(unittest.TestCase):

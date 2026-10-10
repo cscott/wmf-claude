@@ -30,6 +30,7 @@ from . import lima as lima_mod
 from . import mediawiki as mediawiki_mod
 from . import remotes as remotes_mod
 from . import repos as repos_mod
+from . import session as session_mod
 from . import template as template_mod
 from . import vm as vm_mod
 
@@ -377,7 +378,7 @@ def wmf_claude_config(path=None):
     return data if isinstance(data, dict) else {}
 
 
-def phabricator_username(run=subprocess.run, config_path=None):
+def phabricator_username(run=subprocess.run, config_path=None, env=None):
     """The username mcp-phabricator filters "my tasks" by.
 
     Three sources, most explicit first:
@@ -394,7 +395,8 @@ def phabricator_username(run=subprocess.run, config_path=None):
     and the server works without it -- anonymous, public data only, the
     username is a default filter.
     """
-    override = os.environ.get("PHABRICATOR_USERNAME")
+    env = os.environ if env is None else env
+    override = env.get("PHABRICATOR_USERNAME")
     if override:
         return override
     stored = wmf_claude_config(config_path).get("phabricatorUsername")
@@ -433,9 +435,12 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
     6. check the security invariants;
     7. clone the repos in the VM at their host paths (D8), and add the
        host remotes, which also suspend gc (repos.py, remotes.py);
-    8. the MediaWiki setup, as the agent (mediawiki.py, setup.py --lima).
+    8. the session setup (session.py): wmf-claude-setup registers the MCP
+       servers, as the agent;
+    9. the MediaWiki setup and the session files, as the agent
+       (mediawiki.py, setup.py --lima).
 
-    Phase 6 adds the session."""
+    `wmf-sbx resume NAME` then starts Claude Code (resume.py)."""
     parser = argparse.ArgumentParser(description="Create a wmf-sbx sandbox (a Lima VM).")
     parser.add_argument(
         "primary", help="Repo for the sandbox's primary workspace; append ':ro' for read-only"
@@ -597,9 +602,11 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
     # The state first: a create that fails half-way leaves a VM that
     # `wmf-sbx rm NAME` can then remove.
     stamp = (now or datetime.datetime.now(datetime.timezone.utc)).isoformat(timespec="seconds")
+    readonly = {path for (_spec, is_ro), (_c, path, _n) in zip(split, resolved) if is_ro}
     state = state_mod.new_state(
         name, created=stamp, primary_dir=primary_dir, image=key,
-        vm_type=tmpl["vmType"], repos=[path for _c, path, _n in resolved])
+        vm_type=tmpl["vmType"], repos=[path for _c, path, _n in resolved],
+        read_only=sorted(readonly))
     state_mod.save(state, env)
     try:
         vm_mod.create(name, tmpl, lima=lima, log=say)
@@ -621,7 +628,6 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
     # --reset-all resets every repo (DESIGN-setup-steps.md §8.1).
     requested = {path for _c, path, _n in resolved if path not in origins_by_path}
     keep = set() if args.reset_all else requested | {primary_dir}
-    readonly = {path for (_spec, is_ro), (_c, path, _n) in zip(split, resolved) if is_ro}
     # Raw paths get their canonical names here (.gitreview, the config's
     # rules), for the upstream URLs and the MediaWiki roles (core, links).
     resolved_for_kit = canonicals_for_kit(resolved, config.get("rules", []))
@@ -649,9 +655,16 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         links=link_plan(resolved_for_kit, overrides=config.get("link_overrides") or {}),
         readonly=readonly, requested=requested, primary=primary_dir,
         reset_all=args.reset_all)
+    plan["session"] = session_mod.session_plan(name, resolved_for_kit, readonly)
     try:
+        home = env.get("HOME") or os.path.expanduser("~")
+        session_mod.wmf_claude_setup(
+            name, phabricator_username(
+                run=run, env=env,
+                config_path=os.path.join(home, ".config", "wmf-claude", "config.json")),
+            lima=lima, env=env)
         mediawiki_mod.run_setup(name, plan, lima=lima, env=env)
-    except (mediawiki_mod.SetupError, lima_mod.LimaError) as e:
+    except (mediawiki_mod.SetupError, session_mod.SessionError, lima_mod.LimaError) as e:
         print(color_mod.error(f"error: {e}"), file=sys.stderr)
         print(f"  The VM, the clones and the host remotes are kept; fix the "
               f"problem with `wmf-sbx exec {name} -- ...`, or `wmf-sbx rm {name}`.",
@@ -659,14 +672,14 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         return 1
 
     print(f"\nSandbox {name} is ready (Lima instance {vm_mod.instance_name(name)}).\n"
+          f"  wmf-sbx resume {name}          start Claude Code in it\n"
           f"  wmf-sbx exec {name} -- CMD     run a command as the agent\n"
           f"  wmf-sbx status {name}          check it\n"
           f"  wmf-sbx stop|start {name}\n"
           f"  wmf-sbx rm {name}\n"
           + ("" if args.no_remotes else
-             f"  git fetch {name}               (on the host, in a repo) the agent's work\n")
-          + "Not yet on Lima: `wmf-sbx resume` and the Claude session (phase 6).",
-          file=sys.stderr)
+             f"  git fetch {name}               (on the host, in a repo) the agent's work\n"),
+          file=sys.stderr, end="")
     return 0
 
 

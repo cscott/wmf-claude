@@ -75,6 +75,7 @@ class FakeLima:
         self.invariants = invariants or [True] * len(vm.INVARIANTS)
         self.rc = rc
         self.templates = {}
+        self.configs = {}
 
     def instances(self):
         return dict(self.vms)
@@ -109,6 +110,12 @@ class FakeLima:
     def copy(self, src, dst, recursive=False):
         self.calls.append(("copy", src, dst, recursive))
 
+    def config_text(self, name, env=None):
+        return self.configs.get(name, "")
+
+    def edit(self, name, expression):
+        self.calls.append(("edit", name, expression))
+
     def call(self, *args, check=True, capture=True, input=None, text=True):
         self.calls.append(("call",) + tuple(args))
         argv = list(args)
@@ -116,6 +123,8 @@ class FakeLima:
                                                        or "WMF_SBX_HOST_UID" in a for a in argv):
             out = "\n".join(f"{i}:{'ok' if ok else 'FAIL'}" for i, ok in enumerate(self.invariants))
             return Done(stdout=out)
+        if argv[0] == "shell" and any("mktemp /dev/shm/wmf-sbx-cred." in a for a in argv):
+            return Done(stdout="/dev/shm/wmf-sbx-cred.Xy12Ab\n")
         if argv[0] == "shell" and any("mktemp -d /tmp/wmf-sbx-cp" in a for a in argv):
             return Done(stdout="/tmp/wmf-sbx-cp.AbC123\n")
         if argv[0] == "shell" and argv[-3:-1] == ["test", "-d"]:

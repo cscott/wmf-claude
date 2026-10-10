@@ -344,7 +344,7 @@ def merge_settings(path, patch, run=subprocess.run):
             return False
     merged = deep_merge(existing, patch)
     if merged == existing:
-        print(f"{path} already has the kit's settings", file=sys.stderr)
+        print(f"{path} already has the settings", file=sys.stderr)
         return True
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -354,15 +354,10 @@ def merge_settings(path, patch, run=subprocess.run):
     except OSError as e:
         print(f"error: could not write {path} ({e})", file=sys.stderr)
         return False
-    # The install step runs as root (setup.install's default user), so
-    # without this the agent's own settings.json ends up root-owned and
-    # Claude Code cannot update it. The startup run is already the agent,
-    # where this is a no-op.
-    result = run(["sudo", "chown", f"{SANDBOX_USER}:{SANDBOX_USER}", path])
-    if result.returncode != 0:
-        print(f"warning: could not chown {path} (exit {result.returncode})",
-              file=sys.stderr)
-    print(f"merged the kit's settings into {path}", file=sys.stderr)
+    # Run as root, the agent's settings.json would be root-owned and
+    # Claude Code could not update it. As the agent this is a no-op.
+    give_to_agent(path, run=run)
+    print(f"merged the settings into {path}", file=sys.stderr)
     return True
 
 
@@ -1203,6 +1198,35 @@ def load_lima_plan(path):
     return plan
 
 
+def write_session(session, home=None, run=subprocess.run):
+    """The `session` part of a Lima plan (session.py): merge `env` into
+    the agent's ~/.claude/settings.json (D4), and write each file, a path
+    under the agent's home. Returns False if a step failed."""
+    home = home or os.path.expanduser("~")
+    ok = True
+    if session.get("env"):
+        settings = os.path.join(home, ".claude", "settings.json")
+        ok = merge_settings(settings, {"env": session["env"]}, run=run) and ok
+    for entry in session.get("files") or []:
+        rel = entry["path"]
+        if not rel.startswith("~/") or ".." in rel.split("/"):
+            print(f"error: refusing to write {rel!r}: not a path under ~/", file=sys.stderr)
+            ok = False
+            continue
+        path = os.path.join(home, rel[2:])
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(entry["content"])
+        except OSError as e:
+            print(f"error: could not write {path} ({e})", file=sys.stderr)
+            ok = False
+            continue
+        give_to_agent(path, run=run)
+        print(f"wrote {path}", file=sys.stderr)
+    return ok
+
+
 def run_lima_setup(argv, run=subprocess.run, log=None):
     """`--lima PLAN.json`: the MediaWiki setup in a Lima sandbox, run by
     `wmf-sbx create` as the agent, outside nono, before the first session
@@ -1218,6 +1242,10 @@ def run_lima_setup(argv, run=subprocess.run, log=None):
         return 1
     core_path, core_readonly, links, clones, parsoid_path = lima_repo_roles(plan)
     warnings = []
+    # The session files first: they need nothing from the slow part, and a
+    # failed composer run should still leave a usable session.
+    if plan.get("session") and not write_session(plan["session"], run=run):
+        warnings.append("the session settings or files were not all written")
     status = mediawiki_setup(plan, core_path, core_readonly, links, clones, warnings,
                              parsoid_path=parsoid_path, run=run)
     if warnings:

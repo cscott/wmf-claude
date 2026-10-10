@@ -97,6 +97,19 @@ class Limactl:
     def delete(self, name):
         self.call("delete", "--force", name)
 
+    def edit(self, name, expression):
+        """`limactl edit --set EXPRESSION` (a yq expression) on a stopped
+        instance. It takes effect at the next start."""
+        self.call("edit", "--tty=false", name, "--set", expression)
+
+    def config_text(self, name, env=None):
+        """The instance's lima.yaml, or "" if it is not there."""
+        try:
+            with open(os.path.join(lima_home(env), name, "lima.yaml"), encoding="utf-8") as f:
+                return f.read()
+        except OSError:
+            return ""
+
     def disk_path(self, name, env=None):
         """The instance's boot disk. Lima 2.x calls it `disk`; `diffdisk`
         is the name before 2.0 (HANDOFF-LIMA.md, the measurement run)."""

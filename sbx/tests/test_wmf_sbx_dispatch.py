@@ -158,12 +158,15 @@ class DispatchTests(unittest.TestCase):
                 self.run_wmf_sbx(args)
         self.assertEqual(read_log(self.sbx_log), [])
 
-    def test_resume_and_run_are_not_ported_yet(self):
+    def test_resume_and_run_reach_their_siblings(self):
         for verb in ("resume", "run"):
             with self.subTest(verb=verb):
-                r = self.run_wmf_sbx([verb, "x"])
-                self.assertEqual(r.returncode, 1)
-                self.assertIn("not ported to Lima yet", r.stderr)
+                self.add_sibling(verb)
+                r = self.run_wmf_sbx([verb, "x", "--", "-p", "hi"])
+                self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual([e["name"] for e in read_log(self.sibling_log)],
+                         ["wmf-sbx-resume", "wmf-sbx-run"])
+        self.assertEqual(read_log(self.sbx_log), [])
 
     def test_docker_only_verbs_are_retired(self):
         for verb in ("refresh-claude-md", "settings", "ports"):

@@ -12,7 +12,7 @@ you have, then read the section for the kind of repo you are changing:
 - **If you are working on Parsoid**, read §4 and §6. If your change can alter
   what Parsoid renders for an extension, read the parser-test part of §3 too.
 
-Each command was run end to end in a `wmf-sbx-create` sandbox holding
+Each command was run end to end in a `wmf-sbx create` sandbox holding
 Translate, Cite and Parsoid, plus the `core`, `Vector` and
 `UniversalLanguageSelector` checkouts the dependency walk added. The timings
 come from that run, on a 16-core host, with caches warm. Where a command was
@@ -56,7 +56,7 @@ At `sbx create` time:
   to start (§6).
 
 If a `vendor/` or `node_modules/` is missing, the setup log
-(`/var/log/wmf-sbx-setup.log`) says why. You do not need to install,
+(`~/.wmf-sbx/wmf-sbx-setup.log`) says why. You do not need to install,
 configure, or symlink anything else before you run a PHP test.
 
 ## 1. First: find out what you were given
@@ -151,7 +151,7 @@ All three drive the running wiki. See §5 for setup, then:
 ```bash
 cd "$MW_INSTALL_PATH"
 npx grunt karma:chrome --qunit-component=MediaWiki
-npx wdio ./tests/selenium/wdio.conf.js --spec tests/selenium/specs/page.js   # 6 tests, 15 s
+CI=true npx wdio ./tests/selenium/wdio.conf.js --spec tests/selenium/specs/page.js   # 6 tests, 15 s
 npx mocha --timeout 0 tests/api-testing/action/Edit.js                       # 23 tests, 3 s
 ```
 
@@ -317,7 +317,7 @@ does not tell you the harness. Parsoid has an api-testing suite of its own
 repo:
 
 ```bash
-cd <repo> && CI=true TMPDIR=/tmp/wdio npx wdio tests/selenium/wdio.conf.js   # Popups: 3 tests, 7 s
+cd <repo> && CI=true npx wdio tests/selenium/wdio.conf.js   # Popups: 3 tests, 7 s
 ```
 
 Cite's `selenium-test` runs **Cypress**, which needs its own
@@ -389,14 +389,14 @@ url="$MW_SERVER/index.php?title=Special:Version"
 if curl -s --noproxy '*' -o /dev/null "$url"; then
   echo "already running"                 # from earlier in the session: use it
 else
-  composer serve > /tmp/mw-serve.log 2>&1 &
+  composer serve > "$TMPDIR/mw-serve.log" 2>&1 &
   pid=$!
   # The server takes a few seconds to answer the first time; a curl right
   # after the `&` gets "connection refused" (000, exit 7). Poll, do not sleep:
   for i in $(seq 30); do
     code=$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' "$url")
     [ "$code" = 200 ] && break
-    kill -0 "$pid" 2>/dev/null || { cat /tmp/mw-serve.log; break; }   # it died
+    kill -0 "$pid" 2>/dev/null || { cat "$TMPDIR/mw-serve.log"; break; }   # it died
     sleep 1
   done
   echo "$code"   # 200
@@ -406,7 +406,8 @@ fi
 Leave it running, and do not start a second one. A second `composer serve`
 exits at once with `Failed to listen on 127.0.0.1:4000 (reason: Address
 already in use)`, while a plain poll still gets 200 from the first. Its
-log is `/tmp/mw-serve.log`.
+log is `$TMPDIR/mw-serve.log`. Keep logs and scratch files in `$TMPDIR`:
+the sandbox lets you write `/tmp` but not read it back.
 
 ### 5.2 Install Chrome, once per sandbox
 
@@ -414,13 +415,18 @@ log is `/tmp/mw-serve.log`.
 mw-install-browser        # 20 to 50 s, about 420 MB
 ```
 
-No browser is in the image, and apt has none: `chromium` has no candidate,
-and `chromium-browser` and `firefox` are snap stubs. `mw-install-browser`
-installs the current stable Chrome for Testing and its chromedriver, installs
-the shared libraries Chrome needs, and links them at `/usr/bin/chromium` and
-`/usr/bin/chromedriver`, the paths WMF CI uses. MediaWiki pins no browser
-version: CI uses whatever Chromium its image has, and wdio asks for the
-current stable release.
+No browser is in the image. `mw-install-browser` installs the current
+stable Chrome for Testing and its chromedriver in `~/.cache`, and checks
+that they start. `/usr/bin/chromium` and `/usr/bin/chromedriver`, the paths
+WMF CI uses, run them. You need no sudo, and the libraries are already in
+the image: if the script says one is missing, report it and stop. MediaWiki
+pins no browser version: CI uses whatever Chromium its image has, and wdio
+asks for the current stable release.
+
+`/usr/bin/chromium` always adds `--no-sandbox`. Chrome's own sandbox cannot
+start inside this sandbox, which already contains the browser. A Chrome
+that you start by another path stops with `No usable sandbox` unless you
+pass `--no-sandbox` yourself.
 
 Test that it works before you debug a browser suite:
 `/usr/bin/chromium --headless --dump-dom about:blank`.
@@ -441,24 +447,26 @@ npx grunt karma:chrome --qunit-component=<Name>   # MediaWiki for core
 - Without `--qunit-component` you get core's entire suite as well.
 - karma finds Chrome through `$CHROME_BIN` only. If that is unset, it fails
   with `No binary for ChromeHeadless browser on your platform`.
-- No `CHROMIUM_FLAGS` are necessary here: Chrome's own sandbox works in this
-  container.
+- No `CHROMIUM_FLAGS` are necessary here: `$CHROME_BIN` adds `--no-sandbox`
+  (§5.2).
 
 ### 5.4 Selenium (wdio)
 
 ```bash
 cd "$MW_INSTALL_PATH"
-npx wdio ./tests/selenium/wdio.conf.js --spec tests/selenium/specs/page.js
+CI=true npx wdio ./tests/selenium/wdio.conf.js --spec tests/selenium/specs/page.js
 ```
 
-The environment already supplies what `wdio-mediawiki` reads. wdio itself
-downloads the current stable Chrome and chromedriver into `$TMPDIR` on the
-first run, from `googlechromelabs.github.io` and `storage.googleapis.com`
-(6 tests in 15 s, download included). It runs headless because `DISPLAY`
-is unset. Failed commands write screenshots to `tests/selenium/log/`.
+**Always set `CI=true` for wdio.** Then `wdio-mediawiki` uses the Chrome
+and chromedriver from §5.2 and passes `--no-sandbox`. Without it, wdio
+downloads its own Chrome into `$TMPDIR` and starts it without
+`--no-sandbox`, and that Chrome stops at once (`No usable sandbox`, then
+`Chrome instance exited`). `CI=true` also raises `maxInstances` to 75% of
+the CPUs.
 
-To use the Chrome from §5.2 instead of wdio's own download, set `CI=true`.
-That also raises `maxInstances` to 75% of the CPUs.
+The environment already supplies the rest of what `wdio-mediawiki` reads.
+It runs headless because `DISPLAY` is unset. Failed commands write
+screenshots to `tests/selenium/log/`.
 
 ### 5.5 api-testing
 
@@ -505,8 +513,7 @@ mw-install-cypress <repo>     # about 15 s and 800 MB the first time
 cd <repo> && npm run selenium-test
 ```
 
-`mw-install-cypress` installs Xvfb and the libraries that Cypress needs,
-puts the binary in the cache folder that the repo's scripts name (Cite:
+`mw-install-cypress` puts the binary in the cache folder that the repo's scripts name (Cite:
 `tests/cypress/.cache`, which git ignores), and runs `cypress verify`. The
 install is per repo. The wiki from §5.1 must be running. Cypress uses its
 bundled Electron and does not need §5.2. To use the §5.2 Chrome, give it
@@ -539,9 +546,10 @@ it.
    `/` alone.
 3. **`npm ci` where cypress is a devDependency** — §3.
 4. **phan errors about sibling extensions** — §3.
-5. **`Chrome instance exited` from wdio**, with a long `$TMPDIR`. Chrome
-   puts a socket under `$TMPDIR`, and a Unix socket path has a length limit
-   of about 108 bytes. Run with a short one: `TMPDIR=/tmp/wdio npx wdio ...`.
+5. **`Chrome instance exited` from wdio**: you left out `CI=true` (§5.4),
+   or you set a long `$TMPDIR`. Chrome puts a socket under `$TMPDIR`, and a
+   Unix socket path has a length limit of about 108 bytes. Keep the
+   session's own `$TMPDIR`, which is short; `/tmp` itself is not readable.
 6. **A Cypress run with 0 specs that "passes"** — §5.6. Specs whose
    extension is not loaded do not run. Do not substitute a different
    harness for Cypress and report it as equivalent.
@@ -572,6 +580,6 @@ it.
 
 | You are working on | PHPUnit | Lint | Jest | Browser and API |
 |---|---|---|---|---|
-| mediawiki-core | from core: `composer phpunit:entrypoint -- <path>` | from core: `composer test`, `npm test` | from core: `npm run jest` | from core: `npx grunt karma:chrome --qunit-component=MediaWiki`, `npx wdio …`, `npx mocha …` |
+| mediawiki-core | from core: `composer phpunit:entrypoint -- <path>` | from core: `composer test`, `npm test` | from core: `npm run jest` | from core: `npx grunt karma:chrome --qunit-component=MediaWiki`, `CI=true npx wdio …`, `npx mocha …` |
 | an extension or skin | from core: `composer phpunit:entrypoint -- extensions/<Name>/tests/phpunit` | from repo: `composer test`, `npm test` | from repo, only if `package.json` has a script | QUnit from core: `--qunit-component=<Name>`; selenium and api-testing from repo, if defined |
 | Parsoid | from repo: `composer phpunit`, `composer parserTests` | from repo: `composer lint`, `npm test` | — | — |

@@ -308,6 +308,23 @@ class BuilderTests(unittest.TestCase):
         self.assertGreater(script.index("rm -f /usr/local/share/ca-certificates/cloud-init-ca-cert-*.crt"), seal)
         self.assertGreater(script.index("update-ca-certificates --fresh"), seal)
 
+    def test_the_browser_wrappers_run_what_the_helper_links(self):
+        # The agent has no sudo: the image owns /usr/bin/chromium and
+        # /usr/bin/chromedriver, and mw-install-browser fills the links.
+        with open(image.BUILD_SCRIPT, encoding="utf-8") as f:
+            script = f.read()
+        links = re.search(r"^BROWSER_LINKS=(\S+)$", script, re.M).group(1)
+        self.assertIn("flags=' --no-sandbox'", script)
+        for name in ("mw-install-browser", "mw-install-cypress"):
+            with open(image.helper_files()[name], encoding="utf-8") as f:
+                helper = f.read()
+            code = [line for line in helper.splitlines() if not line.lstrip().startswith("#")]
+            self.assertFalse([line for line in code if re.search(r"\bsudo\b", line)], name)
+            if name == "mw-install-browser":
+                self.assertIn(f'LINKS="${{WMF_SBX_BROWSER_LINKS:-{links}}}"', helper)
+        for pkg in ("xvfb", "xauth", "libgtk-3-0t64", "libnss3", "libasound2t64", "libgbm1"):
+            self.assertIn(pkg, image.IMAGE_PACKAGES)
+
     def test_proxies_on_loopback_are_rewritten_for_the_guest(self):
         env = {"https_proxy": "http://127.0.0.1:3128", "HTTP_PROXY": "http://localhost:8080/",
                "no_proxy": "localhost,127.0.0.1", "HOME": "/x",

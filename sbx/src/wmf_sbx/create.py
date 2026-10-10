@@ -654,7 +654,8 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         resolved_for_kit,
         links=link_plan(resolved_for_kit, overrides=config.get("link_overrides") or {}),
         readonly=readonly, primary=primary_dir)
-    plan["session"] = session_mod.session_plan(name, resolved_for_kit, readonly)
+    plan["session"] = session_mod.session_plan(
+        name, resolved_for_kit, readonly, identity=session_mod.git_identity(run=run))
     try:
         home = env.get("HOME") or os.path.expanduser("~")
         session_mod.wmf_claude_setup(

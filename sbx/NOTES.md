@@ -9652,6 +9652,69 @@ Findings:
 - `npm ci` removes and reinstalls `node_modules` on each run, so a
   second setup run costs the npm time again.
 
+## 111. Phase 6 of the Lima port: the Claude session **[2026-10-10]**
+
+Commits 3f6864c (resume, session, lima-sbx text), ceba211 (grants),
+51f7753, a7799c4 (Docker kit session code deleted).
+
+How it works (lima-port/HANDOFF-LIMA.md §8, D6):
+
+- `wmf-sbx resume NAME [LAUNCHER-FLAG ...] [-- CLAUDE-ARG ...]` (and
+  `run --name NAME`): starts the VM if needed (with the proxy-port
+  refresh), checks the invariants, and runs `session.launcher_argv` in
+  the VM: the agent runs upstream's `bin/claude` in the primary clone,
+  with `WMF_CLAUDE_SANDBOX_BACKEND=lima-sbx`. `--continue` once a
+  conversation exists.
+- The credential: the host's `$ANTHROPIC_API_KEY`,
+  `$CLAUDE_CODE_OAUTH_TOKEN` or `~/.config/wmf-sbx/claude-oauth-token`
+  (0600), on stdin into a 0600 file in the guest's `/dev/shm`; the
+  launcher reads and deletes it. Checked: no file is left, and the value
+  is in no command line (unit test).
+- At create, as the agent: `bin/wmf-claude-setup` (MCP servers, nono's
+  base pack, the Phabricator username from the host's config), then
+  `setup.py --lima` writes the session files: `~/.claude/CLAUDE.md`,
+  `~/MEDIAWIKI-TESTING.md`, the settings `env` (D4, with
+  `COMPOSER_HOME`).
+
+Findings (RAN, QEMU TCG, nono 0.78.0, the wmf-engineer profile, a 3-day
+Console API key):
+
+1. **The profile grants no Linux system path that the tools read.**
+   `claude` itself got EACCES (`/opt/claude-code`, behind
+   `/usr/local/bin`); PHP loaded no extension without `/etc/php`, so
+   `composer serve` stopped; every git command stopped without
+   `/etc/gitconfig`. The launcher grants them (and `/opt/node`,
+   `/etc/bash.bashrc`). Proposal for upstream: the same `read` entries
+   for Linux in `profiles/wmf-engineer.json`.
+2. **The agent's caches.** `--allow ~/.cache ~/.npm`. Not
+   `~/.config/composer`: the profile denies its `auth.json`, and nono
+   refuses to start ("Landlock deny-overlap is not enforceable on
+   Linux"). `COMPOSER_HOME` is `~/.cache/composer-home` instead.
+3. **A host proxy needs `--upstream-proxy`.** nono's own proxy connects
+   directly; behind a host proxy that fails ("the proxy refused the
+   tunnel"). With `--upstream-proxy 192.168.5.2:PORT` it works.
+4. **The proxy port baked into the VM.** A cloud container restart
+   changed the host proxy's port, and the host block then refused the
+   new one. `start` and `resume` now update the provisioning (`limactl
+   edit`) before they boot a stopped VM.
+5. `~/.bashrc` is in the profile's deny list, so each Bash tool call
+   prints one "Permission denied" line. Left as is: the deny is
+   deliberate.
+6. `/tmp` is write-only in a session (`$TMPDIR` is the readable one); the
+   lima-sbx text says so.
+7. To do in phase 7: `mw-install-browser` and `mw-install-cypress` run
+   `sudo` (apt, links in `/usr/bin`), which a contained agent cannot.
+
+Checked in a real session (the Translate sandbox of §110, the lima-sbx
+files copied in by hand for that test only): the SessionStart text and
+`~/.claude/CLAUDE.md` are in the context; `mcp list`: phabricator,
+gerrit and gitlab connected; a Phabricator tool call returned T1's title;
+Claude started `composer serve` and got 200 from `Special:Version` and
+the extension list (Translate, UniversalLanguageSelector, Vector); git
+works; `MW_SERVER`, `MW_INSTALL_PATH` and `COMPOSER_HOME` are set.
+
+@@RESULTS@@
+
 ## Still to do
 
 - [x] Implement `sbx/DESIGN-setup-steps.md` — everything after the

@@ -98,8 +98,13 @@ class LauncherTests(unittest.TestCase):
         self.assertIn(("--allow", "/home/me/src/core"), pairs)
         self.assertIn(("--read", "/home/me/src/Vector"), pairs)
         self.assertNotIn(("--allow", "/home/me/src/Cite"), pairs)
-        for path in ("/run/wmf-sbx/host", "/opt/claude-code", "/opt/node"):
+        for path in ("/run/wmf-sbx/host", "/opt/claude-code", "/opt/node", "/etc/php"):
             self.assertIn(("--read", path), pairs)
+        self.assertIn(("--read-file", "/etc/gitconfig"), pairs)
+        self.assertIn(("--allow", "/home/agent/.npm"), pairs)
+        self.assertNotIn(("--read-file", "/home/agent/.bashrc"), pairs)
+        # A deny under an allowed path stops nono (Landlock).
+        self.assertNotIn(("--allow", "/home/agent/.config/composer"), pairs)
         for domain in ("registry.npmjs.org", "repo.packagist.org"):
             self.assertIn(("--allow-domain", domain), pairs)
 

@@ -20,8 +20,7 @@ set -euo pipefail
 # any command this starts.
 unset SSH_AUTH_SOCK
 
-VERBS="cp create exec image ls ls-remotes resolve rm start status stop"
-NOT_YET="resume run"
+VERBS="cp create exec image ls ls-remotes resolve resume rm run start status stop"
 RETIRED="refresh-claude-md settings ports policy kit secret"
 
 usage() {
@@ -47,13 +46,6 @@ case " $VERBS " in
     ;;
 esac
 
-case " $NOT_YET " in
-  *" $verb "*)
-    echo "wmf-sbx: '$verb' is not ported to Lima yet (lima-port/HANDOFF-LIMA.md" \
-         "§11, phase 6). Use 'wmf-sbx exec NAME -- CMD' for now." >&2
-    exit 1
-    ;;
-esac
 case " $RETIRED " in
   *" $verb "*)
     echo "wmf-sbx: '$verb' belonged to the Docker sbx backend and is retired." >&2

@@ -111,6 +111,13 @@ to D12, and tracks A and B, which are not repeated here).
   `--credential`, or the host proxy of track A); the old sbx secret-swap design does not
   apply.
 
+- [ ] **Broaden `WMF_CLAUDE_STE=0`** to the other places that ask for ASD-STE100: the
+  `write-commit-msg` skill, the `mediawiki-dev` agent, and the `templates/CLAUDE.md` and
+  `templates/mediawiki/CLAUDE.md` starters. Today it drops only the SessionStart bullet
+  (enough for now, cananian 2026-10-11). Skills and agents are static text: they could say
+  "unless the SessionStart context says not to", or the hook could add a line that overrides
+  them.
+
 ### Upstream work and repo hygiene
 
 - [ ] **Follow MRs !130, !131, !132**: the branch's base (`lima-port-base`)

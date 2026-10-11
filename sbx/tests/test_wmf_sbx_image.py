@@ -8,6 +8,7 @@ real build was run once in a VM (lima-port/HANDOFF-LIMA.md §11, phase 2).
 """
 
 import copy
+import datetime
 import json
 import os
 import re
@@ -134,7 +135,7 @@ class InputTests(unittest.TestCase):
 
     def test_claude_release_takes_stable_and_the_manifest_checksum(self):
         urls = []
-        version, sha = image.claude_release("x86_64", fetch=fake_fetch(urls))
+        version, sha = image.claude_release("x86_64", fetch=fake_fetch(urls), env={})
         self.assertEqual((version, sha), ("2.1.286", CLAUDE_SHA))
         self.assertEqual(urls[0], image.CLAUDE_RELEASES + "/stable")
 
@@ -165,7 +166,7 @@ class InputTests(unittest.TestCase):
         def fetch(url):
             return "2.1.286" if url.endswith("/stable") else json.dumps({"platforms": {}})
         with self.assertRaisesRegex(image.ImageError, "no checksum"):
-            image.claude_release("x86_64", fetch=fetch)
+            image.claude_release("x86_64", fetch=fetch, env={})
 
     def test_the_packages_extend_the_kit_and_add_no_docker(self):
         for p in kit.BASE_PACKAGES:
@@ -208,7 +209,7 @@ class InputTests(unittest.TestCase):
             self.assertEqual(argv[:2], ["git", "-C"])
             return Done(stdout="0123456789ab\n")
         inputs = image.image_inputs(arch="x86_64", fetch=fake_fetch(), run=run,
-                                    uid=30033, gid=30033)
+                                    uid=30033, gid=30033, env={})
         self.assertEqual(set(inputs), {"schema", "arch", "agent", "base", "packages", "nono",
                                        "node", "php_ast", "claude", "tree", "helpers",
                                    "build_script"})
@@ -217,6 +218,21 @@ class InputTests(unittest.TestCase):
         self.assertEqual(inputs["nono"], image.nono_version())
         self.assertEqual(inputs["tree"], "0123456789ab")
         self.assertEqual(inputs["claude"]["platform"], "linux-x64")
+
+    def test_the_override_replaces_the_head_commit(self):
+        def run(argv, **kw):
+            raise AssertionError("git must not run")
+        env = {image.TREE_OVERRIDE_VAR: "v2"}
+        self.assertEqual(image.tree_revision(run=run, env=env), "v2")
+        for bad in ("../x", "v 2", "-v2", "x" * 65):
+            with self.subTest(bad=bad), self.assertRaises(image.ImageError):
+                image.tree_revision(run=run, env={image.TREE_OVERRIDE_VAR: bad})
+
+    def test_without_the_override_the_key_has_the_head_commit(self):
+        def run(argv, **kw):
+            return Done(stdout="0123456789ab\n")
+        self.assertEqual(image.tree_revision(run=run, env={image.TREE_OVERRIDE_VAR: " "}),
+                         "0123456789ab")
 
     def test_the_key_is_stable_and_changes_with_every_input(self):
         base = sample_inputs()
@@ -440,9 +456,18 @@ class CacheTests(TempEnv):
             self.make_entry(k)
         self.use_image("wiki1", "aaaaaaaaaaaaaaaa")
         gone = image.prune_images(keep={"bbbbbbbbbbbbbbbb"}, env=self.env)
-        self.assertEqual(gone, ["cccccccccccccccc"])
+        self.assertEqual([k for k, _n in gone], ["cccccccccccccccc"])
+        self.assertGreater(gone[0][1], 0)
         self.assertEqual({k for k, _ in image.list_images(self.env)},
                          {"aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb"})
+
+    def test_prune_with_min_age_keeps_young_and_undated_images(self):
+        self.make_entry("aaaaaaaaaaaaaaaa", created="2026-10-09T00:00:00+00:00")
+        self.make_entry("bbbbbbbbbbbbbbbb", created="2026-10-09T11:30:00+00:00")
+        self.make_entry("cccccccccccccccc", created="")
+        now = datetime.datetime(2026, 10, 9, 12, 0, tzinfo=datetime.timezone.utc)
+        gone = image.prune_images(env=self.env, min_age=datetime.timedelta(hours=1), now=now)
+        self.assertEqual([k for k, _n in gone], ["aaaaaaaaaaaaaaaa"])
 
     def test_a_broken_state_file_does_not_stop_rm(self):
         self.make_entry("aaaaaaaaaaaaaaaa")
@@ -539,6 +564,8 @@ class BuildTests(TempEnv):
             with open(argv[-1], "wb") as f:
                 f.write(b"exported")
             return Done()
+        if argv[:2] == ["git", "-C"] and "rev-parse" in argv:
+            return Done(stdout="feedface0123\n")
         if argv[:2] == ["qemu-img", "info"]:
             return Done(stdout=json.dumps({"format": "qcow2", "virtual-size": 21474836480,
                                            "format-specific": {"data": {}}}))
@@ -558,6 +585,7 @@ class BuildTests(TempEnv):
             manifest = json.load(f)
         self.assertEqual(manifest["inputs"], self.inputs)
         self.assertEqual(manifest["key"], self.key)
+        self.assertEqual(manifest["commit"], "feedface0123")
         name = image.builder_name(self.key)
         self.assertEqual(fake.calls[-1], ("delete", name))
         self.assertEqual(fake.template["images"], [self.inputs["base"]])

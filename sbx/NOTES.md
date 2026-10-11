@@ -276,8 +276,16 @@ to D12, and tracks A and B, which are not repeated here).
 - In a session the proxy port needs `--landlock-only` (already on) and a per-session
   `--open-port`; nftables needs an accept for 192.168.5.2:PORT in `block` and
   `agent_egress` (`PROXY_PORTS`).
-- Still to measure on the engineer's host (`lima-port/checks/credential-l1.sh token|live|
-  apikey`): a `setup-token` token, the host's live login, and option N.
+- On the engineer's host (Linux, KVM; `credential-l1.sh`) all three sources work through the
+  proxy, outside nono and in a session: a `setup-token` token and the live login
+  (`~/.claude/.credentials.json`) as `Authorization: Bearer`, a key as `x-api-key`. In
+  OAuth mode too, the base URL gets only `POST /v1/messages` and the open `/api/hello`;
+  nothing failed for want of other endpoints.
+- Option N (nono `--credential anthropic`): the agent sees `ANTHROPIC_BASE_URL=
+  http://127.0.0.1:PORT/anthropic` and a 64-character phantom, not the key. But the key is
+  in the VM (the `/dev/shm` hand-over, the environment of the wrapper and of nono's
+  supervisor), and the built-in service is API-key only. **Chosen: H** (L1 done).
+- Not yet measured: a live-login session across a token refresh (L3).
 
 ### nono, Landlock and the session
 

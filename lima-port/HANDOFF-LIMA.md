@@ -1310,8 +1310,9 @@ phase A3. Every sandbox gets a full copy of the golden image (D2).
    `mw-install-browser` and `mw-install-cypress` work without sudo.
 7. **MVP acceptance:** the blind run (`lima-port/acceptance/`), in a
    contained sandbox, on `vz` and on QEMU. **Done on QEMU** (two runs,
-   `sbx/NOTES.md`); `vz` and the real-hardware checks
-   (`lima-port/checks/real-hardware.sh`) remain.
+   `sbx/NOTES.md`), and the real-hardware checks
+   (`lima-port/checks/real-hardware.sh`) pass on Linux with KVM.
+   `vz` remains.
 
 ### Tests that need a Mac (ask Kosta)
 
@@ -1348,10 +1349,11 @@ QEMU and macOS versions with the results.
 - **D12, optional:** APFS `cp -c` (clonefile) copies of a stopped raw
   golden disk into a `vz` instance's `disk`.
 
-### After the MVP: two independent tracks
+### After the MVP: three independent tracks
 
-Both tracks touch only QEMU sandboxes, and neither depends on the other.
-Do them in either order, or in parallel.
+Tracks A and B touch only QEMU sandboxes, and neither depends on the
+other. Track C (development inside a sandbox) depends on neither. Do
+them in any order, or in parallel.
 
 **Track A: `--sudo` (D9 + D11)**
 
@@ -1418,7 +1420,84 @@ a filtering DNS forwarder, sbx/NOTES.md) may go.
   sandboxes still boot on the old file, and that `prune` keeps it until
   they are gone.
 
-**After both tracks**
+**Track C: develop wmf-sbx inside a sandbox (nested Lima)**
+
+Goal: the work on wmf-sbx itself runs in a wmf-sbx sandbox, with the
+agent under nono, including the integration runs (image build, create,
+blind runs) in VMs nested inside it. The step names are N1, N2, ... so
+that they do not clash with C1 and C2 below.
+
+What is known (RAN 2026-10-11, cananian's Linux host, AMD, KVM):
+
+- QEMU in QEMU works without KVM (all of phases 2 to 7 ran under TCG,
+  in a Firecracker VM), but slowly: blind runs took 4 to 8 hours, with
+  occasional segfaults.
+- Nested KVM is there with no change: the host has
+  `kvm_amd nested=1`, and a sandbox (`hw-check`) has `svm` in
+  `/proc/cpuinfo`, `/dev/kvm` (`root:kvm`, 0660) and the `kvm` module.
+  Lima on Linux runs QEMU with `-cpu host` under KVM.
+- On real hardware the checks that did not complete under TCG pass
+  (`lima-port/checks/real-hardware.sh`): core QUnit 897 tests in 7 s,
+  core wdio 13/13 spec files in 22 s, Cite Cypress 3/3.
+- On a Mac, `vz` has nested virtualisation only on M3 or later with
+  macOS 15, and Lima must ask for it (`nestedVirtualization: true`).
+  Without it the inner VMs run under TCG.
+
+Decided (cananian, 2026-10-11): under nono, not `--sudo` (track A is not
+needed for this). Interim, until N3: the agent edits and runs the unit
+tests under nono; the engineer runs the integration steps with
+`wmf-sbx exec` in the outer sandbox.
+
+- **N1. Spike** (no code; in a disposable sandbox such as `hw-check`).
+  As `engineer`, install Lima and QEMU. Then, as the agent, run
+  `limactl start` of a small template: first with `wmf-sbx exec`
+  (outside nono), then in a session (`wmf-sbx resume`, with extra
+  launcher flags) until it works. Record what nono needs. Expected:
+  - `/dev/kvm` read-write (and the `kvm` group for the agent); check
+    whether nono restricts device ioctls (Landlock ABI 5);
+  - `~/.lima` read-write, with its unix sockets
+    (`--allow-unix-socket-dir-bind`);
+  - read access to QEMU's firmware and data (`/usr/share/qemu`,
+    `/usr/share/OVMF`, `/usr/share/seabios`);
+  - Lima's SSH port-forward to the inner VM: a free local port, which
+    should fall in the guest's ephemeral window (49152-53247, already
+    open) — check;
+  - egress of the inner VMs: QEMU's slirp connects from the outer
+    session, so it goes through nono's proxy as a loopback host proxy
+    (the setup this port already ran behind: `guest_proxy_env`,
+    `PROXY_PORTS`, `--upstream-proxy`). Check that the proxy URL's
+    credentials survive the rewrite. The outer allowlist needs, besides
+    the profile and `REGISTRY_DOMAINS`: `cloud.debian.org`,
+    `deb.debian.org`, `security.debian.org`, `nodejs.org`,
+    `downloads.claude.ai`, the nono pack registry, `github.com`
+    (php-ast). Exit: the list, in `sbx/NOTES.md`.
+- **N2. Implement:**
+  - the image: Lima and QEMU (`qemu-system-x86`/`-arm`, `qemu-utils`,
+    OVMF), the agent in the `kvm` group — or a separate, larger image
+    variant, so that ordinary sandboxes stay small and keep no
+    `/dev/kvm` access; decide in N1;
+  - `create --nested` (recorded in the state): a larger disk (sparse;
+    an image and one inner sandbox need about 25 GB) and memory
+    (16 GiB outer, inner sandboxes at `--memory 4GiB`), and, on `vz`,
+    `nestedVirtualization: true`;
+  - `resume`: for a nested sandbox, the grants and domains from N1, in
+    one place in `session.py`;
+  - submodules: the clone of a repo with submodules must initialise
+    them (wmf-claude's MCP servers; the same to-do as VisualEditor's),
+    or the image build refuses the tree;
+  - the invariants: `/dev/kvm` and the `kvm` group only in a nested
+    sandbox.
+- **N3. Acceptance:** in a nested sandbox, the agent, under nono, makes
+  a change to wmf-sbx, runs the unit tests, builds an image, creates an
+  inner sandbox, and runs `lima-port/checks/real-hardware.sh` against
+  it. Compare the times with the host's.
+
+Security: `/dev/kvm` is a large kernel interface, but it is the outer
+VM's kernel, which the agent already shares; the outer VM's nftables and
+nono still bound the network. Record the change in `sbx/SECURITY.md`
+when N2 lands. `tests/test-profile.sh` still runs on a host only.
+
+**After tracks A and B**
 
 - **C1. Delete** the Docker-backend code. **Split and moved earlier
   (cananian, 2026-10-09).** The first reason to wait (the Docker backend

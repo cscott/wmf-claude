@@ -3,6 +3,11 @@
 # adjust paths for your own layout -- this file has no special status,
 # it's just a starting point (and a test fixture for wmf_sbx_resolve.py).
 
+# Settings for every new sandbox (sbx/README.md, "Preferences").
+session:
+  model: opus
+  permission_mode: acceptEdits   # or bypassPermissions, plan, auto, default
+
 rules:
   # Exact, one-off mappings (no wildcard) always win over any wildcard rule
   # for the same path.

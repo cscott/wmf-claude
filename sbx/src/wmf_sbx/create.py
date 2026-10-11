@@ -502,6 +502,12 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
     except resolve_mod.ResolutionError as e:
         print(color_mod.error(f"error: {e}"), file=sys.stderr)
         return 1
+    try:
+        preferences = config.get("session") or {}
+        session_mod.preference_settings(preferences)
+    except session_mod.SessionError as e:
+        print(color_mod.error(f"error: {e}"), file=sys.stderr)
+        return 1
 
     for (spec, is_ro), (canonical, path, needs_clone) in zip(split, resolved):
         ro_note = " (read-only)" if is_ro else ""
@@ -645,7 +651,8 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         links=link_plan(resolved_for_kit, overrides=config.get("link_overrides") or {}),
         readonly=readonly, primary=primary_dir)
     plan["session"] = session_mod.session_plan(
-        name, resolved_for_kit, readonly, identity=session_mod.git_identity(run=run))
+        name, resolved_for_kit, readonly, identity=session_mod.git_identity(run=run),
+        preferences=preferences)
     try:
         home = env.get("HOME") or os.path.expanduser("~")
         session_mod.wmf_claude_setup(

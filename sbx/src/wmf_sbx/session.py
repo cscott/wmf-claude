@@ -21,6 +21,7 @@ environment while it runs.
 """
 
 import json
+import re
 import os
 import shlex
 import stat
@@ -113,6 +114,47 @@ class SessionError(Exception):
     """A user-facing problem with the session setup or the credential."""
 
 
+# The engineer's preferences for every new sandbox, from the `session:`
+# section of ~/.config/wmf-sbx/repos.yaml. They go into the agent's
+# ~/.claude/settings.json at create, so each sandbox starts with them.
+PERMISSION_MODES = ("default", "acceptEdits", "plan", "auto", "bypassPermissions")
+MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\[\]-]*$")
+
+
+def preference_settings(prefs):
+    """The settings.json patch for the `session:` preferences: `model`
+    and `permission_mode`. Raises SessionError for an unknown key or a bad
+    value, so that a typo stops the create before it builds anything.
+
+    bin/claude refuses every command-line spelling of the permission
+    bypass; in a sandbox it is the engineer's choice, made here once, in
+    settings. `skipDangerousModePermissionPrompt` skips Claude Code's
+    confirmation of that choice. The deny rules of wiring/settings-merge.json
+    still apply (bin/claude passes them with --settings)."""
+    prefs = prefs or {}
+    if not isinstance(prefs, dict):
+        raise SessionError("repos.yaml: `session:` must be a mapping")
+    unknown = sorted(set(prefs) - {"model", "permission_mode"})
+    if unknown:
+        raise SessionError(f"repos.yaml: unknown `session:` key(s): {', '.join(unknown)} "
+                           f"(want model, permission_mode)")
+    patch = {}
+    model = prefs.get("model")
+    if model is not None:
+        if not isinstance(model, str) or not MODEL_RE.match(model):
+            raise SessionError(f"repos.yaml: session.model {model!r} is not a model name")
+        patch["model"] = model
+    mode = prefs.get("permission_mode")
+    if mode is not None:
+        if mode not in PERMISSION_MODES:
+            raise SessionError(f"repos.yaml: session.permission_mode {mode!r}: want one of "
+                               f"{', '.join(PERMISSION_MODES)}")
+        patch["permissions"] = {"defaultMode": mode}
+        if mode == "bypassPermissions":
+            patch["skipDangerousModePermissionPrompt"] = True
+    return patch
+
+
 def token_file(env=None):
     env = os.environ if env is None else env
     base = env.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
@@ -182,7 +224,9 @@ def launcher_argv(state, cred_path=None, launcher_flags=(), claude_args=(),
               + list(launcher_flags) + ["--"] + list(claude_args))
     wrapper = ["bash", "-c", CREDENTIAL_WRAPPER, "_", cred_path or ""] + claude
     return vm_mod.agent_argv(wrapper, workdir=primary,
-                             env={"WMF_CLAUDE_SANDBOX_BACKEND": SANDBOX_BACKEND})
+                             env={"WMF_CLAUDE_SANDBOX_BACKEND": SANDBOX_BACKEND,
+                                  # no "Press Enter" pause after bin/claude's notices
+                                  "WMF_CLAUDE_NO_PAUSE": "1"})
 
 
 def put_credential(name, cred, lima=None):
@@ -336,13 +380,15 @@ def session_env(resolved_for_kit, readonly=(), identity=None):
     return env
 
 
-def session_plan(name, resolved_for_kit, readonly=(), identity=None):
+def session_plan(name, resolved_for_kit, readonly=(), identity=None, preferences=None):
     """The `session` part of the plan, which setup.py --lima writes as the
-    agent: settings `env`, and files under the agent's home."""
+    agent: settings `env` and the engineer's preferences, and files under
+    the agent's home."""
     with open(kit_mod.TESTING_GUIDE_SOURCE, encoding="utf-8") as f:
         guide = f.read()
     return {
         "env": session_env(resolved_for_kit, readonly, identity),
+        "settings": preference_settings(preferences),
         "files": [
             {"path": "~/.claude/CLAUDE.md", "content": home_claude_md(name)},
             {"path": f"~/{kit_mod.TESTING_GUIDE}", "content": guide},
@@ -369,8 +415,13 @@ def wmf_claude_setup(name, username, lima=None, env=None):
     config = json.dumps(phabricator_config(username)) + "\n"
     # The cache directories too: nono may refuse a grant for a path that
     # does not exist (ALLOW_GRANTS).
+    # landlock-only-ack: bin/claude asks once, per home, to acknowledge
+    # --landlock-only, which every sandbox session uses. In the VM the
+    # nftables host block keeps what that warning is about mostly closed
+    # (sbx/SECURITY.md §3), and a new sandbox would ask every time.
     write = vm_mod.agent_argv(["sh", "-c", "mkdir -p ~/.config/wmf-claude " + " ".join(
         shlex.quote(p) for p in ALLOW_GRANTS + (COMPOSER_HOME,))
+        + " && touch ~/.config/wmf-claude/landlock-only-ack"
         + " && cat > ~/.config/wmf-claude/config.json"])
     vm_mod.shell(name, write, lima=lima, input=config, check=False)
     proxy = image_mod.guest_proxy_env(env)

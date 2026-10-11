@@ -95,6 +95,7 @@ class LauncherTests(unittest.TestCase):
         # The wiki, karma, and the guest's ephemeral window (browser tools).
         self.assertIn("--local-web=4000,9876,49152-53247", launcher)
         self.assertIn(("--listen-port", "0"), list(zip(launcher, launcher[1:])))
+        self.assertIn("WMF_CLAUDE_NO_PAUSE=1", a)
         self.assertIn("--landlock-only", launcher)
         pairs = list(zip(launcher, launcher[1:]))
         self.assertIn(("--allow", "/home/me/src/core"), pairs)
@@ -164,6 +165,45 @@ class SessionFilesTests(unittest.TestCase):
             self.assertEqual(settings["model"], "x")
             with open(os.path.join(home, ".claude", "CLAUDE.md")) as f:
                 self.assertEqual(f.read(), "hi")
+
+    def test_write_session_merges_the_preference_settings(self):
+        with tempfile.TemporaryDirectory() as home:
+            run = lambda argv, **kw: subprocess.CompletedProcess(argv, 0)  # noqa: E731
+            self.assertTrue(setup.write_session(
+                {"env": {"A": "1"},
+                 "settings": session.preference_settings(
+                     {"model": "opus", "permission_mode": "bypassPermissions"})},
+                home=home, run=run))
+            with open(os.path.join(home, ".claude", "settings.json")) as f:
+                settings = json.load(f)
+            self.assertEqual(settings["env"], {"A": "1"})
+            self.assertEqual(settings["model"], "opus")
+            self.assertEqual(settings["permissions"], {"defaultMode": "bypassPermissions"})
+            self.assertIs(settings["skipDangerousModePermissionPrompt"], True)
+
+
+class PreferenceTests(unittest.TestCase):
+
+    def test_no_preferences_change_nothing(self):
+        self.assertEqual(session.preference_settings(None), {})
+        self.assertEqual(session.preference_settings({}), {})
+
+    def test_the_model_and_a_cautious_mode(self):
+        self.assertEqual(session.preference_settings(
+            {"model": "claude-opus-5-5[1m]", "permission_mode": "acceptEdits"}),
+            {"model": "claude-opus-5-5[1m]", "permissions": {"defaultMode": "acceptEdits"}})
+
+    def test_only_bypass_skips_the_confirmation(self):
+        self.assertNotIn("skipDangerousModePermissionPrompt",
+                         session.preference_settings({"permission_mode": "plan"}))
+        self.assertTrue(session.preference_settings(
+            {"permission_mode": "bypassPermissions"})["skipDangerousModePermissionPrompt"])
+
+    def test_bad_preferences_are_refused(self):
+        for prefs in ({"modle": "opus"}, {"model": "opus; rm -rf /"}, {"model": 5},
+                      {"permission_mode": "yolo"}, ["model"]):
+            with self.assertRaises(session.SessionError, msg=prefs):
+                session.preference_settings(prefs)
 
 
 class GitIdentityTests(unittest.TestCase):
@@ -348,6 +388,8 @@ class CreateSessionTests(Env):
                          self.err)
         shells = lima.shells()
         self.assertTrue(any(session.WMF_CLAUDE_SETUP in s for s in shells))
+        # bin/claude's one-time --landlock-only acknowledgement is made at create.
+        self.assertTrue(any("landlock-only-ack" in " ".join(s) for s in shells))
         # The image pins Claude Code; setup must not install another one.
         self.assertTrue(any(session.WMF_CLAUDE_SETUP in s and "WMF_CLAUDE_SKIP_UPDATE=1" in s
                             for s in shells))

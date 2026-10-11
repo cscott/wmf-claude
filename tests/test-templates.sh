@@ -833,6 +833,16 @@ if ! grep -q 'managed Docker broker' <<<"$out" && ! grep -q 'no broker handshake
   pass "--docker after -- is not treated as a wrapper flag"; else fail "--docker after -- was wrongly consumed"; fi
 rm -rf "$DOCKER_CWD"
 
+echo "--- session-start hook: WMF_CLAUDE_STE ---"
+ste_default="$(WMF_DOCKER_BROKER_URL='' bash "$REPO_ROOT/bin/session-start.sh")"
+ste_off="$(WMF_CLAUDE_STE=0 WMF_DOCKER_BROKER_URL='' bash "$REPO_ROOT/bin/session-start.sh")"
+if grep -q 'ASD-STE100' <<<"$ste_default" && ! grep -q 'ASD-STE100' <<<"$ste_off" \
+   && [[ "$(grep -v 'ASD-STE100' <<<"$ste_default")" == "$ste_off" ]]; then
+  pass "session-start with WMF_CLAUDE_STE=0 drops only the STE bullet"
+else
+  fail "session-start with WMF_CLAUDE_STE=0 did not drop exactly the STE bullet"
+fi
+
 echo "--- session-start hook: Docker broker routing ---"
 # The hook is the always-present, repo-agnostic signal that tells Claude to run
 # dev tools via mwdocker. It must stay silent unless the broker is attached.

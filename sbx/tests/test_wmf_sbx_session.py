@@ -348,6 +348,9 @@ class CreateSessionTests(Env):
                          self.err)
         shells = lima.shells()
         self.assertTrue(any(session.WMF_CLAUDE_SETUP in s for s in shells))
+        # The image pins Claude Code; setup must not install another one.
+        self.assertTrue(any(session.WMF_CLAUDE_SETUP in s and "WMF_CLAUDE_SKIP_UPDATE=1" in s
+                            for s in shells))
         # The profile denies ~/.bashrc; it goes, after wmf-claude-setup
         # (which writes its alias there).
         setup_at = next(i for i, s in enumerate(shells) if session.WMF_CLAUDE_SETUP in s)

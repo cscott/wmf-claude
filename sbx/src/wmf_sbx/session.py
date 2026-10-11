@@ -374,8 +374,13 @@ def wmf_claude_setup(name, username, lima=None, env=None):
         + " && cat > ~/.config/wmf-claude/config.json"])
     vm_mod.shell(name, write, lima=lima, input=config, check=False)
     proxy = image_mod.guest_proxy_env(env)
+    # SKIP_UPDATE: the image pins Claude Code (image.claude_release; the
+    # version is in the cache key). `claude update` would download ~250 MB
+    # per sandbox into an agent-writable ~/.local/bin that sessions do not
+    # run (RAN: /usr/local/bin is first on AGENT_PATH).
     argv = vm_mod.agent_argv([WMF_CLAUDE_SETUP], env=dict(
-        proxy, WMF_CLAUDE_SKIP_BUILD="1", WMF_CLAUDE_IN_VM="1", WMF_CLAUDE_SKIP_CHROME="1"))
+        proxy, WMF_CLAUDE_SKIP_BUILD="1", WMF_CLAUDE_IN_VM="1", WMF_CLAUDE_SKIP_CHROME="1",
+        WMF_CLAUDE_SKIP_UPDATE="1"))
     # Enter: take the default Phabricator username (from config.json).
     res = vm_mod.shell(name, argv, lima=lima, input="\n", check=False, capture=False)
     if res.returncode != 0:

@@ -65,7 +65,6 @@ to D12, and tracks A and B, which are not repeated here).
 
 ### Session, credentials, Claude Code
 
-- [ ] **Store the user's model preference persistently**.
 - [ ] **Check the "update installed, restart to update" message on the first resume** in a
   new sandbox. Its likely cause, `claude update` in `wmf-claude-setup` at create time (an
   agent-owned 2.1.296 beside the image's pinned version), is now skipped

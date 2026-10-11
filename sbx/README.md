@@ -50,9 +50,46 @@ primary repo is that directory.
 
 `resume` gives the session the host's credential, for that session only:
 `$ANTHROPIC_API_KEY`, `$CLAUDE_CODE_OAUTH_TOKEN`, or the file
-`~/.config/wmf-sbx/claude-oauth-token` (mode 0600; make it with
-`claude setup-token`). Without one, Claude Code asks you to log in, and
-that login stays in the VM.
+`~/.config/wmf-sbx/claude-oauth-token`. Without one, Claude Code asks you
+to log in, and that login stays in the VM: every new sandbox asks again.
+
+To sign in once for all sandboxes, make a token with your Claude
+subscription and keep it in that file, readable by you only:
+
+```bash
+claude setup-token                 # on the host; prints a token (valid for a year)
+mkdir -p ~/.config/wmf-sbx
+install -m 600 /dev/null ~/.config/wmf-sbx/claude-oauth-token
+$EDITOR ~/.config/wmf-sbx/claude-oauth-token    # paste the token
+```
+
+`resume` refuses the file if other users can read it. The agent can read
+the credential while a session runs (`SECURITY.md` §4); revoke the token
+at claude.ai if you think it leaked.
+
+## Preferences
+
+The `session:` section of `~/.config/wmf-sbx/repos.yaml` holds settings
+for every new sandbox. `create` writes them into the agent's
+`~/.claude/settings.json`, so you do not set them again in each one:
+
+```yaml
+session:
+  model: opus                         # Claude Code's `model` setting
+  permission_mode: bypassPermissions  # default, acceptEdits, plan, auto, bypassPermissions
+```
+
+`bypassPermissions` lets the agent use every tool without asking. Upstream
+`bin/claude` refuses that mode on the command line: on the host it would
+also auto-approve the `ask` rules of `wiring/settings-merge.json` (such as
+`WebFetch`). In a sandbox the VM, nono and the deny rules, which still
+apply, are the boundary, so it is a choice you can make here, once. A
+sandbox keeps the settings it was made with; change them in it with
+`/model` or `/permissions`, or create a new one.
+
+Sessions also skip `bin/claude`'s "Press Enter" pause, and `create`
+acknowledges its one-time `--landlock-only` warning for you
+(`SECURITY.md` §3 says why that is safe in a sandbox).
 
 ## Claude Code version
 

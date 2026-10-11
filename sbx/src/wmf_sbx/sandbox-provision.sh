@@ -63,6 +63,11 @@ table inet wmf_sbx_hostblock {
     ct state established,related accept
     ip daddr $NET udp dport { 53, 67 } accept
     ip daddr $NET tcp dport 53 accept
+    # Lima's host resolver: the guest asks 192.168.5.3:53, and Lima's own
+    # NAT rule sends that to the host agent on 192.168.5.2 at a random
+    # port. This chain sees the address after NAT, so match the original
+    # (RAN: without it every lookup was rejected as a private address).
+    meta l4proto { tcp, udp } ct original ip daddr $NET ct original proto-dst 53 accept
     $PROXY_RULE
     ip daddr @private4 counter reject
     meta l4proto { tcp, udp } ip6 daddr @private6 counter reject

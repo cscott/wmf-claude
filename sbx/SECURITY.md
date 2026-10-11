@@ -18,7 +18,7 @@ design and threat model are D9 and D11 in
 | Filesystem | the host's, minus a deny list | the VM's; host repos only as read-only mounts of their git dirs |
 | Root | none (`NO_NEW_PRIVS`) | none: `agent` has no sudo, and nono runs inside the VM too |
 | Network | nono's allowlist proxy | the same nono proxy, inside an nftables host block |
-| Credentials | the engineer's files, minus a deny list | only the Claude credential of the session |
+| Credentials | the engineer's files, minus a deny list | none: the Claude credential stays on the host, behind a proxy |
 | Work leaves by | the agent's own writes to the host | the engineer's `git fetch` of the agent's commits |
 
 ## 1. The layers
@@ -120,14 +120,26 @@ control comes with `--sudo` mode.)
 
 ## 4. Credentials
 
-- **Claude.** `resume` gives the host's credential (`ANTHROPIC_API_KEY`,
-  `CLAUDE_CODE_OAUTH_TOKEN`, or `~/.config/wmf-sbx/claude-oauth-token`)
-  to one session: on stdin into a 0600 file in the guest's `/dev/shm`,
-  which a wrapper reads and deletes before Claude Code starts. It is
-  never on a command line or in the image. The session's environment
-  holds it, so **the agent can read it and spend it** while the session
-  runs. Prefer a short-lived token. A login made in the VM stays in the
-  VM until `rm`.
+- **Claude.** The credential stays on the host (`credproxy.py`). For
+  each session, `resume` runs a reverse proxy on the host's loopback at
+  a port the OS picks, and the session gets its address
+  (`ANTHROPIC_BASE_URL=http://192.168.5.2:PORT`) and a random phantom
+  credential, on stdin into a 0600 file in the guest's `/dev/shm`. The
+  proxy refuses a request without the phantom, replaces the phantom
+  with the real credential, and forwards only `/v1/...` to
+  api.anthropic.com (plus the credential-free `/api/hello`). So **the
+  agent can spend the credential while the session runs, but cannot
+  read it or take it out**; the phantom is worthless once the session
+  ends. The host's own Claude Code login is read for each request and
+  never written. A login made in the VM (no host credential) stays in
+  the VM until `rm`.
+- **The proxy's port.** For the session, `resume` adds an nftables rule
+  that lets the agent reach 192.168.5.2 on that one port, tagged with
+  the port, and removes it when the session ends. A rule left by a
+  `resume` that did not end cleanly stays until the next `resume`
+  (which removes rules whose port has no listener on the host) or the
+  next boot. Other processes on the host can reach the proxy's port
+  too; without the phantom they get a 403.
 - **No other credential is in the VM.** The Phabricator, Gerrit and
   GitLab MCP servers run in the VM anonymously: they can read public
   data, and their write tools fail. No SSH agent is forwarded; the VM
@@ -168,7 +180,8 @@ control comes with `--sudo` mode.)
 - Read and write its clones; commit; run the tests and the wiki.
 - Read the host repos' git dirs, read-only.
 - Reach the allowed hosts through nono's proxy, and Lima's DNS.
-- Spend the Claude credential of the session it runs in.
+- Spend the Claude credential of the session it runs in, through the
+  host's proxy; not read it.
 - Not: read your home directory or working trees, write anything on
   the host, push, reach the host or the LAN, become root, or use your
   Gerrit, Phabricator, GitLab or SSH identity.

@@ -1355,10 +1355,11 @@ Do them in either order, or in parallel.
 
 **Track A: `--sudo` (D9 + D11)**
 
-Revisit with this track: contained mode's local-port window (sbx/NOTES.md
-§112 item 4, the engineer's decision). Once track A brings external egress
-control, contained mode may use it too, and the window, `--landlock-only`
-and the per-port grants may go.
+Revisit with this track: contained mode's local-port window (sbx/NOTES.md,
+"Local ports", the engineer's decision). Once track A brings external egress
+control, contained mode may use it too, and the window, `--landlock-only`,
+the per-port grants and the DNS residual (and with it the fallback plan of
+a filtering DNS forwarder, sbx/NOTES.md) may go.
 
 - **A1. Measure D11** (no code). Exit: results in `sbx/NOTES.md`.
   Mostly **done** on Linux with TCG (RAN; results in D11):

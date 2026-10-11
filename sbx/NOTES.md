@@ -9805,11 +9805,36 @@ Findings and decisions:
      create had removed it: create now removes it after that step.
    - phan on Translate was OOM-killed (exit 137) after 3 hours with
      4 GiB: the default VM memory is now 8 GiB.
-   Not fixed: core's QUnit (`--qunit-component=MediaWiki`) fails with a
-   karma ping timeout ("reconnect failed before timeout of 2000ms")
-   under TCG; check it on real hardware. The run stopped when the test
-   API key ran out of credit, before wdio, Cypress, api-testing and the
-   report. Also seen: QEMU itself segfaulted once, 13 s into a boot
+   After those fixes (the same sandbox, patched, 8 GiB, `--continue`):
+   no workaround was needed for the browser; phan completed in every
+   repo (only sibling-extension issues; core clean); karma QUnit passed
+   for the four extensions; wdio `page.js` passed 6/6 through
+   chromedriver and the port window; api-testing had only the 17 known
+   failures; core:unit's 3 errors are core/Parsoid version skew. The
+   setup warnings now say where a failed step's cause is (npm's own
+   log, or re-run composer), and the guide has the memory figures, the
+   phan counts and a 20 to 35 times slowdown. The report:
+   `sbx-testverify2/sandbox-report:REPORT.md` in Translate (fetch it
+   while the sandbox exists).
+   Open:
+   - [ ] core's QUnit (`--qunit-component=MediaWiki`) does not complete:
+     0 tests, a ping timeout, or about 490 tests and then "no message in
+     60000 ms" (karma also warns that "/" is proxied, from
+     `MW_SCRIPT_PATH=/`). Check on real hardware (`vz`) before chasing
+     it; the guide says it is not known to pass.
+   - [ ] The full wdio suite (`npm run selenium-test` in core) did not
+     finish in the run; several specs failed. Run it on real hardware.
+   - [ ] Cypress was not tested: `download.cypress.io` and
+     `cdn.cypress.io` returned 502 from this cloud environment's proxy
+     (not from nono).
+   - [ ] Claude Code's hooks tell the agent to offer profile changes
+     after any nono denial, even a harmless `ls ~`. An upstream topic.
+   The runs cost about $2.70 (session 1) and $18 (session 2b): in `-p`
+   mode each event of the agent's Monitor tool is a new turn on the
+   whole context, so a long run is expensive. Allow `Monitor`,
+   `TaskOutput` and `TaskStop` (`--allowedTools`), or the run ends when
+   the agent waits on one. Session 1 stopped when the key ran out of
+   credit. Also seen: QEMU itself segfaulted once, 13 s into a boot
    (a retry worked; the phase 6 `limactl start` exit 1 may be the same).
    In `-p` mode, each event of the agent's own Monitor tool starts a new
    turn, so a run has many results.

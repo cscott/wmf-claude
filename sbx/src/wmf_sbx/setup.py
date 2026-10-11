@@ -908,7 +908,8 @@ def mediawiki_setup(plan, core_path, core_readonly, links, clones, warnings,
 
     for work in clones:
         if composer_update(work, run=run) is False:
-            warnings.append(f"composer update failed in {work}")
+            warnings.append(f"composer update failed in {work} (the setup log does not "
+                            f"hold composer's output; run `composer update` there to see why)")
 
     # Core's own npm install is a core step below, and fatal there. Every
     # other clone gets one here, non-fatally: an extension whose JS deps
@@ -917,7 +918,8 @@ def mediawiki_setup(plan, core_path, core_readonly, links, clones, warnings,
         if work == core_path:
             continue
         if npm_install(work, run=run) is False:
-            warnings.append(f"npm install failed in {work}")
+            warnings.append(f"npm install failed in {work} (npm's own log is the newest "
+                            f"file in ~/.npm/_logs/)")
 
     # Core steps: fatal. A sandbox without a working wiki is the one thing
     # this whole exercise was for, so it should fail loudly at create time

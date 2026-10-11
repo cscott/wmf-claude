@@ -20,9 +20,11 @@ come from that run, on a 16-core host, with caches warm. Where a command was
 upstream commit, so a count that is off by one is not a finding.
 
 **Your sandbox may be much slower.** It is a VM, often with 4 CPUs, and
-without hardware virtualisation it runs 5 to 20 times slower than these
-timings. Run suites one at a time, and give long ones (core's `composer
-test`, structure, parser tests) the time they need. A Jest test that fails
+without hardware virtualisation it runs 20 to 35 times slower than these
+timings (Parsoid's parser tests: 35 min; core's phan: 33 min). Run heavy
+suites one at a time, and give long ones (core's `composer test`,
+structure, parser tests, phan) the time they need: a background job that
+your tools stop after 30 minutes is not a test failure. A Jest test that fails
 only with `Exceeded timeout of 5000 ms` is a slow machine, not a failure:
 run it again with `-- --testTimeout=60000` before you report it.
 
@@ -105,7 +107,10 @@ each other's tables, and the second one fails with errors like
 looks like a bug in the suite you ran. Run it again by itself before you
 believe it. Lint, phan, Jest and the tests of another repo's own runner do
 not share that database, so they can run beside PHPUnit, and beside each
-other in different repos.
+other in different repos, **if there is memory for them**: phan alone uses
+2.4 GB (Translate) to 2.8 GB (core), and core's `composer test` starts
+dozens of phpcs workers. Check `free -m` before you start a second heavy
+suite.
 
 **Do not reach for `vendor/bin/phpunit <path>` first.** Core ships
 `phpunit.xml.template`, not a `.dist`. Without a generated `phpunit.xml`,
@@ -157,7 +162,7 @@ All three drive the running wiki. See §5 for setup, then:
 
 ```bash
 cd "$MW_INSTALL_PATH"
-npx grunt karma:chrome --qunit-component=MediaWiki
+npx grunt karma:chrome --qunit-component=MediaWiki   # see §5.3
 CI=true npx wdio ./tests/selenium/wdio.conf.js --spec tests/selenium/specs/page.js   # 6 tests, 15 s
 npx mocha --timeout 0 tests/api-testing/action/Edit.js                       # 23 tests, 3 s
 ```
@@ -222,8 +227,9 @@ temporary gap in the sandbox, not a problem with your tree. An extension's
 adds `../../extensions/cldr`, `../../extensions/CommunityConfiguration` and
 `../../extensions/Gadgets` to `directory_list`. The sandbox clones what
 `extension.json` requires, and it does not require those, so they are
-absent. Result: 32 `PhanUndeclared*` errors in Cite on a pristine upstream
-tree (PageImages 5, Popups 4, Vector 4, TextExtracts 0). Read `.phan/config.php` to see which names it expects, and either
+absent. Result, on a pristine upstream tree: Cite 32 to 42 issues,
+Translate about 160 (Elastica alone 109), Vector 4, ULS 2, PageImages 5,
+Popups 4, TextExtracts 0; core's own phan is clean. Read `.phan/config.php` to see which names it expects, and either
 ignore errors that name exactly those classes or run phan once before your
 change and diff. A missing sibling can also make a `@phan-suppress` unused:
 Translate reports `UnusedPluginSuppression` at
@@ -444,7 +450,8 @@ Test that it works before you debug a browser suite:
 
 Chrome prints `ERROR:dbus/bus.cc ... Failed to connect to the bus` lines
 on stderr, in this test and in every browser suite. They are harmless:
-the sandbox has no D-Bus, and Chrome does not need it. Ignore them.
+the sandbox has no D-Bus, and Chrome does not need it. Ignore them, and
+`Failed to adjust OOM score of renderer ... Permission denied (13)` too.
 
 ### 5.3 QUnit (karma)
 
@@ -460,6 +467,12 @@ npx grunt karma:chrome --qunit-component=<Name>   # MediaWiki for core
   with `No binary for ChromeHeadless browser on your platform`.
 - No `CHROMIUM_FLAGS` are necessary here: `$CHROME_BIN` adds `--no-sandbox`
   (§5.2).
+- **Core's own component (`MediaWiki`) is not known to pass here.** In a
+  VM without hardware virtualisation it ran 0 tests, or about 490 and then
+  stopped reporting (`Disconnected, because no message in 60000 ms`). The
+  extension components pass. If you need core's QUnit, say that it did
+  not complete and quote the output; do not report it as a failure of
+  your change.
 
 ### 5.4 Selenium (wdio)
 

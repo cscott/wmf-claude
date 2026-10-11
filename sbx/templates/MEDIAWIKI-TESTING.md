@@ -162,7 +162,7 @@ All three drive the running wiki. See §5 for setup, then:
 
 ```bash
 cd "$MW_INSTALL_PATH"
-npx grunt karma:chrome --qunit-component=MediaWiki   # see §5.3
+npx grunt karma:chrome --qunit-component=MediaWiki   # ~900 tests, 7 s with KVM; see §5.3
 CI=true npx wdio ./tests/selenium/wdio.conf.js --spec tests/selenium/specs/page.js   # 6 tests, 15 s
 npx mocha --timeout 0 tests/api-testing/action/Edit.js                       # 23 tests, 3 s
 ```
@@ -467,12 +467,11 @@ npx grunt karma:chrome --qunit-component=<Name>   # MediaWiki for core
   with `No binary for ChromeHeadless browser on your platform`.
 - No `CHROMIUM_FLAGS` are necessary here: `$CHROME_BIN` adds `--no-sandbox`
   (§5.2).
-- **Core's own component (`MediaWiki`) is not known to pass here.** In a
-  VM without hardware virtualisation it ran 0 tests, or about 490 and then
-  stopped reporting (`Disconnected, because no message in 60000 ms`). The
-  extension components pass. If you need core's QUnit, say that it did
-  not complete and quote the output; do not report it as a failure of
-  your change.
+- Core's own component (`MediaWiki`, about 900 tests) takes seconds here
+  with hardware virtualisation. In a VM without it, it can stop reporting
+  (`Disconnected, because no message in 60000 ms`) or run 0 tests: that
+  is the slow machine. Say that it did not complete and quote the output;
+  do not report it as a failure of your change.
 
 ### 5.4 Selenium (wdio)
 

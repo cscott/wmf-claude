@@ -77,6 +77,8 @@ for every new sandbox. `create` writes them into the agent's
 session:
   model: opus                         # Claude Code's `model` setting
   permission_mode: bypassPermissions  # default, acceptEdits, plan, auto, bypassPermissions
+  theme: dark                         # dark, light, dark-daltonized, light-daltonized,
+                                      # dark-ansi, light-ansi
 ```
 
 `bypassPermissions` lets the agent use every tool without asking. Upstream
@@ -87,7 +89,11 @@ apply, are the boundary, so it is a choice you can make here, once. A
 sandbox keeps the settings it was made with; change them in it with
 `/model` or `/permissions`, or create a new one.
 
-Sessions also skip `bin/claude`'s "Press Enter" pause, and `create`
+`create` also answers Claude Code's first-run questions in each new
+sandbox, so the first session starts at the prompt: the onboarding (the
+theme and the security notes) is marked done, and every repo of the
+sandbox is marked trusted ("Do you trust the files in this folder?").
+Sessions skip `bin/claude`'s "Press Enter" pause, and `create`
 acknowledges its one-time `--landlock-only` warning for you
 (`SECURITY.md` §3 says why that is safe in a sandbox).
 

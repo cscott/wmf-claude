@@ -296,8 +296,9 @@ is not acceptable.
   Never in a command line, never on the VM's disk. The Claude process
   has it in its environment while it runs. Without one, Claude Code asks
   for a login, which stays in that VM.
-- **After the MVP (first item, before tracks A and B):** the VM holds no
-  long-lived credential. Options, to measure:
+- **After the MVP (first item, before tracks A and B; planned as track
+  L in §11):** the VM holds no long-lived credential. Options, to
+  measure:
   - **nono `--credential SERVICE`** ("Inject credentials via reverse
     proxy", nono 0.78.0 `run --help`): nono's proxy, outside the
     sandboxed process, adds the credential. Closest to what sbx did, and
@@ -1349,11 +1350,12 @@ QEMU and macOS versions with the results.
 - **D12, optional:** APFS `cp -c` (clonefile) copies of a stopped raw
   golden disk into a `vz` instance's `disk`.
 
-### After the MVP: three independent tracks
+### After the MVP: four tracks
 
-Tracks A and B touch only QEMU sandboxes, and neither depends on the
-other. Track C (development inside a sandbox) depends on neither. Do
-them in any order, or in parallel.
+Track L (the shared login) comes first. Tracks A and B touch only QEMU
+sandboxes, and neither depends on the other; track L's host proxy is
+the start of track A's. Track C (development inside a sandbox) depends
+on none of them.
 
 **Track A: `--sudo` (D9 + D11)**
 
@@ -1419,6 +1421,81 @@ a filtering DNS forwarder, sbx/NOTES.md) may go.
   rebuild the golden image (a new hash) and confirm that existing
   sandboxes still boot on the old file, and that `prune` keeps it until
   they are gone.
+
+**Track L: a shared login (D6, after the MVP; first priority)**
+
+Goal: a new sandbox needs no login and no token step, and the VM holds no
+long-lived credential: the agent can spend the login while a session
+runs (any design allows that), but cannot copy it out. Today (the MVP)
+the host's API key or `setup-token` token is in the session's
+environment, where the agent can read it.
+
+Candidates (L1 measures them):
+
+- **H. A host-side credential proxy (preferred).** A small reverse proxy
+  on the host's loopback, one per sandbox (or one for all, with a
+  per-sandbox secret), reached from the guest at 192.168.5.2:PORT (the
+  `PROXY_PORTS` path the host block already has). Claude Code in the VM
+  gets `ANTHROPIC_BASE_URL=http://192.168.5.2:PORT` and a **phantom**
+  credential; the proxy checks the phantom, swaps in the real one, and
+  forwards to `https://api.anthropic.com`. The real credential never
+  enters the VM. Sources, on the host, in this order: the host's own
+  Claude Code login (Linux `~/.claude/.credentials.json`; macOS keychain
+  item "Claude Code-credentials") — what sbx did, and zero setup —
+  then `~/.config/wmf-sbx/claude-oauth-token`, then `$ANTHROPIC_API_KEY`.
+  It is also the start of track A's host proxy (`proxy.py`).
+- **N. nono's credential proxy.** nono 0.78 has `--credential SERVICE`
+  with "phantom" tokens: its supervisor (outside the Landlock domain,
+  same uid) holds the real value and injects it (the built-in
+  `anthropic` service: `env://ANTHROPIC_API_KEY` into `x-api-key`;
+  custom services take `file://`, `cmd://`, `Authorization`). The agent
+  sees only the phantom, but the real token is in the VM (the
+  supervisor's memory, and the `/dev/shm` hand-over). Simpler than H;
+  weaker.
+- **K. `apiKeyHelper`** fetching a short-lived token from the host:
+  needs a short-lived credential to exist; Console keys can expire
+  (3 h to 30 days), subscription tokens cannot (one year). Fallback only.
+
+- **L1. Measure** (no code beyond throwaway scripts):
+  1. H with a Console API key: a 100-line Python reverse proxy on the
+     host; in a session, `ANTHROPIC_BASE_URL` + a phantom
+     `ANTHROPIC_API_KEY`. Does Claude Code work (messages, streaming,
+     `/cost`)? Which hosts and paths does it call besides
+     `/v1/messages`?
+  2. H with a subscription login (`setup-token`, then the host's live
+     `/login`): phantom `CLAUDE_CODE_OAUTH_TOKEN`, proxy swaps the
+     `Authorization: Bearer`. HANDOFF D6 notes that for Anthropic's own
+     API a gateway "must keep" the OAuth header: check which endpoints
+     besides the API Claude Code calls with it (profile, usage,
+     claude.ai) and whether those break or need proxying.
+  3. Using the host's live login: does reading the access token per
+     request work while the host's Claude Code refreshes it? If no host
+     session runs, the token expires: can the proxy refresh it without
+     breaking the host's copy (refresh-token rotation is not
+     documented)? If not, the source is `setup-token` (one year) and the
+     host login is a later nicety.
+  4. N, as a comparison: `--credential anthropic`; confirm the agent
+     cannot read the real value (`env`, `/proc/<supervisor>/environ`,
+     memory) from inside the session.
+  Exit: results in `sbx/NOTES.md`, and a choice between H and N.
+- **L2. Implement** (H, if L1 holds):
+  - `proxy.py`: the reverse proxy, started by `resume`/`start` and
+    stopped with the VM (or one long-lived host service); listens on
+    127.0.0.1 only; forwards to `api.anthropic.com` only, and only the
+    paths L1 found; streams; a per-sandbox phantom (random, in the state
+    file, given to the session instead of the credential); logs request
+    counts, not bodies;
+  - `template.py`/`sandbox-provision.sh`: the proxy's port in the host
+    block (as `PROXY_PORTS`); `session.py`: `ANTHROPIC_BASE_URL`, the
+    phantom, `NO_PROXY` for 192.168.5.2, and an `--open-port`-style grant
+    for that one host port (Landlock is per port);
+  - `resume`: no credential file in `/dev/shm` any more;
+  - `SECURITY.md` §4: the VM holds no credential; the agent can spend it
+    through the proxy while the sandbox exists; `rm` revokes the phantom.
+- **L3. Acceptance:** two sandboxes at once, no login prompt, no token
+  in either VM (grep the environment, `/proc`, the disk), a session of
+  several hours across a token refresh, and a blind run. On macOS too
+  (the keychain source).
 
 **Track C: develop wmf-sbx inside a sandbox (nested Lima)**
 

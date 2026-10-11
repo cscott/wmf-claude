@@ -70,12 +70,16 @@ clone_repo() {
     git -c core.hooksPath=/dev/null clone -q --shared --no-checkout -- "$mount" "$path"
     git -C "$path" -c core.hooksPath=/dev/null checkout -q --detach "$sha"
   fi
-  while IFS= read -r alt; do
-    if [[ ! -d "$alt" ]]; then
-      echo "wmf-sbx: $path borrows objects from $alt, which does not exist" >&2
-      return 1
-    fi
-  done < "$path/.git/objects/info/alternates"
+  # A shallow host repo gives no alternates: git copies the objects
+  # instead (RAN: a `--depth` clone on the host).
+  if [[ -f "$path/.git/objects/info/alternates" ]]; then
+    while IFS= read -r alt; do
+      if [[ ! -d "$alt" ]]; then
+        echo "wmf-sbx: $path borrows objects from $alt, which does not exist" >&2
+        return 1
+      fi
+    done < "$path/.git/objects/info/alternates"
+  fi
 
   # git does not copy hooks. Seed Gerrit's commit-msg hook from the host
   # repo, so that commits get a Change-Id.

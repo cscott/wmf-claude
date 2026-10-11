@@ -1000,7 +1000,8 @@ def load_lima_plan(path):
 def write_session(session, home=None, run=subprocess.run):
     """The `session` part of a Lima plan (session.py): merge `env` (D4) and
     the engineer's preference `settings` into the agent's
-    ~/.claude/settings.json, and write each file, a path
+    ~/.claude/settings.json, `claude_json` (the first-run answers) into
+    ~/.claude.json, and write each file, a path
     under the agent's home. Returns False if a step failed."""
     home = home or os.path.expanduser("~")
     ok = True
@@ -1010,6 +1011,9 @@ def write_session(session, home=None, run=subprocess.run):
     if patch:
         settings = os.path.join(home, ".claude", "settings.json")
         ok = merge_settings(settings, patch, run=run) and ok
+    if session.get("claude_json"):
+        ok = merge_settings(os.path.join(home, ".claude.json"), session["claude_json"],
+                            run=run) and ok
     for entry in session.get("files") or []:
         rel = entry["path"]
         if not rel.startswith("~/") or ".." in rel.split("/"):

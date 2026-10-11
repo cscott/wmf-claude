@@ -71,6 +71,12 @@ are approved without asking. The deny rules still apply. Upstream
 `bin/claude` refuses that mode on the command line; in a sandbox the
 layers above are the boundary.
 
+**Folder trust.** `create` marks each repo of the sandbox trusted in
+Claude Code, so the repo's own Claude Code configuration (`.claude/`,
+hooks, MCP servers) is used without a question. These are the
+engineer's repos, named on `create`, and the session runs them under
+nono in the VM.
+
 **Under nono** the agent's home is not readable, only the directories
 the profile and the session grant; `~/.bashrc` and other credential
 paths in the profile stay denied.

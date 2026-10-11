@@ -558,11 +558,14 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
             image_mod.verify_entry(key, env)
             with open(os.path.join(image_mod.entry_dir(key, env), "manifest.json"),
                       encoding="utf-8") as f:
-                arch = json.load(f)["inputs"]["arch"]
+                image_inputs = json.load(f)["inputs"]
+            arch = image_inputs["arch"]
+            claude_version = (image_inputs.get("claude") or {}).get("version")
         else:
             inputs = (inputs_fn or image_mod.image_inputs)()
             key = image_mod.cache_key(inputs)
             arch = inputs["arch"]
+            claude_version = (inputs.get("claude") or {}).get("version")
             cached = os.path.isdir(image_mod.entry_dir(key, env))
             say(f"+ golden image {key} ({'in the cache' if cached else 'to build'})")
             if not args.dry_run:
@@ -652,7 +655,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         readonly=readonly, primary=primary_dir)
     plan["session"] = session_mod.session_plan(
         name, resolved_for_kit, readonly, identity=session_mod.git_identity(run=run),
-        preferences=preferences)
+        preferences=preferences, claude_version=claude_version)
     try:
         home = env.get("HOME") or os.path.expanduser("~")
         session_mod.wmf_claude_setup(

@@ -118,6 +118,8 @@ class SessionError(Exception):
 # section of ~/.config/wmf-sbx/repos.yaml. They go into the agent's
 # ~/.claude/settings.json at create, so each sandbox starts with them.
 PERMISSION_MODES = ("default", "acceptEdits", "plan", "auto", "bypassPermissions")
+THEMES = ("dark", "light", "dark-daltonized", "light-daltonized", "dark-ansi", "light-ansi")
+PREFERENCE_KEYS = ("model", "permission_mode", "theme")
 MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\[\]-]*$")
 
 
@@ -134,10 +136,13 @@ def preference_settings(prefs):
     prefs = prefs or {}
     if not isinstance(prefs, dict):
         raise SessionError("repos.yaml: `session:` must be a mapping")
-    unknown = sorted(set(prefs) - {"model", "permission_mode"})
+    unknown = sorted(set(prefs) - set(PREFERENCE_KEYS))
     if unknown:
         raise SessionError(f"repos.yaml: unknown `session:` key(s): {', '.join(unknown)} "
-                           f"(want model, permission_mode)")
+                           f"(want {', '.join(PREFERENCE_KEYS)})")
+    theme = prefs.get("theme")
+    if theme is not None and theme not in THEMES:
+        raise SessionError(f"repos.yaml: session.theme {theme!r}: want one of {', '.join(THEMES)}")
     patch = {}
     model = prefs.get("model")
     if model is not None:
@@ -152,6 +157,26 @@ def preference_settings(prefs):
         patch["permissions"] = {"defaultMode": mode}
         if mode == "bypassPermissions":
             patch["skipDangerousModePermissionPrompt"] = True
+    return patch
+
+
+def claude_json_patch(prefs, trusted_paths, claude_version=None):
+    """The patch for the agent's ~/.claude.json: Claude Code's first-run
+    questions, answered once for every new sandbox. Onboarding (the theme
+    and the security notes) is marked done, with the engineer's `theme`
+    if set; each repo of the sandbox is marked trusted, so the session
+    does not ask "do you trust this folder?". The repos are the
+    engineer's own, named on `create`, and the session runs them under
+    nono in a VM in any case."""
+    patch = {"hasCompletedOnboarding": True,
+             "projects": {path: {"hasTrustDialogAccepted": True,
+                                 "hasCompletedProjectOnboarding": True}
+                          for path in trusted_paths}}
+    if claude_version:
+        patch["lastOnboardingVersion"] = claude_version
+    theme = (prefs or {}).get("theme")
+    if theme:
+        patch["theme"] = theme
     return patch
 
 
@@ -380,7 +405,8 @@ def session_env(resolved_for_kit, readonly=(), identity=None):
     return env
 
 
-def session_plan(name, resolved_for_kit, readonly=(), identity=None, preferences=None):
+def session_plan(name, resolved_for_kit, readonly=(), identity=None, preferences=None,
+                 claude_version=None):
     """The `session` part of the plan, which setup.py --lima writes as the
     agent: settings `env` and the engineer's preferences, and files under
     the agent's home."""
@@ -389,6 +415,8 @@ def session_plan(name, resolved_for_kit, readonly=(), identity=None, preferences
     return {
         "env": session_env(resolved_for_kit, readonly, identity),
         "settings": preference_settings(preferences),
+        "claude_json": claude_json_patch(preferences, [path for _c, path in resolved_for_kit],
+                                         claude_version),
         "files": [
             {"path": "~/.claude/CLAUDE.md", "content": home_claude_md(name)},
             {"path": f"~/{kit_mod.TESTING_GUIDE}", "content": guide},

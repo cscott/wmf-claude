@@ -7,6 +7,7 @@
 session:
   model: opus
   permission_mode: acceptEdits   # or bypassPermissions, plan, auto, default
+  theme: dark
 
 rules:
   # Exact, one-off mappings (no wildcard) always win over any wildcard rule

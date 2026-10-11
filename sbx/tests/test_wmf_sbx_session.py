@@ -199,9 +199,37 @@ class PreferenceTests(unittest.TestCase):
         self.assertTrue(session.preference_settings(
             {"permission_mode": "bypassPermissions"})["skipDangerousModePermissionPrompt"])
 
+    def test_the_first_run_answers(self):
+        patch = session.claude_json_patch({"theme": "light", "model": "opus"},
+                                          ["/home/me/src/core", "/home/me/src/Cite"], "2.1.287")
+        self.assertEqual(patch["hasCompletedOnboarding"], True)
+        self.assertEqual(patch["lastOnboardingVersion"], "2.1.287")
+        self.assertEqual(patch["theme"], "light")
+        self.assertEqual(patch["projects"]["/home/me/src/Cite"],
+                         {"hasTrustDialogAccepted": True, "hasCompletedProjectOnboarding": True})
+        self.assertNotIn("model", patch)  # that one goes to settings.json
+        bare = session.claude_json_patch(None, [], None)
+        self.assertNotIn("theme", bare)
+        self.assertNotIn("lastOnboardingVersion", bare)
+        # the theme is a preference, but not a settings.json key
+        self.assertEqual(session.preference_settings({"theme": "dark-ansi"}), {})
+
+    def test_write_session_keeps_what_is_in_claude_json(self):
+        with tempfile.TemporaryDirectory() as home:
+            with open(os.path.join(home, ".claude.json"), "w") as f:
+                json.dump({"mcpServers": {"phabricator": {"command": "x"}}}, f)
+            run = lambda argv, **kw: subprocess.CompletedProcess(argv, 0)  # noqa: E731
+            self.assertTrue(setup.write_session(
+                {"claude_json": session.claude_json_patch({}, ["/p"], "2.1.287")},
+                home=home, run=run))
+            with open(os.path.join(home, ".claude.json")) as f:
+                data = json.load(f)
+            self.assertEqual(data["mcpServers"], {"phabricator": {"command": "x"}})
+            self.assertTrue(data["projects"]["/p"]["hasTrustDialogAccepted"])
+
     def test_bad_preferences_are_refused(self):
         for prefs in ({"modle": "opus"}, {"model": "opus; rm -rf /"}, {"model": 5},
-                      {"permission_mode": "yolo"}, ["model"]):
+                      {"permission_mode": "yolo"}, {"theme": "solarized"}, ["model"]):
             with self.assertRaises(session.SessionError, msg=prefs):
                 session.preference_settings(prefs)
 
@@ -403,6 +431,9 @@ class CreateSessionTests(Env):
         plan = json.loads([i for a, i in inputs if i and '"repos"' in i][0])
         self.assertEqual(plan["session"]["files"][0]["path"], "~/.claude/CLAUDE.md")
         self.assertIn("fetch demo", plan["session"]["files"][0]["content"])
+        # the first-run questions are answered for each repo of the sandbox
+        trusted = plan["session"]["claude_json"]["projects"]
+        self.assertEqual(sorted(trusted), sorted([self.repo, self.ro]))
         self.assertEqual("/home/agent/" + plan["session"]["files"][1]["path"][2:],
                          session.TESTING_GUIDE_PATH)
         self.assertEqual(state_mod.load("demo", self.env)["readOnly"], [self.ro])

@@ -36,15 +36,6 @@ to D12, and tracks A and B, which are not repeated here).
 - [ ] **Optional: say `time env VAR=x cmd`** in MEDIAWIKI-TESTING.md's §6: the shell
   `time` keyword does not take a `VAR=x` prefix.
 
-- [ ] **Faster setup: read the `timing:` lines first.** A create's setup log now times each
-  `composer update` (resolve / install / autoload) and `npm ci`. If downloads and extraction
-  are a large share, pre-fill a composer cache in the golden image (trusted: build time), with
-  `gerrit:mediawiki/vendor`'s `composer.json` as the list of packages, mounted in the VM under
-  an overlay so composer can write. If resolution dominates, a cache does not help; consider
-  running the per-repo steps in parallel, or installing dependency repos lazily. npm's cache
-  can be shared across sandboxes safely (`npm ci` checks the lock file's hashes); composer's
-  cannot (no hashes for most GitHub archives).
-
 ### Git transport and host remotes
 
 - [ ] **`git safe-reset local` inside the VM falls through to the Gerrit check**. `git-review-check` trusts `local` only when `$SANDBOX_NAME`
@@ -90,6 +81,17 @@ to D12, and tracks A and B, which are not repeated here).
   — `git ls-remote` can prompt for a host key or credentials —, `repos.py` 44,
   `session.py` 312), and `lima.Limactl.call` captures output with `input=None`, so a
   `limactl` prompt would hang invisibly. Make the check routine (one grep).
+
+### Golden image cache
+
+- [ ] **Key the image on what goes into it, not on the HEAD commit.** `image_inputs()["tree"]`
+  is wmf-claude's HEAD commit, so any commit (a NOTES.md edit too) makes a new key and a
+  ~10 min rebuild at the next `create`. Key on the git tree hashes of the paths the image
+  installs instead, plus the submodule commits.
+- [ ] **Automatic pruning.** Nothing deletes an image except `wmf-sbx image rm|prune`. Each
+  is a few GB in `${XDG_CACHE_HOME:-~/.cache}/wmf-sbx/images/<key>/`. Proposal: after
+  `create` builds a new image, delete the unused ones (`prune_images(keep={new})`) and
+  say how much it freed.
 
 ### From the design documents
 
@@ -269,6 +271,21 @@ to D12, and tracks A and B, which are not repeated here).
 - Timings under TCG are 5–35× slower than a 16-core host (image build 26–41 min, create
   ~250–310 s, setup for Translate ~40 min); only compare them with each other.
 
+### Shared login (track L)
+
+- L1 (option H, RAN in the cloud test VM with a Console API key; `lima-port/checks/
+  credential-proxy.py`): Claude Code 2.1.287 works through a host reverse proxy with
+  `ANTHROPIC_BASE_URL=http://192.168.5.2:PORT` and a phantom `ANTHROPIC_API_KEY`, outside
+  nono and in a session (`resume --open-port=PORT`, the base URL and `NO_PROXY=192.168.5.2`
+  in the settings env). One turn with a tool: two `POST /v1/messages`, nothing else on the
+  base URL. Besides those: `HEAD /api/hello` without a credential (a connectivity probe;
+  the proxy forwards it without one). The real key never entered the VM.
+- In a session the proxy port needs `--landlock-only` (already on) and a per-session
+  `--open-port`; nftables needs an accept for 192.168.5.2:PORT in `block` and
+  `agent_egress` (`PROXY_PORTS`).
+- Still to measure on the engineer's host (`lima-port/checks/credential-l1.sh token|live|
+  apikey`): a `setup-token` token, the host's live login, and option N.
+
 ### nono, Landlock and the session
 
 - The profile grants no read of the agent's home, only its dot-directories: the session grants
@@ -377,6 +394,10 @@ to D12, and tracks A and B, which are not repeated here).
 - php-ast is built from source at the commit WMF CI pins (`image.PHP_AST`; Debian 13's 1.1.2 is
   too old for phan 6). Change it when CI does.
 - WMF CI targets Node 24 (24.18.0); the image has one global Node from the nodejs.org tarball.
+- Setup timings on real hardware (Linux, KVM; Cite, Popups, TextExtracts, PageImages, core,
+  Vector, cold caches): every `composer update` together 27 s (core 20 s: resolve 2,
+  install 12, autoload 6), every `npm ci` together 19 s. So no composer cache in the golden
+  image: it would save seconds. Look elsewhere when a create is slow.
 - `composer test` in core took 22 min under TCG: the session sets
   `COMPOSER_PROCESS_TIMEOUT=0`.
 - On networks that block GitHub archive downloads, run

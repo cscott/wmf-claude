@@ -12,6 +12,8 @@
 #   sandbox.txt      what enforces the boundary, and what to do when it stops you
 #   environment.txt  which MCP servers exist, and how to test a local wiki
 #
+# WMF_CLAUDE_STE=0 drops the ASD-STE100 writing bullet (see below).
+#
 # WMF_CLAUDE_SANDBOX_BACKEND selects the directory. The default is `nono`.
 # The nono files hold the text that this script had inline, so the default
 # output does not change. For an unknown backend, the hook emits neither
@@ -55,7 +57,17 @@ emit_context environment
 cat <<'CONTEXT'
 - `git add -p` and other interactive git commands cannot work as the Bash tool has no TTY on stdin, so their hunk loops read EOF and abort having staged nothing. To reorganise code into atomic commits, never use destructive commands like `git reset --hard` or `git clean`, and never re-type changes from memory to rebuild them as that discards reviewed, tested work. Stage arbitrary hunks non-destructively with a `git diff` → edit the patch → `git apply --cached` round-trip, to only touch the index and leave the working tree intact. See /wmf-claude:stage-hunks for the full recipe.
 - Wikimedia commit-message convention: subject is "component: Subject"; trailers in order are Assisted-by:, Bug:, Change-Id: (added by the Gerrit commit-msg hook). The Assisted-by: trailer uses Linux-kernel short form — just the model name, e.g. "Assisted-by: Claude Opus 4.7". No email angle brackets, no "(1M context)" or other parentheticals. Do not use Co-Authored-By: in commit bodies for Wikimedia repos.
+CONTEXT
+
+# WMF_CLAUDE_STE=0 leaves out the STE writing rule, for an engineer who
+# prefers plain prose in comments and commit messages.
+if [[ "${WMF_CLAUDE_STE:-1}" != 0 ]]; then
+  cat <<'CONTEXT'
 - Write code comments and commit messages in ASD-STE100 Simplified Technical English: short sentences, active voice, present tense, one instruction per sentence, approved vocabulary. This applies to comments and commit text only — not to chat replies, review comments, task descriptions, or other prose.
+CONTEXT
+fi
+
+cat <<'CONTEXT'
 - After invoking a code-drafting subagent (mediawiki-dev, test-writer, jupyter-notebook), run a fresh-context code review on its diff before reporting work as done. This catches assumption-level problems (misread requirements, wrong API assumptions) that the drafter's own self-review misses because it shares the drafter's mental model.
   - Read `git diff` (and `git diff --cached`) and critique for: misread requirements, wrong API assumptions, suboptimal approach, security issues, missed edge cases, project-convention violations.
   - Apply fixes for clear issues by editing files directly. Do NOT re-invoke the drafting subagent just to apply review comments.

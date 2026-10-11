@@ -30,6 +30,7 @@ import subprocess
 from . import image as image_mod
 from . import kit as kit_mod
 from . import setup as setup_mod
+from . import state as state_mod
 from . import template as template_mod
 from . import vm as vm_mod
 
@@ -119,11 +120,34 @@ class SessionError(Exception):
 # ~/.claude/settings.json at create, so each sandbox starts with them.
 PERMISSION_MODES = ("default", "acceptEdits", "plan", "auto", "bypassPermissions")
 THEMES = ("dark", "light", "dark-daltonized", "light-daltonized", "dark-ansi", "light-ansi")
-PREFERENCE_KEYS = ("model", "permission_mode", "theme")
+PREFERENCE_KEYS = ("model", "permission_mode", "theme", "ste")
+
+
+def first_run_marker(env=None):
+    """The host file that says the engineer has seen Claude Code's
+    first-run questions and warnings in a sandbox (`resume` makes it after
+    the first session). Until it exists, `create` answers none of them, so
+    the first sandbox shows them all; after it, every new sandbox skips
+    them. Delete it to see them again."""
+    return os.path.join(os.path.dirname(state_mod.state_dir(env)), "first-run-seen")
+
+
+def first_run_seen(env=None):
+    return os.path.exists(first_run_marker(env))
+
+
+def mark_first_run_seen(env=None):
+    path = first_run_marker(env)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a", encoding="utf-8"):
+            pass
+    except OSError:
+        pass
 MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\[\]-]*$")
 
 
-def preference_settings(prefs):
+def preference_settings(prefs, quiet=True):
     """The settings.json patch for the `session:` preferences: `model`
     and `permission_mode`. Raises SessionError for an unknown key or a bad
     value, so that a typo stops the create before it builds anything.
@@ -143,6 +167,9 @@ def preference_settings(prefs):
     theme = prefs.get("theme")
     if theme is not None and theme not in THEMES:
         raise SessionError(f"repos.yaml: session.theme {theme!r}: want one of {', '.join(THEMES)}")
+    ste = prefs.get("ste")
+    if ste is not None and not isinstance(ste, bool):
+        raise SessionError(f"repos.yaml: session.ste {ste!r}: want true or false")
     patch = {}
     model = prefs.get("model")
     if model is not None:
@@ -155,12 +182,15 @@ def preference_settings(prefs):
             raise SessionError(f"repos.yaml: session.permission_mode {mode!r}: want one of "
                                f"{', '.join(PERMISSION_MODES)}")
         patch["permissions"] = {"defaultMode": mode}
-        if mode == "bypassPermissions":
+        if mode == "bypassPermissions" and quiet:
             patch["skipDangerousModePermissionPrompt"] = True
+    if ste is False:
+        # bin/session-start.sh leaves out the ASD-STE100 writing rule.
+        patch["env"] = {"WMF_CLAUDE_STE": "0"}
     return patch
 
 
-def claude_json_patch(prefs, trusted_paths, claude_version=None):
+def claude_json_patch(prefs, trusted_paths, claude_version=None, quiet=True):
     """The patch for the agent's ~/.claude.json: Claude Code's first-run
     questions, answered once for every new sandbox. Onboarding (the theme
     and the security notes) is marked done, with the engineer's `theme`
@@ -168,12 +198,14 @@ def claude_json_patch(prefs, trusted_paths, claude_version=None):
     does not ask "do you trust this folder?". The repos are the
     engineer's own, named on `create`, and the session runs them under
     nono in a VM in any case."""
-    patch = {"hasCompletedOnboarding": True,
-             "projects": {path: {"hasTrustDialogAccepted": True,
-                                 "hasCompletedProjectOnboarding": True}
-                          for path in trusted_paths}}
-    if claude_version:
-        patch["lastOnboardingVersion"] = claude_version
+    patch = {}
+    if quiet:
+        patch = {"hasCompletedOnboarding": True,
+                 "projects": {path: {"hasTrustDialogAccepted": True,
+                                     "hasCompletedProjectOnboarding": True}
+                              for path in trusted_paths}}
+        if claude_version:
+            patch["lastOnboardingVersion"] = claude_version
     theme = (prefs or {}).get("theme")
     if theme:
         patch["theme"] = theme
@@ -406,17 +438,20 @@ def session_env(resolved_for_kit, readonly=(), identity=None):
 
 
 def session_plan(name, resolved_for_kit, readonly=(), identity=None, preferences=None,
-                 claude_version=None):
+                 claude_version=None, quiet=True):
     """The `session` part of the plan, which setup.py --lima writes as the
     agent: settings `env` and the engineer's preferences, and files under
     the agent's home."""
     with open(kit_mod.TESTING_GUIDE_SOURCE, encoding="utf-8") as f:
         guide = f.read()
+    settings = preference_settings(preferences, quiet=quiet)
+    env = session_env(resolved_for_kit, readonly, identity)
+    env.update(settings.pop("env", {}))
     return {
-        "env": session_env(resolved_for_kit, readonly, identity),
-        "settings": preference_settings(preferences),
+        "env": env,
+        "settings": settings,
         "claude_json": claude_json_patch(preferences, [path for _c, path in resolved_for_kit],
-                                         claude_version),
+                                         claude_version, quiet=quiet),
         "files": [
             {"path": "~/.claude/CLAUDE.md", "content": home_claude_md(name)},
             {"path": f"~/{kit_mod.TESTING_GUIDE}", "content": guide},
@@ -430,7 +465,7 @@ def phabricator_config(username):
     return {"phabricatorUsername": username} if username else {}
 
 
-def wmf_claude_setup(name, username, lima=None, env=None):
+def wmf_claude_setup(name, username, lima=None, env=None, quiet=True):
     """Run bin/wmf-claude-setup in the VM as the agent: it pulls nono's base
     pack and registers the MCP servers in the agent's ~/.claude.json, as
     lima/guest-install.sh does. Root first gives the agent the one file
@@ -449,7 +484,7 @@ def wmf_claude_setup(name, username, lima=None, env=None):
     # (sbx/SECURITY.md §3), and a new sandbox would ask every time.
     write = vm_mod.agent_argv(["sh", "-c", "mkdir -p ~/.config/wmf-claude " + " ".join(
         shlex.quote(p) for p in ALLOW_GRANTS + (COMPOSER_HOME,))
-        + " && touch ~/.config/wmf-claude/landlock-only-ack"
+        + (" && touch ~/.config/wmf-claude/landlock-only-ack" if quiet else "")
         + " && cat > ~/.config/wmf-claude/config.json"])
     vm_mod.shell(name, write, lima=lima, input=config, check=False)
     proxy = image_mod.guest_proxy_env(env)

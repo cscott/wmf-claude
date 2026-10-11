@@ -31,6 +31,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 import traceback
 import urllib.parse
 
@@ -428,7 +429,75 @@ def as_agent(argv, cwd=None, run=subprocess.run):
     return run(["sudo", "-u", SANDBOX_USER, "-H"] + argv, cwd=cwd)
 
 
-def composer_update(repo_path, run=subprocess.run):
+# Step timings (wmf-sbx create's cost): composer runs with --profile, which
+# stamps each output line with its elapsed time, and its output is also
+# kept in TIMING_DIR, one file per repo. composer_phases() splits it into
+# resolution, download and install, and autoload and scripts; the summary
+# goes into the setup log as a `timing:` line.
+TIMING_DIR = os.path.join(LOG_DIR, "timings")
+PROFILE_LINE = re.compile(r"^\[\s*[\d.]+\s*[KMGT]?i?B/\s*([\d.]+)s\]\s?(.*)$")
+
+
+def run_tee(argv, cwd, path):
+    """Run argv with its output on the terminal (the real stderr, not the
+    setup log) and in the file `path`. Returns a CompletedProcess."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as out:
+        proc = subprocess.Popen(argv, cwd=cwd, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True, errors="replace")
+        for line in proc.stdout:
+            sys.__stderr__.write(line)
+            out.write(line)
+        proc.wait()
+    return subprocess.CompletedProcess(argv, proc.returncode)
+
+
+def agent_argv(argv):
+    """argv as as_agent runs it."""
+    return list(argv) if running_as_agent() else ["sudo", "-u", SANDBOX_USER, "-H"] + argv
+
+
+def composer_phases(text):
+    """{phase: seconds} from `composer --profile` output: `resolve`
+    (metadata and the solver, up to the lock file), `install` (downloads
+    and extraction), `autoload` (autoload and scripts), `total`. A phase
+    whose markers are not in the output is left out."""
+    marks = []
+    for line in text.splitlines():
+        m = PROFILE_LINE.match(line)
+        if m:
+            marks.append((float(m.group(1)), m.group(2)))
+    if not marks:
+        return {}
+
+    def first(*prefixes):
+        for t, msg in marks:
+            if msg.startswith(prefixes):
+                return t
+        return None
+    locked = first("Writing lock file", "Installing dependencies from lock file")
+    install = first("Package operations", "Nothing to install")
+    autoload = first("Generating autoload files", "Generating optimized autoload")
+    end = marks[-1][0]
+    phases = {"total": end}
+    if locked is not None:
+        phases["resolve"] = locked
+    if install is not None and autoload is not None:
+        phases["install"] = autoload - install
+    if autoload is not None:
+        phases["autoload"] = end - autoload
+    return phases
+
+
+def timing_line(step, path, seconds, phases=None):
+    detail = ""
+    if phases:
+        detail = " (" + ", ".join(f"{k} {phases[k]:.0f} s" for k in ("resolve", "install", "autoload")
+                                  if k in phases) + ")"
+    return f"timing: {step} {path}: {seconds:.0f} s{detail}"
+
+
+def composer_update(repo_path, run=subprocess.run, profile_path=None):
     """True/False for a repo with a composer.json, None for one without.
 
     Run in the primary too, unlike git_safe_reset: this touches nothing but
@@ -438,9 +507,11 @@ def composer_update(repo_path, run=subprocess.run):
     outright."""
     if not os.path.exists(os.path.join(repo_path, "composer.json")):
         return None
-    result = as_agent(
-        ["composer", "update", "--no-interaction", "--no-progress"], cwd=repo_path, run=run
-    )
+    argv = ["composer", "update", "--no-interaction", "--no-progress"]
+    if profile_path and run is subprocess.run:
+        result = run_tee(agent_argv(argv + ["--profile"]), repo_path, profile_path)
+    else:
+        result = as_agent(argv, cwd=repo_path, run=run)
     return result.returncode == 0
 
 
@@ -901,7 +972,17 @@ def mediawiki_setup(plan, core_path, core_readonly, links, clones, warnings,
         warnings.append(f"could not write {core_path}/{COMPOSER_LOCAL_NAME} ({e})")
 
     for work in clones:
-        if composer_update(work, run=run) is False:
+        profile = os.path.join(TIMING_DIR, "composer-" + work.strip("/").replace("/", "_") + ".log")
+        start = time.monotonic()
+        updated = composer_update(work, run=run, profile_path=profile)
+        if updated is not None:
+            phases = {}
+            if run is subprocess.run and os.path.exists(profile):
+                with open(profile, encoding="utf-8", errors="replace") as f:
+                    phases = composer_phases(f.read())
+            print(timing_line("composer update", work, time.monotonic() - start, phases),
+                  file=sys.stderr)
+        if updated is False:
             warnings.append(f"composer update failed in {work} (the setup log does not "
                             f"hold composer's output; run `composer update` there to see why)")
 
@@ -911,7 +992,11 @@ def mediawiki_setup(plan, core_path, core_readonly, links, clones, warnings,
     for work in clones:
         if work == core_path:
             continue
-        if npm_install(work, run=run) is False:
+        start = time.monotonic()
+        installed = npm_install(work, run=run)
+        if installed is not None:
+            print(timing_line("npm ci", work, time.monotonic() - start), file=sys.stderr)
+        if installed is False:
             warnings.append(f"npm install failed in {work} (npm's own log is the newest "
                             f"file in ~/.npm/_logs/)")
 

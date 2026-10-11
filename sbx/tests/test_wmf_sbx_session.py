@@ -227,9 +227,25 @@ class PreferenceTests(unittest.TestCase):
             self.assertEqual(data["mcpServers"], {"phabricator": {"command": "x"}})
             self.assertTrue(data["projects"]["/p"]["hasTrustDialogAccepted"])
 
+    def test_ste_false_drops_the_writing_rule_through_the_env(self):
+        self.assertEqual(session.preference_settings({"ste": False}),
+                         {"env": {"WMF_CLAUDE_STE": "0"}})
+        self.assertEqual(session.preference_settings({"ste": True}), {})
+        plan = session.session_plan("demo", [], preferences={"ste": False})
+        self.assertEqual(plan["env"]["WMF_CLAUDE_STE"], "0")
+        self.assertNotIn("env", plan["settings"])
+
+    def test_the_first_sandbox_asks_for_the_bypass_confirmation(self):
+        prefs = {"permission_mode": "bypassPermissions"}
+        self.assertNotIn("skipDangerousModePermissionPrompt",
+                         session.preference_settings(prefs, quiet=False))
+        self.assertEqual(session.claude_json_patch({"theme": "light"}, ["/p"], "2", quiet=False),
+                         {"theme": "light"})
+
     def test_bad_preferences_are_refused(self):
         for prefs in ({"modle": "opus"}, {"model": "opus; rm -rf /"}, {"model": 5},
-                      {"permission_mode": "yolo"}, {"theme": "solarized"}, ["model"]):
+                      {"permission_mode": "yolo"}, {"theme": "solarized"}, {"ste": "no"},
+                      ["model"]):
             with self.assertRaises(session.SessionError, msg=prefs):
                 session.preference_settings(prefs)
 
@@ -353,6 +369,8 @@ class ResumeMainTests(Env):
         self.assertEqual(launch[launch.index("--", launch.index(session.LAUNCHER)) + 1:], ())
         self.assertIn("log in", self.err)
         self.assertTrue(state_mod.load("demo", self.env)["attached"])
+        # a session ran: later sandboxes skip the first-run questions
+        self.assertTrue(session.first_run_seen(self.env))
 
     def test_the_second_resume_continues(self):
         self.resume()
@@ -400,7 +418,8 @@ class CreateSessionTests(Env):
         self.ro = os.path.join(self.tmp, "src", "dep")
         git_repo(self.ro)
 
-    def test_create_runs_wmf_claude_setup_and_sends_the_session(self):
+    def create_demo(self):
+        """Run create; return (lima shells, the stdin inputs)."""
         lima = FakeLima()
         inputs = []
         orig = lima.call
@@ -414,7 +433,22 @@ class CreateSessionTests(Env):
         self.assertEqual(self.quiet(create.main, argv, lima=lima,
                                     env=dict(self.env, PHABRICATOR_USERNAME="Tester")), 0,
                          self.err)
-        shells = lima.shells()
+        return lima.shells(), inputs
+
+    def plan_of(self, inputs):
+        return json.loads([i for a, i in inputs if i and '"repos"' in i][0])
+
+    def test_the_first_sandbox_shows_claude_codes_first_run_questions(self):
+        self.assertFalse(session.first_run_seen(self.env))
+        shells, inputs = self.create_demo()
+        self.assertIn("first wmf-sbx sandbox", self.err)
+        self.assertFalse(any("landlock-only-ack" in " ".join(s) for s in shells))
+        self.assertEqual(self.plan_of(inputs)["session"]["claude_json"], {})
+
+    def test_create_runs_wmf_claude_setup_and_sends_the_session(self):
+        session.mark_first_run_seen(self.env)  # not the first sandbox
+        shells, inputs = self.create_demo()
+        self.assertNotIn("first wmf-sbx sandbox", self.err)
         self.assertTrue(any(session.WMF_CLAUDE_SETUP in s for s in shells))
         # bin/claude's one-time --landlock-only acknowledgement is made at create.
         self.assertTrue(any("landlock-only-ack" in " ".join(s) for s in shells))
@@ -428,7 +462,7 @@ class CreateSessionTests(Env):
         self.assertGreater(rm_at, setup_at)
         config = [i for a, i in inputs if i and "phabricatorUsername" in i]
         self.assertEqual(json.loads(config[0]), {"phabricatorUsername": "Tester"})
-        plan = json.loads([i for a, i in inputs if i and '"repos"' in i][0])
+        plan = self.plan_of(inputs)
         self.assertEqual(plan["session"]["files"][0]["path"], "~/.claude/CLAUDE.md")
         self.assertIn("fetch demo", plan["session"]["files"][0]["content"])
         # the first-run questions are answered for each repo of the sandbox

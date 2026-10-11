@@ -124,6 +124,35 @@ The version is part of the image's cache key, so a new release (or the
 version of the image it was made from; to change it, create a new
 sandbox.
 
+## The golden image cache
+
+The image's cache key is a hash of everything that goes into it: the
+host uid, the architecture, the Debian base image, the package list,
+the nono, Node, php-ast and Claude Code versions, the helper scripts,
+the build script, and the wmf-claude checkout's HEAD commit. A change to
+any of them builds a new image (about 10 minutes) at the next `create`.
+The images are in `${XDG_CACHE_HOME:-~/.cache}/wmf-sbx/images/KEY/`,
+about 2.5 GB each.
+
+When you work on wmf-claude, every commit changes the key. To keep the
+image while you commit, set `WMF_CLAUDE_GIT_HASH_OVERRIDE`: its value
+replaces the commit in the key. Change the value to build a new image
+from the current HEAD:
+
+```bash
+export WMF_CLAUDE_GIT_HASH_OVERRIDE=v1   # commits no longer rebuild the image
+export WMF_CLAUDE_GIT_HASH_OVERRIDE=v2   # rebuild once, from HEAD
+```
+
+To keep the image you already have, set the override to its commit:
+`wmf-sbx image ls` shows it after `wmf-claude`. An image built with an
+override has the tree of the HEAD at its build, which `image ls` shows
+in parentheses.
+
+When `create` builds a new image, it deletes the images that no sandbox
+uses, except those built in the last hour (another `create` can be about
+to use one). `wmf-sbx image prune` deletes all unused images.
+
 ## Quick start
 
 ```bash
@@ -177,8 +206,8 @@ wmf-sbx create PRIMARY[:ro] [EXTRA[:ro] ...] [options]
 - `--vm-type qemu|vz`, `--cpus N` (4), `--memory SIZE` (8GiB),
   `--disk SIZE` (60GiB).
 - `--image KEY`: use a cached golden image (`wmf-sbx image ls`), not the
-  one for the current inputs. The tree revision is an input, so without
-  this every commit gives a new image.
+  one for the current inputs (see also `WMF_CLAUDE_GIT_HASH_OVERRIDE`,
+  "The golden image cache").
 - `--dry-run`: print the plan, the image key and the Lima config.
 
 `create` stops when a step fails. The VM is kept: fix the cause with
@@ -265,7 +294,8 @@ virtiofs), Node from nodejs.org, php-ast from source, nono, Claude Code,
 the built wmf-claude tree at `/opt/wmf-claude`, and the helpers; then it
 seals the image and exports a qcow2. The cache key is a hash of all of
 those inputs, including the tree revision and the host uid (the agent's
-uid). `~/.cache/wmf-sbx/images/KEY/` holds the read-only image.
+uid). `~/.cache/wmf-sbx/images/KEY/` holds the read-only image ("The
+golden image cache").
 
 **Sandbox VM** (`template.py`, `sandbox-provision.sh`, `vm.py`). Each
 sandbox is a Lima instance `wmf-sbx-NAME` with a copy of the golden

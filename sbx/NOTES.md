@@ -82,17 +82,6 @@ to D12, and tracks A and B, which are not repeated here).
   `session.py` 312), and `lima.Limactl.call` captures output with `input=None`, so a
   `limactl` prompt would hang invisibly. Make the check routine (one grep).
 
-### Golden image cache
-
-- [ ] **Key the image on what goes into it, not on the HEAD commit.** `image_inputs()["tree"]`
-  is wmf-claude's HEAD commit, so any commit (a NOTES.md edit too) makes a new key and a
-  ~10 min rebuild at the next `create`. Key on the git tree hashes of the paths the image
-  installs instead, plus the submodule commits.
-- [ ] **Automatic pruning.** Nothing deletes an image except `wmf-sbx image rm|prune`. Each
-  is a few GB in `${XDG_CACHE_HOME:-~/.cache}/wmf-sbx/images/<key>/`. Proposal: after
-  `create` builds a new image, delete the unused ones (`prune_images(keep={new})`) and
-  say how much it freed.
-
 ### From the design documents
 
 - [ ] **Wire up or drop the unused `repos.yaml` keys** `extra_dependencies`,
@@ -267,6 +256,10 @@ to D12, and tracks A and B, which are not repeated here).
   browser suite passes: core QUnit 897 tests in 7 s, core wdio 13/13 spec files in 22 s,
   Popups wdio 1/1, Cypress install 12 s and Cite's specs 3/3. What failed under TCG (core QUnit
   not completing, wdio specs failing) was slowness, not the sandbox.
+- Golden image key: `WMF_CLAUDE_GIT_HASH_OVERRIDE` replaces the HEAD commit (the engineer's
+  choice over keying on tree hashes); the manifest's `commit` is the HEAD that was built.
+  After a build, `create` prunes unused images older than one hour (`PRUNE_MIN_AGE`: a
+  concurrent `create` records its sandbox only after its build).
 - Default VM memory is 8 GiB: phan on Translate was OOM-killed at 4 GiB.
 - Timings under TCG are 5–35× slower than a 16-core host (image build 26–41 min, create
   ~250–310 s, setup for Translate ~40 min); only compare them with each other.

@@ -85,6 +85,9 @@ CLAUDE_CHANNEL = "stable"
 # `latest`) or an exact version (2.1.296). The version and its checksum go
 # into the cache key, so another release gives another image.
 CLAUDE_VERSION_VAR = "WMF_SBX_CLAUDE_VERSION"
+# Replaces the HEAD commit in the cache key (tree_revision).
+TREE_OVERRIDE_VAR = "WMF_CLAUDE_GIT_HASH_OVERRIDE"
+TREE_OVERRIDE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 CLAUDE_CHANNELS = ("stable", "latest")
 
 # The packages, after kit.BASE_PACKAGES (the PHP side, unchanged from the
@@ -230,12 +233,26 @@ def node_release(arch, fetch=_fetch, version=NODE_VERSION):
     return {"version": version, "file": name, "sha256": checksum}
 
 
-def tree_revision(root=REPO_ROOT, run=subprocess.run):
+def head_commit(root=REPO_ROOT, run=subprocess.run):
     """The commit whose tree goes into the image. The tree comes from
     `git archive HEAD`, so uncommitted changes are not in it."""
     result = run(["git", "-C", root, "rev-parse", "--short=12", "HEAD"],
                  capture_output=True, text=True, check=True)
     return result.stdout.strip()
+
+
+def tree_revision(root=REPO_ROOT, run=subprocess.run, env=None):
+    """The wmf-claude part of the cache key: the HEAD commit, or the value
+    of $WMF_CLAUDE_GIT_HASH_OVERRIDE. With the override, new commits do not
+    give a new image; change its value to rebuild. The image still gets
+    the tree of HEAD at the time it is built."""
+    override = ((os.environ if env is None else env).get(TREE_OVERRIDE_VAR) or "").strip()
+    if not override:
+        return head_commit(root, run=run)
+    if not TREE_OVERRIDE_RE.match(override):
+        raise ImageError(f"{TREE_OVERRIDE_VAR}={override!r}: want letters, digits, "
+                         f"'.', '_' or '-' (at most 64)")
+    return override
 
 
 def helper_files():
@@ -265,10 +282,10 @@ def agent_ids(uid=None, gid=None):
 
 
 def image_inputs(arch=None, fetch=_fetch, run=subprocess.run, root=REPO_ROOT,
-                 uid=None, gid=None):
+                 uid=None, gid=None, env=None):
     """Everything that goes into the image (HANDOFF-LIMA.md §5.1)."""
     arch = arch or host_arch()
-    version, checksum = claude_release(arch, fetch=fetch)
+    version, checksum = claude_release(arch, fetch=fetch, env=env)
     return {
         "agent": agent_ids(uid, gid),
         "schema": 1,
@@ -280,7 +297,7 @@ def image_inputs(arch=None, fetch=_fetch, run=subprocess.run, root=REPO_ROOT,
         "php_ast": dict(PHP_AST),
         "claude": {"version": version, "platform": claude_platform(arch),
                    "sha256": checksum},
-        "tree": tree_revision(root, run=run),
+        "tree": tree_revision(root, run=run, env=env),
         "helpers": {name: _sha256_file(path)
                     for name, path in helper_files().items()},
         "build_script": _sha256_file(BUILD_SCRIPT),
@@ -377,16 +394,32 @@ def remove_image(key, env=None):
     shutil.rmtree(path)
 
 
-def prune_images(keep=(), env=None):
+def _created(manifest):
+    try:
+        return datetime.datetime.fromisoformat(manifest.get("created", ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def prune_images(keep=(), env=None, min_age=None, now=None):
     """Delete every entry that no sandbox uses and that is not in `keep`.
-    Returns the keys it deleted."""
+    With `min_age` (a timedelta), keep entries younger than that too: a
+    concurrent `create` may have built one and not yet recorded its
+    sandbox. Returns [(key, bytes freed)]."""
     used = images_in_use(env)
+    now = now or datetime.datetime.now(datetime.timezone.utc)
     gone = []
-    for key, _manifest in list_images(env):
+    for key, manifest in list_images(env):
         if key in used or key in keep:
             continue
+        if min_age is not None:
+            created = _created(manifest)
+            if created is None or now - created < min_age:
+                continue
+        size = sum(os.path.getsize(os.path.join(entry_dir(key, env), f))
+                   for f in os.listdir(entry_dir(key, env)))
         remove_image(key, env)
-        gone.append(key)
+        gone.append((key, size))
     return gone
 
 
@@ -540,7 +573,7 @@ def build(inputs=None, lima=None, run=subprocess.run, env=None, log=print,
     key. The entry appears all at once (a rename), so a failed build
     leaves nothing that `list_images` shows."""
     env = os.environ if env is None else env
-    inputs = inputs or image_inputs(run=run)
+    inputs = inputs or image_inputs(run=run, env=env)
     lima = lima or lima_mod.Limactl(run=run)
     key = cache_key(inputs)
     final = entry_dir(key, env)
@@ -605,6 +638,7 @@ def build(inputs=None, lima=None, run=subprocess.run, env=None, log=print,
         stamp = (now or datetime.datetime.now(datetime.timezone.utc)).isoformat(timespec="seconds")
         with open(os.path.join(out_dir, "manifest.json"), "w", encoding="utf-8") as f:
             json.dump({"key": key, "created": stamp, "inputs": inputs,
+                       "commit": head_commit(root=REPO_ROOT, run=run),
                        "virtual_size": info.get("virtual-size"),
                        "sha256": digest}, f, indent=2, sort_keys=True)
             f.write("\n")
@@ -646,7 +680,7 @@ def main(argv=None, env=None, lima=None, run=subprocess.run, out=sys.stdout):
 
     try:
         if args.cmd == "build":
-            inputs = image_inputs(run=run)
+            inputs = image_inputs(run=run, env=env)
             if args.dry_run:
                 say(json.dumps({"key": cache_key(inputs), "inputs": inputs},
                                indent=2, sort_keys=True))
@@ -659,15 +693,19 @@ def main(argv=None, env=None, lima=None, run=subprocess.run, out=sys.stdout):
                 size = os.path.getsize(golden_path(key, env))
                 inp = m.get("inputs", {})
                 users = ", ".join(used.get(key, [])) or "-"
+                tree = inp.get("tree", "?")
+                if m.get("commit") and m["commit"] != tree:
+                    tree += f" ({m['commit']})"
                 say(f"{key}  {m.get('created', '?')}  {_human(size):>9}  "
-                    f"wmf-claude {inp.get('tree', '?')}  claude {inp.get('claude', {}).get('version', '?')}  "
+                    f"wmf-claude {tree}  claude {inp.get('claude', {}).get('version', '?')}  "
                     f"nono {inp.get('nono', '?')}  used by: {users}")
         elif args.cmd == "rm":
             remove_image(args.key, env)
             say(f"removed {args.key}")
         elif args.cmd == "prune":
             gone = prune_images(env=env)
-            say("removed: " + (", ".join(gone) if gone else "nothing"))
+            say("removed: " + (", ".join(f"{k} ({_human(n)})" for k, n in gone)
+                               if gone else "nothing"))
     except (ImageError, lima_mod.LimaError, state_mod.StateError) as e:
         print(f"wmf-sbx image: {e}", file=sys.stderr)
         return 1

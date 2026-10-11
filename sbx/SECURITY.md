@@ -96,7 +96,9 @@ control comes with `--sudo` mode.)
 **Residuals:**
 
 - DNS queries go to Lima's resolver and from there to the host's: a
-  channel for small amounts of data.
+  channel for small amounts of data. Planned: external egress control,
+  with no DNS in the guest, or else a filtering DNS forwarder
+  (sbx/NOTES.md, "Local ports").
 - An allowed host is a channel too: the proxy filters by host name, and
   some allowed hosts accept writes (the package registries, GitHub).
 - NAT reaches the host's services on its public addresses on TCP 80 and

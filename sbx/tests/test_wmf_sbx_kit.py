@@ -57,7 +57,7 @@ class MediawikiEnvVarsTests(unittest.TestCase):
             )
 
     def test_an_empty_script_path_is_exported_as_a_slash(self):
-        # sbx/DESIGN-testing-instructions.md §2.6: the install's own
+        # The install's own
         # --scriptpath= is the empty string, which wdio-mediawiki rejects
         # before it runs a single test. Quibble exports `/` here too.
         with tempfile.TemporaryDirectory() as tmp:

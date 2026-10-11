@@ -91,7 +91,7 @@ def upstream_plan(resolved, run=subprocess.run,
                   gitlab_upstream=resolve_mod.gitlab_upstream):
     """{local_dir: upstream_clone_url} for the repos we can name an upstream
     for, so the sandbox clone can call the real upstream remote `origin`
-    and the host mirror `local` (sbx/DESIGN-setup-steps.md §8.1).
+    and the host mirror `local`.
 
     Two ways to learn the upstream, tried in order: a resolved canonical
     (gerrit:/gitlab:) via clone_url() -- what do_clone would have cloned
@@ -103,7 +103,7 @@ def upstream_plan(resolved, run=subprocess.run,
     A gitlab: canonical that is a fork is followed to its root project
     (gitlab_upstream), so `origin` in the sandbox is the real upstream and
     not the engineer's personal fork. If GitLab does not answer, the
-    canonical's own URL is used (sbx/NOTES.md §100).
+    canonical's own URL is used.
 
     A repo with neither is simply absent: the clone keeps the host mirror
     as `origin` and git-safe-reset falls back to it."""
@@ -136,8 +136,8 @@ def default_sandbox_name(primary_canonical):
 
 def unique_sandbox_name(name, existing, prompt=input):
     """If `name` collides with a name in `existing` (see
-    existing_sandbox_names), ask the user to pick a different one -- see
-    sbx/NOTES.md §19. An empty response accepts the first
+    existing_sandbox_names), ask the user to pick a different one. An empty response accepts
+    the first
     free auto-suffixed alternative ("name-2", "name-3", ...); the loop
     repeats -- re-suggesting a fresh suffix each time -- until whatever the
     user settles on doesn't collide."""
@@ -156,8 +156,8 @@ def unique_sandbox_name(name, existing, prompt=input):
 
 
 def split_ro_suffix(spec):
-    """Splits a trailing ':ro' opt-out suffix off a repo argument -- see
-    sbx/DESIGN-parallel-clone-tree.md §2. The suffix is stripped here so the
+    """Splits a trailing ':ro' opt-out suffix off a repo argument. The suffix is stripped here
+    so the
     rest of the pipeline (repo resolution, realpath'ing, nested-mount
     checks) sees a plain path.
 
@@ -234,7 +234,7 @@ def find_nested_mount_conflict(dirs):
 def expand_dependencies(resolved, split, config, config_path, include_dev=True,
                         include_suggests=True, fetch=None, warn=None):
     """Grow the explicitly-named repo list into its full MediaWiki
-    dependency closure -- see sbx/DESIGN-dependency-walk.md. Returns
+    dependency closure. Returns
     (resolved, split, origins_by_path, unreachable) -- `unreachable` being
     the repos whose manifests couldn't be fetched, i.e. the reason to
     distrust the closure.
@@ -297,8 +297,7 @@ def expand_dependencies(resolved, split, config, config_path, include_dev=True,
 
 def link_plan(resolved_for_kit, overrides=None, warn=None):
     """{local_dir: (link_name, link_dir)} for every repo that should be
-    symlinked into the core clone -- see sbx/DESIGN-dependency-walk.md §1
-    and §7. Computed here, on the host, because it needs both the canonical
+    symlinked into the core clone. Computed here, on the host, because it needs both the canonical
     names (which only exist here) and the parsed manifests.
 
     A repo with no manifest and no place in mediawiki/{extensions,skins}
@@ -342,20 +341,11 @@ def canonicals_for_kit(resolved, rules):
     return result
 
 
-# --- Host-side MCP registration (Route 1) ---------------------------------
+# --- The Phabricator username for the in-VM MCP setup ----------------------
 #
-# The Phabricator and Gerrit MCP servers run on the *host*, registered with
-# `sbx mcp add`, and reach the sandbox through sbx's MCP gateway. That is
-# the entire point of the arrangement: whatever those servers authenticate
-# with -- a Phabricator username today, a Gerrit HTTP password the day
-# anyone wants to post a review -- stays on the host, unreadable from the
-# sandbox. Installing the servers *in* the sandbox would mean shipping
-# their credentials in with them. See sbx/DESIGN-plugin-integration.md §5
-# step 4 and sbx/NOTES.md §60-62.
-#
-# The in-sandbox half is wmf_sbx.kit's: wmf-sbx-mcp-proxy on PATH, one
-# `claude mcp add` per server, each with its own --tools allowlist. This
-# half makes sure the host has something for the gateway to mount.
+# The MCP servers run in the VM, anonymously (session.wmf_claude_setup).
+# The host only supplies the engineer's Phabricator username, which
+# wmf-claude-setup offers as its default.
 
 
 def wmf_claude_config(path=None):
@@ -625,7 +615,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
 
     # The clones in the VM, then the host remotes. Requested repos keep
     # the host's branch; dependencies go to upstream master, and
-    # --reset-all resets every repo (DESIGN-setup-steps.md §8.1).
+    # --reset-all resets every repo.
     requested = {path for _c, path, _n in resolved if path not in origins_by_path}
     keep = set() if args.reset_all else requested | {primary_dir}
     # Raw paths get their canonical names here (.gitreview, the config's

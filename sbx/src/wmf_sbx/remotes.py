@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Adding, re-pointing, and removing the host-side git remotes -- named
 the same as the sandbox itself, e.g. `sbx-cite` (see remote_name_for) --
-that make a sandbox's clones fetchable from the host. See
-sbx/DESIGN-host-remotes.md §3-§5. On Lima the URL is
+that make a sandbox's clones fetchable from the host. The URL is
 wmfsbx://NAME/PATH, served by git-remote-wmfsbx (remote_helper.py,
 lima-port/HANDOFF-LIMA.md §6.2); the Docker backend used a git daemon on
 a published port.
@@ -401,7 +400,7 @@ def unfetched_tips(state, run=subprocess.run):
         # advertises the whole of refs/, remote-tracking refs included, so
         # a sandbox that fetched Gerrit more recently than the host looks
         # like a pile of unfetched work -- 14 tips across two repos, in
-        # the case that prompted this (sbx/NOTES.md §36.2). None of it is
+        # the case that prompted this. None of it is
         # the agent's, and none of it dies with the sandbox: it is sitting
         # on the origin the sandbox pulled it from.
         upstream = {sha for sha, ref in refs if ref.startswith("refs/remotes/")}

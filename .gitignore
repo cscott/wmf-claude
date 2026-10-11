@@ -16,6 +16,6 @@ __pycache__/
 # Claude Code per-project local settings (machine-specific, never shared).
 .claude/settings.local.json
 
-# cananian's pasted host-command transcripts (sbx/NOTES.md §0) -- untracked
+# cananian's pasted host-command transcripts -- untracked
 # on purpose, never meant to be committed.
 /responses*.txt

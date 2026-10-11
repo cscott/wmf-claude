@@ -2,7 +2,7 @@
 """Resolve a repo name to a canonical Gerrit/GitLab path and a local
 directory to use (or clone into) as an sbx workspace.
 
-Implements the two-step design in sbx/DESIGN-repo-resolution.md:
+Two steps (sbx/README.md, Architecture):
 
   1. name -> canonical "scheme:path" string (Gerrit REST lookup for a bare
      short name, then a GitLab lookup if Gerrit has no match; explicit
@@ -75,7 +75,7 @@ def gerrit_search(substring):
     final path segment with the live gerrit:mediawiki/services/parsoid, or
     gerrit:analytics/asana-stats, which has no live namesake at all).
     Archived projects are never excluded here -- a bare name whose *only*
-    match is archived still needs to resolve (see sbx/NOTES.md); callers use
+    match is archived still needs to resolve; callers use
     `archived` to warn the user, not to filter results."""
     params = {"m": substring}
     # "d" (description) is a bare flag in Gerrit's REST API, not a
@@ -104,7 +104,7 @@ GITLAB_API = f"https://{GITLAB_HOST}/api/v4"
 # group is only consulted when the previous one has no match. Personal
 # namespaces are deliberately absent: ~half of the instance's projects
 # are people's forks (a bare "wmf-claude" matches twenty of them and one
-# real repo), and a fork is never what a bare name means. sbx/NOTES.md §100.
+# real repo), and a fork is never what a bare name means.
 GITLAB_SEARCH_GROUPS = ("repos", "toolforge-repos")
 _GITLAB_MAX_PAGES = 5
 _GITLAB_TIMEOUT = 30
@@ -150,8 +150,8 @@ def gitlab_search(substring, get=_gitlab_get):
     with any hit. `simple=true` leaves the `archived` flag out of each
     project, so the archived subset costs a second query with
     `archived=true` -- made only when the first found something. Anonymous
-    (sbx/NOTES.md §100 measured that the instance answers this without a
-    token; `/search?scope=projects` does not)."""
+    (measured: the instance answers this without a token;
+    `/search?scope=projects` does not)."""
     for group in GITLAB_SEARCH_GROUPS:
         base = f"{GITLAB_API}/groups/{group}/projects?" + urllib.parse.urlencode({
             "include_subgroups": "true", "search": substring,
@@ -260,7 +260,7 @@ def resolve_canonical_path(spec, search=gerrit_search, warn=None, gitlab=None):
     and returns (names, archived), see gerrit_search. `warn`, if given, is
     called with a message when the resolved bare name turns out to be an
     archived project -- it's still resolved either way, never silently
-    dropped (see sbx/NOTES.md).
+    dropped.
 
     Among case-insensitively-matching candidates, a non-archived one is
     preferred by default over an archived one sharing the same final
@@ -449,7 +449,7 @@ def reverse_resolve(path, rules, exists=os.path.isdir, gitreview_project=gitrevi
             rule = next((r for r in rules if r["match"] == canonical), None)
             return canonical, rule
         # Last resort, and the only one a GitLab checkout has: its own
-        # `origin` names the project (sbx/NOTES.md §100).
+        # `origin` names the project.
         canonical = canonical_from_url(origin_url(expanded))
         if canonical is None:
             return None, None

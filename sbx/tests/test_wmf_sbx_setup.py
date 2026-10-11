@@ -1140,5 +1140,48 @@ Remove me.
 """
 
 
+
+class TimingTests(unittest.TestCase):
+    """composer --profile output, measured (composer 2, 2026-10-11)."""
+
+    PROFILE = """\
+[12.2MiB/0.06s] Loading composer repositories with package information
+[13.0MiB/0.30s] Updating dependencies
+[13.3MiB/0.31s] Lock file operations: 1 install, 0 updates, 0 removals
+[13.3MiB/0.31s]   - Locking psr/log (3.0.2)
+[13.3MiB/0.31s] Writing lock file
+[13.3MiB/0.31s] Installing dependencies from lock file (including require-dev)
+[13.3MiB/0.31s] Package operations: 1 install, 0 updates, 0 removals
+[13.3MiB/0.31s]   - Downloading psr/log (3.0.2)
+[13.5MiB/1.48s]   - Installing psr/log (3.0.2): [13.5MiB/1.48s] Cloning f16e1d5863 from cache
+[13.5MiB/1.88s] Generating autoload files
+[13.6MiB/2.38s] No security vulnerability advisories found.
+"""
+
+    def test_the_phases_of_a_composer_update(self):
+        phases = s.composer_phases(self.PROFILE)
+        self.assertAlmostEqual(phases["resolve"], 0.31)
+        self.assertAlmostEqual(phases["install"], 1.57)
+        self.assertAlmostEqual(phases["autoload"], 0.50)
+        self.assertAlmostEqual(phases["total"], 2.38)
+        self.assertEqual(s.composer_phases("no profile here\n"), {})
+
+    def test_the_timing_line(self):
+        self.assertEqual(
+            s.timing_line("composer update", "/w/core", 312.4,
+                              {"resolve": 120, "install": 170.2, "autoload": 22, "total": 312}),
+            "timing: composer update /w/core: 312 s (resolve 120 s, install 170 s, autoload 22 s)")
+        self.assertEqual(s.timing_line("npm ci", "/w/Cite", 61), "timing: npm ci /w/Cite: 61 s")
+
+    def test_run_tee_keeps_the_output_and_the_status(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "t", "out.log")
+            with unittest.mock.patch.object(sys, "__stderr__", io.StringIO()) as term:
+                res = s.run_tee(["sh", "-c", "echo one; echo two >&2; exit 3"], d, path)
+            self.assertEqual(res.returncode, 3)
+            with open(path) as f:
+                self.assertEqual(sorted(f.read().split()), ["one", "two"])
+            self.assertEqual(sorted(term.getvalue().split()), ["one", "two"])
+
 if __name__ == "__main__":
     unittest.main()

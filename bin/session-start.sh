@@ -12,6 +12,8 @@
 #   sandbox.txt      what enforces the boundary, and what to do when it stops you
 #   environment.txt  which MCP servers exist, and how to test a local wiki
 #
+# WMF_CLAUDE_STE=0 drops the ASD-STE100 writing bullet (see below).
+#
 # WMF_CLAUDE_SANDBOX_BACKEND selects the directory. The default is `nono`.
 # The nono files hold the text that this script had inline, so the default
 # output does not change. For an unknown backend, the hook emits neither

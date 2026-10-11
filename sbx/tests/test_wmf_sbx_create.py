@@ -300,7 +300,7 @@ class CanonicalsForKitTests(unittest.TestCase):
 class NodeVersionAndPhabricatorUsernameStdinTests(unittest.TestCase):
     """Both of these calls postdated the original §47.8 sweep and were
     found missing stdin=DEVNULL during the 0.43 recreate, 2026-09-14
-    (responses30.txt; sbx/NOTES.md §82.9) -- an unexpected interactive
+    (responses30.txt) -- an unexpected interactive
     prompt from the invoked program should fail fast with EOF rather
     than hang invisibly, exactly like the 8 call sites §47.8 fixed."""
 

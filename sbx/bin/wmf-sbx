@@ -32,7 +32,7 @@ case " $VERBS " in
   *" $verb "*)
     shift
     # realpath: this script is often reached through a symlink, and the
-    # wmf-sbx-VERB scripts are next to the real file (sbx/NOTES.md §66).
+    # wmf-sbx-VERB scripts are next to the real file.
     self=$(readlink -f -- "${BASH_SOURCE[0]}")
     sibling="$(dirname -- "$self")/wmf-sbx-$verb"
     if [ ! -x "$sibling" ]; then

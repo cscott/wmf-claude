@@ -6,7 +6,7 @@ Title: wmf-claude: The "Linux glob caveat" may be stale: `Read` glob denies fire
 
 ## Technical notes
 
-Measured in an sbx sandbox (`sbx/NOTES.md` §70.4) with the deny list of the time, which used the relative `**/` form. Upstream `main` now uses the absolute `//**/` form (`Read(//**/*.pem)`, `Edit(//**/.env*)`, …), which was not measured. Upstream's text quotes a startup warning ("On Linux, glob patterns in Edit/Read rules will be ignored"), so some Claude Code version prints it. Re-measure on the current Claude Code, with the shipped `wiring/settings-merge.json`, before filing: check whether the warning still prints, and whether a Read and an Edit of a nested `.pem` and `.env` are denied.
+Measured in a Docker sbx sandbox with the deny list of the time, which used the relative `**/` form. Upstream `main` now uses the absolute `//**/` form (`Read(//**/*.pem)`, `Edit(//**/.env*)`, …), which was not measured. Upstream's text quotes a startup warning ("On Linux, glob patterns in Edit/Read rules will be ignored"), so some Claude Code version prints it. Re-measure on the current Claude Code, with the shipped `wiring/settings-merge.json`, before filing: check whether the warning still prints, and whether a Read and an Edit of a nested `.pem` and `.env` are denied.
 
 The `find -exec` and `Write(...)` parts of the original task are fixed upstream and are not part of this one.
 

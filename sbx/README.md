@@ -1,303 +1,241 @@
 # wmf-sbx
 
-A single-command launcher for MediaWiki dev sandboxes on top of Docker's
-`sbx` ("Docker Sandboxes"), replacing hand-written `sbx create` lines and
-`wmf-claude`'s nono-based sandboxing. One command clones the repo(s) you
-name, walks their MediaWiki dependencies, wires up a running wiki, and
-gives the host a git remote to pull your agent's work back out of.
+One command makes a disposable MediaWiki development sandbox: a Lima VM
+with clones of the repos you name and their MediaWiki dependencies, a
+working wiki, and the wmf-claude plugin. Claude Code runs in it as an
+unprivileged user under nono. The host gets a git remote to fetch the
+agent's work.
 
-Design docs and the full findings log live alongside this file
-(`NOTES.md`, `SECURITY.md`, `DESIGN-*.md`) —
-this is the terse how-to-use version. `RESUME.md`, when present, is a handoff written
-for the Claude instance in the *next* sandbox, across an sbx upgrade;
-read it first if you are that instance, and ignore it otherwise.
+- `SECURITY.md`: what the agent can and cannot reach.
+- `NOTES.md`: open to-do items, and the decisions and findings that the
+  code depends on.
+- `../lima-port/HANDOFF-LIMA.md`: the port's decisions (D1 to D12) and
+  the work that remains (track A, `--sudo`; track B, copy-on-write disks).
 
 ## Install
 
-You should install docker sbx from
-[the instructions on docker's github](https://github.com/docker/sbx-releases#manual-install-from-release-artifacts).
-You should also run `./setup.sh` as described in the
-[top-level README](../README.md).  Installing `glab` (aka `apt-get
-install glab`) is helpful if you plan to work with gitlab repositories.
+On the host you need:
 
-Add `sbx/bin` to your `$PATH`:
+- [Lima](https://lima-vm.io/) 2.x. On Linux also QEMU (`qemu-system-x86`
+  or `qemu-system-arm`, `qemu-utils`) and, for speed, KVM. On macOS Lima
+  uses `vz`.
+- Python 3 with PyYAML, git and jq.
+- A checkout of this repository with its submodules
+  (`git clone --recurse-submodules`). The golden image is built from it.
+
+Then put `sbx/bin` on your `PATH`:
 
 ```bash
 export PATH="/path/to/wmf-claude/sbx/bin:$PATH"
 ```
 
-Everything here is invoked as `wmf-sbx-<command>`, or as `wmf-sbx
-<command>` — `sbx/bin/wmf-sbx` redirects `create`, `exec`, `ls-remotes`,
-`refresh-claude-md`, `resolve`, `resume`, `rm`, `run`, and `start` to
-the matching `wmf-sbx-<command>` wrapper automatically, so both
-spellings reach the same place for those nine. (`run` is narrower than the rest: it only
-understands upstream's `--name NAME` re-attach spelling — the one place
-`sbx run` overlaps with `wmf-sbx-resume` — and forwards there; anything
-else, including the create-a-new-sandbox form, is refused with a pointer
-to `wmf-sbx create`.) Never invoke bare `sbx` yourself — it [forwards your SSH agent
-into every sandbox and the forwarding is sticky to the
-daemon](https://github.com/docker/sbx-releases/issues/121). `wmf-sbx`
-strips your SSH agent out of every invocation, redirected or not; add
-`--upstream` as the first argument to reach the raw `sbx` binary instead
-of a `wmf-sbx-<command>` wrapper (SSH agent still stripped).
+Every command is `wmf-sbx VERB ...`, or `wmf-sbx-VERB ...`:
 
-Worth doing once, as a second layer under the wrapper:
+| Verb | What it does |
+|---|---|
+| `create` | make a sandbox (builds the golden image first, if needed) |
+| `resume NAME`, `run --name NAME` | start Claude Code in the sandbox |
+| `exec NAME -- CMD` | run a command in the VM as the agent, outside nono |
+| `cp SRC DST` | copy between the host and a sandbox (`NAME:PATH`) |
+| `ls`, `status NAME` | list sandboxes; check one (VM, image, security invariants) |
+| `start NAME`, `stop NAME` | boot or stop the VM; nothing is lost |
+| `rm NAME` | remove the VM, its state and its host remotes |
+| `image build/ls/rm/prune` | manage the cached golden images |
+| `resolve`, `ls-remotes` | show how a repo name resolves; list a repo's sandbox remotes |
+
+A `NAME` can also be a path shortcut such as `.`: the sandbox whose
+primary repo is that directory.
+
+## Sign-in
+
+`resume` gives the session the host's credential, for that session only:
+`$ANTHROPIC_API_KEY`, `$CLAUDE_CODE_OAUTH_TOKEN`, or the file
+`~/.config/wmf-sbx/claude-oauth-token` (mode 0600; make it with
+`claude setup-token`). Without one, Claude Code asks you to log in, and
+that login stays in the VM.
+
+## Quick start
 
 ```bash
-wmf-sbx settings set ssh.agentForwardingEnabled false
+wmf-sbx create Cite          # 10-20 min the first time; the image is cached
+wmf-sbx resume sbx-cite      # Claude Code, in the primary clone
+git -C ~/Wikimedia/Extensions/Cite fetch sbx-cite   # the agent's commits
+wmf-sbx rm sbx-cite
 ```
-
-This disables forwarding daemon-wide, so it covers an `sbx` started by
-something that is not you. **It only takes effect for daemons started
-after the change, and `sbx daemon restart` kills every running sandbox
-without letting it save state** — every live session on the machine, not
-just yours. The sandboxes come back with `wmf-sbx-start`, but the
-conversations in them do not, and each one then comes back through the
-restart path §4 describes. If your daemon has only ever been started
-through `wmf-sbx` it has no agent to forward and there is nothing to
-restart; otherwise schedule it for when nothing is running.
-`SECURITY.md` §2 has the detail.
 
 ## Naming a repo
 
-Any argument to `wmf-sbx-create` (and `wmf-sbx-resolve`, which just does
-this lookup standalone) can be:
+An argument to `create` (and to `resolve`) can be:
 
-- a **bare short name** (`Cite`) — resolved by querying Gerrit for
-  projects whose final path segment matches exactly. Zero or multiple
-  matches is an error that lists the candidates;
-- a **full project path**, with or without a scheme (`Cite` →
-  `mediawiki/extensions/Cite`, or explicitly `gerrit:mediawiki/extensions/Cite`);
-- an **existing local directory** — reverse-resolved back to its
-  canonical project.
+- a short name (`Cite`): Gerrit is searched for a project whose last path
+  segment matches exactly, then GitLab (`repos` and `toolforge-repos`).
+  No match, or more than one, is an error that lists the candidates;
+- a project path, with or without a forge (`mediawiki/extensions/Cite`,
+  `gerrit:mediawiki/extensions/Cite`, `gitlab:repos/...`);
+- a local directory (`.`, `~/src/foo`), which is mapped back to its
+  project.
 
-The canonical project path is then mapped to a local directory (existing,
-or to clone into) via your `~/.config/wmf-sbx/repos.yaml` rules —
-longest-match-first, e.g. `gerrit:mediawiki/extensions/{name}` →
-`~/Wikimedia/Extensions/{name}`. See `DESIGN-repo-resolution.md` for the
-full matching semantics and an example config.
+The project is then mapped to a host directory by the rules in
+`~/.config/wmf-sbx/repos.yaml`, most specific rule first, for example
+`gerrit:mediawiki/extensions/{name}` → `~/Wikimedia/Extensions/{name}`.
+`reference/example-repos.yaml` is a commented example. A repo that is not
+on the host yet is cloned there first.
 
-## Dependencies are included automatically
+## Dependencies
 
-By default `wmf-sbx-create` walks `extension.json`/`skin.json`
-`requires` (and `dev-requires`, `suggests`) and adds every dependency it
-finds — so `wmf-sbx-create Translate` also pulls in
-`UniversalLanguageSelector`, `mediawiki/core`, `mediawiki/skins/Vector`,
-etc., and symlinks them into core so the wiki actually loads. Turn this
-off with `--no-deps` (mount only what you named — useful for a non-wiki
-sandbox, e.g. working on `wmf-claude` itself) or narrow it with
-`--no-dev` / `--no-suggests`.
+By default `create` walks `requires`, `dev-requires` and `suggests` in
+`extension.json` and `skin.json`, and adds core and Vector. So
+`wmf-sbx create Translate` also gives you core, Vector and
+UniversalLanguageSelector, linked into core and loaded by the wiki.
+`--no-deps` uses only the repos you name; `--no-dev` and `--no-suggests`
+narrow the walk.
 
-## `wmf-sbx-create` options
+## `create`
 
 ```
-wmf-sbx-create PRIMARY [EXTRA ...]
+wmf-sbx create PRIMARY[:ro] [EXTRA[:ro] ...] [options]
 ```
 
-- `PRIMARY` — the sandbox's writable workspace; the starting cwd inside
-  the sandbox. Append `:ro` to make even the primary read-only (unusual).
-- `EXTRA ...` — additional repos, each independently `:ro` or not.
-  `:ro` mounts the host directory read-only instead of making a writable
-  clone — good for reference repos you won't edit (e.g. `core:ro` when
-  you're only touching an extension: it also skips the whole MediaWiki
-  setup, since that's gated on core being writable).
-- `--name NAME` — sandbox name (default: `sbx-<primary repo's slug>`,
-  e.g. `wmf-sbx-create Cite` → `sbx-cite`). The host remote
-  `wmf-sbx-create` adds is named the same as the sandbox.
-- `--kit PATH` / `--kit-out DIR` — use an explicit sbx kit instead of the
-  generated MediaWiki one; `--kit-out` keeps the generated kit on disk
-  for inspection.
-- `--config PATH` — alternate `repos.yaml` (default
-  `~/.config/wmf-sbx/repos.yaml`).
-- `--no-deps`, `--no-dev`, `--no-suggests` — narrow the dependency walk
-  (see above).
-- `--no-mcp` — don't register the Phabricator and Gerrit MCP servers on
-  the host, and leave the proxy out of the generated kit (see below).
-- `--reset-all` — reset every clone to its upstream default branch,
-  including the repos named on the command line (by default those keep
-  whatever branch your host checkout was on).
-- `--no-remotes` — don't touch host `.git/config`; print the
-  `git remote add` commands instead of running them.
-- `--dry-run` — print the resolution plan, the generated kit, and the
-  `sbx create` line; touch nothing.
+- `PRIMARY` is where the session starts. `:ro` makes a repo read-only
+  for the agent.
+- Repos you name keep the branch and commit of your host checkout.
+  Dependencies are reset to upstream `master`. `--reset-all` resets the
+  repos you named too.
+- `--name NAME`: the sandbox name (default `sbx-<primary>`). The host
+  remote has the same name.
+- `--no-remotes`: add no host remote, and leave host gc as it is.
+- `--vm-type qemu|vz`, `--cpus N` (4), `--memory SIZE` (8GiB),
+  `--disk SIZE` (60GiB).
+- `--image KEY`: use a cached golden image (`wmf-sbx image ls`), not the
+  one for the current inputs. The tree revision is an input, so without
+  this every commit gives a new image.
+- `--dry-run`: print the plan, the image key and the Lima config.
 
-## The Phabricator and Gerrit MCP servers
-
-`wmf-sbx-create` registers both MCP servers **on the host** (`sbx mcp
-add`), where the credentials they act under live — your Phabricator
-identity, your Gerrit identity. Nothing inside the sandbox ever sees
-them. The sandbox gets `wmf-sbx-mcp-proxy` instead, a small
-stdio shim that forwards to sbx's MCP gateway, and the generated kit
-registers one proxy entry per server so the tools keep their literal
-names: `mcp__phabricator__phabricator_get_task`,
-`mcp__gerrit__get_commit_message`.
-
-Each proxy entry carries a `--tools` allowlist, and only **read-only**
-tools are on it — four for Phabricator, five for Gerrit. Gerrit's
-fifteen writing tools (`abandon_change`, `post_review_comment`,
-`create_change`, …) would act under your credential, so they are not
-served to the agent at all. The allowlist is also what keeps the
-gateway's flat namespace honest: without it, `mcp__gerrit__…` would
-happily answer a Phabricator tool call.
-
-A server is registered — and offered in the kit — only if it can
-actually start. `wmf-sbx-create` preflights the built submodules and an
-existing host registration of the same name (yours is never
-overwritten), and prints why it skipped anything it skipped. `--no-mcp`
-skips the whole thing.
-
-### You need node ≥ 20.18.1 on `PATH`
-
-Only to *register* the Phabricator server; the sandbox brings its own
-node, and everything else here works regardless.
-
-The version that matters is whatever `node --version` reports in the
-shell you run `wmf-sbx-create` from. If yours is older and a server
-would have to be registered, the create **stops** rather than
-registering it:
-
-```
-error: the sandbox's MCP servers cannot be set up on this host:
-
-  phabricator: /usr/bin/node is v18.19.1, below the v20.18.1 its
-  dependencies need (sbx/NOTES.md §60.2)
-```
-
-This is deliberate, and not worth working around: `sbx mcp add` would
-succeed, `sbx mcp ls` would report `✓ ready` — "ready" only means the
-command path resolved — and the server would then fail *inside every
-sandbox*, at the moment a tool is called. Worse, `sbx mcp add` resolves
-the command once and stores it, so putting a newer node on `PATH`
-afterwards does not repair a registration already made; it has to be
-removed and re-added by hand.
-
-Fix it whichever way suits your host:
-
-- activate your node version manager (`nave`, `nvm`, `fnm`, `asdf`,
-  `volta`, …) and re-run `wmf-sbx-create` from that shell — this is a
-  one-time cost, since an existing registration is reused forever after;
-- or upgrade the system node (22 LTS matches the sandbox image's);
-- or pass `--no-mcp` and work without the Phabricator and Gerrit tools.
-
-Servers **already** registered on the host are used as they are, so once
-the registration exists your everyday shell's node no longer matters.
-
-See `SECURITY.md` §7 for the threat model.
+`create` stops when a step fails. The VM is kept: fix the cause with
+`wmf-sbx exec`, or `wmf-sbx rm` it. A failed per-repo setup step (a
+`composer update` or `npm ci`) is only a warning; the agent finds the
+list in `~/.wmf-sbx/wmf-sbx-setup.status`.
 
 ## Working with Gerrit
 
-The loop:
+1. `wmf-sbx create Cite`, then `wmf-sbx resume sbx-cite`.
+2. In the sandbox, the remote `local` is your host checkout (read-only,
+   current as of your last fetch). To give the agent your newer work,
+   tell it (or run `! git safe-reset local`).
+3. The agent commits on a branch; its `~/.claude/CLAUDE.md` tells it to
+   end each turn with a commit.
+4. On the host: `git fetch sbx-cite`, or `git safe-reset sbx-cite`, which
+   refuses to discard a dirty tree or unsubmitted commits without
+   `--force`.
+5. Review, amend, and `git review` from the host, as usual. The sandbox
+   cannot push.
 
-1. **Create and start the sandbox**:
+## Tests in the sandbox
 
-   ```bash
-   wmf-sbx-create Cite
-   wmf-sbx-resume <sandbox name>
-   ```
-
-2. **Push your host-side changes into the sandbox**, from inside
-   it, to keep Claude working from the same state:
-
-   ```
-   ! git safe-reset local
-   ```
-
-   Note the `!` prefix tells Claude to execute the given shell command.
-   `local` is the sandbox's remote pointing at your host checkout —
-   already configured, no setup needed.
-
-   Note that the initial sandbox is created matching whatever your
-   local git HEAD was in the directories mentioned in the
-   `wmf-sbx-create` command-line, so you can skip this step initially.
-
-3. **Put Claude to work**
-
-4. **Pull the agent's work onto the host**, from your host checkout:
-
-   ```bash
-   git safe-reset sbx-cite
-   ```
-
-   (`wmf-sbx-create` adds this remote automatically, named the same as
-   the sandbox itself.) `git safe-reset` refuses if your working
-   tree is dirty or you have unsubmitted local commits it would discard —
-   pass `--force` past that once you're sure.
-
-5. **Review and test on the host.** Make your own amendments if you
-   want — edit, amend the commit, whatever.
-
-6. Repeat 2–5 until you're happy.
-
-7. **Upload for review from the host**, as usual:
-
-   ```bash
-   git commit --amend   # tidy the message, if needed
-   git review
-   ```
-
-## If the sandbox's git remote seems to go away
-
-`sbx` stops an idle sandbox on its own; a stopped sandbox publishes no
-port, so `git fetch <name>` starts failing even though nothing
-was removed. Bring it back without attaching an agent:
-
-```bash
-wmf-sbx-start <name>
-```
-
-This restarts the container, restores its mount layout, and re-points
-the `<name>` host remote at the daemon's new port. (Reconnecting
-with an agent instead — `wmf-sbx-resume <name>` — does the same repair.)
+The agent's guide is `~/MEDIAWIKI-TESTING.md` (from
+`templates/MEDIAWIKI-TESTING.md`). Every repo has `vendor/` and
+`node_modules/`; core has a SQLite wiki with every extension loaded;
+`composer serve` serves it on port 4000. `mw-install-browser` installs
+Chrome for Testing for karma and wdio (not on an aarch64 VM: there is
+no Linux arm64 build), and `mw-install-cypress REPO` installs a repo's
+Cypress binary.
 
 ## Cleaning up
 
 ```bash
-wmf-sbx-rm <name>
+wmf-sbx rm NAME            # asks first; refuses if the agent has unfetched commits
+wmf-sbx rm --force NAME
+wmf-sbx rm --prune         # remotes and state of sandboxes whose VM is gone
+wmf-sbx image prune        # golden images that no sandbox uses
 ```
 
-Removes the sandbox *and* the host-side `<name>` remotes
-`wmf-sbx-create` added — plain `sbx rm` leaves those behind, and a
-recycled host port can later make a stale remote silently point at an
-unrelated sandbox. `--dry-run` to preview, `-f`/`--force` to skip the
-unfetched-commit guard and confirmation prompt.
+## Troubleshooting
 
-## Changing what the plugin tells a sandbox
+- **The host proxy port changed** (a network that gives you a proxy on
+  127.0.0.1): `start` and `resume` update a stopped VM. For a running VM,
+  `wmf-sbx stop NAME` first.
+- **GitHub archive downloads are blocked** on your network: composer
+  fails in setup. Run
+  `wmf-sbx exec NAME -- composer config --global preferred-install source`
+  and create again. Source installs are large (several GB per repo).
+- **TLS interception** (a corporate CA): set `WMF_SBX_CA_CERTS` to the CA
+  files, separated by `:`, for the image build and the VMs.
+- **Disk**: a sandbox with core and a few extensions uses 15-20 GB, and
+  each golden image about 2.5 GB.
 
-The kit ships the wmf-claude plugin (`skills/`, `agents/`, `hooks/`,
-`templates/`) into every sandbox. Nothing under `sbx/` may change those
-directories in the repo: upstream wmf-claude runs on nono, and an edit
-there is an edit a merge has to undo. Two places take the change instead:
+## Architecture
 
-- **`sbx/plugin-overlay/<path in the plugin tree>`** — a whole file, for
-  text only an sbx sandbox reads. `hooks/context/sbx/environment.txt` is
-  the example. The overlay wins over a repo file of the same path.
-- **`sbx/patches/plugin/NN-name.patch`** — a unified diff (`git diff`
-  output, paths relative to the repo root), for a file the nono backend
-  shares. The kit applies the patches in name order to the copy it
-  installs. A patch that no longer applies fails the kit build and the
-  test suite, which is the signal to refresh it against the new upstream
-  text or to drop it.
+**Commands.** `bin/wmf-sbx` dispatches to `python3 -m wmf_sbx VERB`;
+the code is in `src/wmf_sbx/`, one module per verb, and the tests in
+`tests/`. PyYAML is the only dependency. Lima is driven through
+`lima.Limactl`; the per-sandbox state is a JSON file per sandbox under
+`~/.local/state/wmf-sbx/` (`state.py`).
 
-A fix that is right for nono too belongs in the shared file, offered
-upstream. See `DESIGN-testing-instructions.md` §6.
+**Repo resolution** (`resolve.py`). A name becomes a canonical project
+(`resolve_canonical_path`: Gerrit, then GitLab, following forks to the
+real upstream), and a canonical project becomes a host directory
+(`resolve_directory`, the `repos.yaml` rules). `reverse_resolve` maps a
+directory back, from `.gitreview`, the origin URL or an exact rule.
 
-## When sbx's own CLAUDE.md changes
+**Dependency walk** (`deps.py`). `deps.walk` reads each repo's manifest,
+from the checkout or from gitiles, and adds what it requires; a manifest
+that cannot be fetched stops the create. Link names into core
+(`extensions/<Name>`, `skins/<Name>`) are decided on the host
+(`create.link_plan`) and sent to the VM in the plan.
 
-sbx writes a CLAUDE.md of its own into every sandbox, in the parent
-directory of the primary workspace. Some of its sections are wrong for a
-wmf-sbx sandbox (its "Git workspace mode", for one). A startup step
-edits them, using the heading-keyed edits in
-`sbx/patches/sbx-claude-md/edits.json`. `upstream.md` beside it is the
-sbx text those edits were written against.
+**Golden image** (`image.py`, `image-build.sh`). A builder VM from a
+pinned Debian 13 image installs the packages (PHP, composer, the browser
+libraries), the generic kernel (the cloud kernel has no 9p or
+virtiofs), Node from nodejs.org, php-ast from source, nono, Claude Code,
+the built wmf-claude tree at `/opt/wmf-claude`, and the helpers; then it
+seals the image and exports a qcow2. The cache key is a hash of all of
+those inputs, including the tree revision and the host uid (the agent's
+uid). `~/.cache/wmf-sbx/images/KEY/` holds the read-only image.
 
-A new sbx release can change that text enough that the edits no longer
-apply. The sandbox still works, but `wmf-sbx create`, `wmf-sbx resume`
-and `wmf-sbx start` print a "CLAUDE.md edit failed" error. To fix it:
+**Sandbox VM** (`template.py`, `sandbox-provision.sh`, `vm.py`). Each
+sandbox is a Lima instance `wmf-sbx-NAME` with a copy of the golden
+image. It has two users: `engineer` (Lima's user, with sudo, drives
+setup) and `agent` (no sudo, the host uid). Provisioning at every boot
+loads an nftables host block (no host, LAN or link-local addresses; the
+agent gets TCP 80 and 443 only, off the VM), narrows the ephemeral port
+range (see `SECURITY.md`), and turns TIOCSTI off. `vm.INVARIANTS` are
+checked at every start, resume and status.
 
-```bash
-wmf-sbx refresh-claude-md <name>
-```
+**Repos in the VM** (`repos.py`, `sandbox-repos.sh`). Each repo's git
+dir is a read-only Lima mount (9p on QEMU, virtiofs on `vz`) under
+`/run/wmf-sbx/host/`. The VM has a `git clone --shared` of it at the
+same absolute path as on the host, so every path (Claude's project key,
+`LocalSettings.php`, symlinks) matches. Its remotes are `local` (the
+mount) and `origin` (the upstream). A `:ro` repo is cloned by
+`engineer`, so the agent can read but not write it.
 
-This copies sbx's new text into `upstream.md`, shows the diff, and says
-which edits fail. Change `edits.json` until the command passes, run the
-unit tests, and commit both files. See `NOTES.md` §95.
+**VM to host** (`remotes.py`, `remote_helper.py`). `create` adds a
+remote named after the sandbox to each host repo, with the URL
+`wmfsbx://NAME/PATH`. `git-remote-wmfsbx` serves only
+`git-upload-pack`, run as the agent through `limactl shell`, with hooks
+off: the host can fetch, nothing can push. While the sandbox exists, gc
+in the host repo is suspended, because the clones borrow its objects.
+`rm` refuses to remove a sandbox with commits the host has not fetched.
+
+**MediaWiki setup** (`mediawiki.py`, `setup.py`, `kit.py`). The host
+builds a plan (repos, canonical names, links, `:ro` flags) and sends it
+with `setup.py`, which runs in the VM as the agent: links into core,
+`composer.local.json` (extension libraries merged into core's
+`vendor/`, as CI does), `composer update` and `npm ci` per repo, the
+SQLite install with every extension, `phpunit.xml` and the api-testing
+config. Per-repo steps warn; core steps are fatal. `setup.py` is sent on
+stdin, so a change to it needs no new image.
+
+**Session** (`session.py`, `resume.py`). `resume` checks the
+invariants, puts the credential in a 0600 file in the guest's
+`/dev/shm` (a wrapper reads and deletes it), and runs upstream's
+`bin/claude` as the agent in the primary clone. That is nono with the
+wmf-engineer profile, plus per-session grants: the other clones, the
+caches, the system paths the tools read, the package registries, the
+local ports. `WMF_CLAUDE_SANDBOX_BACKEND=lima-sbx` selects the
+SessionStart text in `hooks/context/lima-sbx/`. The wiki variables
+(`MW_SERVER`, `CHROME_BIN`, ...) and the engineer's git identity are in
+the `env` key of the agent's `~/.claude/settings.json`, which `create`
+writes with `~/.claude/CLAUDE.md` and `~/MEDIAWIKI-TESTING.md`.
+`wmf-claude-setup` runs at create time to register the anonymous MCP
+servers (Phabricator, Gerrit, GitLab) in the VM.

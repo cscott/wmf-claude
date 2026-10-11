@@ -37,8 +37,7 @@ class FakeCompletedProcess:
 
 
 class SetupLogTests(unittest.TestCase):
-    """The report that survives `sbx create`'s collapsed install step --
-    sbx/NOTES.md §32.1."""
+    """The setup log and status file in the VM."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -301,7 +300,7 @@ class StepCommandTests(unittest.TestCase):
         # ci, not install: package-lock.json is tracked in core, and an
         # install that rewrites it leaves the clone dirty. The env prefix
         # keeps cypress from downloading an 800 MB binary at every create;
-        # mw-install-cypress fetches it on demand (sbx/NOTES.md §91).
+        # mw-install-cypress fetches it on demand.
         self.assertEqual(
             self.argv(),
             ["env", "CYPRESS_INSTALL_BINARY=0", "npm", "ci", "--no-audit", "--no-fund"])
@@ -319,8 +318,7 @@ class StepCommandTests(unittest.TestCase):
 
     def test_phpunit_config_runs_cores_own_script(self):
         # Core ships phpunit.xml.template, so a fresh checkout has no
-        # config and `vendor/bin/phpunit <path>` loads no bootstrap
-        # (sbx/DESIGN-testing-instructions.md §2.1).
+        # config and `vendor/bin/phpunit <path>` loads no bootstrap.
         self.touch("composer.json", "{}")
         self.assertTrue(s.phpunit_config(self.repo, run=self.fake_run))
         self.assertEqual(self.argv(), ["composer", "phpunit:config"])
@@ -513,8 +511,7 @@ class EnvFileTests(unittest.TestCase):
 
     def test_an_empty_script_path_is_written_as_a_slash(self):
         # The install's own --scriptpath= is empty, and wdio-mediawiki
-        # rejects that value; Quibble writes `/` here too. See
-        # sbx/DESIGN-testing-instructions.md §2.6.
+        # rejects that value; Quibble writes `/` here too.
         self.write()
         self.assertIn("MW_SCRIPT_PATH=/\n", self.read())
 
@@ -635,7 +632,7 @@ class ComposerLocalTests(unittest.TestCase):
 
 
 class ApiTestingConfigTests(unittest.TestCase):
-    """sbx/DESIGN-testing-instructions.md §5.5 -- the config the
+    """The config the
     api-testing suites need, written into core at create time."""
 
     SECRET = "22d812ebf36429193b72d9d54adcb2e62fba7b37658b69ed0f3aeabf88700b23"
@@ -757,8 +754,7 @@ class ApiTestingConfigTests(unittest.TestCase):
 
 class LimaChainTests(unittest.TestCase):
     """The in-VM chain, driven through main(["--lima", PLAN]) -- ordering,
-    which repos each step touches, and what's fatal. See
-    sbx/DESIGN-setup-steps.md §8. On Lima each repo's path is its clone
+    which repos each step touches, and what's fatal. Each repo's path is its clone
     (D8), and the clones, remotes and resets exist already."""
 
     def setUp(self):
@@ -884,7 +880,7 @@ class LimaChainTests(unittest.TestCase):
         self.assertIn("npm install failed", err)
 
     def test_every_clone_with_a_package_json_gets_an_npm_install(self):
-        # sbx/DESIGN-testing-instructions.md §5.1: an extension's own JS
+        # An extension's own JS
         # tests, linters and selenium harness come from its own node_modules.
         path, core, cite = self.core_and_cite(core_files=[("package.json", "{}")],
                                               cite_files=[("package.json", "{}")])

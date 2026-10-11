@@ -772,8 +772,7 @@ There is no `push` verb: D10 makes it unnecessary.
 
 ### 5.1 Cache key
 
-Cache on kit content, not the repo list (`DESIGN-template-caching.md`
-§3). The key is a hash of:
+Cache on kit content, not the repo list. The key is a hash of:
 
 - the base image URL and digest;
 - the package list;
@@ -804,8 +803,7 @@ key.
 ### 5.2 What goes in the image
 
 - `kit.BASE_PACKAGES` (php plus extensions, composer, imagemagick,
-  librsvg2-bin, git-review, php-wikidiff2, …), Node per
-  `DESIGN-setup-steps.md` §7.2, git, jq, curl, python3-venv, nftables.
+  librsvg2-bin, git-review, php-wikidiff2, …), Node (pinned, `image.NODE_VERSION`), git, jq, curl, python3-venv, nftables.
 - No Docker unless decided.
 - nono and Claude Code, as `guest-install.sh` installs them.
 - `/opt/wmf-claude.<rev>`, built, with the overlay and patches applied.
@@ -873,8 +871,8 @@ At create, as agent:
 1. `git clone --shared /run/wmf-sbx/host/<path>/.git <host path>`, with
    `core.hooksPath=/dev/null`.
 2. `configure_remotes`: `origin` = Gerrit/GitLab, `local` = the mount.
-3. The branch rules stay as they are (`DESIGN-setup-steps.md` §8.2,
-   `--reset-all`).
+3. The branch rules stay as they are (requested repos keep the host's
+   branch; dependencies, or all with `--reset-all`, go to upstream).
 4. The verify half of the old `setup.py` (`alternates_of`, `verify_repo`
    minus the mount checks) still applies: it asserts the alternates
    resolve.
@@ -1047,8 +1045,8 @@ allowed one), the registry `--allow-domain`s (D3), and
 `~/.claude/CLAUDE.md` is `session.home_claude_md` (no sudo steps). The
 `run-tests` patch is not applied: the plugin overlay and patches are
 gone; check in phase 7 whether that skill needs a change upstream. The
-memory seed (`sbx/reference/claude-memory-seed/`) is not used: it holds
-memories about developing wmf-claude, not general ones.
+old memory seed is not used (removed in C1b): it held memories about
+developing wmf-claude, not general ones.
 
 **MCP.** Upstream's anonymous servers run in the VM. Drop the proxy, the
 host registration and the node ≥ 20.18.1 host check. Propose tool-layer
@@ -1103,7 +1101,7 @@ denies for Gerrit's write tools upstream.
 - create-time repo code outside nono (D7);
 - `--landlock-only` for the wiki (D5).
 
-Move the old document to `sbx/history/SECURITY-docker-sbx.md`.
+Done in C1b (the old document is in git history, not in the tree).
 
 ## 10. Code disposition
 
@@ -1308,12 +1306,12 @@ phase A3. Every sandbox gets a full copy of the golden image (D2).
    commit. Found and fixed: the grants that the wmf-engineer profile lacks
    on Linux (`/etc/php`, `/etc/gitconfig`, `/opt/claude-code`,
    `/opt/node`, the agent's caches); nono's `--upstream-proxy` for a host
-   proxy; the proxy port baked into the VM. To do in phase 7:
-   `mw-install-browser` and `mw-install-cypress` use sudo (apt, links in
-   `/usr/bin`), which a contained agent does not have.
-7. **MVP acceptance:** the blind run of
-   `DESIGN-testing-instructions.md` §9, in a contained sandbox, on `vz`
-   and on QEMU.
+   proxy; the proxy port baked into the VM. Phase 7 made
+   `mw-install-browser` and `mw-install-cypress` work without sudo.
+7. **MVP acceptance:** the blind run (`lima-port/acceptance/`), in a
+   contained sandbox, on `vz` and on QEMU. **Done on QEMU** (two runs,
+   `sbx/NOTES.md`); `vz` and the real-hardware checks
+   (`lima-port/checks/real-hardware.sh`) remain.
 
 ### Tests that need a Mac (ask Kosta)
 
@@ -1340,8 +1338,8 @@ QEMU and macOS versions with the results.
   `mcp list` shows the servers connected, and Claude reaches the wiki
   (`composer serve`, then `curl $MW_SERVER`). On macOS the agent's
   paths differ, so check that the grants in `session.py` are enough.
-- **Phase 7:** the blind run of `DESIGN-testing-instructions.md` §9 in
-  a contained sandbox on `vz`.
+- **Phase 7:** the blind run (`lima-port/acceptance/`) in a contained
+  sandbox on `vz`.
 - **Track A (A1):** the D11 measurements on macOS QEMU with HVF:
   `restrict=on`, the `cmd:` guestfwd, slirp DNS, and that virtiofs is
   not available (so the mounts are 9p there too).
@@ -1431,7 +1429,7 @@ and the per-port grants may go.
     `create.py`, `settings.py`, `refresh_claude_md.py`, the MCP proxy
     and gateway helpers, `resume.py` and `run.py`; phase 6 writes the
     Lima `resume`).
-  - **C1b, the documents: at phase 7,** when the design stops moving.
+  - **C1b, the documents: done** (phase 7).
     Rewrite `sbx/README.md` and `sbx/SECURITY.md`. The rules for the
     notes and design documents (cananian, 2026-10-09):
     - `sbx/NOTES.md` keeps only actionable decisions and findings, and
@@ -1441,8 +1439,7 @@ and the per-port grants may go.
     - Remove each `DESIGN-*` document whose design is implemented. Put
       a short description in a "Design" or "Architecture" section of
       `sbx/README.md`, where it helps a reader understand the structure
-      of the code. (`DESIGN-template-caching.md` is superseded by §5 and
-      D12.)
+      of the code.
     - Until phase 7, keep the sbx history that the port still uses to
       understand earlier decisions. Remove what the port no longer
       needs, as it becomes unnecessary.

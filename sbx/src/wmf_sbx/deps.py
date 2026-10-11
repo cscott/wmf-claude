@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The MediaWiki dependency walk: turn `wmf-sbx-create <one extension>`
 into the whole set of repos that extension needs in order to actually
-run. See sbx/DESIGN-dependency-walk.md.
+run.
 
 Three things here are easy to get wrong, and the design doc's evidence is
 worth keeping next to the code:

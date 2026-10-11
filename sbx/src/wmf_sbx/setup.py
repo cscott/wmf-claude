@@ -8,9 +8,8 @@ mediawiki.py). The clones are there already, at the host paths (D8),
 with their remotes and resets (sandbox-repos.sh). This script does the
 MediaWiki part: the links of the extensions and skins into core,
 composer.local.json, `composer update`, `npm ci`, `.env`, the install,
-phpunit.xml and the api-testing config. See sbx/DESIGN-setup-steps.md
-§8 for the order and the failure policy: the per-repo steps warn and
-continue, the core ones are fatal.
+phpunit.xml and the api-testing config. The per-repo steps warn and
+continue; the core ones are fatal.
 
 Everything this script prints goes to the terminal and to
 LOG_DIR/wmf-sbx-setup.log; the `error:`/`warning:` lines also go to
@@ -74,8 +73,7 @@ SANDBOX_USER = "agent"
 
 
 # Used only if core's own composer.json can't be read or parsed -- the
-# install script there is the authority for all of these (see
-# sbx/DESIGN-setup-steps.md §4.2), and the plan file's `mediawiki` block
+# install script there is the authority for all of these, and the plan file's `mediawiki` block
 # overrides these in turn.
 DEFAULT_INSTALL_PARAMS = {
     "server": "http://localhost:4000",
@@ -91,7 +89,7 @@ INSTALL_SCRIPT_NAME = "mw-install:sqlite"
 # isn't running here -- the values that make the test harnesses work are
 # the ones in the agent's settings `env` (session.py, D4). This
 # file is still written because it's the documented artifact and it's
-# where an engineer will look. See sbx/DESIGN-setup-steps.md §4.1.
+# where an engineer will look.
 ENV_TEMPLATE = """\
 MW_SCRIPT_PATH={script_path}
 MW_SERVER={server}
@@ -110,8 +108,7 @@ MW_DOCKER_GID={gid}
 # name, so `git status` stays clean, and it sits next to
 # LocalSettings.php, whose values it repeats. The settings `env` also has
 # API_TESTING_CONFIG_FILE with the absolute path, so an extension's own
-# `npm run api-testing` finds it from outside core. See
-# sbx/DESIGN-testing-instructions.md §5.5.
+# `npm run api-testing` finds it from outside core.
 API_TESTING_CONFIG_NAME = ".api-testing.config.json"
 
 # Written into the core clone, which merges it into core's own
@@ -338,7 +335,7 @@ def link_into_core(core_path, links, core_readonly=False):
 
     links: [(link_dir, link_name, target), ...] -- link_dir is 'extensions'
     or 'skins', link_name is the *directory* name to use (which is not the
-    manifest's `name` field; see sbx/DESIGN-dependency-walk.md §1), and
+    manifest's `name` field; see sbx/README.md, Architecture), and
     target is the clone's path, which is the host path (D8).
 
     Never fatal: a symlink that can't be made is warned about and skipped.
@@ -438,7 +435,7 @@ def composer_update(repo_path, run=subprocess.run):
     vendor/ (composer.lock is gitignored in core), so there is no work in
     progress for it to disturb -- and when the primary *is* mediawiki/core,
     skipping it would leave no vendor/ at all and the install would fail
-    outright. See sbx/DESIGN-setup-steps.md §3."""
+    outright."""
     if not os.path.exists(os.path.join(repo_path, "composer.json")):
         return None
     result = as_agent(
@@ -510,7 +507,7 @@ def write_composer_local(core_path, parsoid_checkout=False, run=subprocess.run):
 def parse_install_params(core_path, fallback=None):
     """--server / --scriptpath / --pass as core's own composer.json
     mw-install:sqlite script gives them, so the .env we write can't drift
-    from the wiki we install (sbx/DESIGN-setup-steps.md §4.2). Anything
+    from the wiki we install. Anything
     unparseable falls back to `fallback`, then to DEFAULT_INSTALL_PARAMS."""
     params = dict(DEFAULT_INSTALL_PARAMS)
     params.update(fallback or {})
@@ -549,8 +546,7 @@ def env_file_contents(params, uid, gid):
         # install, and the harnesses that read MW_SCRIPT_PATH reject the
         # empty string (wdio-mediawiki does, though core's Gruntfile calls
         # it valid). Quibble exports the same `/`. The install keeps the
-        # empty value; only what the harnesses read changes. See
-        # sbx/DESIGN-testing-instructions.md §2.6 and §5.4.
+        # empty value; only what the harnesses read changes.
         script_path=params.get("scriptPath") or "/",
         server=server,
         port=port,
@@ -677,19 +673,18 @@ def npm_install(repo_path, run=subprocess.run):
     Runs in every clone that has a package.json, not in core alone: an
     extension's own JS tests, linters and selenium harness all come from
     its own node_modules. Measured cost for the four repos of the test
-    sandbox: 29 s. See sbx/DESIGN-testing-instructions.md §5.1.
+    sandbox: 29 s.
 
     `npm ci` rather than `npm install`: core's package-lock.json is
     *tracked*, so an install that touches it leaves the clone dirty and a
     later git safe-reset then refuses. ci is also lockfile-exact and
     faster. Falls back to install when there's no lockfile to be exact
-    about. See sbx/DESIGN-setup-steps.md §5.
+    about.
 
     CYPRESS_INSTALL_BINARY=0 because a repo that lists cypress would
     otherwise download an 800 MB binary at every create, and most tasks
     never run its Cypress specs. The variable makes the package install
-    without the binary; `mw-install-cypress` fetches it on demand
-    (sbx/NOTES.md §91)."""
+    without the binary; `mw-install-cypress` fetches it on demand."""
     if not os.path.exists(os.path.join(repo_path, "package.json")):
         return None
     if os.path.exists(os.path.join(repo_path, "package-lock.json")):
@@ -717,7 +712,7 @@ def phpunit_config(core_path, run=subprocess.run):
     `composer phpunit:config` is core's own script for the job
     (`@php tests/phpunit/generatePHPUnitConfig.php`). Claude still has to
     run it again after an extension list changes, which is why the
-    template documents it. See sbx/DESIGN-testing-instructions.md §5.2."""
+    template documents it."""
     if not os.path.exists(os.path.join(core_path, "composer.json")):
         return None
     result = as_agent(["composer", "phpunit:config"], cwd=core_path, run=run)
@@ -754,7 +749,7 @@ def install_mediawiki(core_path, run=subprocess.run):
 # makes that same wfLoadExtension('Parsoid', ...) call itself, from a
 # spot earlier in the file, so leaving the original in place would
 # double-load the extension. Observed live for other extensions
-# (sbx/NOTES.md §30 -- `wfLoadExtension( 'Translate' )`); MediaWiki's
+# (`wfLoadExtension( 'Translate' )`); MediaWiki's
 # ExtensionRegistry always emits this exact spacing.
 PARSOID_LOAD_EXTENSION_LINE = "wfLoadExtension( 'Parsoid' );"
 
@@ -877,8 +872,7 @@ def mediawiki_setup(plan, core_path, core_readonly, links, clones, warnings,
     install_mediawiki has written one to patch (see PARSOID_CANONICAL).
 
     The whole chain is gated on a writable core: with none there is
-    nothing to link into and no wiki to install. See
-    sbx/DESIGN-setup-steps.md §8 for the order and the failure policy:
+    nothing to link into and no wiki to install. The failure policy:
     the per-repo steps warn and continue, the core ones are fatal.
     """
     if core_path is None:

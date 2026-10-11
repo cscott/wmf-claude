@@ -8,6 +8,7 @@ The real session ran in a VM (lima-port/HANDOFF-LIMA.md §11, phase 6)."""
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -37,29 +38,6 @@ class CredentialTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.env = {"XDG_CONFIG_HOME": self.tmp.name}
-
-    def write_token(self, mode):
-        path = session.token_file(self.env)
-        os.makedirs(os.path.dirname(path))
-        with open(path, "w") as f:
-            f.write(" tok \n")
-        os.chmod(path, mode)
-
-    def test_the_variables_come_first_in_claudes_order(self):
-        env = dict(self.env, ANTHROPIC_API_KEY="k", CLAUDE_CODE_OAUTH_TOKEN="t")
-        self.assertEqual(session.host_credential(env), {"ANTHROPIC_API_KEY": "k"})
-        env.pop("ANTHROPIC_API_KEY")
-        self.assertEqual(session.host_credential(env), {"CLAUDE_CODE_OAUTH_TOKEN": "t"})
-
-    def test_the_token_file(self):
-        self.assertEqual(session.host_credential(self.env), {})
-        self.write_token(0o600)
-        self.assertEqual(session.host_credential(self.env), {"CLAUDE_CODE_OAUTH_TOKEN": "tok"})
-
-    def test_a_token_file_others_can_read_is_refused(self):
-        self.write_token(0o644)
-        with self.assertRaisesRegex(session.SessionError, "chmod 600"):
-            session.host_credential(self.env)
 
     def test_the_file_contents_are_safe_to_source(self):
         text = session.credential_file_contents({"ANTHROPIC_API_KEY": "a'b $(x)"})
@@ -270,6 +248,12 @@ class GitIdentityTests(unittest.TestCase):
         # core's `composer test` outlasts the 300 s default in a VM.
         self.assertEqual(session.session_env([])["COMPOSER_PROCESS_TIMEOUT"], "0")
 
+    def test_the_credential_proxys_address_bypasses_nonos_proxy(self):
+        env = session.session_env([])
+        self.assertEqual(env["NO_PROXY"], "localhost,127.0.0.1,192.168.5.2")
+        self.assertEqual(env["no_proxy"], env["NO_PROXY"])
+        self.assertEqual(env["ENABLE_TOOL_SEARCH"], "true")
+
 
 class ContextTextTests(unittest.TestCase):
 
@@ -378,13 +362,43 @@ class ResumeMainTests(Env):
         last = self.launches()[-1]
         self.assertEqual(last[-1], "--continue")
 
-    def test_the_credential_goes_on_stdin_and_never_on_a_command_line(self):
-        self.assertEqual(self.resume("--", "-p", "hi", env={"ANTHROPIC_API_KEY": SECRET}), 0)
-        self.assertIn(f"ANTHROPIC_API_KEY={SECRET}\n", [i for i in self.inputs if i])
+    def test_the_credential_stays_on_the_host(self):
+        self.assertEqual(self.resume("--", "-p", "hi", env={"ANTHROPIC_API_KEY": SECRET}), 0,
+                         self.err)
         for call in self.lima.calls:
             self.assertFalse(any(SECRET in str(a) for a in call), call)
+        self.assertFalse(any(SECRET in i for i in self.inputs if i))
+        # the phantom and the proxy's address go on stdin, into /dev/shm
+        (cred,) = [i for i in self.inputs if i and "ANTHROPIC_BASE_URL" in i]
+        port = re.search(r"ANTHROPIC_BASE_URL=http://192\.168\.5\.2:(\d+)\n", cred).group(1)
+        self.assertRegex(cred, r"ANTHROPIC_API_KEY=wmfsbx-[\w-]{20,}\n")
         (launch,) = self.launches()
         self.assertIn("/dev/shm/wmf-sbx-cred.Xy12Ab", launch)
+        self.assertIn(f"--open-port={port}", launch[:launch.index("--", launch.index(session.LAUNCHER))])
+        # the host block is opened to the port before the session and closed after it
+        rules = [" ".join(s) for s in self.lima.shells() if "wmf_sbx_hostblock" in " ".join(s)]
+        added = [i for i, r in enumerate(rules) if f"tcp dport {port} accept" in r]
+        removed = [i for i, r in enumerate(rules) if f'"wmf-sbx-cred-{port}" # handle' in r
+                   and "insert" not in r]
+        self.assertEqual(len(added), 1)
+        self.assertEqual(len(removed), 1)
+        self.assertLess(added[0], removed[0])
+        shells = self.lima.shells()
+        self.assertLess(shells.index(launch), [i for i, s in enumerate(shells)
+                                               if " ".join(s) == rules[removed[0]]][0])
+
+    def test_an_oauth_token_gets_an_oauth_phantom(self):
+        self.assertEqual(self.resume("--", "-p", "hi", env={"CLAUDE_CODE_OAUTH_TOKEN": SECRET}), 0)
+        (cred,) = [i for i in self.inputs if i and "ANTHROPIC_BASE_URL" in i]
+        self.assertRegex(cred, r"CLAUDE_CODE_OAUTH_TOKEN=wmfsbx-")
+        self.assertNotIn("ANTHROPIC_API_KEY", cred)
+
+    def test_no_credential_no_proxy(self):
+        self.assertEqual(self.resume(), 0, self.err)
+        self.assertFalse(any("wmf_sbx_hostblock" in " ".join(s) for s in self.lima.shells()
+                             if "nft" in " ".join(s) and "insert" in " ".join(s)))
+        (launch,) = self.launches()
+        self.assertFalse(any(a.startswith("--open-port") for a in launch))
 
     def test_a_broken_invariant_starts_no_session(self):
         self.lima.invariants = [False] * len(vm.INVARIANTS)

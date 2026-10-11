@@ -285,6 +285,8 @@ to D12, and tracks A and B, which are not repeated here).
   http://127.0.0.1:PORT/anthropic` and a 64-character phantom, not the key. But the key is
   in the VM (the `/dev/shm` hand-over, the environment of the wrapper and of nono's
   supervisor), and the built-in service is API-key only. **Chosen: H** (L1 done).
+- L2 RAN in the cloud test VM: a session with a tool call through the proxy, with the key
+  on the host only; the rule is removed after the session.
 - Not yet measured: a live-login session across a token refresh (L3).
 
 ### nono, Landlock and the session
@@ -314,10 +316,18 @@ to D12, and tracks A and B, which are not repeated here).
   adds `--no-sandbox`, a temporary `--user-data-dir` (headless Chrome will not start without
   one under nono) and `XDG_CONFIG_HOME` under the cache (crash handler). `/etc/fonts` is
   granted; helpers must not read the dpkg database.
-- Credential: the host's `$ANTHROPIC_API_KEY`, `$CLAUDE_CODE_OAUTH_TOKEN` or
-  `~/.config/wmf-sbx/claude-oauth-token` (0600) goes on stdin into a 0600 file in the guest's
-  `/dev/shm`, which the launcher reads and deletes; never on a command line, never in the
-  image.
+- Credential (track L): `credproxy.py`, run by `resume` for the session; the VM gets the
+  proxy's address and a phantom, on stdin into a 0600 file in `/dev/shm`. The proxy's port
+  is opened per session with an nftables rule tagged `wmf-sbx-cred-PORT` (a per-session
+  port, not one per sandbox, so that two sessions of one sandbox work).
+- nono sets `NO_PROXY=localhost,127.0.0.1` and drops the caller's; the proxy's address goes
+  into `NO_PROXY` through the settings `env` (`session.CREDENTIAL_PROXY_ENV`), or the API
+  call goes to nono's proxy and gets a 403 (RAN). `ANTHROPIC_*` variables pass through nono.
+- With a base URL that is not Anthropic's, Claude Code turns tool search off unless
+  `ENABLE_TOOL_SEARCH=true` (its debug log says so); the session sets it.
+- Claude Code also calls api.anthropic.com directly (bootstrap, fast-mode status, the MCP
+  registry, telemetry), through nono's proxy and without the base URL; these are not
+  needed for a session.
 - `resume` adds `--continue` only once `attached` is set, and sets it only after a clean run
   whose arguments could start a conversation (`starts_a_conversation`: not `--version`, not a
   subcommand such as `mcp`).

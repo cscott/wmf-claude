@@ -48,13 +48,27 @@ primary repo is that directory.
 
 ## Sign-in
 
-`resume` gives the session the host's credential, for that session only:
-`$ANTHROPIC_API_KEY`, `$CLAUDE_CODE_OAUTH_TOKEN`, or the file
-`~/.config/wmf-sbx/claude-oauth-token`. Without one, Claude Code asks you
-to log in, and that login stays in the VM: every new sandbox asks again.
+If you use Claude Code on the host, there is nothing to do: sandboxes
+use your login. The credential stays on the host. For each session,
+`resume` runs a small proxy on the host's loopback that puts the
+credential into Claude Code's API requests; the VM gets only the proxy's
+address and a random stand-in that is good for that session's proxy.
 
-To sign in once for all sandboxes, make a token with your Claude
-subscription and keep it in that file, readable by you only:
+`resume` takes the first of:
+
+1. `$ANTHROPIC_API_KEY`;
+2. `$CLAUDE_CODE_OAUTH_TOKEN`;
+3. the file `~/.config/wmf-sbx/claude-oauth-token` (see below);
+4. your Claude Code login on the host (Linux: `~/.claude/.credentials.json`;
+   macOS: the keychain). `resume` reads it for each request, so it uses
+   the host's refreshed login; if the login has expired, run `claude` on
+   the host once. `WMF_SBX_HOST_LOGIN=0` leaves it out.
+
+With none of these, Claude Code asks you to log in, and that login stays
+in the VM: every new sandbox asks again.
+
+A token that does not depend on a host login: make one with your Claude
+subscription and keep it in the file, readable by you only:
 
 ```bash
 claude setup-token                 # on the host; prints a token (valid for a year)
@@ -63,9 +77,11 @@ install -m 600 /dev/null ~/.config/wmf-sbx/claude-oauth-token
 $EDITOR ~/.config/wmf-sbx/claude-oauth-token    # paste the token
 ```
 
-`resume` refuses the file if other users can read it. The agent can read
-the credential while a session runs (`SECURITY.md` §4); revoke the token
-at claude.ai if you think it leaked.
+`resume` refuses the file if other users can read it. While a session
+runs, the agent can use the credential through the proxy, but cannot
+read it (`SECURITY.md` §4). The proxy's log is
+`~/.local/state/wmf-sbx/sandboxes/NAME.credproxy.log` (requests, no
+bodies).
 
 ## Preferences
 
@@ -332,8 +348,10 @@ config. Per-repo steps warn; core steps are fatal. `setup.py` is sent on
 stdin, so a change to it needs no new image.
 
 **Session** (`session.py`, `resume.py`). `resume` checks the
-invariants, puts the credential in a 0600 file in the guest's
-`/dev/shm` (a wrapper reads and deletes it), and runs upstream's
+invariants, starts the credential proxy (`credproxy.py`), opens the
+guest's host block to its port, puts the proxy's address and the
+stand-in credential in a 0600 file in the guest's `/dev/shm` (a wrapper
+reads and deletes it), and runs upstream's
 `bin/claude` as the agent in the primary clone. That is nono with the
 wmf-engineer profile, plus per-session grants: the other clones, the
 caches, the system paths the tools read, the package registries, the

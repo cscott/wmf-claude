@@ -138,6 +138,25 @@ class InputTests(unittest.TestCase):
         self.assertEqual((version, sha), ("2.1.286", CLAUDE_SHA))
         self.assertEqual(urls[0], image.CLAUDE_RELEASES + "/stable")
 
+    def test_claude_release_follows_wmf_sbx_claude_version(self):
+        def fetch(url):
+            if url.endswith("/latest"):
+                return "2.1.296\n"
+            if url.endswith("/manifest.json"):
+                version = url.rsplit("/", 2)[-2]
+                return json.dumps({"platforms": {"linux-x64": {"checksum": version[-1] * 64}}})
+            raise AssertionError(f"unexpected URL {url}")
+        var = image.CLAUDE_VERSION_VAR
+        self.assertEqual(image.claude_release("x86_64", fetch=fetch, env={var: "latest"}),
+                         ("2.1.296", "6" * 64))
+        self.assertEqual(image.claude_release("x86_64", fetch=fetch, env={var: "2.1.280"}),
+                         ("2.1.280", "0" * 64))
+        self.assertEqual(image.claude_release("x86_64", fetch=fake_fetch(), env={var: ""})[0],
+                         "2.1.286")
+        for bad in ("beta", "2.1", "2.1.280; rm -rf /"):
+            with self.assertRaisesRegex(image.ImageError, var):
+                image.claude_release("x86_64", fetch=fetch, env={var: bad})
+
     def test_claude_release_refuses_a_page_that_is_not_a_version(self):
         with self.assertRaisesRegex(image.ImageError, "unexpected Claude Code version"):
             image.claude_release("x86_64", fetch=lambda url: "<html>error</html>")

@@ -19,7 +19,7 @@
 # folder, so the repo's own `npm run` scripts find the binary. Run it again
 # after a change to the repo's Cypress version.
 #
-# See sbx/NOTES.md §91 and ~/MEDIAWIKI-TESTING.md §5.6.
+# See ~/MEDIAWIKI-TESTING.md §5.6.
 set -uo pipefail
 
 # The X programs that `cypress verify` and the runs start. The libraries

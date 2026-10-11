@@ -17,13 +17,22 @@ When a task is filed, add its T-number to the table. When upstream takes
 a fix, delete the pair.
 
 A wmf-claude fix that is ready goes upstream as a GitLab merge request,
-not as a task here. Two former tasks are gone for that reason:
+not as a task here. Those already sent or merged:
 
 - The `find -exec` deny spelling and the dead `Write(...)` denies:
-  upstream made the same fix, so the task and its patch are deleted.
-  Only the Linux glob question (task 4) is left.
-- `run-tests` and `vendor/bin/phpunit`: this is MR D, sent as
+  fixed upstream by
+  [!106](https://gitlab.wikimedia.org/repos/product-safety-and-integrity/wmf-claude/-/merge_requests/106)
+  and
+  [!112](https://gitlab.wikimedia.org/repos/product-safety-and-integrity/wmf-claude/-/merge_requests/112).
+  Only the Linux glob question (task 4) is left; the caveat it questions
+  came with
+  [!57](https://gitlab.wikimedia.org/repos/product-safety-and-integrity/wmf-claude/-/merge_requests/57).
+- `run-tests` and `vendor/bin/phpunit`:
   [!130](https://gitlab.wikimedia.org/repos/product-safety-and-integrity/wmf-claude/-/merge_requests/130)
-  (see `sbx/NOTES.md` §104). The `lima-port` branch carries !130, so
-  `sbx/patches/plugin/01-run-tests-composer-entrypoint.patch` is
-  deleted. The kit now ships upstream's `run-tests` unchanged.
+  (open). The `lima-port` branch carries it.
+- The SessionStart backend seam and the Phabricator username in
+  `config.json`:
+  [!132](https://gitlab.wikimedia.org/repos/product-safety-and-integrity/wmf-claude/-/merge_requests/132)
+  and
+  [!131](https://gitlab.wikimedia.org/repos/product-safety-and-integrity/wmf-claude/-/merge_requests/131)
+  (open). The `lima-port` branch carries them.

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Remove a sandbox: its Lima VM, its state, and the host-side `<name>`
-git remotes and gc settings that wmf-sbx added for it (see
-sbx/DESIGN-host-remotes.md §5).
+git remotes and gc settings that wmf-sbx added for it.
 
 Only a sandbox that wmf-sbx owns (it has a state file) is removed, so
 that `rm` can never delete another Lima VM. `limactl delete` does not

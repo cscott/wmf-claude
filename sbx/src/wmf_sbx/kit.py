@@ -35,10 +35,8 @@ REPO_ROOT = os.path.dirname(SBX_ROOT)
 #    resolves as a git subcommand, and `git-review-check` because
 #    git-safe-reset invokes it by bare name.
 #  - sbx/helpers/ holds the scripts that only run inside a sandbox.
-#    `mw-install-browser` installs Chrome for the karma and selenium suites
-#    (sbx/DESIGN-testing-instructions.md §5.3). `mw-install-cypress`
-#    installs a repo's Cypress binary and the packages it needs
-#    (sbx/NOTES.md §91).
+#    `mw-install-browser` installs Chrome for the karma and selenium suites;
+#    `mw-install-cypress` installs a repo's Cypress binary.
 HELPER_SCRIPT_DIR = os.path.join(SBX_ROOT, "bin")
 SANDBOX_HELPER_DIR = os.path.join(SBX_ROOT, "helpers")
 HELPER_SCRIPTS = {
@@ -51,8 +49,7 @@ HELPER_SCRIPTS = {
 # The in-sandbox testing guide, shipped to ~/MEDIAWIKI-TESTING.md. It goes
 # beside CLAUDE.md, not in it and not in ~/.claude/: it is reference
 # material to read when the agent tests, not context for every session. The
-# CLAUDE.md "Running tests" section points at it
-# (sbx/DESIGN-testing-instructions.md §3).
+# CLAUDE.md "Running tests" section points at it.
 TESTING_GUIDE = "MEDIAWIKI-TESTING.md"
 TESTING_GUIDE_SOURCE = os.path.join(SBX_ROOT, "templates", TESTING_GUIDE)
 
@@ -88,8 +85,7 @@ CHROME_BIN = "/usr/bin/chromium"
 def mediawiki_env_vars(resolved):
     """What the MediaWiki test harnesses read out of the environment,
     taken from the host's own mediawiki/core checkout (its composer.json
-    mw-install:sqlite script is the authority -- see
-    sbx/DESIGN-setup-steps.md §4.2).
+    mw-install:sqlite script is the authority).
 
     wmf-sbx-setup writes the same values into <core>/.env, but that file is
     read by `docker compose` and nothing else: core's Gruntfile and
@@ -103,7 +99,7 @@ def mediawiki_env_vars(resolved):
     empty string is legitimate for a docroot install, and core's Gruntfile
     says so, but wdio-mediawiki's own guard rejects it and stops every
     selenium run before the first test. Quibble exports `/` for the same
-    reason. See sbx/DESIGN-testing-instructions.md §2.6.
+    reason.
 
     CHROME_BIN names the path mw-install-browser links, which is the path
     Quibble uses too. It is set even before that helper has run: a
@@ -170,8 +166,7 @@ def build_plan(resolved, readonly_dirs=None, links=None, primary=None):
     (the first is the primary unless `primary` says otherwise).
     links: {local_dir: (link_name, link_dir)} for the repos that should be
     symlinked into the core clone -- computed host-side, where the parsed
-    manifests are (see sbx/DESIGN-dependency-walk.md §1 on why the link
-    name is not the manifest's `name` field).
+    manifests are (see sbx/README.md, Architecture).
     """
     readonly_dirs = set(readonly_dirs or [])
     links = links or {}

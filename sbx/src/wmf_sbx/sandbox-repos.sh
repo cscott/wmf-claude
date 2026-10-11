@@ -84,7 +84,7 @@ clone_repo() {
   fi
 
   # `origin` is the real upstream, `local` the host's repository, as in
-  # sbx (configure_remotes, DESIGN-setup-steps.md §8.1). Without an
+  # sbx (configure_remotes). Without an
   # upstream, `origin` stays the host's repository.
   remote=origin
   if [[ -n "$upstream" ]]; then

@@ -10,7 +10,7 @@ host ports are recycled (confirmed on the host, 2026-09-07), so a leaked
 remote doesn't merely clutter a config -- it can later fetch from an
 unrelated sandbox that happened to be handed the same port. Reliable
 cleanup is therefore a correctness requirement, and cleanup needs a
-record of what we touched. See sbx/DESIGN-host-remotes.md §1-§2.
+record of what we touched.
 
 One JSON file per sandbox rather than a single registry, so two
 concurrent `wmf-sbx-create` runs can never read-modify-write the same

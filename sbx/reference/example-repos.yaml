@@ -1,5 +1,5 @@
-# Example ~/.config/wmf-sbx/repos.yaml, matching the walkthrough in
-# sbx/DESIGN-repo-resolution.md. Copy to ~/.config/wmf-sbx/repos.yaml and
+# Example ~/.config/wmf-sbx/repos.yaml (see sbx/README.md, "Naming a
+# repo"). Copy to ~/.config/wmf-sbx/repos.yaml and
 # adjust paths for your own layout -- this file has no special status,
 # it's just a starting point (and a test fixture for wmf_sbx_resolve.py).
 
@@ -43,8 +43,8 @@ extra_dependencies: {}
   # gerrit:mediawiki/extensions/Example:
   #   - gerrit:mediawiki/extensions/OtherThing
 
-# Personal additions to the auto-generated MediaWiki kit (see
-# sbx/DESIGN-kit-generation.md) -- for anything that's a preference, not a
+# Personal additions (no code reads them yet; sbx/NOTES.md) -- for
+# anything that's a preference, not a
 # shared MediaWiki dependency, so it doesn't belong in wmf-claude's
 # upstreamed defaults. Applied after the auto-wired MW_CORE_REPO-style
 # variables and the base package list, respectively.

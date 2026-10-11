@@ -166,7 +166,9 @@ class ProvisionTests(unittest.TestCase):
         s = self.script()
         for needle in ("gpasswd -d", "ip daddr @private4 counter reject",
                        "tcp dport { 80, 443 } accept", "meta skuid $AGENT_UID jump agent_egress",
-                       "dev.tty.legacy_tiocsti = 0", "touch /run/wmf-sbx/provisioned"):
+                       "dev.tty.legacy_tiocsti = 0", "touch /run/wmf-sbx/provisioned",
+                       # DNS after Lima's NAT to the host agent's resolver
+                       "ct original ip daddr $NET ct original proto-dst 53 accept"):
             self.assertIn(needle, s)
         self.assertNotIn("flush ruleset", s)
 

@@ -36,3 +36,18 @@ not as a task here. Those already sent or merged:
   and
   [!131](https://gitlab.wikimedia.org/repos/product-safety-and-integrity/wmf-claude/-/merge_requests/131)
   (open). The `lima-port` branch carries them.
+
+Ready to send, not yet a merge request:
+
+- **`WMF_CLAUDE_STE=0`** leaves the ASD-STE100 writing bullet out of the
+  SessionStart context. Branch `ste-switch` on
+  [cscott/wmf-claude](https://github.com/cscott/wmf-claude/tree/ste-switch),
+  one commit (de1117f) on upstream `main` 10aefc1: `bin/session-start.sh`,
+  a test in `tests/test-templates.sh`, `docs/advanced.md` and `CLAUDE.md`.
+  The default output does not change. Tested: upstream's
+  `tests/test-templates.sh` passes (247/247), and the commit cherry-picks
+  cleanly onto !127 (249/249). If !132 merges first, the rebase conflicts
+  in the hook's heredoc; redo the same split there. The `lima-port`
+  branch has its own copy of the change, on top of !132's seam. When the
+  MR is opened, put its number here; when it merges, take upstream's
+  version in the next rebase.

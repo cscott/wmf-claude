@@ -22,6 +22,8 @@ set -uo pipefail
 NAME=${WMF_SBX_CHECK_NAME:-hw-check}
 LOGS=${WMF_SBX_CHECK_LOGS:-real-hardware-logs}
 WMF_SBX=${WMF_SBX:-wmf-sbx}
+# WMF_SBX_CHECK_IMAGE=KEY reuses a cached golden image (`wmf-sbx image ls`).
+IMAGE_ARGS=(${WMF_SBX_CHECK_IMAGE:+--image "$WMF_SBX_CHECK_IMAGE"})
 mkdir -p "$LOGS"
 
 # The session's environment (MW_SERVER, CHROME_BIN, ...) is in the agent's
@@ -55,7 +57,7 @@ check() {  # NAME DIR CMD
 
 case "${1:-}" in
   create)
-    "$WMF_SBX" create --reset-all --name "$NAME" \
+    "$WMF_SBX" create --reset-all "${IMAGE_ARGS[@]}" --name "$NAME" \
       gerrit:mediawiki/extensions/Cite gerrit:mediawiki/extensions/Popups \
       gerrit:mediawiki/extensions/TextExtracts gerrit:mediawiki/extensions/PageImages
     ;;

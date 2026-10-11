@@ -231,6 +231,10 @@ to D12, and tracks A and B, which are not repeated here).
 
 ### Lima, QEMU and the golden image
 
+- Lima's DNS: the guest asks 192.168.5.3:53, and Lima's iptables NAT sends it to the host
+  agent's resolver on 192.168.5.2 at a random port. The host block's filter sees the address
+  after NAT, so it accepts by the original destination (`ct original ... proto-dst 53`).
+  A host proxy hides a DNS failure: the proxy resolves names itself.
 - Debian 13's cloud kernel has no 9p and no virtiofs: the image installs `linux-image-amd64`
   and purges the cloud kernels; the build checks the modules.
 - 9p `fscache` serves stale refs after a host `pack-refs`; use `9p.cache: none` (template line

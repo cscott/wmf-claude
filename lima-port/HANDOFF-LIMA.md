@@ -1479,6 +1479,9 @@ Candidates (L1 measures them):
      cannot read the real value (`env`, `/proc/<supervisor>/environ`,
      memory) from inside the session.
   Exit: results in `sbx/NOTES.md`, and a choice between H and N.
+  Status: 1 **done** (RAN, sbx/NOTES.md, "Shared login"); 2–4 need the
+  engineer's host: `lima-port/checks/credential-l1.sh token`, `live`,
+  `apikey` (step 4 of its `apikey` run is N).
 - **L2. Implement** (H, if L1 holds):
   - `proxy.py`: the reverse proxy, started by `resume`/`start` and
     stopped with the VM (or one long-lived host service); listens on

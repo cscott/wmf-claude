@@ -34,6 +34,9 @@ from . import session as session_mod
 from . import template as template_mod
 from . import vm as vm_mod
 
+# `create` keeps unused golden images younger than this (prune_old_images).
+PRUNE_MIN_AGE = datetime.timedelta(hours=1)
+
 CLONE_URL_BUILDERS = {
     "gerrit": lambda path: f"https://gerrit.wikimedia.org/r/{path}",
     "gitlab": lambda path: f"https://gitlab.wikimedia.org/{path}.git",
@@ -411,6 +414,22 @@ def lima_sandbox_names(lima, env=None):
     return names
 
 
+def prune_old_images(new_key, env, say):
+    """After a build: delete the golden images that no sandbox uses, except
+    the new one and any built in the last PRUNE_MIN_AGE (another `create`
+    may be about to use it). A failure is a warning: the sandbox does not
+    depend on it."""
+    try:
+        gone = image_mod.prune_images(keep={new_key}, env=env, min_age=PRUNE_MIN_AGE)
+    except (OSError, image_mod.ImageError) as e:
+        print(f"warning: could not remove old golden images ({e})", file=sys.stderr)
+        return
+    if gone:
+        freed = sum(n for _k, n in gone)
+        say(f"+ removed {len(gone)} unused golden image(s), {freed / 2**30:.1f} GiB: "
+            + ", ".join(k for k, _n in gone))
+
+
 def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
          inputs_fn=None, prompt=input, now=None):
     """`wmf-sbx create` on Lima (lima-port/HANDOFF-LIMA.md §4, phase 3).
@@ -569,7 +588,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
             arch = image_inputs["arch"]
             claude_version = (image_inputs.get("claude") or {}).get("version")
         else:
-            inputs = (inputs_fn or image_mod.image_inputs)()
+            inputs = inputs_fn() if inputs_fn else image_mod.image_inputs(env=env)
             key = image_mod.cache_key(inputs)
             arch = inputs["arch"]
             claude_version = (inputs.get("claude") or {}).get("version")
@@ -577,6 +596,8 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
             say(f"+ golden image {key} ({'in the cache' if cached else 'to build'})")
             if not args.dry_run:
                 (build or image_mod.build)(inputs, lima=lima, run=run, env=env, log=say)
+                if not cached:
+                    prune_old_images(key, env, say)
         golden = image_mod.golden_path(key, env)
 
         if not args.dry_run:

@@ -10,6 +10,7 @@ The real round trip ran in a VM (lima-port/HANDOFF-LIMA.md §11, phase 3).
 
 import contextlib
 import io
+import datetime
 import json
 import os
 import shutil
@@ -280,6 +281,30 @@ class CreateTests(Env):
         self.assertEqual(self.create("--name", "demo", inputs=False), 0, self.err)
         self.assertEqual(self.built, [self.inputs])
         self.assertEqual(state_mod.load("demo", self.env)["image"], image.cache_key(self.inputs))
+
+    def date_image(self, created):
+        path = os.path.join(image.entry_dir(self.KEY, self.env), "manifest.json")
+        with open(path, "w") as f:
+            json.dump({"key": self.KEY, "created": created, "inputs": {"arch": "x86_64"}}, f)
+
+    def test_a_build_removes_old_unused_images(self):
+        self.date_image("2026-01-01T00:00:00+00:00")
+        self.assertEqual(self.create("--name", "demo", inputs=False), 0, self.err)
+        self.assertFalse(os.path.exists(image.entry_dir(self.KEY, self.env)))
+        self.assertIn(f"removed 1 unused golden image(s)", self.err)
+
+    def test_a_build_keeps_an_image_built_in_the_last_hour(self):
+        now = datetime.datetime.now(datetime.timezone.utc)
+        self.date_image((now - datetime.timedelta(minutes=5)).isoformat(timespec="seconds"))
+        self.assertEqual(self.create("--name", "demo", inputs=False), 0, self.err)
+        self.assertTrue(os.path.isdir(image.entry_dir(self.KEY, self.env)))
+
+    def test_a_cached_image_removes_nothing(self):
+        other = "fedcba9876543210"
+        shutil.copytree(image.entry_dir(self.KEY, self.env), image.entry_dir(other, self.env))
+        self.date_image("2026-01-01T00:00:00+00:00")
+        self.assertEqual(self.create("--name", "demo"), 0, self.err)
+        self.assertTrue(os.path.isdir(image.entry_dir(other, self.env)))
 
     def test_sudo_is_refused_for_now(self):
         self.assertEqual(self.create("--sudo"), 1)

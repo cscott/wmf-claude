@@ -30,12 +30,6 @@ to D12, and tracks A and B, which are not repeated here).
 - [ ] **`--reset-all` semantics**. It must reset to the *upstream* branch
   (Gerrit/GitLab), never to the host's branch. Today, a repo with no known upstream keeps the
   host repo as `origin` and `safe-reset` goes there silently (`sandbox-repos.sh`, `clone_repo`). Refuse `--reset-all` (or warn per repo) when the upstream is unknown, and test it.
-- [ ] **Re-check on real hardware what failed under TCG**: core's QUnit
-  (`--qunit-component=MediaWiki`) does not complete (0 tests, ping timeout, or "no message in
-  60000 ms"; karma also warns that "/" is proxied); the full core wdio suite
-  (`npm run selenium-test`) did not finish; Cypress was not tested (the cloud proxy gave 502
-  for `download.cypress.io`/`cdn.cypress.io`). `lima-port/checks/real-hardware.sh` runs
-  these checks; not on Apple Silicon (no Chrome for Testing for Linux arm64).
 - [ ] **Watch for the TCG segfaults on real hardware**: Claude Code (Bun),
   jsdoc, a Jest worker, and QEMU itself once at boot; each passed on retry. Maybe the same as
   an unexplained `limactl start` exit 1 after 24 s, seen once.
@@ -252,6 +246,10 @@ to D12, and tracks A and B, which are not repeated here).
   (`limactl edit`) before booting a stopped VM. nono needs `--upstream-proxy 192.168.5.2:PORT`
   behind a host proxy.
 - `exec` without `-w` falls back to the agent's home when the primary clone does not exist.
+- On real hardware (Linux, KVM; `lima-port/checks/real-hardware.sh`, outside nono) every
+  browser suite passes: core QUnit 897 tests in 7 s, core wdio 13/13 spec files in 22 s,
+  Popups wdio 1/1, Cypress install 12 s and Cite's specs 3/3. What failed under TCG (core QUnit
+  not completing, wdio specs failing) was slowness, not the sandbox.
 - Default VM memory is 8 GiB: phan on Translate was OOM-killed at 4 GiB.
 - Timings under TCG are 5–35× slower than a 16-core host (image build 26–41 min, create
   ~250–310 s, setup for Translate ~40 min); only compare them with each other.

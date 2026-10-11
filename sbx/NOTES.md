@@ -72,9 +72,10 @@ to D12, and tracks A and B, which are not repeated here).
 ### Session, credentials, Claude Code
 
 - [ ] **Store the user's model preference persistently**.
-- [ ] **Check the "update installed, restart to update" message on the first resume** (Still
-  to do). `bin/launch-claude.sh` exports `DISABLE_AUTOUPDATER=1` , so it may be gone
-  under Lima; confirm in a new sandbox, then close or fix.
+- [ ] **Check the "update installed, restart to update" message on the first resume** in a
+  new sandbox. Its likely cause, `claude update` in `wmf-claude-setup` at create time (an
+  agent-owned 2.1.296 beside the image's pinned version), is now skipped
+  (`WMF_CLAUDE_SKIP_UPDATE=1`); close this if the message is gone.
 - [ ] **Upstream: grant the Linux system paths the tools read**. Propose `read`
   entries for `/opt/claude-code`, `/etc/php`, `/etc/gitconfig`, `/etc/bash.bashrc`,
   `/opt/node`, `/etc/fonts` in `profiles/wmf-engineer.json` (today the lima-sbx launcher

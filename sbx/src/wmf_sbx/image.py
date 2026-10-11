@@ -31,6 +31,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.error
 import urllib.request
 
 try:
@@ -80,6 +81,11 @@ CLAUDE_RELEASES = "https://downloads.claude.ai/claude-code-releases"
 # `stable`, not `latest`: the image is shared by every sandbox that has the
 # same key, so it takes the release channel that has had more use.
 CLAUDE_CHANNEL = "stable"
+# WMF_SBX_CLAUDE_VERSION picks another release: a channel (`stable`,
+# `latest`) or an exact version (2.1.296). The version and its checksum go
+# into the cache key, so another release gives another image.
+CLAUDE_VERSION_VAR = "WMF_SBX_CLAUDE_VERSION"
+CLAUDE_CHANNELS = ("stable", "latest")
 
 # The packages, after kit.BASE_PACKAGES (the PHP side, unchanged from the
 # Docker kit):
@@ -183,13 +189,26 @@ def _fetch(url):
         return resp.read().decode("utf-8")
 
 
-def claude_release(arch, fetch=_fetch, channel=CLAUDE_CHANNEL):
-    """(version, sha256) of the Claude Code release on `channel` for
-    `arch`, from the release manifest."""
-    version = fetch(f"{CLAUDE_RELEASES}/{channel}").strip()
+def claude_release(arch, fetch=_fetch, channel=CLAUDE_CHANNEL, env=None):
+    """(version, sha256) of the Claude Code release for `arch`, from the
+    release manifest: the one on `channel`, or the channel or exact
+    version that $WMF_SBX_CLAUDE_VERSION names."""
+    requested = ((os.environ if env is None else env).get(CLAUDE_VERSION_VAR) or "").strip()
+    if requested and not (requested in CLAUDE_CHANNELS
+                          or re.match(r"^\d+\.\d+\.\d+$", requested)):
+        raise ImageError(f"{CLAUDE_VERSION_VAR}={requested!r}: want "
+                         f"{' or '.join(CLAUDE_CHANNELS)}, or a version such as 2.1.296")
+    channel = requested or channel
+    if channel in CLAUDE_CHANNELS:
+        version = fetch(f"{CLAUDE_RELEASES}/{channel}").strip()
+    else:
+        version = channel
     if not re.match(r"^\d+\.\d+\.\d+$", version):
         raise ImageError(f"unexpected Claude Code version {version!r} on {channel}")
-    manifest = json.loads(fetch(f"{CLAUDE_RELEASES}/{version}/manifest.json"))
+    try:
+        manifest = json.loads(fetch(f"{CLAUDE_RELEASES}/{version}/manifest.json"))
+    except urllib.error.HTTPError as e:
+        raise ImageError(f"no Claude Code release {version} ({e.code} for its manifest)")
     plat = claude_platform(arch)
     checksum = ((manifest.get("platforms") or {}).get(plat) or {}).get("checksum", "")
     if not re.match(r"^[0-9a-f]{64}$", checksum):

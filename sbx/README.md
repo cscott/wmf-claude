@@ -54,6 +54,24 @@ primary repo is that directory.
 `claude setup-token`). Without one, Claude Code asks you to log in, and
 that login stays in the VM.
 
+## Claude Code version
+
+The golden image holds one Claude Code release, and sandboxes do not
+update it. By default it is the release on Claude Code's `stable`
+channel when the image is built. `WMF_SBX_CLAUDE_VERSION` picks another
+one, for `create` and `image build`:
+
+```bash
+WMF_SBX_CLAUDE_VERSION=latest wmf-sbx create Cite    # the `latest` channel
+WMF_SBX_CLAUDE_VERSION=2.1.296 wmf-sbx create Cite   # an exact release
+```
+
+The version is part of the image's cache key, so a new release (or the
+`stable` channel moving on) gives a new image at the next `create`.
+`wmf-sbx image ls` shows each image's version. A sandbox keeps the
+version of the image it was made from; to change it, create a new
+sandbox.
+
 ## Quick start
 
 ```bash

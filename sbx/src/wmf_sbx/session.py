@@ -244,9 +244,9 @@ This sandbox holds its own set of repos; `ls "$MW_INSTALL_PATH"/extensions
 "$MW_INSTALL_PATH"/skins` and `echo "$PARSOID"` show which. Setup installed
 `vendor/` and `node_modules/` in every repo, and a SQLite wiki at
 `$MW_INSTALL_PATH` with every checked-out extension and skin loaded. A step
-that failed is listed in `~/.wmf-sbx/wmf-sbx-setup.status`, and
-`~/.wmf-sbx/wmf-sbx-setup.log` says why; read them when something is
-missing, before you try to install it yourself.
+that failed is listed in `~/.wmf-sbx/wmf-sbx-setup.status` (and
+`~/.wmf-sbx/wmf-sbx-setup.log`), with where to find its cause; read them
+when something is missing, before you try to install it yourself.
 `~/MEDIAWIKI-TESTING.md` is the full guide. Read it before your first test
 run in a session, not after a failure.
 

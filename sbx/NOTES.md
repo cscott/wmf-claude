@@ -271,7 +271,13 @@ to D12, and tracks A and B, which are not repeated here).
   loopback from other hosts, so the guest's ephemeral range is narrowed to 49152–53247
   (`tcp_tw_reuse`) and each session opens 4000, 9876 and that window plus `--listen-port 0`;
   the VM's nftables limits off-VM TCP to 80/443. Bookmark: revisit when external egress control
-  arrives (track A).
+  arrives (track A). With it, the guest needs no DNS (the host proxy resolves names), so the
+  same change closes contained mode's DNS residual (lookups through Lima's resolver can
+  tunnel data). If the unification slips, the separate fix is a filtering DNS forwarder in
+  the VM (dnsmasq or unbound, as root) that answers only for nono's allowlist (the profile's
+  domains plus `session.REGISTRY_DOMAINS`): only nono's proxy needs DNS, because nft and
+  Landlock keep the agent's other traffic off the network. DNS over HTTPS does not help:
+  any recursive resolver forwards `<data>.evil.example` to its name server.
 - Browsers without sudo: the image has the Chrome/Cypress libraries, Xvfb and xauth;
   `/usr/bin/chromium`/`chromedriver` wrap links in `~/.cache/wmf-sbx-browser`; the wrapper
   adds `--no-sandbox`, a temporary `--user-data-dir` (headless Chrome will not start without

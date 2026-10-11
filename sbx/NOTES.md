@@ -36,6 +36,15 @@ to D12, and tracks A and B, which are not repeated here).
 - [ ] **Optional: say `time env VAR=x cmd`** in MEDIAWIKI-TESTING.md's §6: the shell
   `time` keyword does not take a `VAR=x` prefix.
 
+- [ ] **Faster setup: read the `timing:` lines first.** A create's setup log now times each
+  `composer update` (resolve / install / autoload) and `npm ci`. If downloads and extraction
+  are a large share, pre-fill a composer cache in the golden image (trusted: build time), with
+  `gerrit:mediawiki/vendor`'s `composer.json` as the list of packages, mounted in the VM under
+  an overlay so composer can write. If resolution dominates, a cache does not help; consider
+  running the per-repo steps in parallel, or installing dependency repos lazily. npm's cache
+  can be shared across sandboxes safely (`npm ci` checks the lock file's hashes); composer's
+  cannot (no hashes for most GitHub archives).
+
 ### Git transport and host remotes
 
 - [ ] **`git safe-reset local` inside the VM falls through to the Gerrit check**. `git-review-check` trusts `local` only when `$SANDBOX_NAME`

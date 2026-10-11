@@ -1481,7 +1481,11 @@ Candidates (L1 measures them):
   Exit: results in `sbx/NOTES.md`, and a choice between H and N.
   Status: **done**; H chosen (sbx/NOTES.md, "Shared login"). Item 3's
   refresh question moves to L3.
-- **L2. Implement** (H, if L1 holds):
+- **L2. Implement** (H, if L1 holds). Status: **done** (RAN, an API
+  key, in the cloud VM). As built: `credproxy.py`, one proxy per
+  `resume`, in a thread, on a port the OS picks; the nftables rule is
+  added and removed per session, not baked into the template
+  (sbx/NOTES.md, "Shared login"). Planned:
   - `proxy.py`: the reverse proxy, started by `resume`/`start` and
     stopped with the VM (or one long-lived host service); listens on
     127.0.0.1 only; forwards to `api.anthropic.com` only, and only the

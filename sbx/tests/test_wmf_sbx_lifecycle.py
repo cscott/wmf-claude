@@ -146,7 +146,9 @@ class Env(unittest.TestCase):
         self.addCleanup(self._cleanup)
         self.env = {"XDG_STATE_HOME": os.path.join(self.tmp, "state"),
                     "XDG_CACHE_HOME": os.path.join(self.tmp, "cache"),
-                    "HOME": self.tmp}
+                    "HOME": self.tmp,
+                    # not the keychain of the machine that runs the tests
+                    "WMF_SBX_HOST_LOGIN": "0"}
         d = image.entry_dir(self.KEY, self.env)
         os.makedirs(d)
         g = os.path.join(d, "golden.qcow2")

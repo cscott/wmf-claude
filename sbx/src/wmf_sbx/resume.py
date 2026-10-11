@@ -14,16 +14,21 @@ nono (session.launcher_argv). LAUNCHER-FLAGs go to bin/claude, e.g.
 Without CLAUDE-ARGs, a sandbox that has had a conversation gets
 `--continue`.
 
-The credential (D6, MVP) comes from the host: $ANTHROPIC_API_KEY,
-$CLAUDE_CODE_OAUTH_TOKEN, or the file ~/.config/wmf-sbx/claude-oauth-token
-(a token from `claude setup-token`, mode 0600). It is given to this
-session only (session.py). Without one, Claude Code asks you to log in,
-and that login stays in this VM.
+The credential stays on the host (track L, credproxy.py): $ANTHROPIC_API_KEY,
+$CLAUDE_CODE_OAUTH_TOKEN, the file ~/.config/wmf-sbx/claude-oauth-token
+(a token from `claude setup-token`, mode 0600), or the host's own Claude
+Code login. For the length of the session, a proxy on the host's loopback
+puts it into Claude Code's requests; the VM gets a phantom. Without a
+credential, Claude Code asks you to log in, and that login stays in this
+VM.
 """
 
+import os
 import sys
 
 from . import color as color_mod
+from . import credproxy as credproxy_mod
+from . import image as image_mod
 from . import lima as lima_mod
 from . import session as session_mod
 from . import start as start_mod
@@ -102,29 +107,85 @@ def main(argv=None, lima=None, env=None):
                                   f"is started. `wmf-sbx rm {name}` and create it again."),
                   file=sys.stderr)
             return 1
-        cred = session_mod.host_credential(env)
-        cred_path = session_mod.put_credential(name, cred, lima=lima) if cred else None
+        source = credproxy_mod.host_source(env)
     except (state_mod.StateError, vm_mod.VmError, lima_mod.LimaError,
-            session_mod.SessionError) as e:
+            credproxy_mod.CredentialError) as e:
         print(color_mod.error(f"error: {e}"), file=sys.stderr)
         return 1
-    if not cred:
+    if source is None:
         print(color_mod.dim(
             "note: no Claude credential on the host ($ANTHROPIC_API_KEY, "
-            f"$CLAUDE_CODE_OAUTH_TOKEN or {session_mod.token_file(env)}); Claude Code "
-            "will ask you to log in, in this VM only."), file=sys.stderr)
+            f"$CLAUDE_CODE_OAUTH_TOKEN, {credproxy_mod.token_file(env)}, or a Claude Code "
+            "login); Claude Code will ask you to log in, in this VM only."), file=sys.stderr)
     if claude_args is None:
         claude_args = default_claude_args(state.get("attached"))
-    argv = session_mod.launcher_argv(
-        state, cred_path=cred_path, launcher_flags=launcher_flags,
-        claude_args=claude_args, proxy=session_mod.upstream_proxy(env))
-    print(color_mod.dim(f"+ claude in {vm_mod.instance_name(name)}, as the agent, in "
-                        f"{state['primaryDir']}"), file=sys.stderr)
-    result = vm_mod.shell(name, argv, lima=lima, workdir="/", check=False, capture=False)
+    proxy = None
+    try:
+        cred_path = None
+        if source is not None:
+            proxy, cred_path = start_proxy(name, source, lima=lima, env=env)
+            launcher_flags = list(launcher_flags) + [f"--open-port={proxy.port}"]
+        argv = session_mod.launcher_argv(
+            state, cred_path=cred_path, launcher_flags=launcher_flags,
+            claude_args=claude_args, proxy=session_mod.upstream_proxy(env))
+        print(color_mod.dim(f"+ claude in {vm_mod.instance_name(name)}, as the agent, in "
+                            f"{state['primaryDir']}"), file=sys.stderr)
+        result = vm_mod.shell(name, argv, lima=lima, workdir="/", check=False, capture=False)
+    except (lima_mod.LimaError, session_mod.SessionError) as e:
+        print(color_mod.error(f"error: {e}"), file=sys.stderr)
+        return 1
+    finally:
+        if proxy is not None:
+            stop_proxy(name, proxy, lima=lima)
     if result.returncode == 0 and starts_a_conversation(claude_args):
         set_attached(name, env=env)
         session_mod.mark_first_run_seen(env)
     return result.returncode
+
+
+def proxy_log_path(name, env=None):
+    return os.path.join(state_mod.state_dir(env), f"{name}.credproxy.log")
+
+
+def start_proxy(name, source, lima=None, env=None):
+    """Start the session's credential proxy on the host, open the guest's
+    host block to its port, and pass the phantom and the proxy's address
+    into the VM. Returns (proxy, the credential file's path in the VM)."""
+    problem = credproxy_mod.check_source(source)
+    if problem:
+        print(color_mod.error(f"warning: {problem}"), file=sys.stderr)
+    proxy = credproxy_mod.CredentialProxy(
+        source, env=env, ca_files=image_mod.extra_ca_files(env),
+        log_path=proxy_log_path(name, env))
+    proxy.start()
+    try:
+        # A rule whose port has no listener on the host was left by a
+        # resume that did not end cleanly; remove it with ours added.
+        res = vm_mod.shell(name, credproxy_mod.guest_rule_ports_argv(), lima=lima,
+                           check=False)
+        stale = [p for p in (res.stdout or "").split()
+                 if p.isdigit() and not credproxy_mod.port_in_use(int(p))]
+        res = vm_mod.shell(name, credproxy_mod.guest_rules_argv(add=[proxy.port],
+                                                                remove=stale),
+                           lima=lima, check=False)
+        if res.returncode != 0:
+            raise session_mod.SessionError(
+                f"could not open the VM's host block to the credential proxy "
+                f"(exit {res.returncode})")
+        return proxy, session_mod.put_credential(name, proxy.session_env(), lima=lima)
+    except BaseException:
+        stop_proxy(name, proxy, lima=lima)
+        raise
+
+
+def stop_proxy(name, proxy, lima=None):
+    """Close the guest's host block to the proxy's port again, then stop it."""
+    try:
+        vm_mod.shell(name, credproxy_mod.guest_rules_argv(remove=[proxy.port]),
+                     lima=lima, check=False)
+    except lima_mod.LimaError:
+        pass   # the next resume removes the rule (no listener)
+    proxy.stop()
 
 
 def run_main(argv=None, lima=None, env=None):

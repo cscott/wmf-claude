@@ -12,21 +12,20 @@ At create (create.py, setup.py --lima), as the agent:
 
 At resume (resume.py), launcher_argv() is what runs in the VM.
 
-The credential (D6, MVP): a Claude token or API key from the host
-(host_credential), given to one session only. It goes into the VM on
-stdin, into a 0600 file in /dev/shm (RAM), and the launcher reads and
-deletes the file before it starts bin/claude. It is never in a command
-line and never on the VM's disk. The Claude process has it in its
-environment while it runs.
+The credential (track L): the host's Claude credential stays on the
+host, behind a proxy that `resume` runs for the session (credproxy.py).
+The session gets the proxy's address and a phantom credential. They go
+into the VM on stdin, into a 0600 file in /dev/shm (RAM), and the
+launcher reads and deletes the file before it starts bin/claude.
 """
 
 import json
 import re
 import os
 import shlex
-import stat
 import subprocess
 
+from . import credproxy as credproxy_mod
 from . import image as image_mod
 from . import kit as kit_mod
 from . import setup as setup_mod
@@ -100,11 +99,19 @@ REGISTRY_DOMAINS = (
     "download.cypress.io", "cdn.cypress.io",  # mw-install-cypress
 )
 
-# The host's credential for the session (D6, MVP). The variables first,
-# in Claude Code's own order of precedence; then the token file, for a
-# token from `claude setup-token`.
-CREDENTIAL_VARS = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
-TOKEN_VAR = "CLAUDE_CODE_OAUTH_TOKEN"
+# For the host credential proxy (credproxy.py), in every session; the
+# address and the phantom come per session, in the credential file.
+# - NO_PROXY: nono sets NO_PROXY=localhost,127.0.0.1 and drops the
+#   variable from the launch environment; without the proxy's address in
+#   it, the API call goes to nono's proxy, which refuses it (RAN: 403).
+#   Claude Code applies its settings `env` after nono, and the value is
+#   the same for every session, so two sessions do not clash.
+# - ENABLE_TOOL_SEARCH: Claude Code turns tool search off for a base URL
+#   that is not Anthropic's unless told that the proxy forwards
+#   tool_reference blocks; this one forwards the requests as they are.
+SESSION_NO_PROXY = "localhost,127.0.0.1," + credproxy_mod.GUEST_HOST
+CREDENTIAL_PROXY_ENV = {"NO_PROXY": SESSION_NO_PROXY, "no_proxy": SESSION_NO_PROXY,
+                        "ENABLE_TOOL_SEARCH": "true"}
 
 # Reads the credential file (if any), deletes it, then runs the launcher.
 CREDENTIAL_WRAPPER = ('f=$1; shift; if [ -n "$f" ]; then set -a; . "$f"; set +a; '
@@ -212,33 +219,9 @@ def claude_json_patch(prefs, trusted_paths, claude_version=None, quiet=True):
     return patch
 
 
-def token_file(env=None):
-    env = os.environ if env is None else env
-    base = env.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
-    return os.path.join(base, "wmf-sbx", "claude-oauth-token")
-
-
-def host_credential(env=None):
-    """{VAR: value} for the session, or {} when the host has none. A token
-    file that other users can read is refused."""
-    env = os.environ if env is None else env
-    for var in CREDENTIAL_VARS:
-        if env.get(var):
-            return {var: env[var]}
-    path = token_file(env)
-    try:
-        st = os.stat(path)
-    except FileNotFoundError:
-        return {}
-    if stat.S_IMODE(st.st_mode) & 0o077:
-        raise SessionError(f"{path} can be read by other users; chmod 600 it")
-    with open(path, encoding="utf-8") as f:
-        token = f.read().strip()
-    return {TOKEN_VAR: token} if token else {}
-
-
 def credential_file_contents(cred):
-    """The credential as shell assignments, for the wrapper to source."""
+    """The session's variables as shell assignments, for the wrapper to
+    source."""
     return "".join(f"{k}={shlex.quote(v)}\n" for k, v in sorted(cred.items()))
 
 
@@ -428,6 +411,7 @@ def session_env(resolved_for_kit, readonly=(), identity=None):
     # takes more than the default 300 s in a VM (RAN, phase 7: 22 min under
     # QEMU without KVM). The Bash tool has its own timeout.
     env = {"COMPOSER_HOME": COMPOSER_HOME, "COMPOSER_PROCESS_TIMEOUT": "0"}
+    env.update(CREDENTIAL_PROXY_ENV)
     env.update(identity or {})
     for canonical, path in resolved_for_kit:
         for var in kit_mod.REPO_ENVIRONMENT_VARS.get(canonical, []):

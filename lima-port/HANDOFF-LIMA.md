@@ -1432,7 +1432,8 @@ environment, where the agent can read it.
 
 Candidates (L1 measures them):
 
-- **H. A host-side credential proxy (preferred).** A small reverse proxy
+- **H. A host-side credential proxy (CHOSEN by cananian, 2026-10-11;
+  L1 still measures it).** A small reverse proxy
   on the host's loopback, one per sandbox (or one for all, with a
   per-sandbox secret), reached from the guest at 192.168.5.2:PORT (the
   `PROXY_PORTS` path the host block already has). Claude Code in the VM

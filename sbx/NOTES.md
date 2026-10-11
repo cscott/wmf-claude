@@ -287,7 +287,15 @@ to D12, and tracks A and B, which are not repeated here).
   supervisor), and the built-in service is API-key only. **Chosen: H** (L1 done).
 - L2 RAN in the cloud test VM: a session with a tool call through the proxy, with the key
   on the host only; the rule is removed after the session.
-- Not yet measured: a live-login session across a token refresh (L3).
+- L3 in the cloud VM (`lima-port/checks/credential-l3.sh`, an API key): sessions in two
+  sandboxes, both through their own proxy; `scan` found the key nowhere: not in any
+  process's environment or command line in either VM during a session, not in `/dev/shm`,
+  `/tmp` or the agent's Claude Code files, not on either VM's disk (3 and 23 GB), not in the
+  host's wmf-sbx state.
+- Still to run on the engineer's host (L3): the same with the live login, a 9-hour session
+  across a token refresh (`credential-l3.sh long`), a blind run, and macOS (the keychain).
+- A shallow host repo (`git clone --depth`): `git clone --shared` copies the objects and
+  writes no alternates file; `sandbox-repos.sh` accepts that (RAN).
 
 ### nono, Landlock and the session
 

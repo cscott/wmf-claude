@@ -187,6 +187,17 @@ class CloneRepoTests(Tmp):
         with open(os.path.join(dest, ".git", "objects", "info", "alternates")) as f:
             self.assertEqual(f.read().strip(), os.path.join(self.host, ".git", "objects"))
 
+    def test_a_shallow_host_repo_is_copied_not_borrowed(self):
+        shallow = os.path.join(self.tmp, "shallow")
+        subprocess.run(["git", "clone", "-q", "--depth", "1", "-b", "topic",
+                        "file://" + self.host, shallow], check=True, capture_output=True)
+        self.host = shallow
+        dest = os.path.join(self.tmp, "vm", "shallow")
+        self.clone(dest, "topic", git(shallow, "rev-parse", "HEAD"), "", "0")
+        self.assertEqual(git(dest, "rev-parse", "HEAD"), git(shallow, "rev-parse", "HEAD"))
+        self.assertFalse(os.path.exists(
+            os.path.join(dest, ".git", "objects", "info", "alternates")))
+
     def test_a_dependency_is_reset_to_upstream_master(self):
         dest = os.path.join(self.tmp, "vm", "dep")
         self.clone(dest, "topic", git(self.host, "rev-parse", "HEAD"), self.upstream, "1")

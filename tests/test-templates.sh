@@ -942,6 +942,13 @@ if diff -u "$FIXTURES/nono.txt" \
 else
   fail "session-start default output differs from tests/fixtures/session-start/nono.txt"
 fi
+out="$(WMF_CLAUDE_STE=0 env -u WMF_CLAUDE_SANDBOX_BACKEND -u WMF_DOCKER_BROKER_URL bash "$HOOK" 2>/dev/null)"
+if ! grep -q 'ASD-STE100' <<<"$out" \
+   && [[ "$(diff <(grep -v 'ASD-STE100' "$FIXTURES/nono.txt") <(echo "$out"))" == "" ]]; then
+  pass "session-start with WMF_CLAUDE_STE=0 drops only the STE bullet"
+else
+  fail "session-start with WMF_CLAUDE_STE=0 did not drop exactly the STE bullet"
+fi
 if diff -u "$FIXTURES/nono-broker.txt" \
      <(env -u WMF_CLAUDE_SANDBOX_BACKEND \
          -u WMF_CLAUDE_STE -u WMF_CLAUDE_IN_VM -u WMF_CLAUDE_CHROME_IN_VM \

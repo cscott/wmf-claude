@@ -79,7 +79,13 @@ session:
   permission_mode: bypassPermissions  # default, acceptEdits, plan, auto, bypassPermissions
   theme: dark                         # dark, light, dark-daltonized, light-daltonized,
                                       # dark-ansi, light-ansi
+  ste: false                          # leave out the ASD-STE100 rule for comments and
+                                      # commit messages (default: true)
 ```
+
+`ste: false` sets `WMF_CLAUDE_STE=0` for the sessions, which takes the
+STE writing rule out of the SessionStart context. The `write-commit-msg`
+skill still asks for STE when you use it.
 
 `bypassPermissions` lets the agent use every tool without asking. Upstream
 `bin/claude` refuses that mode on the command line: on the host it would
@@ -89,13 +95,16 @@ apply, are the boundary, so it is a choice you can make here, once. A
 sandbox keeps the settings it was made with; change them in it with
 `/model` or `/permissions`, or create a new one.
 
-`create` also answers Claude Code's first-run questions in each new
-sandbox, so the first session starts at the prompt: the onboarding (the
-theme and the security notes) is marked done, and every repo of the
-sandbox is marked trusted ("Do you trust the files in this folder?").
-Sessions skip `bin/claude`'s "Press Enter" pause, and `create`
-acknowledges its one-time `--landlock-only` warning for you
-(`SECURITY.md` §3 says why that is safe in a sandbox).
+**Your first sandbox shows every first-run question and warning**:
+Claude Code's onboarding (the theme and the security notes), "Do you
+trust the files in this folder?", `bin/claude`'s `--landlock-only`
+warning, and the bypass-mode confirmation. After its first session,
+`resume` writes `~/.local/state/wmf-sbx/first-run-seen`, and from then on
+`create` answers them in every new sandbox, so its first session starts
+at the prompt: onboarding done, each repo of the sandbox trusted, the
+warning acknowledged (`SECURITY.md` §3 says why that is safe in a
+sandbox). Delete that file to see them all again. Sessions always skip
+`bin/claude`'s "Press Enter" pause.
 
 ## Claude Code version
 
@@ -223,6 +232,11 @@ wmf-sbx image prune        # golden images that no sandbox uses
   files, separated by `:`, for the image build and the VMs.
 - **Disk**: a sandbox with core and a few extensions uses 15-20 GB, and
   each golden image about 2.5 GB.
+- **Slow create**: the setup log in the VM
+  (`wmf-sbx exec NAME -- grep timing: .wmf-sbx/wmf-sbx-setup.log`) has a
+  `timing:` line per `composer update` (split into resolve, install and
+  autoload) and per `npm ci`; composer's own profile is in
+  `~/.wmf-sbx/timings/`.
 
 ## Architecture
 

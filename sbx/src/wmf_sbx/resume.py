@@ -123,6 +123,7 @@ def main(argv=None, lima=None, env=None):
     result = vm_mod.shell(name, argv, lima=lima, workdir="/", check=False, capture=False)
     if result.returncode == 0 and starts_a_conversation(claude_args):
         set_attached(name, env=env)
+        session_mod.mark_first_run_seen(env)
     return result.returncode
 
 

@@ -502,6 +502,13 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
     except resolve_mod.ResolutionError as e:
         print(color_mod.error(f"error: {e}"), file=sys.stderr)
         return 1
+    # Claude Code's first-run questions and warnings: shown in the
+    # engineer's first sandbox, answered by create in every later one.
+    quiet = session_mod.first_run_seen(env)
+    if not quiet:
+        print("note: this is your first wmf-sbx sandbox: its first session shows Claude "
+              "Code's first-run questions and warnings. Later sandboxes skip them.",
+              file=sys.stderr)
     try:
         preferences = config.get("session") or {}
         session_mod.preference_settings(preferences)
@@ -655,14 +662,14 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         readonly=readonly, primary=primary_dir)
     plan["session"] = session_mod.session_plan(
         name, resolved_for_kit, readonly, identity=session_mod.git_identity(run=run),
-        preferences=preferences, claude_version=claude_version)
+        preferences=preferences, claude_version=claude_version, quiet=quiet)
     try:
         home = env.get("HOME") or os.path.expanduser("~")
         session_mod.wmf_claude_setup(
             name, phabricator_username(
                 run=run, env=env,
                 config_path=os.path.join(home, ".config", "wmf-claude", "config.json")),
-            lima=lima, env=env)
+            lima=lima, env=env, quiet=quiet)
         mediawiki_mod.run_setup(name, plan, lima=lima, env=env)
     except (mediawiki_mod.SetupError, session_mod.SessionError, lima_mod.LimaError) as e:
         print(color_mod.error(f"error: {e}"), file=sys.stderr)

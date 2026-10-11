@@ -64,6 +64,13 @@ working trees, not the home directory.
 engineer's fetch (§5). A `:ro` repo is a clone owned by `engineer`: the
 agent can read it but not write it.
 
+**Permission mode.** If the engineer sets `permission_mode:
+bypassPermissions` (`README.md`, "Preferences"), the agent's tool calls
+are not confirmed, and the `ask` rules of `wiring/settings-merge.json`
+are approved without asking. The deny rules still apply. Upstream
+`bin/claude` refuses that mode on the command line; in a sandbox the
+layers above are the boundary.
+
 **Under nono** the agent's home is not readable, only the directories
 the profile and the session grant; `~/.bashrc` and other credential
 paths in the profile stay denied.

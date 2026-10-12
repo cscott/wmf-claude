@@ -34,6 +34,10 @@ READ_DIRS = ("/usr/share/qemu", "/usr/share/seabios", "/usr/share/OVMF", "/usr/s
              "/usr/share/AAVMF", "/usr/share/qemu-efi-aarch64",
              "/usr/local/share/lima", "/usr/local/libexec/lima")
 LIMA_HOME = f"{vm_mod.AGENT_HOME}/.lima"
+# The inner wmf-sbx's own state and settings (its images go in ~/.cache,
+# which every session has).
+WMF_SBX_DIRS = (f"{vm_mod.AGENT_HOME}/.local/state/wmf-sbx",
+                f"{vm_mod.AGENT_HOME}/.config/wmf-sbx")
 
 # The hosts an image build and a `create` in the sandbox reach, through
 # the session's nono proxy (Lima points the inner VMs at it), besides the
@@ -57,6 +61,8 @@ def session_grants():
     and listen)."""
     grants = ["--allow", LIMA_HOME, "--allow-unix-socket-subtree-bind", LIMA_HOME,
               "--allow-file", "/dev/kvm"]
+    for d in WMF_SBX_DIRS:
+        grants += ["--allow", d]
     for d in READ_DIRS:
         grants += ["--read", d]
     for d in DOMAINS:
@@ -88,6 +94,7 @@ if ! /usr/local/bin/limactl --version 2>/dev/null | grep -q {q(LIMA_VERSION)}; t
   rm -rf "$tmp"
 fi
 install -d -m 0755 {' '.join(q(d) for d in READ_DIRS)}
+install -d -m 0700 -o {q(vm_mod.AGENT)} -g {q(vm_mod.AGENT)} {' '.join(q(d) for d in (LIMA_HOME,) + WMF_SBX_DIRS)}
 usermod -aG kvm {q(vm_mod.AGENT)}
 install -d -m 0755 /etc/wmf-sbx
 touch {q(MARKER)}

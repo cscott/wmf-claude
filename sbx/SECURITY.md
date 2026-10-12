@@ -190,7 +190,7 @@ the sandbox is weaker.
 For work on wmf-sbx itself, a nested sandbox lets the agent run Lima VMs
 of its own. Root installs QEMU, OVMF and Lima at `create` and adds the
 agent to the `kvm` group; the sessions get `/dev/kvm`, `~/.lima` (with
-its sockets), QEMU's and Lima's data, `~/wmf-sbx-src` and wmf-sbx's
+its sockets), QEMU's and Lima's data, `/home/wmf-sbx-src` and wmf-sbx's
 own directories, and the download hosts of an image build
 (`nested.py`). The install also downloads the Debian base image to
 `/var/cache/wmf-sbx/base`, checked against the digest that wmf-sbx

@@ -124,6 +124,20 @@ class LauncherTests(unittest.TestCase):
         self.assertIn("--read " + image.LOCAL_BASE_DIR, " ".join(nested.session_grants()))
         self.assertIn("--allow " + nested.SRC_DIR, " ".join(nested.session_grants()))
 
+    def test_the_inner_repos_have_paths_an_inner_vm_can_use(self):
+        # RAN (N3): the inner create refused ~/wmf-sbx-src/extensions/Cite,
+        # under the agent's home, which the inner VM uses itself (D8).
+        import wmf_sbx.nested as nested
+        import wmf_sbx.repos as repos
+        import yaml
+        repos.check_vm_path(nested.SRC_DIR)
+        for rule in yaml.safe_load(nested.SETTINGS)["repos"]:
+            self.assertTrue(rule["path"].startswith(nested.SRC_DIR + "/"), rule)
+            repos.check_vm_path(rule["path"].replace("{name}", "x"))
+        # Root makes it: the agent cannot write /home.
+        self.assertIn("install -d -m 0700 -o agent", nested.install_script(
+            "x86_64", image.base_image("x86_64")))
+
     def test_proxy_flags_and_claude_args_are_in_their_places(self):
         a = self.argv(proxy="192.168.5.2:3128", launcher_flags=["--allow-post=x.org"],
                       claude_args=["-p", "hi"], cred_path="/dev/shm/wmf-sbx-cred.x")

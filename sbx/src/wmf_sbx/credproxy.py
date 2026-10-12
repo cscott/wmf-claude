@@ -144,8 +144,8 @@ def live_login_reader(env=None, run=subprocess.run, platform=sys.platform,
         expires = oauth.get("expiresAt")
         t = (now or time.time)()
         if isinstance(expires, (int, float)) and expires / 1000 <= t:
-            raise CredentialError("the host's Claude Code login has expired; run `claude` "
-                                  "on the host once to refresh it")
+            raise CredentialError("the host's Claude Code login has expired; run "
+                                  "`wmf-sbx login` on the host for a token that lasts a year")
         return token
     return read
 
@@ -185,8 +185,8 @@ def host_source(env=None, run=subprocess.run, platform=sys.platform):
 
 def _must(token):
     if not token:
-        raise CredentialError("the host's Claude Code login is gone; run `claude` on the "
-                              "host and log in")
+        raise CredentialError("the host's Claude Code login is gone; run `wmf-sbx login` "
+                              "on the host")
     return token
 
 

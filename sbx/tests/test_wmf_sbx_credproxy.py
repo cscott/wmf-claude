@@ -90,7 +90,7 @@ class SourceTests(unittest.TestCase):
         self.login(expires_ms=1000)
         s = self.source()
         self.assertIsNotNone(s)
-        self.assertRegex(cp.check_source(s), "expired.*run `claude`")
+        self.assertRegex(cp.check_source(s), "expired.*run `wmf-sbx login`")
         self.login(expires_ms=(2 ** 41))
         self.assertIsNone(cp.check_source(s))
 

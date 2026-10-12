@@ -306,6 +306,18 @@ to D12, and tracks A and B, which are not repeated here).
   gives limactl `/dev/null` unless the call has `input` or is `interactive` (the session,
   `exec`); the other capturing subprocess calls also get `/dev/null`.
 - Still to run on the engineer's host: `long` (again), a blind run, and macOS.
+- Docker sbx's sign-in (Docker's docs, and our pre-deletion SECURITY.md §7.5): `/login` ran
+  in the sandbox; the host's egress proxy completed the OAuth exchange, kept the token on
+  the host (one per host, shared by every sandbox), refreshed it, and swapped a
+  `proxy-managed` placeholder for it on the way out. It needs TLS interception, so here it
+  waits for track A.
+- `setup-token` tokens (Anthropic's docs and issues): one year, scope `user:inference`. Not
+  possible with one: Remote Control, claude.ai connectors and synced skills and plugins,
+  `/usage` (scope error), cloud sessions and `/schedule`; no expiry warning. Local MCP
+  servers work. `wmf-sbx login` makes one in a throwaway VM (RAN in the cloud VM up to
+  the code prompt: `script` is in the image, and the URL is an OSC 8 hyperlink). Without a
+  terminal setup-token waits for ever, so `login` refuses to start; a SIGTERM left the VM
+  running (Python runs no `finally` for it), so SIGTERM and SIGHUP now stop it cleanly.
 - A shallow host repo (`git clone --depth`): `git clone --shared` copies the objects and
   writes no alternates file; `sandbox-repos.sh` accepts that (RAN).
 

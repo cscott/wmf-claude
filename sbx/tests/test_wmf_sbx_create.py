@@ -415,7 +415,7 @@ class ExpandDependenciesTests(unittest.TestCase):
         resolved = [(self.EXT + "Cite", self.cite, False)]
         split = [(self.EXT + "Cite", False)]
         return c.expand_dependencies(
-            resolved, split, {"rules": self.rules}, self.config_path,
+            resolved, split, {"repos": self.rules}, self.config_path,
             fetch=fetch or (lambda canonical, warn=None: None),
             warn=lambda msg: None, **kw
         )

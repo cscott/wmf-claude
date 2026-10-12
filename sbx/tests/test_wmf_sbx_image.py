@@ -234,6 +234,21 @@ class InputTests(unittest.TestCase):
         self.assertEqual(image.tree_revision(run=run, env={image.TREE_OVERRIDE_VAR: " "}),
                          "0123456789ab")
 
+    def test_latest_keys_on_the_head_commit_when_it_builds(self):
+        env = {image.TREE_OVERRIDE_VAR: "latest"}
+        self.assertTrue(image.wants_latest(env))
+        self.assertFalse(image.wants_latest({image.TREE_OVERRIDE_VAR: "v1"}))
+        self.assertEqual(image.tree_revision(run=lambda a, **k: Done(stdout="abc123\n"),
+                                             env=env), "abc123")
+
+    def test_extra_packages_extend_the_list_and_the_key(self):
+        self.assertEqual(image.image_packages(), list(image.IMAGE_PACKAGES))
+        extra = image.image_packages(["nano", "nano", image.IMAGE_PACKAGES[0]])
+        self.assertEqual(extra, list(image.IMAGE_PACKAGES) + ["nano"])
+        for bad in ("Nano", "nano;rm", "", 3):
+            with self.subTest(bad=bad), self.assertRaises(image.ImageError):
+                image.image_packages([bad])
+
     def test_the_key_is_stable_and_changes_with_every_input(self):
         base = sample_inputs()
         key = image.cache_key(base)
@@ -468,6 +483,14 @@ class CacheTests(TempEnv):
         now = datetime.datetime(2026, 10, 9, 12, 0, tzinfo=datetime.timezone.utc)
         gone = image.prune_images(env=self.env, min_age=datetime.timedelta(hours=1), now=now)
         self.assertEqual([k for k, _n in gone], ["aaaaaaaaaaaaaaaa"])
+
+    def test_newest_image_for_this_arch_and_uid(self):
+        self.make_entry("aaaaaaaaaaaaaaaa", created="2026-10-09T01:00:00+00:00")
+        self.make_entry("bbbbbbbbbbbbbbbb", created="2026-10-09T02:00:00+00:00")
+        key, _m = image.newest_image(self.env, arch="x86_64", uid=1000)
+        self.assertEqual(key, "bbbbbbbbbbbbbbbb")
+        self.assertIsNone(image.newest_image(self.env, arch="aarch64", uid=1000))
+        self.assertIsNone(image.newest_image(self.env, arch="x86_64", uid=501))
 
     def test_a_broken_state_file_does_not_stop_rm(self):
         self.make_entry("aaaaaaaaaaaaaaaa")

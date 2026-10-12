@@ -248,6 +248,23 @@ class GitIdentityTests(unittest.TestCase):
         # core's `composer test` outlasts the 300 s default in a VM.
         self.assertEqual(session.session_env([])["COMPOSER_PROCESS_TIMEOUT"], "0")
 
+    def test_settings_environment_goes_into_the_session_env(self):
+        plan = session.session_plan("demo", [], environment={"GERRITUA": "ua", "N": 1,
+                                                             "FLAG": True},
+                                    preferences={"ste": False})
+        self.assertEqual(plan["env"]["GERRITUA"], "ua")
+        self.assertEqual(plan["env"]["N"], "1")
+        self.assertEqual(plan["env"]["FLAG"], "1")
+        self.assertEqual(plan["env"]["WMF_CLAUDE_STE"], "0")
+
+    def test_bad_or_reserved_environment_is_refused(self):
+        for bad, why in (({"1X": "a"}, "not a variable name"),
+                         ({"NO_PROXY": "x"}, "credential proxy"),
+                         ({"ANTHROPIC_BASE_URL": "x"}, "credential proxy"),
+                         ({"A": ["x"]}, "want a string")):
+            with self.subTest(bad=bad), self.assertRaisesRegex(session.SessionError, why):
+                session.check_environment(bad)
+
     def test_the_credential_proxys_address_bypasses_nonos_proxy(self):
         env = session.session_env([])
         self.assertEqual(env["NO_PROXY"], "localhost,127.0.0.1,192.168.5.2")

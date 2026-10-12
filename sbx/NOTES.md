@@ -63,6 +63,26 @@ to D12, and tracks A and B, which are not repeated here).
   `mr_default_target_self` (anonymous callers see `None`).
 - [ ] **Full GitLab project listing with an on-disk cache, plus recorded-response fixtures**.
 
+### Nested Lima (track C)
+
+- N1 (engineer's host, KVM, a sandbox from `lima-port/checks/n1-spike.sh`): the agent runs
+  a nested Lima VM under the session's nono with, besides the session's flags:
+  `--allow ~/.lima`, `--allow-unix-socket-subtree-bind ~/.lima`, `--allow-file /dev/kvm`,
+  `--read` of `/usr/share/qemu`, `/usr/share/seabios`, `/usr/share/OVMF`, `/usr/share/ovmf`,
+  `/usr/local/share/lima`, `/usr/local/libexec/lima`, and `--listen-port` for the inner
+  VM's SSH port (pinned in its template, 50022, inside the ephemeral window). The agent
+  needs the `kvm` group; root installs QEMU, OVMF and Lima. Nested KVM works with no host
+  change (`accel=kvm`; start in 22 s under nono, 31 s outside).
+- `TMPDIR` must be the session's (`/tmp/claude-UID`, launch-claude.sh): `/tmp` is
+  write-only under nono, and Lima builds its cloud-init ISO in TMPDIR.
+- Inner egress: Lima rewrites the session's proxy variables (nono's proxy on loopback) to
+  192.168.5.2 for the inner VM, and the inner VM's request reached no host (`000` for
+  deb.debian.org, not in the allowlist anyway). Outside nono the inner VM's egress works.
+  N2 must give an inner image build its hosts (cloud.debian.org, deb.debian.org,
+  security.debian.org, nodejs.org, downloads.claude.ai, the nono pack registry) and check
+  that requests through the rewritten proxy URL work. `cloud.debian.org` is also needed
+  for the HEAD that refreshes a cached base image (refused; Lima then uses the cache).
+
 ### Testing in the sandbox
 
 - [ ] **Cypress under nono** (blind run, 2026-10-12): Electron writes `~/.config/Cypress`

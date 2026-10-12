@@ -300,7 +300,8 @@ wmf-sbx create PRIMARY[:ro] [EXTRA[:ro] ...] [options]
   `create` installs QEMU, OVMF and Lima in this sandbox (the golden image
   has none), adds the agent to the `kvm` group, and the sessions get the
   grants for `~/.lima`, `/dev/kvm` and the download hosts of an image
-  build. Defaults: 16 GiB of memory, a 120 GiB (sparse) disk. Nested KVM
+  build. It also writes a `settings.yaml` for the inner wmf-sbx (repos
+  in `~/wmf-sbx-src`) if there is none. Defaults: 16 GiB of memory, a 120 GiB (sparse) disk. Nested KVM
   needs the host to allow it (Linux: `kvm_intel`/`kvm_amd` `nested=1`, the
   default on recent kernels; macOS: M3 or later with macOS 15, on `vz`);
   without it the inner VMs run, slowly, without KVM. For example:

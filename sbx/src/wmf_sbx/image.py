@@ -50,6 +50,11 @@ REPO_ROOT = kit.REPO_ROOT
 # release, with sha512 digests). Read it from there, so that there is one
 # pin for both modes.
 BASE_TEMPLATE = os.path.join(REPO_ROOT, "lima", "wmf-claude.yaml")
+# A local copy of the base image, used instead of a download when it is
+# there. Only a nested sandbox has one (nested.py): cloud.debian.org
+# redirects to mirrors, which the session's nono does not allow (RAN, N3).
+# It is not in the cache key: the digest is.
+LOCAL_BASE_DIR = "/var/cache/wmf-sbx/base"
 BUILD_SCRIPT = os.path.join(os.path.dirname(os.path.realpath(__file__)),
                             "image-build.sh")
 NONO_VERSION_FILE = os.path.join(REPO_ROOT, ".nono-version")
@@ -473,13 +478,22 @@ def extra_ca_files(env=None):
     return files
 
 
-def builder_template(inputs, ca_files=()):
+def local_base(base, base_dir=None):
+    """The path of a local copy of the base image, or None. Lima checks
+    its digest as it does a download's."""
+    path = os.path.join(base_dir or LOCAL_BASE_DIR, os.path.basename(base["location"]))
+    return path if os.path.isfile(path) else None
+
+
+def builder_template(inputs, ca_files=(), base_dir=None):
     """The builder's Lima config, as a dict. Closed like Kosta's template:
     plain mode, no mounts, no port forwards, no agent or X11 forwarding."""
+    image = dict(inputs["base"])
+    image["location"] = local_base(image, base_dir) or image["location"]
     tmpl = {
         "minimumLimaVersion": "2.0.0",
         "plain": True,
-        "images": [dict(inputs["base"])],
+        "images": [image],
         "cpus": 4,
         "memory": "4GiB",
         "disk": BUILDER_DISK,
@@ -633,8 +647,15 @@ def build(inputs=None, lima=None, run=subprocess.run, env=None, log=print,
         lima.validate(tmpl)
 
         log(f"==> builder {name}: create and boot (Debian {inputs['arch']})")
-        lima.create(name, tmpl)
-        lima.start(name, timeout=BUILDER_START_TIMEOUT)
+        try:
+            lima.create(name, tmpl)
+            lima.start(name, timeout=BUILDER_START_TIMEOUT)
+        except lima_mod.LimaError:
+            # Nothing in it to inspect yet (RAN, N3: a refused download
+            # left a stopped builder).
+            if lima.exists(name):
+                lima.delete(name)
+            raise
 
         log("==> staging the tree, helpers and build script")
         stage = os.path.join(work, "stage")

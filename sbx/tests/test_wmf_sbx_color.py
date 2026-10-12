@@ -67,6 +67,21 @@ class ColorTests(unittest.TestCase):
                 self.assertEqual(color.error("x"), "\x1b[38;2;247;118;142mx\x1b[m")
 
 
+def _ptys_work():
+    """True when this process can make a pty that is a terminal. Under
+    nono it cannot (RAN, N3: the child saw no terminal)."""
+    try:
+        import pty
+        master, slave = pty.openpty()
+    except (ImportError, OSError):
+        return False
+    try:
+        return os.isatty(slave)
+    finally:
+        os.close(master)
+        os.close(slave)
+
+
 @contextlib.contextmanager
 def _real_stdout_fd_capture():
     # pty._copy relays the child through the raw fd (os.write(1, ...)),
@@ -147,6 +162,7 @@ class RunWithColorTests(unittest.TestCase):
         self.assertEqual(result, "fake-result")
         self.assertEqual(calls, [["true"]])
 
+    @unittest.skipUnless(_ptys_work(), "a new pty is not a terminal here (nono)")
     def test_real_pty_gives_the_child_a_terminal(self):
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("NO_COLOR", None)

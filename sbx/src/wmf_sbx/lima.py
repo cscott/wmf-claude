@@ -21,7 +21,18 @@ Rules for the callers:
 
 import json
 import os
+import re
 import subprocess
+
+
+# user:password@ in a URL. limactl logs proxy URLs in full, and in a
+# session the proxy is nono's, with its session password (RAN, N3).
+URL_PASSWORD_RE = re.compile(r"(://[^/@\s:]+:)[^/@\s]+@")
+
+
+def redact(text):
+    """text, with the passwords in its URLs replaced by ***."""
+    return URL_PASSWORD_RE.sub(r"\1***@", text)
 
 
 class LimaError(Exception):
@@ -68,7 +79,7 @@ class Limactl:
                 (result.stderr or b"").decode("utf-8", "replace"))
             raise LimaError(
                 f"{' '.join(argv[:3])} ... failed (exit {result.returncode}): "
-                f"{(err or '').strip()[-2000:]}")
+                f"{redact((err or '').strip()[-2000:])}")
         return result
 
     # -- instances -------------------------------------------------------

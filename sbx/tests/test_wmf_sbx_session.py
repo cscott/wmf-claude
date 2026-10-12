@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 sys.path.insert(0, os.path.dirname(__file__))
 
 import wmf_sbx.create as create  # noqa: E402
+import wmf_sbx.image as image  # noqa: E402
 import wmf_sbx.resume as resume  # noqa: E402
 import wmf_sbx.session as session  # noqa: E402
 import wmf_sbx.setup as setup  # noqa: E402
@@ -104,9 +105,24 @@ class LauncherTests(unittest.TestCase):
     def test_the_nested_install_script_is_valid_bash(self):
         import wmf_sbx.nested as nested
         for arch in nested.PACKAGES:
-            res = subprocess.run(["bash", "-n"], input=nested.install_script(arch), text=True,
-                                 capture_output=True)
+            script = nested.install_script(arch, image.base_image(arch))
+            res = subprocess.run(["bash", "-n"], input=script, text=True, capture_output=True)
             self.assertEqual(res.returncode, 0, res.stderr)
+
+    def test_the_nested_install_runs_limactl_as_the_agent_and_checks_the_base_image(self):
+        import wmf_sbx.nested as nested
+        base = image.base_image("x86_64")
+        script = nested.install_script("x86_64", base)
+        # limactl refuses root; every limactl call goes through runuser.
+        for line in script.splitlines():
+            if "limactl --version" in line:
+                self.assertIn("runuser -u agent -- env HOME=/home/agent /usr/local/bin/limactl", line)
+        self.assertIn(base["location"], script)
+        self.assertIn("sha512sum -c", script)
+        self.assertIn(base["digest"].split(":", 1)[1], script)
+        self.assertIn('test -e "$1" || cat > "$1"', script)
+        self.assertIn("--read " + image.LOCAL_BASE_DIR, " ".join(nested.session_grants()))
+        self.assertIn("--allow " + nested.SRC_DIR, " ".join(nested.session_grants()))
 
     def test_proxy_flags_and_claude_args_are_in_their_places(self):
         a = self.argv(proxy="192.168.5.2:3128", launcher_flags=["--allow-post=x.org"],

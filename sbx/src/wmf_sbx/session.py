@@ -261,7 +261,7 @@ def launcher_argv(state, cred_path=None, launcher_flags=(), claude_args=(),
     if proxy:
         grants += ["--upstream-proxy", proxy]
     if state.get("nested"):
-        grants += nested_mod.session_grants()
+        grants += nested_mod.session_grants(state.get("nestedSrc"))
     claude = ([LAUNCHER, f"--local-web={local_ports()}", "--landlock-only",
                "--listen-port", "0"] + grants
               + list(launcher_flags) + ["--"] + list(claude_args))

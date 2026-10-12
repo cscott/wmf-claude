@@ -94,7 +94,7 @@ class LauncherTests(unittest.TestCase):
             self.assertIn(("--allow-domain", domain), pairs)
 
     def test_a_nested_sandbox_gets_the_lima_grants(self):
-        argv = session.launcher_argv(dict(STATE, nested=True))
+        argv = session.launcher_argv(dict(STATE, nested=True, nestedSrc="/home/eng/wmf-sbx-src"))
         joined = " ".join(argv)
         for want in ("--allow-file /dev/kvm", "--allow /home/agent/.lima",
                      "--allow-unix-socket-subtree-bind /home/agent/.lima",
@@ -107,14 +107,14 @@ class LauncherTests(unittest.TestCase):
     def test_the_nested_install_script_is_valid_bash(self):
         import wmf_sbx.nested as nested
         for arch in nested.PACKAGES:
-            script = nested.install_script(arch, image.base_image(arch))
+            script = nested.install_script(arch, image.base_image(arch), "/home/eng/wmf-sbx-src")
             res = subprocess.run(["bash", "-n"], input=script, text=True, capture_output=True)
             self.assertEqual(res.returncode, 0, res.stderr)
 
     def test_the_nested_install_runs_limactl_as_the_agent_and_checks_the_base_image(self):
         import wmf_sbx.nested as nested
         base = image.base_image("x86_64")
-        script = nested.install_script("x86_64", base)
+        script = nested.install_script("x86_64", base, "/home/eng/wmf-sbx-src")
         # limactl refuses root; every limactl call goes through runuser.
         for line in script.splitlines():
             if "limactl --version" in line:
@@ -123,8 +123,9 @@ class LauncherTests(unittest.TestCase):
         self.assertIn("sha512sum -c", script)
         self.assertIn(base["digest"].split(":", 1)[1], script)
         self.assertIn('test -e "$1" || cat > "$1"', script)
-        self.assertIn("--read " + image.LOCAL_BASE_DIR, " ".join(nested.session_grants()))
-        self.assertIn("--allow " + nested.SRC_DIR, " ".join(nested.session_grants()))
+        grants = " ".join(nested.session_grants("/home/eng/wmf-sbx-src"))
+        self.assertIn("--read " + image.LOCAL_BASE_DIR, grants)
+        self.assertIn("--allow /home/eng/wmf-sbx-src", grants)
 
     def test_the_inner_repos_have_paths_an_inner_vm_can_use(self):
         # RAN (N3): the inner create refused ~/wmf-sbx-src/extensions/Cite,
@@ -132,13 +133,15 @@ class LauncherTests(unittest.TestCase):
         import wmf_sbx.nested as nested
         import wmf_sbx.repos as repos
         import yaml
-        repos.check_vm_path(nested.SRC_DIR)
-        for rule in yaml.safe_load(nested.SETTINGS)["repos"]:
-            self.assertTrue(rule["path"].startswith(nested.SRC_DIR + "/"), rule)
+        src = nested.src_dir("/home/eng/")
+        self.assertEqual(src, "/home/eng/wmf-sbx-src")
+        repos.check_vm_path(src)
+        for rule in yaml.safe_load(nested.settings(src))["repos"]:
+            self.assertTrue(rule["path"].startswith(src + "/"), rule)
             repos.check_vm_path(rule["path"].replace("{name}", "x"))
-        # Root makes it: the agent cannot write /home.
+        # Root makes it: the agent may not write its parent.
         self.assertIn("install -d -m 0700 -o agent", nested.install_script(
-            "x86_64", image.base_image("x86_64")))
+            "x86_64", image.base_image("x86_64"), src))
 
     def test_proxy_flags_and_claude_args_are_in_their_places(self):
         a = self.argv(proxy="192.168.5.2:3128", launcher_flags=["--allow-post=x.org"],

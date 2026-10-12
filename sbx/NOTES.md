@@ -95,10 +95,18 @@ to D12, and tracks A and B, which are not repeated here).
   pack registry, `registry.nono.sh` (N3: a 403 that did not name the host; `RUST_LOG=debug
   nono pull` did). nono also POSTs an update check to `update.nono.sh`; not granted.
 - `limactl` logs proxy URLs with their password: `lima.redact` removes them from LimaError.
-- Inner sandboxes' repos go to `/home/wmf-sbx-src` (settings written by the install, if
-  none), the one writable directory the session gives them. Not under `/home/agent`: the
-  inner VM has the clones at the same paths (D8), and uses that home itself (N3: create
-  refused `~/wmf-sbx-src`). A sandbox installed before this keeps its old settings.
+- Inner sandboxes' repos go to `wmf-sbx-src` in the engineer's home path (state `nestedSrc`,
+  e.g. `/home/cananian/wmf-sbx-src`; settings written by the install, if none), the one
+  writable directory the session gives them. The outer VM has the clones at their host paths
+  already, so this looks as it does on the host. Not under `/home/agent`: the inner VM has
+  the clones at the same paths (D8), and that is its own agent's home (N3: create refused
+  `~/wmf-sbx-src`). A sandbox installed before this keeps its old settings.
+- nono's CA: `$SSL_CERT_FILE` is the system bundle plus nono's CA (151 certificates);
+  `image.session_ca_file` keeps the ones the system bundle lacks (compared as DER), at a
+  fixed path (`~/.cache/wmf-sbx/session-ca.pem`), so a resume in a later session refreshes
+  it. Whether an inner VM reads the new file at its next start (Lima's cidata) is not RAN.
+  An inner VM that runs across an outer session restart has the old proxy password and CA
+  until it restarts.
 - `TMPDIR` must be the session's (`/tmp/claude-UID`, launch-claude.sh): `/tmp` is
   write-only under nono, and Lima builds its cloud-init ISO in TMPDIR.
 - In a nested session a new pty is not a terminal; `test_real_pty_*` skips.

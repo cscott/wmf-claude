@@ -37,14 +37,21 @@ READ_DIRS = ("/usr/share/qemu", "/usr/share/seabios", "/usr/share/OVMF", "/usr/s
              "/usr/local/share/lima", "/usr/local/libexec/lima",
              image_mod.LOCAL_BASE_DIR)
 LIMA_HOME = f"{vm_mod.AGENT_HOME}/.lima"
-# The inner wmf-sbx's own state and settings, and the repos of its
-# sandboxes (SETTINGS). Its images go in ~/.cache, which every session has.
-# Not under the agent's home: the inner VM has the clones at their paths
-# here (D8), and its own agent has that home (RAN, N3: create refused
-# ~/wmf-sbx-src/extensions/Cite).
-SRC_DIR = "/home/wmf-sbx-src"
+# The inner wmf-sbx's own state and settings. Its images go in ~/.cache,
+# which every session has.
 WMF_SBX_DIRS = (f"{vm_mod.AGENT_HOME}/.local/state/wmf-sbx",
-                f"{vm_mod.AGENT_HOME}/.config/wmf-sbx", SRC_DIR)
+                f"{vm_mod.AGENT_HOME}/.config/wmf-sbx")
+# The repos of inner sandboxes: SRC_NAME in the engineer's home path, as
+# on the host (the outer VM has the clones at their host paths, D8). Not
+# under /home/agent: the inner VM has the clones at the same paths, and
+# that is its own agent's home (RAN, N3: create refused
+# ~/wmf-sbx-src/extensions/Cite).
+SRC_NAME = "wmf-sbx-src"
+
+
+def src_dir(host_home):
+    """The directory for the inner sandboxes' repos (state `nestedSrc`)."""
+    return os.path.join(os.path.normpath(host_home), SRC_NAME)
 
 # The hosts an image build and a `create` in the sandbox reach, through
 # the session's nono proxy (Lima points the inner VMs at it), besides the
@@ -58,38 +65,43 @@ DOMAINS = (
     "registry.nono.sh",                                            # wmf-claude-setup: nono pull
 )
 
-# The inner wmf-sbx's settings, if the engineer has none there: the
-# repos of inner sandboxes go to SRC_DIR (RAN, N3: with no
-# settings, `create gerrit:...` has no rule). SRC_DIR is the one
-# writable directory the session gives them.
-SETTINGS = """\
+
+
+def settings(src):
+    """The inner wmf-sbx's settings, if the engineer has none there: the
+    repos of inner sandboxes go to `src` (RAN, N3: with no settings,
+    `create gerrit:...` has no rule), the one writable directory the
+    session gives them."""
+    return f"""\
 # Written by `wmf-sbx create --nested` (sbx/reference/example-settings.yaml).
 repos:
   - match: "gerrit:mediawiki/core"
-    path: "/home/wmf-sbx-src/core"
-  - match: "gerrit:mediawiki/extensions/{name}"
-    path: "/home/wmf-sbx-src/extensions/{name}"
-  - match: "gerrit:mediawiki/skins/{name}"
-    path: "/home/wmf-sbx-src/skins/{name}"
-  - match: "gerrit:**/{name}"
-    path: "/home/wmf-sbx-src/{name}"
-  - match: "gitlab:**/{name}"
-    path: "/home/wmf-sbx-src/{name}"
+    path: "{src}/core"
+  - match: "gerrit:mediawiki/extensions/{{name}}"
+    path: "{src}/extensions/{{name}}"
+  - match: "gerrit:mediawiki/skins/{{name}}"
+    path: "{src}/skins/{{name}}"
+  - match: "gerrit:**/{{name}}"
+    path: "{src}/{{name}}"
+  - match: "gitlab:**/{{name}}"
+    path: "{src}/{{name}}"
 """
+
 
 # Default resources: an image build and one inner sandbox (D2 copies).
 MEMORY = "16GiB"
 DISK = "120GiB"
 
 
-def session_grants():
+def session_grants(src):
     """bin/claude flags for a nested sandbox's session (N1). The inner VM's
     SSH port needs none: Lima binds a port from the kernel's ephemeral
     range, the window the session opens already (--open-port is connect
     and listen)."""
     grants = ["--allow", LIMA_HOME, "--allow-unix-socket-subtree-bind", LIMA_HOME,
               "--allow-file", "/dev/kvm"]
-    for d in WMF_SBX_DIRS:
+    # A nested sandbox made before `nestedSrc` existed has no src.
+    for d in WMF_SBX_DIRS + ((src,) if src else ()):
         grants += ["--allow", d]
     for d in READ_DIRS:
         grants += ["--read", d]
@@ -98,11 +110,12 @@ def session_grants():
     return grants
 
 
-def install_script(arch, base):
+def install_script(arch, base, src):
     """A bash script, run as root in the sandbox: QEMU, firmware, Lima
     LIMA_VERSION (checked against its release's SHA256SUMS), the base
     image `base` (image.base_image(), checked against its digest) in
-    image.LOCAL_BASE_DIR, settings for the inner wmf-sbx if it has none,
+    image.LOCAL_BASE_DIR, `src` for the inner sandboxes' repos, settings
+    for the inner wmf-sbx if it has none,
     the agent in the kvm group, and the marker."""
     if arch not in PACKAGES:
         raise ValueError(f"no nested support for {arch}")
@@ -112,7 +125,7 @@ def install_script(arch, base):
     if algo not in ("sha256", "sha512") or not digest:
         raise ValueError(f"unknown base image digest {base['digest']!r}")
     base_file = os.path.join(image_mod.LOCAL_BASE_DIR, os.path.basename(base["location"]))
-    settings = f"{vm_mod.AGENT_HOME}/.config/wmf-sbx/settings.yaml"
+    settings_file = f"{vm_mod.AGENT_HOME}/.config/wmf-sbx/settings.yaml"
     limactl = (f"runuser -u {shlex.quote(vm_mod.AGENT)} -- env HOME={vm_mod.AGENT_HOME} "
                "/usr/local/bin/limactl")
     q = shlex.quote
@@ -140,10 +153,11 @@ if ! echo {q(digest + '  ' + base_file)} | {algo}sum -c --quiet >/dev/null 2>&1;
   chmod 0644 {q(base_file + '.tmp')}
   mv {q(base_file + '.tmp')} {q(base_file)}
 fi
-install -d -m 0700 -o {q(vm_mod.AGENT)} -g "$(id -g {q(vm_mod.AGENT)})" {q(SRC_DIR)}
-runuser -u {q(vm_mod.AGENT)} -- mkdir -p -m 0700 {' '.join(q(d) for d in (LIMA_HOME,) + WMF_SBX_DIRS if d != SRC_DIR)}
-runuser -u {q(vm_mod.AGENT)} -- sh -c {q('test -e "$1" || cat > "$1"')} sh {q(settings)} <<'WMF_SBX_SETTINGS'
-{SETTINGS}WMF_SBX_SETTINGS
+# Root makes it: the agent may not write its parent.
+install -d -m 0700 -o {q(vm_mod.AGENT)} -g "$(id -g {q(vm_mod.AGENT)})" {q(src)}
+runuser -u {q(vm_mod.AGENT)} -- mkdir -p -m 0700 {' '.join(q(d) for d in (LIMA_HOME,) + WMF_SBX_DIRS)}
+runuser -u {q(vm_mod.AGENT)} -- sh -c {q('test -e "$1" || cat > "$1"')} sh {q(settings_file)} <<'WMF_SBX_SETTINGS'
+{settings(src)}WMF_SBX_SETTINGS
 usermod -aG kvm {q(vm_mod.AGENT)}
 install -d -m 0755 /etc/wmf-sbx
 touch {q(MARKER)}

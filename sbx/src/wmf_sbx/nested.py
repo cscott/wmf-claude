@@ -51,6 +51,7 @@ DOMAINS = (
     "nodejs.org",                                                  # Node
     "downloads.claude.ai",                                         # Claude Code
     "release-assets.githubusercontent.com",                        # nono, Lima releases
+    "pypi.org", "files.pythonhosted.org",                          # MCP servers' venvs
 )
 
 # The inner wmf-sbx's settings, if the engineer has none there: the

@@ -138,6 +138,10 @@ nono_phase() {
     echo 'set -uo pipefail'
     declare -f inner_test
     echo "export PATH=/usr/local/bin:\$PATH"
+    # As upstream's launch-claude.sh does for a session: /tmp is write-only
+    # under nono, and Lima builds its cloud-init ISO in TMPDIR (RAN: "open
+    # /tmp/diskfs_iso.../05-lima-mounts.sh: permission denied").
+    echo 'export TMPDIR="/tmp/claude-$(id -u)"; mkdir -p "$TMPDIR"'
     printf 'inner_test nono %q %q %q\n' "$WORK" "$SSH_PORT" "$INNER"
   } > "$WORK/inner-test.sh"
   # The nono shim: bin/claude's nono arguments, our command.

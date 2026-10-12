@@ -155,12 +155,12 @@ class TestingGuideTests(unittest.TestCase):
         self.assertIn("mw-install-browser", session.RUNNING_TESTS_MD)
         self.assertIn("composer serve", session.RUNNING_TESTS_MD)
 
-    def test_claude_md_offers_cypress_but_does_not_require_it(self):
-        # The binary is 800 MB, so the agent installs it only when the
-        # repo's Cypress specs are likely to cover the change.
-        self.assertIn("mw-install-cypress", session.RUNNING_TESTS_MD)
-        self.assertIn("Install it only when", session.RUNNING_TESTS_MD)
-        self.assertNotIn("cannot run here", session.RUNNING_TESTS_MD)
+    def test_claude_md_says_cypress_does_not_run_under_nono_yet(self):
+        # RAN (blind run, 2026-10-12): Electron cannot write ~/.config and
+        # Xvfb cannot start under nono. Until the session grants that, the
+        # agent must not spend 800 MB and a diagnosis on it.
+        self.assertIn("do not start under\nnono yet", session.RUNNING_TESTS_MD)
+        self.assertNotIn("mw-install-cypress", session.RUNNING_TESTS_MD)
 
 
 class BuildPlanTests(unittest.TestCase):

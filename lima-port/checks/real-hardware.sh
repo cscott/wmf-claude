@@ -57,7 +57,7 @@ check() {  # NAME DIR CMD
 
 case "${1:-}" in
   create)
-    "$WMF_SBX" create --reset-all "${IMAGE_ARGS[@]}" --name "$NAME" \
+    "$WMF_SBX" create --reset-all ${IMAGE_ARGS[@]+"${IMAGE_ARGS[@]}"} --name "$NAME" \
       gerrit:mediawiki/extensions/Cite gerrit:mediawiki/extensions/Popups \
       gerrit:mediawiki/extensions/TextExtracts gerrit:mediawiki/extensions/PageImages
     ;;

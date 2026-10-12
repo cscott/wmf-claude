@@ -673,6 +673,21 @@ class LimactlTests(unittest.TestCase):
             return result or Done()
         return run
 
+    def test_stdin_is_closed_unless_interactive_or_given(self):
+        seen = []
+
+        def run(argv, **kw):
+            seen.append(kw)
+            return Done()
+        l = lima.Limactl(run=run)
+        l.call("shell", "x", "--", "true")
+        self.assertIs(seen[-1]["stdin"], subprocess.DEVNULL)
+        l.call("shell", "x", "--", "cat", input="data")
+        self.assertNotIn("stdin", seen[-1])
+        self.assertEqual(seen[-1]["input"], "data")
+        l.call("shell", "x", "--", "claude", capture=False, interactive=True)
+        self.assertNotIn("stdin", seen[-1])
+
     def test_instances_reads_one_json_object_per_line(self):
         out = '{"name":"a","status":"Running"}\n{"name":"b","status":"Stopped"}\n'
         l = lima.Limactl(run=self.runner(Done(stdout=out)))

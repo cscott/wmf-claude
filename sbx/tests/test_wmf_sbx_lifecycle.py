@@ -117,7 +117,7 @@ class FakeLima:
     def edit(self, name, expression):
         self.calls.append(("edit", name, expression))
 
-    def call(self, *args, check=True, capture=True, input=None, text=True):
+    def call(self, *args, check=True, capture=True, input=None, text=True, interactive=False):
         self.calls.append(("call",) + tuple(args))
         argv = list(args)
         if argv[0] == "shell" and "bash" in argv and any("echo 0:" in a or "0:ok" in a

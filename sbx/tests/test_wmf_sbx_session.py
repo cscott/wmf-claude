@@ -334,8 +334,12 @@ class ResumeMainTests(Env):
         self.inputs = []
         orig = self.lima.call
 
+        self.interactive = []
+
         def call(*args, **kw):
             self.inputs.append(kw.get("input"))
+            if kw.get("interactive"):
+                self.interactive.append(("call",) + args)
             return orig(*args, **kw)
         self.lima.call = call
 
@@ -386,6 +390,13 @@ class ResumeMainTests(Env):
         shells = self.lima.shells()
         self.assertLess(shells.index(launch), [i for i, s in enumerate(shells)
                                                if " ".join(s) == rules[removed[0]]][0])
+
+    def test_only_the_session_gets_the_terminal(self):
+        self.resume("--", "-p", "hi", env={"ANTHROPIC_API_KEY": SECRET})
+        shell_calls = [c for c in self.lima.calls if c[0] == "call" and c[1] == "shell"]
+        self.assertTrue(shell_calls)
+        self.assertEqual(self.interactive, [c for c in shell_calls
+                                            if session.LAUNCHER in c])
 
     def test_an_oauth_token_gets_an_oauth_phantom(self):
         self.assertEqual(self.resume("--", "-p", "hi", env={"CLAUDE_CODE_OAUTH_TOKEN": SECRET}), 0)

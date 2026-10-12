@@ -130,7 +130,8 @@ def main(argv=None, lima=None, env=None):
             claude_args=claude_args, proxy=session_mod.upstream_proxy(env))
         print(color_mod.dim(f"+ claude in {vm_mod.instance_name(name)}, as the agent, in "
                             f"{state['primaryDir']}"), file=sys.stderr)
-        result = vm_mod.shell(name, argv, lima=lima, workdir="/", check=False, capture=False)
+        result = vm_mod.shell(name, argv, lima=lima, workdir="/", check=False,
+                              capture=False, interactive=True)
     except (lima_mod.LimaError, session_mod.SessionError) as e:
         print(color_mod.error(f"error: {e}"), file=sys.stderr)
         return 1

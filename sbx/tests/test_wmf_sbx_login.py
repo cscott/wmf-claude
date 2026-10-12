@@ -50,12 +50,19 @@ class FindTokenTests(unittest.TestCase):
                 f"Paste code here if prompted >\r\n\x1b[>0q{TOKEN}\r\n")
         self.assertEqual(login.find_token(text), TOKEN)
 
-    def test_the_pty_is_the_terminals_width_but_wide_enough_for_the_token(self):
-        import collections
-        size = collections.namedtuple("Size", "columns lines")
-        self.assertEqual(login.columns(lambda: size(200, 50)), 200)
-        self.assertEqual(login.columns(lambda: size(80, 24)), login.MIN_COLUMNS)
-        self.assertGreater(login.MIN_COLUMNS, len(TOKEN) + 4)
+    def test_a_wrapped_token_is_joined(self):
+        width = 40
+        line = " " + TOKEN
+        wrapped = "\r\n".join(line[k:k + width] for k in range(0, len(line), width))
+        text = f"Your token:\r\n\r\n{wrapped}\r\n\r\nStore this token securely."
+        self.assertEqual(login.find_token(text, width=width), TOKEN)
+
+    def test_a_line_after_an_unwrapped_token_is_not_joined(self):
+        text = f" {TOKEN}\r\nStore-this-token\r\n"
+        self.assertEqual(login.find_token(text, width=200), TOKEN)
+        # padded to the full width with spaces, but not wrapped
+        text = f" {TOKEN}" + " " * 100 + "\r\nStore-this-token\r\n"
+        self.assertEqual(login.find_token(text, width=200), TOKEN)
 
     def test_no_token(self):
         self.assertIsNone(login.find_token("Error: cancelled\r\n"))

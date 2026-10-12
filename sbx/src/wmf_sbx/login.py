@@ -34,12 +34,15 @@ from . import template as template_mod
 from . import vm as vm_mod
 
 LOGIN_MEMORY = "2GiB"
-# setup-token prints the token once. `script` records the terminal; the
-# pty's width is set so that the token is not wrapped (columns()).
+# setup-token prints the token once. `script` records the terminal, at
+# the engineer's terminal's width (RAN: a wider pty garbles Claude Code's
+# screen); find_token() joins a token that wraps.
 TRANSCRIPT = "/dev/shm/wmf-sbx-login.typescript"
-SETUP_TOKEN = ("stty cols @COLS@ 2>/dev/null; umask 077; "
+SETUP_TOKEN = ("umask 077; "
                f"script -q -e -c 'claude setup-token' {TRANSCRIPT}")
 TOKEN_RE = re.compile(r"sk-ant-oat01-[A-Za-z0-9_-]{20,}")
+TOKEN_PREFIX = "sk-ant-oat01-"
+TOKEN_CHARS = re.compile(r"[A-Za-z0-9_-]*")
 # CSI sequences, OSC sequences (setup-token prints its URL as an OSC 8
 # hyperlink, ended by ESC \ or BEL), and carriage returns.
 ANSI_RE = re.compile(r"\x1b\[[0-9;?>]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\r")
@@ -66,22 +69,30 @@ def pick_image(key=None, env=None):
     return key, arch
 
 
-# The token is about 110 characters. A pty narrower than that wraps it in
-# the transcript; one wider than the engineer's terminal garbles Claude
-# Code's screen (RAN at 2000 columns). So the terminal's width, but at
-# least MIN_COLUMNS.
-MIN_COLUMNS = 120
-
-
-def columns(get_size=shutil.get_terminal_size):
-    width = get_size().columns
-    return max(width, MIN_COLUMNS)
-
-
-def find_token(transcript):
-    """The last setup-token token in a terminal transcript, or None."""
-    found = TOKEN_RE.findall(ANSI_RE.sub("", transcript))
-    return found[-1] if found else None
+def find_token(transcript, width=None):
+    """The last setup-token token in a terminal transcript, or None. A
+    token that fills its line to `width` (the terminal's) and goes on at
+    the start of the next line was wrapped, and is joined."""
+    lines = ANSI_RE.sub("", transcript).split("\n")
+    found = None
+    for i, line in enumerate(lines):
+        start = line.rfind(TOKEN_PREFIX)
+        if start < 0:
+            continue
+        token = TOKEN_CHARS.match(line, start + len(TOKEN_PREFIX)).group()
+        token = TOKEN_PREFIX + token
+        j = i
+        while (width and j + 1 < len(lines)
+               and len(lines[j].rstrip()) >= width - 1
+               and lines[j].rstrip().endswith(token[-8:])):
+            more = TOKEN_CHARS.match(lines[j + 1].lstrip()).group()
+            if not more:
+                break
+            token += more
+            j += 1
+        if TOKEN_RE.fullmatch(token):
+            found = token
+    return found
 
 
 def save_token(token, env=None):
@@ -98,13 +109,13 @@ def save_token(token, env=None):
 
 def run_login(name, lima, ask=getpass.getpass, log=print):
     """Run setup-token in the VM, interactively; return the token."""
-    argv = vm_mod.agent_argv(["bash", "-c", SETUP_TOKEN.replace("@COLS@", str(columns()))])
+    argv = vm_mod.agent_argv(["bash", "-c", SETUP_TOKEN])
     res = vm_mod.shell(name, argv, lima=lima, check=False, capture=False, interactive=True)
     if res.returncode != 0:
         raise LoginError(f"claude setup-token failed (exit {res.returncode})")
     out = vm_mod.shell(name, vm_mod.agent_argv(
         ["sh", "-c", f'cat {TRANSCRIPT}; rm -f {TRANSCRIPT}']), lima=lima, check=False)
-    token = find_token(out.stdout or "")
+    token = find_token(out.stdout or "", width=shutil.get_terminal_size().columns)
     if token:
         return token
     log("wmf-sbx: could not read the token from setup-token's output.")

@@ -36,6 +36,10 @@ from . import session as session_mod
 from . import template as template_mod
 from . import vm as vm_mod
 
+# `create --nested` says this first (SECURITY.md, section 6a).
+NESTED_WARNING = ("warning: a nested sandbox is less secure: nono gives the agent /dev/kvm, "
+                  "Lima's sockets and more hosts. Use it only to work on wmf-claude itself.")
+
 # `create` keeps unused golden images younger than this (prune_old_images).
 PRUNE_MIN_AGE = datetime.timedelta(hours=1)
 
@@ -487,8 +491,8 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
                         help=f"default {template_mod.DEFAULT_DISK} "
                         f"({nested_mod.DISK} with --nested)")
     parser.add_argument("--nested", action="store_true",
-                        help="let the agent run Lima VMs of its own (QEMU, Lima, /dev/kvm), "
-                        "to work on wmf-sbx itself")
+                        help="LOWER SECURITY, only to work on wmf-claude itself: let the agent "
+                        "run Lima VMs of its own (QEMU, Lima, /dev/kvm; nono grants more)")
     parser.add_argument("--image", metavar="KEY",
                         help="use this cached golden image (`wmf-sbx image ls`) "
                         "instead of the one for the current inputs")
@@ -671,6 +675,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         return 1
 
     if args.nested:
+        print(color_mod.error(NESTED_WARNING), file=sys.stderr)
         say("+ nested: QEMU and Lima in the sandbox, the agent in the kvm group")
         script = nested_mod.install_script(arch)
         argv = (["sudo", "env"] + [f"{k}={v}" for k, v in

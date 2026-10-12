@@ -292,8 +292,11 @@ wmf-sbx create PRIMARY[:ro] [EXTRA[:ro] ...] [options]
 - `--no-remotes`: add no host remote, and leave host gc as it is.
 - `--vm-type qemu|vz`, `--cpus N` (4), `--memory SIZE` (8GiB),
   `--disk SIZE` (60GiB).
-- `--nested`: for work on wmf-sbx itself. The agent can run Lima VMs of
-  its own, under nono (image builds, inner sandboxes, `real-hardware.sh`):
+- `--nested`: **lower security; only for work on wmf-claude or wmf-sbx
+  itself.** Do not use it for other work. nono gives the agent more in a
+  nested sandbox: `/dev/kvm`, the `kvm` group, Lima's sockets, more
+  writable directories and more download hosts (SECURITY.md, §6a). The
+  agent can run Lima VMs of its own, under nono (image builds, inner sandboxes, `real-hardware.sh`):
   `create` installs QEMU, OVMF and Lima in this sandbox (the golden image
   has none), adds the agent to the `kvm` group, and the sessions get the
   grants for `~/.lima`, `/dev/kvm` and the download hosts of an image

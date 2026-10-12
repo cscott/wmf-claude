@@ -301,7 +301,8 @@ wmf-sbx create PRIMARY[:ro] [EXTRA[:ro] ...] [options]
   has none), adds the agent to the `kvm` group, and the sessions get the
   grants for `~/.lima`, `/dev/kvm` and the download hosts of an image
   build. It also writes a `settings.yaml` for the inner wmf-sbx (repos
-  in `/home/wmf-sbx-src`) if there is none. Defaults: 16 GiB of memory, a 120 GiB (sparse) disk. Nested KVM
+  in `~/wmf-sbx-src`, at your home's path as on the host) if there is
+  none. Defaults: 16 GiB of memory, a 120 GiB (sparse) disk. Nested KVM
   needs the host to allow it (Linux: `kvm_intel`/`kvm_amd` `nested=1`, the
   default on recent kernels; macOS: M3 or later with macOS 15, on `vz`);
   without it the inner VMs run, slowly, without KVM. For example:

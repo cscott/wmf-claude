@@ -200,7 +200,9 @@ pins. What changes:
   kernel, which the agent already shares; the host's hypervisor is not
   exposed beyond what nested virtualisation already is.
 - The inner VMs' network goes through the session's nono proxy (Lima
-  points them at it), and the outer VM's nftables still bound it.
+  points them at it), and the outer VM's nftables still bound it. The
+  inner VMs trust the session's nono CA (it re-signs TLS for hosts with
+  endpoint rules); an image build removes it before it seals.
 - Every sandbox's invariants check that the agent is in the `kvm` group
   only in a nested sandbox (root writes `/etc/wmf-sbx/nested`, which the
   agent cannot).

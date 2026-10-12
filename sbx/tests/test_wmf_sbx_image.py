@@ -28,17 +28,18 @@ import wmf_sbx.lima as lima  # noqa: E402
 
 
 
-# A nested sandbox has a local base image (image.LOCAL_BASE_DIR); the
-# tests must not see it.
-_NO_LOCAL_BASE = mock.patch.object(image, "LOCAL_BASE_DIR", "/nonexistent/wmf-sbx-base")
+# A nested sandbox has a local base image (image.LOCAL_BASE_DIR) and a
+# marker (image.NESTED_MARKER); the tests must not see them.
+_NOT_NESTED = mock.patch.multiple(image, LOCAL_BASE_DIR="/nonexistent/wmf-sbx-base",
+                                  NESTED_MARKER="/nonexistent/wmf-sbx-nested")
 
 
 def setUpModule():
-    _NO_LOCAL_BASE.start()
+    _NOT_NESTED.start()
 
 
 def tearDownModule():
-    _NO_LOCAL_BASE.stop()
+    _NOT_NESTED.stop()
 
 class Done:
     def __init__(self, returncode=0, stdout="", stderr=""):
@@ -366,6 +367,19 @@ class BuilderTests(unittest.TestCase):
     def test_no_extra_ca_means_no_cacerts_key(self):
         self.assertEqual(image.extra_ca_files({}), [])
         self.assertNotIn("caCerts", image.builder_template(sample_inputs()))
+
+    def test_a_nested_sandbox_gives_the_inner_vms_nonos_ca(self):
+        with tempfile.TemporaryDirectory() as d:
+            marker = os.path.join(d, "nested")
+            cert = os.path.join(d, "nono-ca.pem")
+            open(cert, "w").close()
+            env = {"SSL_CERT_FILE": cert}
+            self.assertEqual(image.extra_ca_files(env), [])
+            open(marker, "w").close()
+            with mock.patch.object(image, "NESTED_MARKER", marker):
+                self.assertEqual(image.extra_ca_files(env), [cert])
+                self.assertEqual(image.extra_ca_files({}), [])
+                self.assertEqual(image.extra_ca_files(dict(env, **{image.CA_CERTS_VAR: ""})), [])
 
     def test_extra_ca_files_go_to_the_builder_and_not_into_the_key(self):
         with tempfile.TemporaryDirectory() as d:

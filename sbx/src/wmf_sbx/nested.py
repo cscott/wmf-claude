@@ -20,7 +20,7 @@ LIMA_VERSION = "2.2.1"
 LIMA_RELEASES = "https://github.com/lima-vm/lima/releases/download"
 # Written by the install, as root: the invariant "the agent is not in the
 # kvm group" holds unless it exists, and the agent cannot create it.
-MARKER = "/etc/wmf-sbx/nested"
+MARKER = image_mod.NESTED_MARKER
 
 # Debian packages for QEMU and its firmware, by guest architecture, and
 # PyYAML, which wmf-sbx itself needs.
@@ -129,7 +129,7 @@ if ! {limactl} --version 2>/dev/null | grep -q {q(LIMA_VERSION)}; then
 fi
 install -d -m 0755 {' '.join(q(d) for d in READ_DIRS)}
 # The base image, for image builds in the sandbox (image.local_base()).
-if ! echo {q(digest + '  ' + base_file)} | {algo}sum -c --quiet 2>/dev/null; then
+if ! echo {q(digest + '  ' + base_file)} | {algo}sum -c --quiet >/dev/null 2>&1; then
   echo "+ base image {os.path.basename(base_file)}" >&2
   curl -fsSL -o {q(base_file + '.tmp')} {q(base['location'])}
   echo {q(digest + '  ' + base_file + '.tmp')} | {algo}sum -c --quiet

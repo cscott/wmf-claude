@@ -314,7 +314,8 @@ to D12, and tracks A and B, which are not repeated here).
 - `wmf-sbx login` on the engineer's host (Linux, KVM): the token was read from the
   transcript and saved; `resume` then used it with no login prompt. With the pty at 2000
   columns, Claude Code's text was garbled on the engineer's terminal; the pty now has the
-  terminal's width, at least 120 (the token is ~110 characters).
+  terminal's own width (the engineer's decision), and `find_token` joins a token that
+  wraps (a line filled to the width, ending in token characters, goes on in the next).
 - `--continue` does not take up a `-p` run ("No conversation found to continue"): only an
   interactive session marks a sandbox attached.
 - Still to run on the engineer's host: a blind run, and macOS.

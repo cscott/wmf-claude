@@ -29,6 +29,7 @@ from . import state as state_mod
 from . import image as image_mod
 from . import lima as lima_mod
 from . import mediawiki as mediawiki_mod
+from . import nested as nested_mod
 from . import remotes as remotes_mod
 from . import repos as repos_mod
 from . import session as session_mod
@@ -479,10 +480,15 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
     parser.add_argument("--vm-type", choices=sorted(template_mod.MOUNT_TYPES),
                         help="Lima driver (default: vz on macOS, qemu elsewhere)")
     parser.add_argument("--cpus", type=int, default=template_mod.DEFAULT_CPUS)
-    parser.add_argument("--memory", default=template_mod.DEFAULT_MEMORY,
-                        help=f"default {template_mod.DEFAULT_MEMORY}")
-    parser.add_argument("--disk", default=template_mod.DEFAULT_DISK,
-                        help=f"default {template_mod.DEFAULT_DISK}")
+    parser.add_argument("--memory",
+                        help=f"default {template_mod.DEFAULT_MEMORY} "
+                        f"({nested_mod.MEMORY} with --nested)")
+    parser.add_argument("--disk",
+                        help=f"default {template_mod.DEFAULT_DISK} "
+                        f"({nested_mod.DISK} with --nested)")
+    parser.add_argument("--nested", action="store_true",
+                        help="let the agent run Lima VMs of its own (QEMU, Lima, /dev/kvm), "
+                        "to work on wmf-sbx itself")
     parser.add_argument("--image", metavar="KEY",
                         help="use this cached golden image (`wmf-sbx image ls`) "
                         "instead of the one for the current inputs")
@@ -619,7 +625,10 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         tmpl = template_mod.sandbox_template(
             golden, arch, gitdirs=repos_mod.git_dirs(repos), vm_type=args.vm_type,
             cpus=args.cpus,
-            memory=args.memory, disk=args.disk,
+            memory=args.memory or (nested_mod.MEMORY if args.nested
+                                   else template_mod.DEFAULT_MEMORY),
+            disk=args.disk or (nested_mod.DISK if args.nested else template_mod.DEFAULT_DISK),
+            nested=args.nested,
             proxy_ports=template_mod.loopback_proxy_ports(env),
             ca_files=image_mod.extra_ca_files(env))
     except (state_mod.StateError, vm_mod.VmError, image_mod.ImageError,
@@ -643,6 +652,8 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         name, created=stamp, primary_dir=primary_dir, image=key,
         vm_type=tmpl["vmType"], repos=[path for _c, path, _n in resolved],
         read_only=sorted(readonly))
+    if args.nested:
+        state["nested"] = True
     state_mod.save(state, env)
     try:
         vm_mod.create(name, tmpl, lima=lima, log=say)
@@ -658,6 +669,19 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         print(color_mod.error(f"error: {name} breaks a security invariant; do not use "
                               f"it. `wmf-sbx rm {name}`."), file=sys.stderr)
         return 1
+
+    if args.nested:
+        say("+ nested: QEMU and Lima in the sandbox, the agent in the kvm group")
+        script = nested_mod.install_script(arch)
+        argv = (["sudo", "env"] + [f"{k}={v}" for k, v in
+                                   sorted(image_mod.guest_proxy_env(env).items())]
+                + ["bash", "-s"])
+        res = vm_mod.shell(name, argv, lima=lima, input=script, check=False, capture=False)
+        if res.returncode != 0:
+            print(color_mod.error(f"error: installing QEMU and Lima in the sandbox failed "
+                                  f"(exit {res.returncode})"), file=sys.stderr)
+            print(f"  `wmf-sbx rm {name}` removes what was made.", file=sys.stderr)
+            return 1
 
     # The clones in the VM, then the host remotes. Requested repos keep
     # the host's branch; dependencies go to upstream master, and

@@ -73,6 +73,11 @@ to D12, and tracks A and B, which are not repeated here).
   VM's SSH port (pinned in its template, 50022, inside the ephemeral window). The agent
   needs the `kvm` group; root installs QEMU, OVMF and Lima. Nested KVM works with no host
   change (`accel=kvm`; start in 22 s under nono, 31 s outside).
+- N2 (built, unit tests): `create --nested` (state `nested`), `nested.py` (install script,
+  grants, domains), the invariant "kvm group only in a nested sandbox". No `--listen-port`
+  grant for the inner SSH port: `--open-port` is connect and listen, and Lima's port comes
+  from the ephemeral window the session opens. Still to RAN: N3, and the nono pack
+  registry's host (not found in the binary; a denial will name it).
 - `TMPDIR` must be the session's (`/tmp/claude-UID`, launch-claude.sh): `/tmp` is
   write-only under nono, and Lima builds its cloud-init ISO in TMPDIR.
 - Inner egress: Lima rewrites the session's proxy variables (nono's proxy on loopback) to

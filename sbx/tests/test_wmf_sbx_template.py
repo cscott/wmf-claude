@@ -92,6 +92,19 @@ class TemplateTests(unittest.TestCase):
         subprocess.run(["limactl", "validate", f.name], check=True, capture_output=True)
 
 
+class NestedTemplateTests(unittest.TestCase):
+
+    def test_vz_asks_for_nested_virtualisation(self):
+        t = template.sandbox_template("/x/golden.qcow2", "aarch64", vm_type="vz", nested=True,
+                                      host_uid=1000)
+        self.assertTrue(t["nestedVirtualization"])
+        t = template.sandbox_template("/x/golden.qcow2", "x86_64", vm_type="qemu",
+                                      nested=True, host_uid=1000)
+        self.assertNotIn("nestedVirtualization", t)
+        t = template.sandbox_template("/x/golden.qcow2", "aarch64", vm_type="vz", host_uid=1000)
+        self.assertNotIn("nestedVirtualization", t)
+
+
 class CheckTests(unittest.TestCase):
     """Each rule of check_template, broken once."""
 

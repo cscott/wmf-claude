@@ -28,6 +28,7 @@ import subprocess
 from . import credproxy as credproxy_mod
 from . import image as image_mod
 from . import kit as kit_mod
+from . import nested as nested_mod
 from . import setup as setup_mod
 from . import state as state_mod
 from . import template as template_mod
@@ -259,6 +260,8 @@ def launcher_argv(state, cred_path=None, launcher_flags=(), claude_args=(),
         grants += ["--allow-domain", domain]
     if proxy:
         grants += ["--upstream-proxy", proxy]
+    if state.get("nested"):
+        grants += nested_mod.session_grants()
     claude = ([LAUNCHER, f"--local-web={local_ports()}", "--landlock-only",
                "--listen-port", "0"] + grants
               + list(launcher_flags) + ["--"] + list(claude_args))

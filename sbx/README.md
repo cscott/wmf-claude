@@ -292,6 +292,16 @@ wmf-sbx create PRIMARY[:ro] [EXTRA[:ro] ...] [options]
 - `--no-remotes`: add no host remote, and leave host gc as it is.
 - `--vm-type qemu|vz`, `--cpus N` (4), `--memory SIZE` (8GiB),
   `--disk SIZE` (60GiB).
+- `--nested`: for work on wmf-sbx itself. The agent can run Lima VMs of
+  its own, under nono (image builds, inner sandboxes, `real-hardware.sh`):
+  `create` installs QEMU, OVMF and Lima in this sandbox (the golden image
+  has none), adds the agent to the `kvm` group, and the sessions get the
+  grants for `~/.lima`, `/dev/kvm` and the download hosts of an image
+  build. Defaults: 16 GiB of memory, a 120 GiB (sparse) disk. Nested KVM
+  needs the host to allow it (Linux: `kvm_intel`/`kvm_amd` `nested=1`, the
+  default on recent kernels; macOS: M3 or later with macOS 15, on `vz`);
+  without it the inner VMs run, slowly, without KVM. For example:
+  `wmf-sbx create --nested --no-deps ~/src/wmf-claude`.
 - `--image KEY`: use a cached golden image (`wmf-sbx image ls`), not the
   one for the current inputs (see also `WMF_CLAUDE_GIT_HASH_OVERRIDE`,
   "The golden image cache").

@@ -47,6 +47,47 @@ Every command is `wmf-sbx VERB ...`, or `wmf-sbx-VERB ...`:
 A `NAME` can also be a path shortcut such as `.`: the sandbox whose
 primary repo is that directory.
 
+## Getting started
+
+1. **Tell wmf-sbx where your repos are.** wmf-sbx names repos by their
+   Gerrit or GitLab project (`gerrit:mediawiki/extensions/Cite`); rules in
+   `~/.config/wmf-sbx/settings.yaml` map projects to directories on your
+   machine. A sandbox works on clones of those directories, and a repo
+   that is not there yet is cloned there first. Start from the example
+   and change the paths to your layout:
+
+   ```bash
+   mkdir -p ~/.config/wmf-sbx
+   cp sbx/reference/example-settings.yaml ~/.config/wmf-sbx/settings.yaml
+   $EDITOR ~/.config/wmf-sbx/settings.yaml
+   ```
+
+   The `repos:` rules are tried most specific first: an exact project
+   (`gerrit:mediawiki/core`) before a pattern, where `{name}` is the last
+   path segment and `**` any number of leading ones. Write rules for the
+   places your checkouts already are, and end with a catch-all such as
+   `gerrit:**/{name}` → `~/Wikimedia/{name}`. Check a few names:
+
+   ```bash
+   wmf-sbx resolve Cite        # the project and the directory it maps to
+   wmf-sbx resolve core
+   wmf-sbx resolve --path ~/Wikimedia/Extensions/Echo   # the other way round
+   ```
+
+   The same file holds your preferences for every sandbox ("Preferences"),
+   extra environment variables and Debian packages.
+
+2. **Sign in once:** `wmf-sbx login` ("Sign-in"). It needs a golden image,
+   so on a new machine run step 3 first and sign in before the first
+   `resume`.
+
+3. **Make a sandbox and start Claude Code in it:**
+
+   ```bash
+   wmf-sbx create Cite        # 10-20 minutes the first time (the golden image)
+   wmf-sbx resume sbx-cite
+   ```
+
 ## Sign-in
 
 Sign in once, for every sandbox, without Claude Code on the host:
@@ -90,8 +131,8 @@ bodies).
 
 ## Preferences
 
-The `session:` section of `~/.config/wmf-sbx/repos.yaml` holds settings
-for every new sandbox. `create` writes them into the agent's
+The `session:` section of `~/.config/wmf-sbx/settings.yaml` holds
+settings for every new sandbox. `create` writes them into the agent's
 `~/.claude/settings.json`, so you do not set them again in each one:
 
 ```yaml
@@ -103,6 +144,20 @@ session:
   ste: false                          # leave out the ASD-STE100 rule for comments and
                                       # commit messages (default: true)
 ```
+
+Two more sections of the file apply to every new sandbox:
+
+```yaml
+environment:          # variables for the sessions (the agent's settings `env`)
+  GERRITUA: "..."
+  CLAUDE_CODE_DISABLE_1M_CONTEXT: "1"
+packages:             # extra Debian packages in the golden image
+  - nano
+```
+
+`environment:` cannot set `ANTHROPIC_*` or `NO_PROXY` (the credential
+proxy's). `packages:` are part of the golden image's cache key, so a
+change builds a new image at the next `create`.
 
 `ste: false` sets `WMF_CLAUDE_STE=0` for the sessions, which takes the
 STE writing rule out of the SessionStart context. The `write-commit-msg`
@@ -165,6 +220,11 @@ export WMF_CLAUDE_GIT_HASH_OVERRIDE=v1   # commits no longer rebuild the image
 export WMF_CLAUDE_GIT_HASH_OVERRIDE=v2   # rebuild once, from HEAD
 ```
 
+`WMF_CLAUDE_GIT_HASH_OVERRIDE=latest` uses the newest cached image (for
+your machine's architecture and uid) whatever its inputs, as `wmf-sbx
+login` does, and builds one only when the cache has none. It ignores
+other changes too (a new Claude Code release, `packages:`).
+
 To keep the image you already have, set the override to its commit:
 `wmf-sbx image ls` shows it after `wmf-claude`. An image built with an
 override has the tree of the HEAD at its build, which `image ls` shows
@@ -195,11 +255,13 @@ An argument to `create` (and to `resolve`) can be:
 - a local directory (`.`, `~/src/foo`), which is mapped back to its
   project.
 
-The project is then mapped to a host directory by the rules in
-`~/.config/wmf-sbx/repos.yaml`, most specific rule first, for example
-`gerrit:mediawiki/extensions/{name}` → `~/Wikimedia/Extensions/{name}`.
-`reference/example-repos.yaml` is a commented example. A repo that is not
-on the host yet is cloned there first.
+The project is then mapped to a host directory by the `repos:` rules in
+`~/.config/wmf-sbx/settings.yaml` ("Getting started"), most specific rule
+first, for example `gerrit:mediawiki/extensions/{name}` →
+`~/Wikimedia/Extensions/{name}`. `reference/example-settings.yaml` is a
+commented example. A repo that is not on the host yet is cloned there
+first. (Before `settings.yaml`, the file was `repos.yaml` and `repos:` was
+`rules:`; the old names still work, with a note.)
 
 ## Dependencies
 
@@ -219,8 +281,12 @@ wmf-sbx create PRIMARY[:ro] [EXTRA[:ro] ...] [options]
 - `PRIMARY` is where the session starts. `:ro` makes a repo read-only
   for the agent.
 - Repos you name keep the branch and commit of your host checkout.
-  Dependencies are reset to upstream `master`. `--reset-all` resets the
-  repos you named too.
+  Dependencies are reset to upstream `master` (or `main`): the clone in
+  the VM fetches the real upstream (Gerrit or GitLab, as `origin`) and
+  resets to its tip. `--reset-all` resets the repos you named too. Only
+  if upstream cannot be fetched, or wmf-sbx cannot tell what it is (no
+  `gerrit:`/`gitlab:` name and no https `origin` on the host), is a repo
+  reset to your host checkout's branch instead; `create` warns for each.
 - `--name NAME`: the sandbox name (default `sbx-<primary>`). The host
   remote has the same name.
 - `--no-remotes`: add no host remote, and leave host gc as it is.
@@ -299,7 +365,7 @@ the code is in `src/wmf_sbx/`, one module per verb, and the tests in
 **Repo resolution** (`resolve.py`). A name becomes a canonical project
 (`resolve_canonical_path`: Gerrit, then GitLab, following forks to the
 real upstream), and a canonical project becomes a host directory
-(`resolve_directory`, the `repos.yaml` rules). `reverse_resolve` maps a
+(`resolve_directory`, the `repos:` rules of `settings.yaml`). `reverse_resolve` maps a
 directory back, from `.gitreview`, the origin URL or an exact rule.
 
 **Dependency walk** (`deps.py`). `deps.walk` reads each repo's manifest,

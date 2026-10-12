@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 import wmf_sbx.resolve as r  # noqa: E402
 
 EXAMPLE_CONFIG = os.path.join(
-    os.path.dirname(__file__), "..", "reference", "example-repos.yaml"
+    os.path.dirname(__file__), "..", "reference", "example-settings.yaml"
 )
 
 
@@ -708,26 +708,63 @@ class ReverseResolveOriginTests(unittest.TestCase):
 class LoadConfigTests(unittest.TestCase):
     def test_loads_example_config(self):
         config = r.load_config(EXAMPLE_CONFIG)
-        self.assertIn("rules", config)
-        self.assertIn("extra_dependencies", config)
-        matches = [rule["match"] for rule in config["rules"]]
+        self.assertEqual(set(r.CONFIG_DEFAULTS) - set(config), set())
+        matches = [rule["match"] for rule in config["repos"]]
         self.assertIn("gerrit:mediawiki/core", matches)
         self.assertIn("gerrit:mediawiki/extensions/{name}", matches)
         self.assertIn("gerrit:analytics/{name}", matches)
         self.assertIn("gerrit:**/{name}", matches)
         self.assertIn("gitlab:**/{name}", matches)
+        self.assertEqual(config["environment"], {})
+        self.assertEqual(config["packages"], [])
+        self.assertEqual(config["session"]["theme"], "dark")
 
     def test_missing_config_file_returns_empty(self):
-        config = r.load_config("/nonexistent/path/repos.yaml")
-        self.assertEqual(
-            config,
-            {"rules": [], "extra_dependencies": {}, "extra_environment": {}, "extra_packages": []},
-        )
+        config = r.load_config("/nonexistent/path/settings.yaml")
+        self.assertEqual(config, {"repos": [], "environment": {}, "packages": [],
+                                  "dependency_overrides": {}, "link_overrides": {},
+                                  "extra_dependencies": {}})
 
-    def test_loads_extra_environment_and_packages_defaults(self):
-        config = r.load_config(EXAMPLE_CONFIG)
-        self.assertEqual(config["extra_environment"], {})
-        self.assertEqual(config["extra_packages"], [])
+    def write(self, name, text):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        path = os.path.join(d, name)
+        with open(path, "w") as f:
+            f.write(text)
+        return path
+
+    def test_the_old_key_names_still_work(self):
+        path = self.write("x.yaml", "rules:\n  - {match: 'gerrit:a/{name}', path: '~/a/{name}'}\n"
+                          "extra_environment: {A: b}\nextra_packages: [nano]\n")
+        config = r.load_config(path)
+        self.assertEqual(config["repos"][0]["match"], "gerrit:a/{name}")
+        self.assertEqual(config["environment"], {"A": "b"})
+        self.assertEqual(config["packages"], ["nano"])
+        self.assertNotIn("rules", config)
+
+    def test_old_and_new_names_together_are_refused(self):
+        path = self.write("x.yaml", "rules: []\nrepos: []\n")
+        with self.assertRaisesRegex(r.ResolutionError, "old name of `repos:`"):
+            r.load_config(path)
+
+    def test_a_wrong_type_is_refused(self):
+        path = self.write("x.yaml", "packages: nano\n")
+        with self.assertRaisesRegex(r.ResolutionError, "`packages:` must be a list"):
+            r.load_config(path)
+
+    def test_the_old_file_is_read_with_a_note(self):
+        legacy = self.write("repos.yaml", "rules: []\nsession: {theme: dark}\n")
+        notes = []
+        missing = os.path.join(os.path.dirname(legacy), "settings.yaml")
+        with mock.patch.object(r, "DEFAULT_CONFIG", missing):
+            config = r.load_config(missing, warn=notes.append, legacy=legacy)
+        self.assertEqual(config["session"], {"theme": "dark"})
+        self.assertIn("rename it", notes[0])
+        with mock.patch.object(r, "DEFAULT_CONFIG", missing):
+            r.load_config(missing, warn=notes.append, legacy=legacy)
+        self.assertEqual(len(notes), 1)
+        # an explicit --config path that is missing does not fall back
+        self.assertEqual(r.load_config(missing, warn=notes.append, legacy=legacy)["repos"], [])
 
     def test_end_to_end_with_example_config(self):
         def fake_search(substring):

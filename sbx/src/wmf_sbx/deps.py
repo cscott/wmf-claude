@@ -236,7 +236,7 @@ def key_to_canonical(section, key, overrides=None, warn=None):
     `requires: {"Abuse Filter": "*"}` is legal MediaWiki and would produce
     a nonsense Gerrit project, so anything that can't be a single project
     path segment is refused rather than guessed at. `dependency_overrides`
-    in repos.yaml is the escape hatch for exactly those.
+    in settings.yaml is the escape hatch for exactly those.
     """
     warn = warn or _noop
     if overrides and key in overrides:
@@ -248,7 +248,7 @@ def key_to_canonical(section, key, overrides=None, warn=None):
         warn(
             f"dependency {key!r} cannot be a Gerrit project path (the key is a "
             f"credits name, not a directory) -- skipping it. Add a "
-            f"`dependency_overrides:` entry in repos.yaml to map it by hand."
+            f"`dependency_overrides:` entry in settings.yaml to map it by hand."
         )
         return None
     return f"gerrit:mediawiki/{section}/{key}"

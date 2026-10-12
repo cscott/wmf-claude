@@ -123,7 +123,7 @@ class SessionError(Exception):
 
 
 # The engineer's preferences for every new sandbox, from the `session:`
-# section of ~/.config/wmf-sbx/repos.yaml. They go into the agent's
+# section of ~/.config/wmf-sbx/settings.yaml. They go into the agent's
 # ~/.claude/settings.json at create, so each sandbox starts with them.
 PERMISSION_MODES = ("default", "acceptEdits", "plan", "auto", "bypassPermissions")
 THEMES = ("dark", "light", "dark-daltonized", "light-daltonized", "dark-ansi", "light-ansi")
@@ -166,27 +166,27 @@ def preference_settings(prefs, quiet=True):
     still apply (bin/claude passes them with --settings)."""
     prefs = prefs or {}
     if not isinstance(prefs, dict):
-        raise SessionError("repos.yaml: `session:` must be a mapping")
+        raise SessionError("settings.yaml: `session:` must be a mapping")
     unknown = sorted(set(prefs) - set(PREFERENCE_KEYS))
     if unknown:
-        raise SessionError(f"repos.yaml: unknown `session:` key(s): {', '.join(unknown)} "
+        raise SessionError(f"settings.yaml: unknown `session:` key(s): {', '.join(unknown)} "
                            f"(want {', '.join(PREFERENCE_KEYS)})")
     theme = prefs.get("theme")
     if theme is not None and theme not in THEMES:
-        raise SessionError(f"repos.yaml: session.theme {theme!r}: want one of {', '.join(THEMES)}")
+        raise SessionError(f"settings.yaml: session.theme {theme!r}: want one of {', '.join(THEMES)}")
     ste = prefs.get("ste")
     if ste is not None and not isinstance(ste, bool):
-        raise SessionError(f"repos.yaml: session.ste {ste!r}: want true or false")
+        raise SessionError(f"settings.yaml: session.ste {ste!r}: want true or false")
     patch = {}
     model = prefs.get("model")
     if model is not None:
         if not isinstance(model, str) or not MODEL_RE.match(model):
-            raise SessionError(f"repos.yaml: session.model {model!r} is not a model name")
+            raise SessionError(f"settings.yaml: session.model {model!r} is not a model name")
         patch["model"] = model
     mode = prefs.get("permission_mode")
     if mode is not None:
         if mode not in PERMISSION_MODES:
-            raise SessionError(f"repos.yaml: session.permission_mode {mode!r}: want one of "
+            raise SessionError(f"settings.yaml: session.permission_mode {mode!r}: want one of "
                                f"{', '.join(PERMISSION_MODES)}")
         patch["permissions"] = {"defaultMode": mode}
         if mode == "bypassPermissions" and quiet:
@@ -421,15 +421,38 @@ def session_env(resolved_for_kit, readonly=(), identity=None):
     return env
 
 
+ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def check_environment(environment):
+    """settings.yaml `environment:` as {NAME: str}. Raises SessionError for a
+    bad name, a non-scalar value, or a variable the credential proxy needs
+    (CREDENTIAL_PROXY_ENV, ANTHROPIC_*)."""
+    out = {}
+    for name, value in (environment or {}).items():
+        if not isinstance(name, str) or not ENV_NAME_RE.match(name):
+            raise SessionError(f"settings.yaml: `environment:` {name!r} is not a variable name")
+        if name in CREDENTIAL_PROXY_ENV or name.startswith("ANTHROPIC_"):
+            raise SessionError(f"settings.yaml: `environment:` {name} is set by wmf-sbx "
+                               f"for the credential proxy")
+        if isinstance(value, bool):
+            value = "1" if value else "0"
+        if not isinstance(value, (str, int, float)):
+            raise SessionError(f"settings.yaml: `environment:` {name}: want a string")
+        out[name] = str(value)
+    return out
+
+
 def session_plan(name, resolved_for_kit, readonly=(), identity=None, preferences=None,
-                 claude_version=None, quiet=True):
+                 claude_version=None, quiet=True, environment=None):
     """The `session` part of the plan, which setup.py --lima writes as the
-    agent: settings `env` and the engineer's preferences, and files under
-    the agent's home."""
+    agent: settings `env` (wmf-sbx's, then settings.yaml `environment:`)
+    and the engineer's preferences, and files under the agent's home."""
     with open(kit_mod.TESTING_GUIDE_SOURCE, encoding="utf-8") as f:
         guide = f.read()
     settings = preference_settings(preferences, quiet=quiet)
     env = session_env(resolved_for_kit, readonly, identity)
+    env.update(check_environment(environment))
     env.update(settings.pop("env", {}))
     return {
         "env": env,

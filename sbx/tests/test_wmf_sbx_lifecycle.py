@@ -140,6 +140,7 @@ class Env(unittest.TestCase):
     """State and cache in a temporary directory; one cached image."""
 
     KEY = "0123456789abcdef"
+    MANIFEST_INPUTS = {"arch": image.host_arch(), "agent": {"uid": os.getuid()}}
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -158,7 +159,7 @@ class Env(unittest.TestCase):
         with open(os.path.join(d, "golden.sha256"), "w") as f:
             f.write(image._sha256_file(g) + "  golden.qcow2\n")
         with open(os.path.join(d, "manifest.json"), "w") as f:
-            json.dump({"key": self.KEY, "inputs": {"arch": "x86_64"}}, f)
+            json.dump({"key": self.KEY, "inputs": self.MANIFEST_INPUTS}, f)
 
     def _cleanup(self):
         for dirpath, _dirs, files in os.walk(self.tmp):
@@ -287,7 +288,7 @@ class CreateTests(Env):
     def date_image(self, created):
         path = os.path.join(image.entry_dir(self.KEY, self.env), "manifest.json")
         with open(path, "w") as f:
-            json.dump({"key": self.KEY, "created": created, "inputs": {"arch": "x86_64"}}, f)
+            json.dump({"key": self.KEY, "created": created, "inputs": self.MANIFEST_INPUTS}, f)
 
     def test_a_build_removes_old_unused_images(self):
         self.date_image("2026-01-01T00:00:00+00:00")
@@ -300,6 +301,19 @@ class CreateTests(Env):
         self.date_image((now - datetime.timedelta(minutes=5)).isoformat(timespec="seconds"))
         self.assertEqual(self.create("--name", "demo", inputs=False), 0, self.err)
         self.assertTrue(os.path.isdir(image.entry_dir(self.KEY, self.env)))
+
+    def test_latest_uses_the_newest_cached_image_and_builds_nothing(self):
+        self.env[image.TREE_OVERRIDE_VAR] = "latest"
+        self.assertEqual(self.create("--name", "demo", inputs=False), 0, self.err)
+        self.assertEqual(self.built, [])
+        self.assertEqual(state_mod.load("demo", self.env)["image"], self.KEY)
+        self.assertIn("the newest cached one", self.err)
+
+    def test_latest_with_an_empty_cache_builds(self):
+        self.env[image.TREE_OVERRIDE_VAR] = "latest"
+        shutil.rmtree(image.entry_dir(self.KEY, self.env))
+        self.assertEqual(self.create("--name", "demo", inputs=False), 0, self.err)
+        self.assertEqual(self.built, [self.inputs])
 
     def test_a_cached_image_removes_nothing(self):
         other = "fedcba9876543210"

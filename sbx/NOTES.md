@@ -80,10 +80,8 @@ to D12, and tracks A and B, which are not repeated here).
 
 ### From the design documents
 
-- [ ] **Wire up or drop the unused `repos.yaml` keys** `extra_dependencies`,
-  `extra_environment`, `extra_packages`: `resolve.load_config` gives them defaults and
-  `reference/example-repos.yaml` documents them, but no code reads them. `extra_packages`
-  would have to go into `image.image_inputs` (the cache key).
+- [ ] **`extra_dependencies:` in settings.yaml is not used yet** (dependencies no manifest
+  declares, keyed by canonical): wire it into the dependency walk, or drop it.
 - [ ] **Dependency walk, open questions:** a manifest `name` that is not the directory: an
   override table (`dependency_overrides`, today) or a fallback to the `name` field? Do
   `dev-requires` repos need another policy (`:ro` by default)?
@@ -171,7 +169,7 @@ to D12, and tracks A and B, which are not repeated here).
 - A rule's existing directory is trusted only if its `.gitreview` `project=` matches; a
   directory that exists with the wrong checkout is an error, not `needs_clone`.
 - `reverse_resolve`: `.gitreview` is authoritative; then the checkout's `origin` URL (GitLab
-  https and `git@gitlab-ssh.wikimedia.org` forms); then exact `repos.yaml` rules only — a
+  https and `git@gitlab-ssh.wikimedia.org` forms); then exact `repos:` rules only — a
   wildcard rule cannot be inverted.
 - GitLab: consulted only when Gerrit has no match; search groups `repos` then
   `toolforge-repos`, never personal namespaces (about half of 4,427 projects are forks).
@@ -186,7 +184,7 @@ to D12, and tracks A and B, which are not repeated here).
   `retry-after: 60` (Varnish); retry once. "Couldn't ask" is `UNREACHABLE`, not "no
   dependencies": the create refuses. Unit tests must stub `fetch_manifest` (`patch_offline`).
 - A dependency key is a credits `name`, not a directory (44 of 298 manifests differ); keys that
-  cannot be a path are refused; `dependency_overrides:` in `repos.yaml` maps them by hand.
+  cannot be a path are refused; `dependency_overrides:` in settings.yaml maps them by hand.
 - Link names (canonical's last segment, or the manifest `name` outside extensions/skins, may
   contain spaces) are decided on the host and shipped in the plan JSON; setup never clobbers a
   real directory at a link destination.
@@ -252,6 +250,19 @@ to D12, and tracks A and B, which are not repeated here).
   browser suite passes: core QUnit 897 tests in 7 s, core wdio 13/13 spec files in 22 s,
   Popups wdio 1/1, Cypress install 12 s and Cite's specs 3/3. What failed under TCG (core QUnit
   not completing, wdio specs failing) was slowness, not the sandbox.
+- The settings file is `~/.config/wmf-sbx/settings.yaml` (the engineer's decision; it was
+  `repos.yaml`): `repos:` (was `rules:`), `session:`, `environment:` (was
+  `extra_environment:`; into the session env at create, not `ANTHROPIC_*`/`NO_PROXY`),
+  `packages:` (was `extra_packages:`; into the image inputs, so the key), plus
+  `dependency_overrides:`, `link_overrides:`, `extra_dependencies:`. `load_config` reads
+  the old file and keys, with one note per run.
+- `--reset-all` (checked against the code and in tests): every clone is reset, each to
+  `origin`, the upstream URL from its canonical (Gerrit, or GitLab followed to the fork's
+  root) or else the host's https `origin`. It falls back to the host's branch only when
+  upstream does not fetch or no upstream is known, and warns for both.
+- `WMF_CLAUDE_GIT_HASH_OVERRIDE=latest`: `create` takes the newest cached image for this
+  arch and uid (`image.newest_image`, also used by `login`); it builds, keyed on HEAD,
+  only when there is none.
 - Golden image key: `WMF_CLAUDE_GIT_HASH_OVERRIDE` replaces the HEAD commit (the engineer's
   choice over keying on tree hashes); the manifest's `commit` is the HEAD that was built.
   After a build, `create` prunes unused images older than one hour (`PRUNE_MIN_AGE`: a

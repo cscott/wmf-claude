@@ -88,6 +88,12 @@ CLAUDE_VERSION_VAR = "WMF_SBX_CLAUDE_VERSION"
 # Replaces the HEAD commit in the cache key (tree_revision).
 TREE_OVERRIDE_VAR = "WMF_CLAUDE_GIT_HASH_OVERRIDE"
 TREE_OVERRIDE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+# WMF_CLAUDE_GIT_HASH_OVERRIDE=latest: `create` uses the newest cached image
+# (for this architecture and host uid) instead of the one for the current
+# inputs, and builds only when there is none (newest_image).
+LATEST = "latest"
+# A Debian package name (settings.yaml `packages:`).
+PACKAGE_RE = re.compile(r"^[a-z0-9][a-z0-9+.-]+$")
 CLAUDE_CHANNELS = ("stable", "latest")
 
 # The packages, after kit.BASE_PACKAGES (the PHP side, unchanged from the
@@ -248,7 +254,7 @@ def tree_revision(root=REPO_ROOT, run=subprocess.run, env=None):
     give a new image; change its value to rebuild. The image still gets
     the tree of HEAD at the time it is built."""
     override = ((os.environ if env is None else env).get(TREE_OVERRIDE_VAR) or "").strip()
-    if not override:
+    if not override or override == LATEST:
         return head_commit(root, run=run)
     if not TREE_OVERRIDE_RE.match(override):
         raise ImageError(f"{TREE_OVERRIDE_VAR}={override!r}: want letters, digits, "
@@ -282,8 +288,34 @@ def agent_ids(uid=None, gid=None):
     return {"name": AGENT_USER, "uid": uid, "gid": gid}
 
 
+def wants_latest(env=None):
+    """Whether WMF_CLAUDE_GIT_HASH_OVERRIDE asks for the newest cached image."""
+    return ((os.environ if env is None else env).get(TREE_OVERRIDE_VAR) or "").strip() == LATEST
+
+
+def image_packages(extra=()):
+    """The image's package list: IMAGE_PACKAGES, then the engineer's extra
+    packages (settings.yaml `packages:`), sorted, without repeats."""
+    bad = [p for p in extra if not isinstance(p, str) or not PACKAGE_RE.match(p)]
+    if bad:
+        raise ImageError(f"settings.yaml: `packages:` {bad[0]!r} is not a Debian package name")
+    return list(IMAGE_PACKAGES) + sorted(set(extra) - set(IMAGE_PACKAGES))
+
+
+def newest_image(env=None, arch=None, uid=None):
+    """(key, manifest) of the newest cached image for `arch` and the host
+    uid `uid` (the agent's uid, D10), or None."""
+    arch = arch or host_arch()
+    uid = os.getuid() if uid is None else uid
+    for key, manifest in reversed(list_images(env)):
+        inputs = manifest.get("inputs") or {}
+        if inputs.get("arch") == arch and (inputs.get("agent") or {}).get("uid") == uid:
+            return key, manifest
+    return None
+
+
 def image_inputs(arch=None, fetch=_fetch, run=subprocess.run, root=REPO_ROOT,
-                 uid=None, gid=None, env=None):
+                 uid=None, gid=None, env=None, packages=()):
     """Everything that goes into the image (HANDOFF-LIMA.md §5.1)."""
     arch = arch or host_arch()
     version, checksum = claude_release(arch, fetch=fetch, env=env)
@@ -292,7 +324,7 @@ def image_inputs(arch=None, fetch=_fetch, run=subprocess.run, root=REPO_ROOT,
         "schema": 1,
         "arch": arch,
         "base": base_image(arch),
-        "packages": list(IMAGE_PACKAGES),
+        "packages": image_packages(packages),
         "nono": nono_version(),
         "node": node_release(arch, fetch=fetch),
         "php_ast": dict(PHP_AST),
@@ -673,6 +705,9 @@ def main(argv=None, env=None, lima=None, run=subprocess.run, out=sys.stdout):
                    help="print the inputs and the key; build nothing")
     b.add_argument("--keep-builder", action="store_true",
                    help="do not delete the builder VM after a good build")
+    b.add_argument("--config", default=None,
+                   help="the settings file, for its `packages:` (default "
+                        "~/.config/wmf-sbx/settings.yaml)")
     sub.add_parser("ls", help="list the cached images")
     r = sub.add_parser("rm", help="remove one image (refused if a sandbox uses it)")
     r.add_argument("key")
@@ -684,7 +719,9 @@ def main(argv=None, env=None, lima=None, run=subprocess.run, out=sys.stdout):
 
     try:
         if args.cmd == "build":
-            inputs = image_inputs(run=run, env=env)
+            from . import resolve as resolve_mod
+            config = resolve_mod.load_config(args.config or resolve_mod.DEFAULT_CONFIG)
+            inputs = image_inputs(run=run, env=env, packages=config["packages"])
             if args.dry_run:
                 say(json.dumps({"key": cache_key(inputs), "inputs": inputs},
                                indent=2, sort_keys=True))
@@ -711,6 +748,11 @@ def main(argv=None, env=None, lima=None, run=subprocess.run, out=sys.stdout):
             say("removed: " + (", ".join(f"{k} ({_human(n)})" for k, n in gone)
                                if gone else "nothing"))
     except (ImageError, lima_mod.LimaError, state_mod.StateError) as e:
+        print(f"wmf-sbx image: {e}", file=sys.stderr)
+        return 1
+    except Exception as e:  # resolve.ResolutionError: the settings file
+        if type(e).__name__ != "ResolutionError":
+            raise
         print(f"wmf-sbx image: {e}", file=sys.stderr)
         return 1
     return 0

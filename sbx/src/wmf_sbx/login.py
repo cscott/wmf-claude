@@ -22,6 +22,7 @@ import getpass
 import os
 import re
 import secrets
+import shutil
 import signal
 import sys
 
@@ -34,9 +35,9 @@ from . import vm as vm_mod
 
 LOGIN_MEMORY = "2GiB"
 # setup-token prints the token once. `script` records the terminal; the
-# pty is made very wide so that the token is not wrapped.
+# pty's width is set so that the token is not wrapped (columns()).
 TRANSCRIPT = "/dev/shm/wmf-sbx-login.typescript"
-SETUP_TOKEN = ("stty cols 2000 2>/dev/null; umask 077; "
+SETUP_TOKEN = ("stty cols @COLS@ 2>/dev/null; umask 077; "
                f"script -q -e -c 'claude setup-token' {TRANSCRIPT}")
 TOKEN_RE = re.compile(r"sk-ant-oat01-[A-Za-z0-9_-]{20,}")
 # CSI sequences, OSC sequences (setup-token prints its URL as an OSC 8
@@ -65,6 +66,18 @@ def pick_image(key=None, env=None):
     return key, arch
 
 
+# The token is about 110 characters. A pty narrower than that wraps it in
+# the transcript; one wider than the engineer's terminal garbles Claude
+# Code's screen (RAN at 2000 columns). So the terminal's width, but at
+# least MIN_COLUMNS.
+MIN_COLUMNS = 120
+
+
+def columns(get_size=shutil.get_terminal_size):
+    width = get_size().columns
+    return max(width, MIN_COLUMNS)
+
+
 def find_token(transcript):
     """The last setup-token token in a terminal transcript, or None."""
     found = TOKEN_RE.findall(ANSI_RE.sub("", transcript))
@@ -85,7 +98,7 @@ def save_token(token, env=None):
 
 def run_login(name, lima, ask=getpass.getpass, log=print):
     """Run setup-token in the VM, interactively; return the token."""
-    argv = vm_mod.agent_argv(["bash", "-c", SETUP_TOKEN])
+    argv = vm_mod.agent_argv(["bash", "-c", SETUP_TOKEN.replace("@COLS@", str(columns()))])
     res = vm_mod.shell(name, argv, lima=lima, check=False, capture=False, interactive=True)
     if res.returncode != 0:
         raise LoginError(f"claude setup-token failed (exit {res.returncode})")

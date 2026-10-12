@@ -414,6 +414,14 @@ class BuilderTests(unittest.TestCase):
         self.assertEqual(out["no_proxy"], "localhost,127.0.0.1")
         self.assertNotIn("HOME", out)
 
+    def test_credentials_survive_the_rewrite(self):
+        # RAN (N3): nono's proxy URL has credentials, and the builder got
+        # 127.0.0.1 unchanged, so apt found no proxy.
+        out = image.guest_proxy_env({"https_proxy": "http://nono:s3cret@127.0.0.1:49509",
+                                     "http_proxy": "http://u:p@proxy.example:3128"})
+        self.assertEqual(out["https_proxy"], "http://nono:s3cret@192.168.5.2:49509")
+        self.assertEqual(out["http_proxy"], "http://u:p@proxy.example:3128")
+
     def test_no_proxy_means_no_variables(self):
         self.assertEqual(image.guest_proxy_env({"HOME": "/x"}), {})
 

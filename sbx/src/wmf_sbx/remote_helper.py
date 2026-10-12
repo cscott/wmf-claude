@@ -28,6 +28,7 @@ that wmf-sbx owns.
 
 import os
 import re
+import shutil
 import sys
 
 from . import lima as lima_mod
@@ -63,7 +64,12 @@ def upload_pack_argv(name, path, exe="limactl"):
         vm_mod.agent_argv(git)
 
 
-def serve(url, stdin, stdout, execvp=os.execvp, env=None):
+NO_LIMACTL = ("limactl is not on PATH. git runs this helper with the PATH of the "
+              "shell that runs git: add Lima's bin directory to PATH (in ~/.profile "
+              "or your shell's rc file), as for wmf-sbx itself.")
+
+
+def serve(url, stdin, stdout, execvp=os.execvp, env=None, which=None):
     """Answer git on `stdin`/`stdout` (binary streams). Returns an exit
     status, or does not return (exec)."""
     name, path = parse_url(url)
@@ -77,9 +83,14 @@ def serve(url, stdin, stdout, execvp=os.execvp, env=None):
             stdout.flush()
         elif cmd == "connect git-upload-pack":
             state_mod.require(name, env=env)
+            # Before the answer: after it, git takes any error for the
+            # remote's, and says only "Could not read from remote".
+            exe = (which or shutil.which)("limactl")
+            if not exe:
+                raise HelperError(NO_LIMACTL)
             stdout.write(b"\n")
             stdout.flush()
-            argv = upload_pack_argv(name, path)
+            argv = upload_pack_argv(name, path, exe=exe)
             execvp(argv[0], argv)
             return 0  # only a fake execvp returns
         elif cmd.startswith("connect "):

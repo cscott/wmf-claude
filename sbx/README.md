@@ -337,6 +337,13 @@ wmf-sbx image prune        # golden images that no sandbox uses
 
 ## Troubleshooting
 
+- **`git fetch NAME` fails**: git runs wmf-sbx's remote helper with the
+  `PATH` of the shell that runs git, so both must be on it there (in
+  `~/.profile` or your shell's rc file, not only in one terminal):
+  wmf-claude's `sbx/bin` (else git says "git: 'remote-wmfsbx' is not a
+  git command"; `create` warns about it) and Lima's `limactl` (else
+  "fatal: wmfsbx: limactl is not on PATH").
+
 - **The host proxy port changed** (a network that gives you a proxy on
   127.0.0.1): `start` and `resume` update a stopped VM. For a running VM,
   `wmf-sbx stop NAME` first.

@@ -318,7 +318,9 @@ to D12, and tracks A and B, which are not repeated here).
   wraps (a line filled to the width, ending in token characters, goes on in the next).
 - `--continue` does not take up a `-p` run ("No conversation found to continue"): only an
   interactive session marks a sandbox attached.
-- Still to run on the engineer's host: a blind run, and macOS.
+- Still to run: a blind run on the engineer's host; macOS by someone with a Mac
+  (`lima-port/TESTING-MACOS.md`, a guide for a human tester). The check scripts avoid
+  bash 4 features and empty-array expansions under `set -u` (macOS has bash 3.2).
 - Docker sbx's sign-in (Docker's docs, and our pre-deletion SECURITY.md §7.5): `/login` ran
   in the sandbox; the host's egress proxy completed the OAuth exchange, kept the token on
   the host (one per host, shared by every sandbox), refreshed it, and swapped a

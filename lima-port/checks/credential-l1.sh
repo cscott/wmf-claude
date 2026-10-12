@@ -48,7 +48,7 @@ case $MODE in
 esac
 
 python3 "$HERE/credential-proxy.py" --port "$PORT" --phantom "$PHANTOM" \
-  "${PROXY_ARGS[@]}" > /dev/null 2>> "$LOG" &
+  ${PROXY_ARGS[@]+"${PROXY_ARGS[@]}"} > /dev/null 2>> "$LOG" &
 PROXY=$!
 trap 'kill $PROXY 2>/dev/null' EXIT
 sleep 1

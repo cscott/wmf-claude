@@ -1607,12 +1607,11 @@ tests under nono; the engineer runs the integration steps with
   a change to wmf-sbx, runs the unit tests, builds an image, creates an
   inner sandbox, and runs `lima-port/checks/real-hardware.sh` against
   it. Compare the times with the host's.
-  Status: **first run failed** (2026-10-12; fixes pushed, run again).
-  The unit tests ran in 25 s (11 failures: tests that assumed root,
-  and a pty test; fixed). The image build stopped at once: cloud.debian.org
-  redirects to a mirror that the session does not allow; the create
-  installs the base image now (`image.LOCAL_BASE_DIR`). There was no
-  settings file for the inner create; the create writes one now.
+  Status: **in progress** (2026-10-12). Unit tests pass under nono in
+  24 s, and a change commits. The image build passes apt, the kernel,
+  php-ast, Node, nono and Claude Code; the next run is to get past the
+  MCP venvs (PyPI) and do the inner create and `real-hardware.sh`.
+  Findings: sbx/NOTES.md, "Nested Lima".
 
 Security: `/dev/kvm` is a large kernel interface, but it is the outer
 VM's kernel, which the agent already shares; the outer VM's nftables and

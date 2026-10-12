@@ -207,6 +207,23 @@ class CloneRepoTests(Tmp):
         self.assertEqual(git(dest, "rev-parse", "HEAD"),
                          git(self.upstream, "rev-parse", "master"))
 
+    def test_submodules_come_from_the_hosts_copies(self):
+        sub = os.path.join(self.tmp, "subsrc")
+        git_repo(sub)
+        subprocess.run(["git", "-C", self.host, "-c", "protocol.file.allow=always",
+                        "submodule", "add", "-q", sub, "mcp"], check=True,
+                       capture_output=True, env=dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null"))
+        git(self.host, "commit", "-q", "-m", "add a submodule")
+        # the host's copy is absorbed into .git/modules; the source goes away,
+        # so only the mount can provide it
+        shutil.rmtree(sub)
+        dest = os.path.join(self.tmp, "vm", "withsub")
+        res = self.clone(dest, "topic", git(self.host, "rev-parse", "HEAD"), "", "0")
+        self.assertTrue(os.path.exists(os.path.join(dest, "mcp", ".git")), res.stderr)
+        self.assertEqual(git(os.path.join(dest, "mcp"), "rev-parse", "HEAD"),
+                         git(os.path.join(self.host, "mcp"), "rev-parse", "HEAD"))
+        self.assertNotIn("could not be checked out", res.stderr)
+
     def test_a_reset_with_no_upstream_says_it_uses_the_hosts_branch(self):
         dest = os.path.join(self.tmp, "vm", "noup")
         res = self.clone(dest, "topic", git(self.host, "rev-parse", "HEAD"), "", "1")

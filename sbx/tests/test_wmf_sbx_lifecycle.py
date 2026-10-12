@@ -27,6 +27,7 @@ import wmf_sbx.create as create  # noqa: E402
 import wmf_sbx.exec as exec_mod  # noqa: E402
 import wmf_sbx.image as image  # noqa: E402
 import wmf_sbx.lima as lima_mod  # noqa: E402
+import wmf_sbx.nested as nested  # noqa: E402
 import wmf_sbx.repos as repos  # noqa: E402
 import wmf_sbx.ls as ls  # noqa: E402
 import wmf_sbx.rm as rm  # noqa: E402
@@ -321,6 +322,32 @@ class CreateTests(Env):
         self.date_image("2026-01-01T00:00:00+00:00")
         self.assertEqual(self.create("--name", "demo"), 0, self.err)
         self.assertTrue(os.path.isdir(image.entry_dir(other, self.env)))
+
+    def test_nested_installs_lima_and_records_it(self):
+        inputs = []
+        lima = FakeLima()
+        orig = lima.call
+
+        def call(*args, **kw):
+            inputs.append(kw.get("input") or "")
+            return orig(*args, **kw)
+        lima.call = call
+        self.assertEqual(self.create("--name", "demo", "--nested", lima=lima), 0, self.err)
+        self.assertTrue(state_mod.load("demo", self.env)["nested"])
+        tmpl = lima.templates["wmf-sbx-demo"]
+        self.assertEqual((tmpl["memory"], tmpl["disk"]), ("16GiB", "120GiB"))
+        (script,) = [i for i in inputs if "usermod -aG kvm agent" in i]
+        self.assertIn(f"lima-{nested.LIMA_VERSION}-Linux-", script)
+        self.assertIn("sha256sum -c", script)
+        self.assertIn(nested.MARKER, script)
+
+    def test_not_nested_by_default(self):
+        self.assertEqual(self.create("--name", "demo", "--memory", "6GiB"), 0, self.err)
+        self.assertNotIn("nested", state_mod.load("demo", self.env))
+        tmpl = self.lima.templates["wmf-sbx-demo"]
+        self.assertEqual((tmpl["memory"], tmpl["disk"]), ("6GiB", template.DEFAULT_DISK))
+        self.assertFalse(any("usermod -aG kvm" in " ".join(map(str, c))
+                             for c in self.lima.calls))
 
     def test_sudo_is_refused_for_now(self):
         self.assertEqual(self.create("--sudo"), 1)

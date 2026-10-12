@@ -177,6 +177,23 @@ control comes with `--sudo` mode.)
 - **The golden image** is read-only in the cache and checked against
   its checksum by `status`. It holds no credential.
 
+## 6a. Nested sandboxes (`create --nested`)
+
+For work on wmf-sbx itself, a nested sandbox lets the agent run Lima VMs
+of its own. Root installs QEMU, OVMF and Lima at `create` and adds the
+agent to the `kvm` group; the sessions get `/dev/kvm`, `~/.lima` (with
+its sockets) and QEMU's and Lima's data, and the download hosts of an
+image build (`nested.py`). What changes:
+
+- `/dev/kvm` is a large kernel interface, but it is the sandbox VM's
+  kernel, which the agent already shares; the host's hypervisor is not
+  exposed beyond what nested virtualisation already is.
+- The inner VMs' network goes through the session's nono proxy (Lima
+  points them at it), and the outer VM's nftables still bound it.
+- Every sandbox's invariants check that the agent is in the `kvm` group
+  only in a nested sandbox (root writes `/etc/wmf-sbx/nested`, which the
+  agent cannot).
+
 ## 7. What the agent can do, plainly
 
 - Read and write its clones; commit; run the tests and the wiki.

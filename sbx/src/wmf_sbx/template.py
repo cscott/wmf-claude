@@ -105,7 +105,7 @@ def provision_script(proxy_ports=()):
 
 def sandbox_template(golden_path, arch, gitdirs=(), vm_type=None, cpus=DEFAULT_CPUS,
                      memory=DEFAULT_MEMORY, disk=DEFAULT_DISK, proxy_ports=(),
-                     ca_files=(), host_uid=None):
+                     ca_files=(), host_uid=None, nested=False):
     """The instance config, as a dict.
 
     `golden_path` is the cached golden image; `limactl create` copies it
@@ -144,6 +144,10 @@ def sandbox_template(golden_path, arch, gitdirs=(), vm_type=None, cpus=DEFAULT_C
     }
     if ca_files:
         tmpl["caCerts"] = {"files": [os.path.abspath(f) for f in ca_files]}
+    if nested and vm_type == "vz":
+        # vz passes virtualisation through only when asked (M3 or later,
+        # macOS 15); QEMU on Linux runs `-cpu host`, which already does.
+        tmpl["nestedVirtualization"] = True
     check_template(tmpl, host_uid=host_uid)
     return tmpl
 

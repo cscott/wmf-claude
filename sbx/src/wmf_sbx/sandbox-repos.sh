@@ -112,4 +112,29 @@ clone_repo() {
     git -C "$path" safe-reset --force "$remote" >/dev/null \
       || warn "$path: git safe-reset $remote failed; it stays on the host's commit"
   fi
+  init_submodules "$mount" "$path"
+}
+
+# Submodules (wmf-claude's MCP servers, VisualEditor's lib/ve): from the
+# host's own copies in the mounted git dir (modules/NAME), with no network.
+# A commit the host does not have (a repo reset to upstream) is fetched
+# from the URL in .gitmodules instead.
+init_submodules() {
+  local mount=$1 path=$2 key sub name
+  [[ -f "$path/.gitmodules" ]] || return 0
+  git -C "$path" config -f .gitmodules --get-regexp '^submodule\..*\.path$' |
+  while read -r key sub; do
+    name=${key#submodule.}; name=${name%.path}
+    if [[ -d "$mount/modules/$name" ]]; then
+      git -C "$path" config "submodule.$name.url" "$mount/modules/$name"
+      if git -C "$path" -c protocol.file.allow=always -c core.hooksPath=/dev/null \
+           submodule update --init -q -- "$sub" 2>/dev/null; then
+        continue
+      fi
+      git -C "$path" config --unset "submodule.$name.url"
+    fi
+    echo "+ git submodule update --init $sub (from its upstream; $path)" >&2
+    git -C "$path" -c core.hooksPath=/dev/null submodule update --init -q -- "$sub" \
+      || warn "$path: submodule $sub could not be checked out"
+  done
 }

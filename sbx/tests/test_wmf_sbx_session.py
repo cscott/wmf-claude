@@ -92,6 +92,22 @@ class LauncherTests(unittest.TestCase):
         for domain in ("registry.npmjs.org", "repo.packagist.org"):
             self.assertIn(("--allow-domain", domain), pairs)
 
+    def test_a_nested_sandbox_gets_the_lima_grants(self):
+        argv = session.launcher_argv(dict(STATE, nested=True))
+        joined = " ".join(argv)
+        for want in ("--allow-file /dev/kvm", "--allow /home/agent/.lima",
+                     "--allow-unix-socket-subtree-bind /home/agent/.lima",
+                     "--read /usr/share/qemu", "--allow-domain deb.debian.org"):
+            self.assertIn(want, joined)
+        self.assertNotIn("/dev/kvm", " ".join(session.launcher_argv(STATE)))
+
+    def test_the_nested_install_script_is_valid_bash(self):
+        import wmf_sbx.nested as nested
+        for arch in nested.PACKAGES:
+            res = subprocess.run(["bash", "-n"], input=nested.install_script(arch), text=True,
+                                 capture_output=True)
+            self.assertEqual(res.returncode, 0, res.stderr)
+
     def test_proxy_flags_and_claude_args_are_in_their_places(self):
         a = self.argv(proxy="192.168.5.2:3128", launcher_flags=["--allow-post=x.org"],
                       claude_args=["-p", "hi"], cred_path="/dev/shm/wmf-sbx-cred.x")

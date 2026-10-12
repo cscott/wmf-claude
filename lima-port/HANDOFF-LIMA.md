@@ -1582,7 +1582,12 @@ tests under nono; the engineer runs the integration steps with
     `deb.debian.org`, `security.debian.org`, `nodejs.org`,
     `downloads.claude.ai`, the nono pack registry, `github.com`
     (php-ast). Exit: the list, in `sbx/NOTES.md`.
-- **N2. Implement:**
+- **N2. Implement.** Status: **built** (unit tests; not yet RAN).
+  Decided (cananian, 2026-10-12): no QEMU or Lima in the golden image;
+  `create --nested` installs them in that sandbox (`nested.py`), so
+  ordinary sandboxes are unchanged. Submodules are initialised from the
+  host's copies in the mounted git dir (`modules/NAME`), else from their
+  upstream. Planned:
   - the image: Lima and QEMU (`qemu-system-x86`/`-arm`, `qemu-utils`,
     OVMF), the agent in the `kvm` group — or a separate, larger image
     variant, so that ordinary sandboxes stay small and keep no

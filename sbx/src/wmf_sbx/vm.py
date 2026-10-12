@@ -171,6 +171,10 @@ INVARIANTS = [
     ("the agent's node is the image's",
      f"test \"$(sudo -u agent env PATH={AGENT_PATH} node --version)\" = "
      "\"v$(jq -r .inputs.node.version /etc/wmf-sbx-image.json)\""),
+    # Only `create --nested` gives the agent /dev/kvm (nested.py); root
+    # writes the marker, which the agent cannot.
+    ("the agent is in the kvm group only in a nested sandbox",
+     "! id -nG agent | grep -qw kvm || test -e /etc/wmf-sbx/nested"),
     ("the agent has the host uid",
      "test \"$(id -u agent)\" = \"$WMF_SBX_HOST_UID\""),
 ]

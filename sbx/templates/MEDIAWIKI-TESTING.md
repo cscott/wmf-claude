@@ -125,7 +125,16 @@ again after the set of extensions changes.
 |---|---|---|
 | `--testsuite=core:unit` | core's `tests/phpunit/unit` | 18740 tests, 9 s |
 | `--testsuite=structure` | structure checks on core *and* every loaded extension | 1712 tests, 30 s |
-| `--testsuite=parsertests` | every parser-test file, core's and each extension's | 2404 tests, 13 s |
+| `--testsuite=parsertests` | core's parser-test files only (`ParserTest_Core_*`) | 2404 tests, 15 s |
+| `--testsuite=extensions` | every loaded extension's PHPUnit, with their parser tests and Parsoid's integrated ones (`ParserTest_<Extension>_*`, `ParserTest_Parsoid_*`) | 11745 tests, 140 s |
+| `--testsuite=includes`, `integration`, `maintenance_suite`, `tests`, `docs` | the rest of core (the names are in the generated `phpunit.xml`) | `includes` 18069 tests, 210 s; the others under 25 s |
+
+With extensions loaded, `--testsuite=includes` fails tests that core's own
+CI never sees, because CI runs core alone: Translate adds namespaces 1198
+and 1199 (`ApiQueryLanguageinfoTest`, `SpecialWatchlistTest`), an
+extension's library shows up in `ApiQuerySiteinfoTest::testInstalledLibraries`,
+and Cite without cldr breaks `SignatureValidatorTest`. Compare with the
+pristine run from §1 before you report one.
 
 ### Lint and phan
 
@@ -391,7 +400,12 @@ Parsoid is also loaded into the wiki as an extension, and core's and each
 extension's parser tests run through it. So a Parsoid change can break
 `tests/phpunit/gen/ParserTest_Cite_*` in core (§3) without breaking
 anything in `$PARSOID`. If the sandbox holds extensions with parser tests,
-run theirs too.
+run theirs too. Parsoid's own tests in integrated mode are the 44
+`ParserTest_Parsoid_*` files, in core's `--testsuite=extensions`. Eight of
+them use `{{#if:}}` and fail unless ParserFunctions is loaded: WMF CI adds
+ParserFunctions, Scribunto and TimedMediaHandler for Parsoid
+(`integration/config`, `zuul/dependencies.yaml`), and the sandbox does
+not. Ask the engineer for a sandbox with ParserFunctions if you need them.
 
 ## 5. Tests that drive the wiki or a browser
 
@@ -510,6 +524,12 @@ an authentication problem.
 These tests edit the live dev wiki. That is expected.
 
 ### 5.6 Cypress, only when it covers your change
+
+**Not under nono yet** (sbx/NOTES.md): Cypress's Electron writes
+`~/.config/Cypress`, and the Xvfb it starts needs `/tmp/.X11-unix`; the
+session grants neither, so `cypress verify` dies with SIGTRAP. Do not try
+to work around it; say in your report that Cypress did not run. The
+engineer can run it outside nono with `wmf-sbx exec`.
 
 Some repos run Cypress, not wdio, as `npm run selenium-test` (Cite, for
 one; read the script). The npm package is installed, but its binary is not.

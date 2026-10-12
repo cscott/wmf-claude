@@ -63,6 +63,22 @@ to D12, and tracks A and B, which are not repeated here).
   `mr_default_target_self` (anonymous callers see `None`).
 - [ ] **Full GitLab project listing with an on-disk cache, plus recorded-response fixtures**.
 
+### Testing in the sandbox
+
+- [ ] **Cypress under nono** (blind run, 2026-10-12): Electron writes `~/.config/Cypress`
+  (not granted; it dies with SIGTRAP and prints nothing), and Xvfb needs `/tmp/.X11-unix`
+  (read, socket bind) and a writable XKB output dir (`/var/lib/xkb`, else `/tmp`, which is
+  write-only under nono). Outside nono (`wmf-sbx exec`) Cite's specs pass (real hardware).
+  Candidate fix: grant `~/.config/Cypress`, `/tmp/.X11-unix` (with socket bind) and
+  `/var/lib/xkb` (made 1777 at boot); measure with the session's flags first. Until then the
+  guide and the sandbox CLAUDE.md say it does not run.
+- [ ] **CI's extra dependencies**: WMF CI adds ParserFunctions, Scribunto and
+  TimedMediaHandler for Parsoid (`integration/config` `zuul/dependencies.yaml`, "extras");
+  without ParserFunctions 8 `ParserTest_Parsoid_*` tests fail. Wire settings.yaml
+  `extra_dependencies:` into the walk, and consider shipping CI's extras as defaults.
+- [ ] **The manual-test skill says `/w/api.php`** (upstream skill); the sandbox wiki is a
+  docroot install (`$MW_SERVER/api.php`). Upstream topic, or a line in the sandbox CLAUDE.md.
+
 ### Session, credentials, Claude Code
 
 - [ ] **Check the "update installed, restart to update" message on the first resume** in a
@@ -80,8 +96,6 @@ to D12, and tracks A and B, which are not repeated here).
 
 ### From the design documents
 
-- [ ] **`extra_dependencies:` in settings.yaml is not used yet** (dependencies no manifest
-  declares, keyed by canonical): wire it into the dependency walk, or drop it.
 - [ ] **Dependency walk, open questions:** a manifest `name` that is not the directory: an
   override table (`dependency_overrides`, today) or a fallback to the `name` field? Do
   `dev-requires` repos need another policy (`:ro` by default)?
@@ -329,7 +343,12 @@ to D12, and tracks A and B, which are not repeated here).
   wraps (a line filled to the width, ending in token characters, goes on in the next).
 - `--continue` does not take up a `-p` run ("No conversation found to continue"): only an
   interactive session marks a sandbox attached.
-- Still to run: a blind run on the engineer's host; macOS by someone with a Mac
+- Blind run with a `wmf-sbx login` token (engineer's host, KVM, Translate + Cite + Parsoid,
+  2026-10-12): 18 minutes; first green suite after 25 s; every suite passed or failed as the
+  guide says, except Cypress (does not start under nono) and the guide's errors it found
+  (parsertests scope, `--testsuite=extensions`, core's other suites, Parsoid needing
+  ParserFunctions), now fixed in MEDIAWIKI-TESTING.md.
+- Still to run: macOS by someone with a Mac
   (`lima-port/TESTING-MACOS.md`, a guide for a human tester). The check scripts avoid
   bash 4 features and empty-array expansions under `set -u` (macOS has bash 3.2).
 - Docker sbx's sign-in (Docker's docs, and our pre-deletion SECURITY.md §7.5): `/login` ran

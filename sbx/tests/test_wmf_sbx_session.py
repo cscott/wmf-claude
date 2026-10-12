@@ -98,7 +98,9 @@ class LauncherTests(unittest.TestCase):
         joined = " ".join(argv)
         for want in ("--allow-file /dev/kvm", "--allow /home/agent/.lima",
                      "--allow-unix-socket-subtree-bind /home/agent/.lima",
-                     "--read /usr/share/qemu", "--allow-domain deb.debian.org"):
+                     "--read /usr/share/qemu", "--allow-domain deb.debian.org",
+                     # RAN (N3): an inner create's `nono pull` got a 403 without it.
+                     "--allow-domain registry.nono.sh"):
             self.assertIn(want, joined)
         self.assertNotIn("/dev/kvm", " ".join(session.launcher_argv(STATE)))
 

@@ -91,8 +91,9 @@ to D12, and tracks A and B, which are not repeated here).
   session's (7 days): an inner sandbox made in an earlier session has an old one.
 - An inner image build reaches: deb.debian.org, security.debian.org, github.com (php-ast),
   nodejs.org, release-assets.githubusercontent.com, downloads.claude.ai, pypi.org and
-  files.pythonhosted.org (MCP venvs), and the nono pack registry (host not yet known: a
-  denial will name it).
+  files.pythonhosted.org (MCP venvs). An inner create's `wmf-claude-setup` reaches the nono
+  pack registry, `registry.nono.sh` (N3: a 403 that did not name the host; `RUST_LOG=debug
+  nono pull` did). nono also POSTs an update check to `update.nono.sh`; not granted.
 - `limactl` logs proxy URLs with their password: `lima.redact` removes them from LimaError.
 - Inner sandboxes' repos go to `/home/wmf-sbx-src` (settings written by the install, if
   none), the one writable directory the session gives them. Not under `/home/agent`: the

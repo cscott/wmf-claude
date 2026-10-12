@@ -55,6 +55,7 @@ DOMAINS = (
     "downloads.claude.ai",                                         # Claude Code
     "release-assets.githubusercontent.com",                        # nono, Lima releases
     "pypi.org", "files.pythonhosted.org",                          # MCP servers' venvs
+    "registry.nono.sh",                                            # wmf-claude-setup: nono pull
 )
 
 # The inner wmf-sbx's settings, if the engineer has none there: the

@@ -18,6 +18,7 @@ import datetime
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -684,6 +685,11 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
             warn=lambda m: print(f"warning: {m}", file=sys.stderr))
         state["remotes"], state["skipped"] = added, skipped
         state_mod.save(state, env)
+        if added and not shutil.which("git-remote-wmfsbx"):
+            print(f"warning: git-remote-wmfsbx is not on PATH, so `git fetch {name}` "
+                  f"will fail (\"git: 'remote-wmfsbx' is not a git command\"): add "
+                  f"wmf-claude's sbx/bin to PATH (in ~/.profile or your shell's rc "
+                  f"file).", file=sys.stderr)
 
     plan = mediawiki_mod.build_plan(
         resolved_for_kit,

@@ -58,7 +58,11 @@ class Limactl:
             kwargs["capture_output"] = True
         if text:
             kwargs["text"] = True
-        result = self.run(argv, **kwargs)
+        try:
+            result = self.run(argv, **kwargs)
+        except FileNotFoundError:
+            raise LimaError(f"{self.exe} is not on PATH: install Lima 2.x, or add its "
+                            f"bin directory to PATH") from None
         if check and result.returncode != 0:
             err = result.stderr if isinstance(result.stderr, str) else (
                 (result.stderr or b"").decode("utf-8", "replace"))

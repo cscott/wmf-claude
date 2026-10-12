@@ -16,6 +16,20 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import wmf_sbx.setup as s  # noqa: E402
 
+# The tests expect the host's view, where the setup runs as root and
+# sudo's to the agent. As the agent (a nested sandbox, RAN N3), the real
+# running_as_agent() is True and the sudo's go away.
+_AS_ROOT = unittest.mock.patch.object(s, "running_as_agent", return_value=False)
+
+
+def setUpModule():
+    _AS_ROOT.start()
+
+
+def tearDownModule():
+    _AS_ROOT.stop()
+
+
 def patch_sandbox_home(testcase):
     """Point SANDBOX_HOME and the paths under it at a temporary directory.
 

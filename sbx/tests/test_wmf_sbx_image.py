@@ -27,6 +27,19 @@ import wmf_sbx.kit as kit  # noqa: E402
 import wmf_sbx.lima as lima  # noqa: E402
 
 
+
+# A nested sandbox has a local base image (image.LOCAL_BASE_DIR); the
+# tests must not see it.
+_NO_LOCAL_BASE = mock.patch.object(image, "LOCAL_BASE_DIR", "/nonexistent/wmf-sbx-base")
+
+
+def setUpModule():
+    _NO_LOCAL_BASE.start()
+
+
+def tearDownModule():
+    _NO_LOCAL_BASE.stop()
+
 class Done:
     def __init__(self, returncode=0, stdout="", stderr=""):
         self.returncode = returncode
@@ -286,6 +299,15 @@ class BuilderTests(unittest.TestCase):
         inputs = sample_inputs()
         t = image.builder_template(inputs)
         self.assertEqual(t["images"], [inputs["base"]])
+
+    def test_the_builder_boots_a_local_copy_of_the_base_image_when_there_is_one(self):
+        inputs = sample_inputs()
+        with tempfile.TemporaryDirectory() as d:
+            local = os.path.join(d, os.path.basename(inputs["base"]["location"]))
+            open(local, "w").close()
+            t = image.builder_template(inputs, base_dir=d)
+        self.assertEqual(t["images"], [dict(inputs["base"], location=local)])
+        self.assertEqual(image.cache_key(inputs), image.cache_key(sample_inputs()))
 
     def test_the_builder_user_has_its_own_uid_not_the_hosts(self):
         t = image.builder_template(sample_inputs())
@@ -652,6 +674,17 @@ class BuildTests(TempEnv):
         self.assertEqual(self.build(again), self.key)
         self.assertEqual(again.calls, [])
 
+    def test_a_builder_that_does_not_start_is_deleted(self):
+        fake = FakeLima(self.env)
+
+        def refuse(name, timeout=None):
+            raise image.lima_mod.LimaError("limactl start ... failed")
+        fake.start = refuse
+        with self.assertRaises(image.lima_mod.LimaError):
+            self.build(fake)
+        self.assertEqual(fake.calls[-1], ("delete", image.builder_name(self.key)))
+        self.assertEqual(image.list_images(self.env), [])
+
     def test_a_failed_build_keeps_the_builder_and_leaves_no_entry(self):
         fake = FakeLima(self.env, build_rc=1)
         with self.assertRaisesRegex(image.ImageError, "builder is kept"):
@@ -701,6 +734,15 @@ class LimactlTests(unittest.TestCase):
             raise FileNotFoundError(argv[0])
         with self.assertRaisesRegex(lima.LimaError, "limactl is not on PATH"):
             lima.Limactl(run=run).call("list")
+
+    def test_an_error_does_not_show_proxy_passwords(self):
+        err = ('msg="Replacing `http_proxy` value `http://nono:s3cret@127.0.0.1:49383` '
+               'with `http://nono:s3cret@192.168.5.2:49383`"')
+        with self.assertRaises(lima.LimaError) as cm:
+            lima.Limactl(run=self.runner(Done(returncode=1, stderr=err))).call("create", "x")
+        self.assertNotIn("s3cret", str(cm.exception))
+        self.assertIn("http://nono:***@127.0.0.1:49383", str(cm.exception))
+        self.assertEqual(lima.redact("https://example.org/a:b@c"), "https://example.org/a:b@c")
 
     def test_stdin_is_closed_unless_interactive_or_given(self):
         seen = []

@@ -1555,9 +1555,11 @@ tests under nono; the engineer runs the integration steps with
   Script: `lima-port/checks/n1-spike.sh`, run in the VM; the host only
   pipes it in (phases `setup` as root, `outside` and `nono` as the agent;
   the `nono` phase runs upstream's bin/claude with the session's flags
-  and a `nono` shim that swaps Claude Code for the test). RAN in the
-  cloud VM up to the inner `limactl` (no Lima there): the flags, the shim
-  and nono's acceptance of the candidate grants work.
+  and a `nono` shim that swaps Claude Code for the test). Status:
+  **done** (RAN on cananian's host, KVM, 2026-10-12): outside nono an
+  inner VM started in 31 s (`accel=kvm`), under the session's nono in
+  22 s; shell, stop and delete work. The grants are in sbx/NOTES.md
+  ("Nested Lima"). Inner egress under nono: none yet (see there).
   As `engineer`, install Lima and QEMU. Then, as the agent, run
   `limactl start` of a small template: first with `wmf-sbx exec`
   (outside nono), then in a session (`wmf-sbx resume`, with extra

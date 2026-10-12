@@ -111,45 +111,34 @@ if s:
 
   long)
     # One session for H hours: the proxy reads the host login for each
-    # request, so it must follow the host's refreshes. Keep using Claude
-    # Code on the host meanwhile (it refreshes its login when it runs), or
-    # leave a host session open. Every 10 minutes this logs the login's
-    # expiry and a hash prefix of its access token (not the token).
-    # Want: the hash changes at least once, and the proxy log has no 401.
+    # request, so it must follow the host's refreshes. The session is one
+    # `claude -p` reading stream-json from stdin; this script sends it a
+    # message every INTERVAL seconds (WMF_SBX_L3_INTERVAL, default 600), so
+    # one proxy serves every request. (Asking the model to sleep in a loop
+    # does not work: RAN, the session ended within 10 minutes.) Each message
+    # also logs the login's expiry and a hash prefix of its access token
+    # (not the token). Want: a reply to every message, no 401 in the proxy
+    # log, and, if the run crosses the expiry, a new hash. Only Claude Code
+    # running on the host refreshes the host login.
     hours=${2:-9}
-    turns=$(( hours * 60 / 2 ))   # under the Bash tool's 2-minute timeout
+    interval=${WMF_SBX_L3_INTERVAL:-600}
+    n=${WMF_SBX_L3_MESSAGES:-$(( hours * 3600 / interval ))}
+    first=${SANDBOXES[0]}
     log=$LOGS/long.log
-    : > "$(proxy_log l3-a)"
+    : > "$(proxy_log "$first")"
     : > "$log"
-    session l3-a "$LOGS/long-session.log" \
-      "This is a long-running connectivity test. Do this $turns times: run \`sleep 110; date\` with the Bash tool, one call at a time. Do not stop early and do not ask me anything. At the end, reply with the number of times you ran it." &
-    pid=$!
-    while kill -0 $pid 2>/dev/null; do
-      python3 - >> "$log" <<'PY'
-import datetime, hashlib, json, os, subprocess, sys
-if sys.platform == "darwin":
-    r = subprocess.run(["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
-                       capture_output=True, text=True)
-    doc = json.loads(r.stdout) if r.returncode == 0 else {}
-else:
-    try:
-        doc = json.load(open(os.path.expanduser("~/.claude/.credentials.json")))
-    except OSError:
-        doc = {}
-o = doc.get("claudeAiOauth") or {}
-t = o.get("accessToken") or ""
-exp = o.get("expiresAt")
-exp = datetime.datetime.fromtimestamp(exp / 1000).isoformat(timespec="minutes") if exp else "-"
-print(f"{datetime.datetime.now().isoformat(timespec='minutes')} login expires {exp} "
-      f"token {hashlib.sha256(t.encode()).hexdigest()[:8] if t else '-'}")
-PY
-      sleep 600
-    done
-    wait $pid; echo "== session rc $?"
+    for i in $(seq "$n"); do
+      python3 "$HERE/credential-scan.py" --login-state "message $i" >> "$log"
+      printf '{"type":"user","message":{"role":"user","content":"Reply with exactly: tick-%s"}}\n' "$i"
+      if [[ $i -lt $n ]]; then sleep "$interval"; fi
+    done | "$WMF_SBX" resume "$first" -- -p --input-format stream-json \
+      --output-format stream-json --verbose --model haiku > "$LOGS/long-session.jsonl" 2>&1
+    echo "== session rc $?"
+    echo "== replies: $(grep -o '"result":"tick-[0-9]*' "$LOGS/long-session.jsonl" | wc -l) of $n"
     echo "== login over time:"; sed 's/^/   | /' "$log"
     echo "== proxy log (status counts):"
-    awk '{print $5}' "$(proxy_log l3-a)" | sort | uniq -c | sed 's/^/   | /'
-    grep -E ' (401|403|502) ' "$(proxy_log l3-a)" | sed 's/^/   ! /'
+    awk '{print $5}' "$(proxy_log "$first")" | sort | uniq -c | sed 's/^/   | /'
+    grep -E ' (401|403|502) ' "$(proxy_log "$first")" | sed 's/^/   ! /'
     ;;
 
   rm)

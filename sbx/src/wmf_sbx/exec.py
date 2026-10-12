@@ -64,7 +64,7 @@ def main(argv=None, lima=None, env=None):
         vm_mod.ensure_running(name, lima=lima,
                               log=lambda m: print(color_mod.dim(m), file=sys.stderr))
         result = vm_mod.shell(name, argv_in, lima=lima, workdir=workdir,
-                              check=False, capture=False)
+                              check=False, capture=False, interactive=True)
     except (state_mod.StateError, vm_mod.VmError, lima_mod.LimaError) as e:
         print(color_mod.error(f"error: {e}"), file=sys.stderr)
         return 1

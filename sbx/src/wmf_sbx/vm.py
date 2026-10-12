@@ -136,10 +136,14 @@ def delete(name, lima=None):
 
 
 def shell(name, argv, lima=None, workdir=ENGINEER_HOME, check=True, capture=True,
-          input=None):
-    """Run argv in the guest as the engineer (Lima's user)."""
+          input=None, interactive=False):
+    """Run argv in the guest as the engineer (Lima's user). Only an
+    `interactive` command gets the caller's stdin (Limactl.call)."""
     lima = lima or lima_mod.Limactl()
     args = ["shell", f"--workdir={workdir}", instance_name(name), "--"] + list(argv)
+    if interactive:
+        return lima.call(*args, check=check, capture=capture, input=input,
+                         interactive=True)
     return lima.call(*args, check=check, capture=capture, input=input)
 
 

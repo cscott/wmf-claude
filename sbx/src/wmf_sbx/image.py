@@ -237,7 +237,8 @@ def head_commit(root=REPO_ROOT, run=subprocess.run):
     """The commit whose tree goes into the image. The tree comes from
     `git archive HEAD`, so uncommitted changes are not in it."""
     result = run(["git", "-C", root, "rev-parse", "--short=12", "HEAD"],
-                 capture_output=True, text=True, check=True)
+                 capture_output=True, text=True, check=True,
+                 stdin=subprocess.DEVNULL)
     return result.stdout.strip()
 
 
@@ -483,7 +484,8 @@ def check_submodules(root=REPO_ROOT, run=subprocess.run):
     has an empty MCP server directory (RAN: image d16a1c5496fa83fe has
     none of the three)."""
     result = run(["git", "-C", root, "submodule", "status", "--recursive"],
-                 capture_output=True, text=True, check=True)
+                 capture_output=True, text=True, check=True,
+                 stdin=subprocess.DEVNULL)
     missing = [line.split()[1] for line in result.stdout.splitlines()
                if line.startswith("-") and len(line.split()) > 1]
     if missing:
@@ -499,7 +501,8 @@ def make_tree_tarball(dest, rev, root=REPO_ROOT, run=subprocess.run):
     stage = tempfile.mkdtemp(prefix="wmf-sbx-tree.")
     try:
         archive = run(["git", "-C", root, "archive", "--format=tar", "HEAD"],
-                      capture_output=True, check=True)
+                      capture_output=True, check=True,
+                      stdin=subprocess.DEVNULL)
         run(["tar", "-x", "-C", stage], input=archive.stdout, check=True)
         run(["git", "-C", root, "submodule", "--quiet", "foreach", "--recursive",
              f'mkdir -p "{stage}/$displaypath" && git archive --format=tar $sha1 '
@@ -550,7 +553,8 @@ def build_env(inputs, guest_stage):
 
 def qemu_img_info(path, run=subprocess.run):
     result = run(["qemu-img", "info", "--output=json", path],
-                 capture_output=True, text=True, check=True)
+                 capture_output=True, text=True, check=True,
+                 stdin=subprocess.DEVNULL)
     return json.loads(result.stdout)
 
 

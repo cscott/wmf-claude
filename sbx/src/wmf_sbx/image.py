@@ -21,6 +21,7 @@ from Kosta's pinned Debian image). In short:
 """
 
 import argparse
+import base64
 import datetime
 import hashlib
 import json
@@ -159,6 +160,10 @@ CA_CERTS_VAR = "WMF_SBX_CA_CERTS"
 # and its CA is in $SSL_CERT_FILE. With no $WMF_SBX_CA_CERTS, the inner
 # VMs get that file.
 NESTED_MARKER = "/etc/wmf-sbx/nested"
+# $SSL_CERT_FILE is the system's bundle plus nono's CA (RAN N3: 151
+# certificates). The inner VMs get only what the system bundle lacks.
+SYSTEM_CA_BUNDLE = "/etc/ssl/certs/ca-certificates.crt"
+PEM_CERT_RE = re.compile(r"-----BEGIN CERTIFICATE-----[A-Za-z0-9+/=\s]+?-----END CERTIFICATE-----")
 
 
 class ImageError(Exception):
@@ -479,13 +484,59 @@ def extra_ca_files(env=None):
     value = env.get(CA_CERTS_VAR)
     if value is None and os.path.exists(NESTED_MARKER):
         cert = env.get("SSL_CERT_FILE")
-        return [cert] if cert and os.path.isfile(cert) else []
+        path = session_ca_file(cert, env) if cert and os.path.isfile(cert) else None
+        return [path] if path else []
     files = [os.path.abspath(os.path.expanduser(p))
              for p in (value or "").split(":") if p]
     for f in files:
         if not os.path.isfile(f):
             raise ImageError(f"{CA_CERTS_VAR}: no such file: {f}")
     return files
+
+
+def _pem_certs(path):
+    """The certificates in a PEM file, as {DER bytes: PEM text}, in order.
+    Bundles wrap their base64 differently; the DER bytes are the same."""
+    try:
+        with open(path, encoding="ascii", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return {}
+    certs = {}
+    for m in PEM_CERT_RE.finditer(text):
+        body = "".join(m.group().split("\n")[1:-1]).replace(" ", "")
+        try:
+            der = base64.b64decode("".join(body.split()), validate=True)
+        except ValueError:
+            continue
+        certs.setdefault(der, m.group().strip())
+    return certs
+
+
+def session_ca_file(bundle, env=None):
+    """A file with the certificates of `bundle` that SYSTEM_CA_BUNDLE does
+    not have (nono's CA), or None if there are none. Its path does not
+    change, so a later session's CA replaces an earlier one's for the
+    inner VMs that read it at their next start."""
+    certs = _pem_certs(bundle)
+    system = _pem_certs(SYSTEM_CA_BUNDLE)
+    extra = [pem for der, pem in certs.items() if der not in system]
+    if not extra:
+        return None
+    path = os.path.join(os.path.dirname(cache_root(env)), "session-ca.pem")
+    content = "\n".join(extra) + "\n"
+    try:
+        with open(path, encoding="ascii") as f:
+            if f.read() == content:
+                return path
+    except OSError:
+        pass
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = f"{path}.tmp.{os.getpid()}"
+    with open(tmp, "w", encoding="ascii") as f:
+        f.write(content)
+    os.replace(tmp, path)
+    return path
 
 
 def local_base(base, base_dir=None):

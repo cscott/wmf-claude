@@ -333,13 +333,23 @@ class CreateTests(Env):
             return orig(*args, **kw)
         lima.call = call
         self.assertEqual(self.create("--name", "demo", "--nested", lima=lima), 0, self.err)
-        self.assertTrue(state_mod.load("demo", self.env)["nested"])
+        st = state_mod.load("demo", self.env)
+        self.assertTrue(st["nested"])
+        # The inner repos go in the engineer's home path, as on the host.
+        src = os.path.join(os.path.normpath(self.env["HOME"]), "wmf-sbx-src")
+        self.assertEqual(st["nestedSrc"], src)
         tmpl = lima.templates["wmf-sbx-demo"]
         self.assertEqual((tmpl["memory"], tmpl["disk"]), ("16GiB", "120GiB"))
         (script,) = [i for i in inputs if "usermod -aG kvm agent" in i]
         self.assertIn(f"lima-{nested.LIMA_VERSION}-Linux-", script)
         self.assertIn("sha256sum -c", script)
         self.assertIn(nested.MARKER, script)
+        self.assertIn(f'path: "{src}/extensions/{{name}}"', script)
+
+    def test_nested_refuses_a_home_the_vm_uses_itself(self):
+        self.env["HOME"] = "/home/agent"
+        self.assertEqual(self.create("--name", "demo", "--nested"), 1)
+        self.assertIn("--nested: /home/agent/wmf-sbx-src is under /home/agent", self.err)
 
     def test_not_nested_by_default(self):
         self.assertEqual(self.create("--name", "demo", "--memory", "6GiB"), 0, self.err)

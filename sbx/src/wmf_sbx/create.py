@@ -570,6 +570,16 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
             return 1
 
     _primary_canonical, primary_dir, _ = resolved[0]
+    nested_src = None
+    if args.nested:
+        # The inner sandboxes' repos, at the engineer's home path, as on
+        # the host (nested.SRC_NAME).
+        nested_src = nested_mod.src_dir(env.get("HOME") or os.path.expanduser("~"))
+        try:
+            repos_mod.check_vm_path(nested_src)
+        except repos_mod.RepoError as e:
+            print(color_mod.error(f"error: --nested: {e}"), file=sys.stderr)
+            return 1
     conflict = find_nested_mount_conflict([path for _c, path, _n in resolved])
     if conflict is not None:
         ancestor, descendant = conflict
@@ -658,6 +668,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         read_only=sorted(readonly))
     if args.nested:
         state["nested"] = True
+        state["nestedSrc"] = nested_src
     state_mod.save(state, env)
     try:
         vm_mod.create(name, tmpl, lima=lima, log=say)
@@ -677,7 +688,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
     if args.nested:
         print(color_mod.error(NESTED_WARNING), file=sys.stderr)
         say("+ nested: QEMU and Lima in the sandbox, the agent in the kvm group")
-        script = nested_mod.install_script(arch, image_mod.base_image(arch))
+        script = nested_mod.install_script(arch, image_mod.base_image(arch), nested_src)
         argv = (["sudo", "env"] + [f"{k}={v}" for k, v in
                                    sorted(image_mod.guest_proxy_env(env).items())]
                 + ["bash", "-s"])

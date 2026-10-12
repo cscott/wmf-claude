@@ -368,18 +368,39 @@ class BuilderTests(unittest.TestCase):
         self.assertEqual(image.extra_ca_files({}), [])
         self.assertNotIn("caCerts", image.builder_template(sample_inputs()))
 
-    def test_a_nested_sandbox_gives_the_inner_vms_nonos_ca(self):
+    @staticmethod
+    def pem(body):
+        return f"-----BEGIN CERTIFICATE-----\n{body}\n-----END CERTIFICATE-----\n"
+
+    def test_a_nested_sandbox_gives_the_inner_vms_only_nonos_ca(self):
         with tempfile.TemporaryDirectory() as d:
             marker = os.path.join(d, "nested")
-            cert = os.path.join(d, "nono-ca.pem")
-            open(cert, "w").close()
-            env = {"SSL_CERT_FILE": cert}
+            system = os.path.join(d, "system.crt")
+            bundle = os.path.join(d, "bundle.pem")
+            with open(system, "w") as f:
+                f.write(self.pem("U1lTVEVNMQ==") + self.pem("U1lTVEVNMg=="))
+            with open(bundle, "w") as f:
+                f.write(self.pem("U1lTVEVNMQ==") + "\n" + self.pem("Tk9OTw==") + self.pem("U1lTVEVNMg=="))
+            env = {"SSL_CERT_FILE": bundle, "XDG_CACHE_HOME": os.path.join(d, "cache")}
             self.assertEqual(image.extra_ca_files(env), [])
             open(marker, "w").close()
-            with mock.patch.object(image, "NESTED_MARKER", marker):
-                self.assertEqual(image.extra_ca_files(env), [cert])
+            with mock.patch.multiple(image, NESTED_MARKER=marker, SYSTEM_CA_BUNDLE=system):
+                files = image.extra_ca_files(env)
+                self.assertEqual(files, [os.path.join(d, "cache", "wmf-sbx", "session-ca.pem")])
+                with open(files[0]) as f:
+                    self.assertEqual(f.read(), self.pem("Tk9OTw=="))
+                # A later session's CA replaces it, at the same path.
+                with open(bundle, "w") as f:
+                    f.write(self.pem("U1lTVEVNMQ==") + self.pem("TkVX"))
+                self.assertEqual(image.extra_ca_files(env), files)
+                with open(files[0]) as f:
+                    self.assertEqual(f.read(), self.pem("TkVX"))
                 self.assertEqual(image.extra_ca_files({}), [])
                 self.assertEqual(image.extra_ca_files(dict(env, **{image.CA_CERTS_VAR: ""})), [])
+                # Nothing that the system lacks: nothing to add.
+                with open(bundle, "w") as f:
+                    f.write(self.pem("U1lTVEVNMQ=="))
+                self.assertEqual(image.extra_ca_files(env), [])
 
     def test_extra_ca_files_go_to_the_builder_and_not_into_the_key(self):
         with tempfile.TemporaryDirectory() as d:

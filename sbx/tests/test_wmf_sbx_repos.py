@@ -10,6 +10,7 @@ against local repositories, and `git fetch wmfsbx://...` through a fake
 a VM (lima-port/HANDOFF-LIMA.md §11, phase 4)."""
 
 import io
+import contextlib
 import os
 import shlex
 import shutil
@@ -17,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 sys.path.insert(0, os.path.dirname(__file__))
@@ -258,12 +260,32 @@ class HelperTests(Tmp):
         self.env = {"XDG_STATE_HOME": os.path.join(self.tmp, "state")}
         state_mod.save(state_mod.new_state("demo"), self.env)
 
-    def serve(self, *lines, url="wmfsbx://demo/home/me/core"):
+    def serve(self, *lines, url="wmfsbx://demo/home/me/core", limactl="limactl"):
         out = io.BytesIO()
         self.execs = []
+        self.out = out
         rc = helper.serve(url, io.BytesIO(b"".join(l + b"\n" for l in lines)), out,
-                          execvp=lambda f, argv: self.execs.append(argv), env=self.env)
+                          execvp=lambda f, argv: self.execs.append(argv), env=self.env,
+                          which=lambda exe: limactl)
         return rc, out.getvalue()
+
+    def test_no_limactl_on_path_is_a_clear_error_before_the_answer(self):
+        with self.assertRaisesRegex(helper.HelperError, "limactl is not on PATH"):
+            self.serve(b"capabilities", b"connect git-upload-pack", limactl=None)
+        self.assertEqual(self.out.getvalue(), b"connect\n\n")
+        self.assertEqual(self.execs, [])
+
+    def test_main_prints_the_error_without_a_traceback(self):
+        err = io.StringIO()
+        with mock.patch.object(helper.shutil, "which", return_value=None), \
+                mock.patch.object(helper.sys, "stdin", io.TextIOWrapper(
+                    io.BytesIO(b"connect git-upload-pack\n"))), \
+                mock.patch.object(helper.sys, "stdout", io.TextIOWrapper(io.BytesIO())), \
+                mock.patch.object(helper.state_mod, "require"), \
+                contextlib.redirect_stderr(err):
+            rc = helper.main(["demo", "wmfsbx://demo/home/me/core"])
+        self.assertEqual(rc, 128)
+        self.assertIn("fatal: wmfsbx: limactl is not on PATH", err.getvalue())
 
     def test_parse_url(self):
         self.assertEqual(helper.parse_url("wmfsbx://demo/home/me/core"),
@@ -282,6 +304,8 @@ class HelperTests(Tmp):
         self.assertEqual(out, b"connect\n\n\n")
         argv = self.execs[0]
         self.assertEqual(argv[:5], ["limactl", "shell", "--workdir=/", "wmf-sbx-demo", "--"])
+        _rc, _out = self.serve(b"connect git-upload-pack", limactl="/opt/lima/bin/limactl")
+        self.assertEqual(self.execs[0][0], "/opt/lima/bin/limactl")
         self.assertEqual(argv[5:9], ["sudo", "-H", "-u", "agent"])
         self.assertIn("core.hooksPath=/dev/null", argv)
         self.assertEqual(argv[-3:], ["upload-pack", "--", "/home/me/core"])
@@ -397,6 +421,14 @@ class CreateFlowTests(Env):
         self.assertEqual(git(self.repo, "remote"), "")
         self.assertEqual(git(self.repo, "config", "--get", "gc.auto", check=False), "")
         self.assertIsNone(state_mod.load("demo", self.env))
+
+    def test_a_missing_remote_helper_is_a_warning(self):
+        real = shutil.which
+        with mock.patch.object(create.shutil, "which",
+                               lambda exe, *a, **k: None if exe == "git-remote-wmfsbx"
+                               else real(exe, *a, **k)):
+            self.assertEqual(self.create(), 0, self.err)
+        self.assertIn("git-remote-wmfsbx is not on PATH", self.err)
 
     def test_no_remotes_leaves_the_host_config_alone(self):
         before = open(os.path.join(self.repo, ".git", "config")).read()

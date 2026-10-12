@@ -696,6 +696,12 @@ class LimactlTests(unittest.TestCase):
             return result or Done()
         return run
 
+    def test_no_limactl_is_a_lima_error(self):
+        def run(argv, **kw):
+            raise FileNotFoundError(argv[0])
+        with self.assertRaisesRegex(lima.LimaError, "limactl is not on PATH"):
+            lima.Limactl(run=run).call("list")
+
     def test_stdin_is_closed_unless_interactive_or_given(self):
         seen = []
 

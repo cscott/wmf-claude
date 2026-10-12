@@ -87,6 +87,14 @@ to D12, and tracks A and B, which are not repeated here).
   session password, in a session): `lima.redact` removes them from LimaError. Inner
   sandboxes' repos go to `~/wmf-sbx-src` (settings written by the install, if none).
   Inner egress through the rewritten proxy URL is still not RAN.
+- N3, second run (agent under nono, 2026-10-12): unit tests 725 OK in 24 s. The image
+  build gave the builder nono's proxy as `127.0.0.1`: the rewrite to 192.168.5.2 missed a
+  URL with credentials (`//nono:PASSWORD@127.0.0.1`); fixed in `image.guest_proxy_env`.
+  With that and `WMF_SBX_CA_CERTS=$SSL_CERT_FILE` (nono re-signs TLS for some hosts,
+  nodejs.org among them; not deb.debian.org) the build passed apt, kernel, php-ast, Node,
+  nono and Claude Code, then stopped at wmf-claude's MCP venvs: `pypi.org` not in the
+  allowlist (added to `nested.DOMAINS` with `files.pythonhosted.org`; not yet RAN). To do:
+  set the CA for a build in a nested session without the engineer's help.
 - `TMPDIR` must be the session's (`/tmp/claude-UID`, launch-claude.sh): `/tmp` is
   write-only under nono, and Lima builds its cloud-init ISO in TMPDIR.
 - Inner egress: Lima rewrites the session's proxy variables (nono's proxy on loopback) to

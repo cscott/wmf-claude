@@ -1515,8 +1515,9 @@ Candidates (L1 measures them):
   expired-login message points to it.
 - **L3. Acceptance** (`lima-port/checks/credential-l3.sh`; RAN in the
   cloud VM with an API key, and on the engineer's host with the live
-  login and the token file: `concurrent` and `scan` pass; `long`, the
-  blind run and macOS still to do):
+  login and the token file: `concurrent`, `scan` and `long` pass (`long`
+  showed the idle host login expiring, as expected); a real `wmf-sbx
+  login`, the blind run and macOS still to do):
   two sandboxes at once, no login prompt, no token
   in either VM (grep the environment, `/proc`, the disk), a session of
   several hours across a token refresh, and a blind run. On macOS too

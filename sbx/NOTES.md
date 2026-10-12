@@ -305,7 +305,13 @@ to D12, and tracks A and B, which are not repeated here).
   piped input to `resume` was eaten by the checks before the session. `Limactl.call` now
   gives limactl `/dev/null` unless the call has `input` or is `interactive` (the session,
   `exec`); the other capturing subprocess calls also get `/dev/null`.
-- Still to run on the engineer's host: `long` (again), a blind run, and macOS.
+- `long 9` on the engineer's host, live login, host idle: one session and one proxy for 9
+  hours, a message every 10 minutes. 45 of 54 replies; every request until the login's
+  expiry (7.5 hours after its last refresh) got a 200, every one after it the proxy's 401
+  (two per message: Claude Code retries once). The token never changed: nothing refreshes
+  an idle host's login. So a long session works through the proxy, and the host login is
+  not a source to rely on; `wmf-sbx login` is.
+- Still to run on the engineer's host: a real `wmf-sbx login`, a blind run, and macOS.
 - Docker sbx's sign-in (Docker's docs, and our pre-deletion SECURITY.md §7.5): `/login` ran
   in the sandbox; the host's egress proxy completed the OAuth exchange, kept the token on
   the host (one per host, shared by every sandbox), refreshed it, and swapped a

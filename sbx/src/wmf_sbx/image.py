@@ -519,8 +519,9 @@ def guest_proxy_env(env=None):
     for var in PROXY_VARS:
         value = env.get(var)
         if value:
-            out[var] = re.sub(r"//(localhost|127\.0\.0\.1)([:/]|$)",
-                              rf"//{SLIRP_GATEWAY}\2", value)
+            # nono's proxy URL has credentials: //nono:PASSWORD@127.0.0.1:PORT
+            out[var] = re.sub(r"//([^/@]*@)?(localhost|127\.0\.0\.1)([:/]|$)",
+                              rf"//\g<1>{SLIRP_GATEWAY}\3", value)
     return out
 
 

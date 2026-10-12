@@ -52,6 +52,7 @@ threat model, so there is no supported way to pass them.
 | `WMF_CLAUDE_PROFILE` | Load `profiles/<name>.json` instead of `wmf-engineer` |
 | `WMF_CLAUDE_NO_PAUSE` | Skip the Enter pause that follows startup notices. (`WMF_CLAUDE_QUIET`, which hid the old banner, is now a no-op.) |
 | `WMF_CLAUDE_SKIP_UPDATE` | Skip the update check and prompt entirely |
+| `WMF_CLAUDE_STE` | `0` drops the ASD-STE100 writing rule (for comments and commit messages) from the SessionStart context. Skills such as `write-commit-msg` still ask for it. |
 | `WMF_CLAUDE_NONO_VERBOSE` | Show nono's banner and its exit summary of denied paths (off by default: most denials there are expected) |
 | `WMF_CLAUDE_SKIP_CHROME` | Skip building the chrome-devtools MCP during setup |
 

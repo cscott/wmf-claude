@@ -59,11 +59,11 @@ def pick_image(key=None, env=None):
         image_mod.verify_entry(key, env)
         manifest = dict(image_mod.list_images(env)).get(key) or {}
     else:
-        images = image_mod.list_images(env)
-        if not images:
+        newest = image_mod.newest_image(env)
+        if not newest:
             raise LoginError("no golden image in the cache; `wmf-sbx image build` first "
                              "(or `wmf-sbx create`, which builds it)")
-        key, manifest = images[-1]
+        key, manifest = newest
         image_mod.verify_entry(key, env)
     arch = (manifest.get("inputs") or {}).get("arch") or image_mod.host_arch()
     return key, arch

@@ -91,6 +91,9 @@ clone_repo() {
   # sbx (configure_remotes). Without an
   # upstream, `origin` stays the host's repository.
   remote=origin
+  if [[ -z "$upstream" && "$reset" == 1 ]]; then
+    warn "$path: no upstream is known (no gerrit:/gitlab: name, no https origin on the host); it is reset to the host's branch, not upstream"
+  fi
   if [[ -n "$upstream" ]]; then
     git -C "$path" remote rename origin local
     git -C "$path" remote add origin "$upstream"

@@ -7,8 +7,8 @@ Two steps (sbx/README.md, Architecture):
   1. name -> canonical "scheme:path" string (Gerrit REST lookup for a bare
      short name, then a GitLab lookup if Gerrit has no match; explicit
      scheme or an already-qualified path is used as-is).
-  2. canonical path -> local directory, via the user's
-     ~/.config/wmf-sbx/repos.yaml rules (longest-match-first among existing
+  2. canonical path -> local directory, via the `repos:` rules of the
+     user's ~/.config/wmf-sbx/settings.yaml (longest-match-first among existing
      directories; longest match outright when nothing exists yet to clone).
 
 Requires PyYAML only for reading the config file; the resolution/matching
@@ -31,7 +31,15 @@ except ImportError:  # pragma: no cover - exercised only when yaml is absent
     yaml = None
 
 GERRIT_URL = "https://gerrit.wikimedia.org/r/projects/"
-DEFAULT_CONFIG = os.path.expanduser("~/.config/wmf-sbx/repos.yaml")
+DEFAULT_CONFIG = os.path.expanduser("~/.config/wmf-sbx/settings.yaml")
+# The file's name and keys before settings.yaml; still read, with a note.
+LEGACY_CONFIG = os.path.expanduser("~/.config/wmf-sbx/repos.yaml")
+LEGACY_KEYS = {"rules": "repos", "extra_environment": "environment",
+               "extra_packages": "packages"}
+_LEGACY_NOTED = set()   # say it once per run, not once per repo
+CONFIG_DEFAULTS = {"repos": [], "environment": {}, "packages": [],
+                   "dependency_overrides": {}, "link_overrides": {},
+                   "extra_dependencies": {}}
 _SCHEME_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9+.-]*):(.*)$")
 
 
@@ -412,18 +420,18 @@ def gitreview_project(path):
 def reverse_resolve(path, rules, exists=os.path.isdir, gitreview_project=gitreview_project,
                     origin_url=git_origin_url):
     """The inverse of Step 2: given a local directory, identify the
-    canonical "scheme:path" it corresponds to and the repos.yaml rule (if
+    canonical "scheme:path" it corresponds to and the settings.yaml `repos:` rule (if
     any) that maps to it. Returns (canonical, rule); either or both may be
     None if nothing can be identified (see below).
 
     A ".gitreview" file's "project=" line, if present, is authoritative --
-    repos.yaml rules are hand-maintained and can go stale (see
+    settings.yaml `repos:` rules are hand-maintained and can go stale (see
     resolve_directory's belt-and-suspenders check above), so it's used even
     if it disagrees with what a rule would have predicted for this path. In
     that case `rule` is whichever configured rule's expansion actually
     produces this exact directory, or None if none does (report this case
     as "<no rule>" -- the .gitreview project is still authoritative, it's
-    just not one repos.yaml knows how to reproduce).
+    just not one settings.yaml knows how to reproduce).
 
     Without a .gitreview (not a Gerrit checkout, or not cloned yet), falls
     back to the config's *exact* (no "**"/"{name}") rules only -- see
@@ -464,7 +472,7 @@ def resolve_directory(canonical, rules, exists=os.path.isdir, gitreview_project=
 
     Belt-and-suspenders check: a Gerrit canonical whose candidate directory
     already exists AND has a .gitreview file is only accepted if that
-    file's "project=" line agrees with what we expect there -- repos.yaml
+    file's "project=" line agrees with what we expect there -- settings.yaml
     rules are hand-maintained and directories get renamed/repurposed, so an
     existing directory at the expected path isn't proof it's the right
     checkout. A directory with no .gitreview (or a scheme other than
@@ -496,7 +504,7 @@ def resolve_directory(canonical, rules, exists=os.path.isdir, gitreview_project=
         raise ResolutionError(
             f"{path} already exists, but its .gitreview says {recorded!r}, "
             f"not {can_rest!r} -- refusing to treat it as a fresh-clone "
-            "target. Fix or remove it, or adjust repos.yaml."
+            "target. Fix or remove it, or adjust settings.yaml."
         )
     return path, rule, True
 
@@ -505,9 +513,19 @@ def resolve_directory(canonical, rules, exists=os.path.isdir, gitreview_project=
 # Config loading and CLI
 # --------------------------------------------------------------------------
 
-def load_config(path=DEFAULT_CONFIG):
+def load_config(path=DEFAULT_CONFIG, warn=lambda msg: print(msg, file=sys.stderr),
+                legacy=LEGACY_CONFIG):
+    """The settings file as a dict with every key of CONFIG_DEFAULTS (and
+    `session` if set). The old name (repos.yaml) and old keys (`rules`,
+    `extra_environment`, `extra_packages`) are still read, with a note."""
+    if not os.path.exists(path) and path == DEFAULT_CONFIG and os.path.exists(legacy):
+        if legacy not in _LEGACY_NOTED:
+            _LEGACY_NOTED.add(legacy)
+            warn(f"note: reading {legacy}; rename it to {path} (and its `rules:` key to "
+                 f"`repos:`)")
+        path = legacy
     if not os.path.exists(path):
-        return {"rules": [], "extra_dependencies": {}, "extra_environment": {}, "extra_packages": []}
+        return {k: type(v)() for k, v in CONFIG_DEFAULTS.items()}
     if yaml is None:
         raise ResolutionError(
             f"PyYAML is required to read {path} but isn't installed.\n"
@@ -517,10 +535,20 @@ def load_config(path=DEFAULT_CONFIG):
         )
     with open(path, encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
-    data.setdefault("rules", [])
-    data.setdefault("extra_dependencies", {})
-    data.setdefault("extra_environment", {})
-    data.setdefault("extra_packages", [])
+    if not isinstance(data, dict):
+        raise ResolutionError(f"{path}: want a mapping at the top level")
+    for old, new in LEGACY_KEYS.items():
+        if old in data:
+            if new in data:
+                raise ResolutionError(f"{path}: has both `{old}:` and `{new}:`; "
+                                      f"`{old}:` is the old name of `{new}:`")
+            data[new] = data.pop(old)
+    for key, default in CONFIG_DEFAULTS.items():
+        if data.get(key) is None:
+            data[key] = type(default)()
+        elif not isinstance(data[key], type(default)):
+            raise ResolutionError(f"{path}: `{key}:` must be a "
+                                  f"{'list' if isinstance(default, list) else 'mapping'}")
     return data
 
 
@@ -530,7 +558,7 @@ def resolve(spec, config_path=DEFAULT_CONFIG, search=gerrit_search, exists=os.pa
     needs_clone)."""
     config = load_config(config_path)
     canonical = resolve_canonical_path(spec, search=search, warn=warn, gitlab=gitlab)
-    path, rule, needs_clone = resolve_directory(canonical, config["rules"], exists=exists)
+    path, rule, needs_clone = resolve_directory(canonical, config["repos"], exists=exists)
     return canonical, path, rule, needs_clone
 
 
@@ -543,10 +571,10 @@ def main(argv=None):
     )
     parser.add_argument(
         "--path", help="Reverse lookup: given a local directory, identify the "
-        "canonical Gerrit/GitLab project and repos.yaml rule it corresponds "
+        "canonical Gerrit/GitLab project and settings.yaml `repos:` rule it corresponds "
         "to, instead of resolving NAME to a directory"
     )
-    parser.add_argument("--config", default=DEFAULT_CONFIG, help="Path to repos.yaml")
+    parser.add_argument("--config", default=DEFAULT_CONFIG, help="Path to settings.yaml")
     parser.add_argument("--json", action="store_true", help="Machine-readable output")
     args = parser.parse_args(argv)
 
@@ -556,14 +584,14 @@ def main(argv=None):
     if args.path is not None:
         try:
             config = load_config(args.config)
-            canonical, rule = reverse_resolve(args.path, config["rules"])
+            canonical, rule = reverse_resolve(args.path, config["repos"])
         except ResolutionError as e:
             print(f"error: {e}", file=sys.stderr)
             return 1
         if canonical is None:
             print(
                 f"error: no canonical project found for {args.path!r} "
-                "(no .gitreview, and no exact repos.yaml rule matches this "
+                "(no .gitreview, and no exact settings.yaml `repos:` rule matches this "
                 "directory).",
                 file=sys.stderr,
             )

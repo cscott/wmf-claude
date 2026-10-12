@@ -11,6 +11,7 @@ a VM (lima-port/HANDOFF-LIMA.md §11, phase 4)."""
 
 import io
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -204,6 +205,17 @@ class CloneRepoTests(Tmp):
         self.assertEqual(git(dest, "rev-parse", "HEAD"),
                          git(self.upstream, "rev-parse", "master"))
 
+    def test_a_reset_with_no_upstream_says_it_uses_the_hosts_branch(self):
+        dest = os.path.join(self.tmp, "vm", "noup")
+        res = self.clone(dest, "topic", git(self.host, "rev-parse", "HEAD"), "", "1")
+        self.assertIn("no upstream is known", res.stderr)
+
+    def test_an_unreachable_upstream_says_so(self):
+        dest = os.path.join(self.tmp, "vm", "unreach")
+        res = self.clone(dest, "topic", git(self.host, "rev-parse", "HEAD"),
+                         os.path.join(self.tmp, "nowhere"), "1")
+        self.assertIn("could not fetch", res.stderr)
+
     def test_a_detached_host_head(self):
         dest = os.path.join(self.tmp, "vm", "det")
         sha = git(self.host, "rev-parse", "HEAD~1")
@@ -391,6 +403,45 @@ class CreateFlowTests(Env):
         self.assertEqual(self.create("--no-remotes"), 0, self.err)
         self.assertEqual(open(os.path.join(self.repo, ".git", "config")).read(), before)
         self.assertIn("gc stays on", self.err)
+
+    def clone_calls(self, *extra, repos=()):
+        """create with the given extra repos; the clone_repo calls of the
+        agent's clone script, as argument lists."""
+        lima = FakeLima()
+        scripts = []
+        orig = lima.call
+
+        def call(*args, **kw):
+            if kw.get("input") and "clone_repo " in kw["input"]:
+                scripts.append(kw["input"])
+            return orig(*args, **kw)
+        lima.call = call
+        argv = ["--no-deps", "--config", os.path.join(self.tmp, "repos.yaml"),
+                "--image", self.KEY, "--name", "demo", self.repo] + list(repos) + list(extra)
+        self.assertEqual(self.quiet(create.main, argv, lima=lima, env=self.env,
+                                    prompt=lambda q: ""), 0, self.err)
+        return [shlex.split(line)[1:] for s in scripts for line in s.splitlines()
+                if line.startswith("clone_repo ")]
+
+    def second_repo(self):
+        other = os.path.join(self.tmp, "src", "other")
+        git_repo(other)
+        git(other, "remote", "add", "origin", "https://gerrit.wikimedia.org/r/other")
+        return other
+
+    def test_reset_all_resets_every_repo_to_its_upstream(self):
+        other = self.second_repo()
+        calls = self.clone_calls("--reset-all", repos=[other])
+        self.assertEqual(sorted(c[1] for c in calls), sorted([self.repo, other]))
+        # clone_repo MOUNT PATH BRANCH SHA UPSTREAM RESET
+        self.assertEqual([c[5] for c in calls], ["1", "1"])
+        upstream = {c[1]: c[4] for c in calls}
+        self.assertEqual(upstream[other], "https://gerrit.wikimedia.org/r/other")
+
+    def test_without_reset_all_the_named_repos_keep_the_hosts_commit(self):
+        other = self.second_repo()
+        calls = self.clone_calls(repos=[other])
+        self.assertEqual([c[5] for c in calls], ["0", "0"])
 
     def test_a_failed_clone_fails_the_create(self):
         class Broken(FakeLima):

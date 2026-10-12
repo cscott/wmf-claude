@@ -64,7 +64,7 @@ def host_upstream_url(host_dir, run=subprocess.run):
     This is upstream_plan's fallback for a repo whose canonical name isn't
     known -- most commonly a raw filesystem-path argument (is_raw_path)
     that canonicals_for_kit couldn't identify, because it's a GitLab clone
-    (no .gitreview -- that's Gerrit-only) with no exact repos.yaml rule
+    (no .gitreview -- that's Gerrit-only) with no exact settings.yaml `repos:` rule
     either. Reading the host's own git config instead needs no
     forge-specific knowledge at all: it works for any already-cloned
     directory, whatever it was cloned from.
@@ -255,7 +255,7 @@ def expand_dependencies(resolved, split, config, config_path, include_dev=True,
     # Looked up here rather than as a default argument so tests (and
     # anything else) can substitute the network call by patching the module.
     fetch = fetch or deps_mod.fetch_manifest
-    rules = config.get("rules", [])
+    rules = config["repos"]
 
     def local_dir(canonical):
         try:
@@ -289,7 +289,7 @@ def expand_dependencies(resolved, split, config, config_path, include_dev=True,
             # sandbox, which is a far worse experience than an error here.
             raise resolve_mod.ResolutionError(
                 f"{e}\n{canonical} was pulled in as a dependency "
-                f"({' -> '.join(chain)}). Add a repos.yaml rule for it, or "
+                f"({' -> '.join(chain)}). Add a settings.yaml `repos:` rule for it, or "
                 f"re-run with --no-deps."
             ) from None
         resolved.append(entry)
@@ -531,6 +531,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
     try:
         preferences = config.get("session") or {}
         session_mod.preference_settings(preferences)
+        session_mod.check_environment(config["environment"])
     except session_mod.SessionError as e:
         print(color_mod.error(f"error: {e}"), file=sys.stderr)
         return 1
@@ -578,9 +579,15 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
             raise vm_mod.VmError(f"a sandbox named {name!r} exists already")
 
         # The golden image: the cache entry for the current inputs, built
-        # when it is missing (phase 2), or the one --image names.
-        if args.image:
-            key = args.image
+        # when it is missing (phase 2), or the one --image names, or with
+        # WMF_CLAUDE_GIT_HASH_OVERRIDE=latest the newest cached one.
+        latest = (image_mod.newest_image(env) if not args.image
+                  and image_mod.wants_latest(env) else None)
+        if args.image or latest:
+            key = args.image or latest[0]
+            if latest:
+                say(f"+ golden image {key} (the newest cached one: "
+                    f"{image_mod.TREE_OVERRIDE_VAR}={image_mod.LATEST})")
             image_mod.verify_entry(key, env)
             with open(os.path.join(image_mod.entry_dir(key, env), "manifest.json"),
                       encoding="utf-8") as f:
@@ -588,7 +595,8 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
             arch = image_inputs["arch"]
             claude_version = (image_inputs.get("claude") or {}).get("version")
         else:
-            inputs = inputs_fn() if inputs_fn else image_mod.image_inputs(env=env)
+            inputs = (inputs_fn() if inputs_fn
+                      else image_mod.image_inputs(env=env, packages=config["packages"]))
             key = image_mod.cache_key(inputs)
             arch = inputs["arch"]
             claude_version = (inputs.get("claude") or {}).get("version")
@@ -657,7 +665,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
     keep = set() if args.reset_all else requested | {primary_dir}
     # Raw paths get their canonical names here (.gitreview, the config's
     # rules), for the upstream URLs and the MediaWiki roles (core, links).
-    resolved_for_kit = canonicals_for_kit(resolved, config.get("rules", []))
+    resolved_for_kit = canonicals_for_kit(resolved, config["repos"])
     try:
         upstreams = upstream_plan(resolved_for_kit, run=run)
         repos_mod.clone_in_vm(name, repos, upstreams, keep, readonly=readonly,
@@ -683,7 +691,8 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         readonly=readonly, primary=primary_dir)
     plan["session"] = session_mod.session_plan(
         name, resolved_for_kit, readonly, identity=session_mod.git_identity(run=run),
-        preferences=preferences, claude_version=claude_version, quiet=quiet)
+        preferences=preferences, claude_version=claude_version, quiet=quiet,
+        environment=config["environment"])
     try:
         home = env.get("HOME") or os.path.expanduser("~")
         session_mod.wmf_claude_setup(

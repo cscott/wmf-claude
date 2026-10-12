@@ -51,12 +51,12 @@ If `import yaml` fails, `python3 -m pip install --user pyyaml` (add
 `--break-system-packages` if pip refuses).
 
 Tell wmf-sbx where to clone the repos on the Mac (if you already have a
-`~/.config/wmf-sbx/repos.yaml`, keep yours and skip this):
+`~/.config/wmf-sbx/settings.yaml`, keep yours and skip this):
 
 ```bash
 mkdir -p ~/.config/wmf-sbx
-cat > ~/.config/wmf-sbx/repos.yaml <<'YAML'
-rules:
+cat > ~/.config/wmf-sbx/settings.yaml <<'YAML'
+repos:
   - match: "gerrit:mediawiki/core"
     path: "~/wmf-sbx-src/core"
   - match: "gerrit:mediawiki/extensions/{name}"

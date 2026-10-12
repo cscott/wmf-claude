@@ -292,8 +292,16 @@ to D12, and tracks A and B, which are not repeated here).
   process's environment or command line in either VM during a session, not in `/dev/shm`,
   `/tmp` or the agent's Claude Code files, not on either VM's disk (3 and 23 GB), not in the
   host's wmf-sbx state.
-- Still to run on the engineer's host (L3): the same with the live login, a 9-hour session
-  across a token refresh (`credential-l3.sh long`), a blind run, and macOS (the keychain).
+- L3 on the engineer's host (Linux, KVM): `concurrent` passes with the live login (both
+  sandboxes' requests in the same second) and `scan` passes with the live login and with
+  the token file (access and refresh tokens: 0 hits in processes, files and both disks).
+  `create` removed 4 unused images (10 GiB) after its build.
+- An idle host's login expires: with no host Claude Code running, the access token had
+  expired, and the sessions got the proxy's 401 ("run `claude` on the host once"). One
+  host `claude -p` refreshed it. If `long` shows this mid-session, consider letting the
+  proxy have the host's Claude Code refresh the login (not refreshing it itself: the
+  refresh token rotates, and the host's copy would break).
+- Still to run on the engineer's host: `long` (started), a blind run, and macOS.
 - A shallow host repo (`git clone --depth`): `git clone --shared` copies the objects and
   writes no alternates file; `sandbox-repos.sh` accepts that (RAN).
 

@@ -1500,8 +1500,9 @@ Candidates (L1 measures them):
   - `SECURITY.md` §4: the VM holds no credential; the agent can spend it
     through the proxy while the sandbox exists; `rm` revokes the phantom.
 - **L3. Acceptance** (`lima-port/checks/credential-l3.sh`; RAN in the
-  cloud VM with an API key: `concurrent` and `scan` pass; the live
-  login, `long`, the blind run and macOS are for the engineer's host):
+  cloud VM with an API key, and on the engineer's host with the live
+  login and the token file: `concurrent` and `scan` pass; `long`, the
+  blind run and macOS still to do):
   two sandboxes at once, no login prompt, no token
   in either VM (grep the environment, `/proc`, the disk), a session of
   several hours across a token refresh, and a blind run. On macOS too

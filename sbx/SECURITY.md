@@ -131,7 +131,9 @@ control comes with `--sudo` mode.)
   agent can spend the credential while the session runs, but cannot
   read it or take it out**; the phantom is worthless once the session
   ends. The host's own Claude Code login is read for each request and
-  never written. A login made in the VM (no host credential) stays in
+  never written. `wmf-sbx login` makes the usual credential, a
+  one-year `setup-token` token for model requests only, in a throwaway
+  VM with no repo, no mount and no session, and deletes the VM. A login made in the VM (no host credential) stays in
   the VM until `rm`.
 - **The proxy's port.** For the session, `resume` adds an nftables rule
   that lets the agent reach 192.168.5.2 on that one port, tagged with

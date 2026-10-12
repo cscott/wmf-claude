@@ -364,12 +364,9 @@ QUnit and selenium need a browser, which is not installed by default: run
 `composer serve`. Do not change `MW_SCRIPT_PATH`: it is `/` on purpose, as
 in CI.
 
-Cypress e2e tests (Cite's `selenium-test`, for one) can run here, but the
-binary is not installed: `mw-install-cypress <repo>` installs it (about
-800 MB). Install it only when your change is likely to be covered by that
-repo's Cypress specs. Many specs also need extensions that this sandbox may
-not have, and without them the run skips them and passes with 0 tests. If
-you skip Cypress, say so.
+Cypress e2e tests (Cite's `selenium-test`, for one) do not start under
+nono yet (~/MEDIAWIKI-TESTING.md §5.6): do not install or try them; say in
+your report that they did not run.
 
 `composer phan` reports undeclared classes from sibling extensions that
 `.phan/config.php` names and this sandbox does not have. Those errors are

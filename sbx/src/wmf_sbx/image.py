@@ -154,6 +154,11 @@ KEY_RE = re.compile(r"^[0-9a-f]{16}$")
 # cloud-init; image-build.sh removes them before it seals, so the image
 # does not trust them and they are not an image input.
 CA_CERTS_VAR = "WMF_SBX_CA_CERTS"
+# In a nested sandbox (nested.py writes this marker, as root), a session's
+# nono re-signs TLS for the hosts with endpoint rules (nodejs.org, RAN N3),
+# and its CA is in $SSL_CERT_FILE. With no $WMF_SBX_CA_CERTS, the inner
+# VMs get that file.
+NESTED_MARKER = "/etc/wmf-sbx/nested"
 
 
 class ImageError(Exception):
@@ -468,10 +473,15 @@ def builder_name(key):
 
 
 def extra_ca_files(env=None):
-    """The absolute paths in $WMF_SBX_CA_CERTS. Each must be a file."""
+    """The absolute paths in $WMF_SBX_CA_CERTS. Each must be a file. In a
+    nested sandbox, with no $WMF_SBX_CA_CERTS: $SSL_CERT_FILE (nono's CA)."""
     env = os.environ if env is None else env
+    value = env.get(CA_CERTS_VAR)
+    if value is None and os.path.exists(NESTED_MARKER):
+        cert = env.get("SSL_CERT_FILE")
+        return [cert] if cert and os.path.isfile(cert) else []
     files = [os.path.abspath(os.path.expanduser(p))
-             for p in (env.get(CA_CERTS_VAR) or "").split(":") if p]
+             for p in (value or "").split(":") if p]
     for f in files:
         if not os.path.isfile(f):
             raise ImageError(f"{CA_CERTS_VAR}: no such file: {f}")

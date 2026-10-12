@@ -73,37 +73,32 @@ to D12, and tracks A and B, which are not repeated here).
   VM's SSH port (pinned in its template, 50022, inside the ephemeral window). The agent
   needs the `kvm` group; root installs QEMU, OVMF and Lima. Nested KVM works with no host
   change (`accel=kvm`; start in 22 s under nono, 31 s outside).
-- N2 (built, unit tests): `create --nested` (state `nested`), `nested.py` (install script,
-  grants, domains), the invariant "kvm group only in a nested sandbox". No `--listen-port`
-  grant for the inner SSH port: `--open-port` is connect and listen, and Lima's port comes
-  from the ephemeral window the session opens. Still to RAN: N3, and the nono pack
-  registry's host (not found in the binary; a denial will name it).
-- N3, first run: `limactl` refuses root (`must not run as the root user`), so the install
-  runs it as the agent. `cloud.debian.org` redirects to geo-picked mirrors
-  (`gemmei.ftp.acc.umu.se`), which no allowlist can list: the install downloads the base
-  image (checked against its digest) to `/var/cache/wmf-sbx/base`, and the builder boots
-  that copy (`image.local_base`; not in the cache key). A failed `limactl create` or
-  `start` of a builder deletes it. `limactl` logs proxy URLs with their password (nono's
-  session password, in a session): `lima.redact` removes them from LimaError. Inner
-  sandboxes' repos go to `~/wmf-sbx-src` (settings written by the install, if none).
-  Inner egress through the rewritten proxy URL is still not RAN.
-- N3, second run (agent under nono, 2026-10-12): unit tests 725 OK in 24 s. The image
-  build gave the builder nono's proxy as `127.0.0.1`: the rewrite to 192.168.5.2 missed a
-  URL with credentials (`//nono:PASSWORD@127.0.0.1`); fixed in `image.guest_proxy_env`.
-  With that and `WMF_SBX_CA_CERTS=$SSL_CERT_FILE` (nono re-signs TLS for some hosts,
-  nodejs.org among them; not deb.debian.org) the build passed apt, kernel, php-ast, Node,
-  nono and Claude Code, then stopped at wmf-claude's MCP venvs: `pypi.org` not in the
-  allowlist (added to `nested.DOMAINS` with `files.pythonhosted.org`; not yet RAN). To do:
-  set the CA for a build in a nested session without the engineer's help.
+- N2: `create --nested` (state `nested`), `nested.py` (install script, grants, domains),
+  the invariant "kvm group only in a nested sandbox". No `--listen-port` grant for the inner
+  SSH port: `--open-port` is connect and listen, and Lima's port comes from the ephemeral
+  window the session opens.
+- `limactl` refuses root (`must not run as the root user`): the install runs it as the
+  agent.
+- `cloud.debian.org` redirects to geo-picked mirrors (`gemmei.ftp.acc.umu.se`), which no
+  allowlist can list: the install downloads the base image (checked against its digest) to
+  `/var/cache/wmf-sbx/base`, and the builder boots that copy (`image.local_base`; not in
+  the cache key). `cloud.debian.org` is also the HEAD that refreshes a cached base image.
+- Inner egress works through nono's proxy. Lima and `image.guest_proxy_env` rewrite the
+  session's proxy URL (`http://nono:PASSWORD@127.0.0.1:PORT`) to 192.168.5.2; the rewrite
+  must keep the credentials. nono re-signs TLS for hosts with endpoint rules (nodejs.org;
+  not deb.debian.org), so the inner VMs need nono's CA: in a nested sandbox, with no
+  `WMF_SBX_CA_CERTS`, `image.extra_ca_files` gives them `$SSL_CERT_FILE`. The CA is the
+  session's (7 days): an inner sandbox made in an earlier session has an old one.
+- An inner image build reaches: deb.debian.org, security.debian.org, github.com (php-ast),
+  nodejs.org, release-assets.githubusercontent.com, downloads.claude.ai, pypi.org and
+  files.pythonhosted.org (MCP venvs), and the nono pack registry (host not yet known: a
+  denial will name it).
+- `limactl` logs proxy URLs with their password: `lima.redact` removes them from LimaError.
+- Inner sandboxes' repos go to `~/wmf-sbx-src` (settings written by the install, if none),
+  the one writable directory the session gives them.
 - `TMPDIR` must be the session's (`/tmp/claude-UID`, launch-claude.sh): `/tmp` is
   write-only under nono, and Lima builds its cloud-init ISO in TMPDIR.
-- Inner egress: Lima rewrites the session's proxy variables (nono's proxy on loopback) to
-  192.168.5.2 for the inner VM, and the inner VM's request reached no host (`000` for
-  deb.debian.org, not in the allowlist anyway). Outside nono the inner VM's egress works.
-  N2 must give an inner image build its hosts (cloud.debian.org, deb.debian.org,
-  security.debian.org, nodejs.org, downloads.claude.ai, the nono pack registry) and check
-  that requests through the rewritten proxy URL work. `cloud.debian.org` is also needed
-  for the HEAD that refreshes a cached base image (refused; Lima then uses the cache).
+- In a nested session a new pty is not a terminal; `test_real_pty_*` skips.
 
 ### Testing in the sandbox
 

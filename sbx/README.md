@@ -41,6 +41,7 @@ Every command is `wmf-sbx VERB ...`, or `wmf-sbx-VERB ...`:
 | `start NAME`, `stop NAME` | boot or stop the VM; nothing is lost |
 | `rm NAME` | remove the VM, its state and its host remotes |
 | `image build/ls/rm/prune` | manage the cached golden images |
+| `login` | sign in to Claude once, for every sandbox ("Sign-in") |
 | `resolve`, `ls-remotes` | show how a repo name resolves; list a repo's sandbox remotes |
 
 A `NAME` can also be a path shortcut such as `.`: the sandbox whose
@@ -48,34 +49,38 @@ primary repo is that directory.
 
 ## Sign-in
 
-If you use Claude Code on the host, there is nothing to do: sandboxes
-use your login. The credential stays on the host. For each session,
-`resume` runs a small proxy on the host's loopback that puts the
-credential into Claude Code's API requests; the VM gets only the proxy's
-address and a random stand-in that is good for that session's proxy.
+Sign in once, for every sandbox, without Claude Code on the host:
+
+```bash
+wmf-sbx login
+```
+
+It boots a throwaway VM from the golden image (no repo, no session), runs
+`claude setup-token` there on your terminal (open the URL it prints,
+sign in, paste the code back), saves the token in
+`~/.config/wmf-sbx/claude-oauth-token` (mode 0600), and deletes the VM.
+The token lasts a year. It can make model requests only: no Remote
+Control, and no connectors, skills or plugins from claude.ai; MCP servers
+in the sandbox still work.
+
+The credential stays on the host. For each session, `resume` runs a
+small proxy on the host's loopback that puts the credential into Claude
+Code's API requests; the VM gets only the proxy's address and a random
+stand-in that is good for that session's proxy.
 
 `resume` takes the first of:
 
 1. `$ANTHROPIC_API_KEY`;
 2. `$CLAUDE_CODE_OAUTH_TOKEN`;
-3. the file `~/.config/wmf-sbx/claude-oauth-token` (see below);
-4. your Claude Code login on the host (Linux: `~/.claude/.credentials.json`;
-   macOS: the keychain). `resume` reads it for each request, so it uses
-   the host's refreshed login; if the login has expired, run `claude` on
-   the host once. `WMF_SBX_HOST_LOGIN=0` leaves it out.
+3. the file `~/.config/wmf-sbx/claude-oauth-token` (`wmf-sbx login`);
+4. your Claude Code login on the host, if you use Claude Code there
+   (Linux: `~/.claude/.credentials.json`; macOS: the keychain). `resume`
+   reads it for each request, so it uses the host's refreshed login; but
+   it expires when Claude Code has not run on the host for some hours.
+   `WMF_SBX_HOST_LOGIN=0` leaves it out.
 
 With none of these, Claude Code asks you to log in, and that login stays
 in the VM: every new sandbox asks again.
-
-A token that does not depend on a host login: make one with your Claude
-subscription and keep it in the file, readable by you only:
-
-```bash
-claude setup-token                 # on the host; prints a token (valid for a year)
-mkdir -p ~/.config/wmf-sbx
-install -m 600 /dev/null ~/.config/wmf-sbx/claude-oauth-token
-$EDITOR ~/.config/wmf-sbx/claude-oauth-token    # paste the token
-```
 
 `resume` refuses the file if other users can read it. While a session
 runs, the agent can use the credential through the proxy, but cannot

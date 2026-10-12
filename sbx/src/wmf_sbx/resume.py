@@ -116,7 +116,8 @@ def main(argv=None, lima=None, env=None):
         print(color_mod.dim(
             "note: no Claude credential on the host ($ANTHROPIC_API_KEY, "
             f"$CLAUDE_CODE_OAUTH_TOKEN, {credproxy_mod.token_file(env)}, or a Claude Code "
-            "login); Claude Code will ask you to log in, in this VM only."), file=sys.stderr)
+            "login). Run `wmf-sbx login` once for all sandboxes; for now, Claude Code will "
+            "ask you to log in, in this VM only."), file=sys.stderr)
     if claude_args is None:
         claude_args = default_claude_args(state.get("attached"))
     proxy = None

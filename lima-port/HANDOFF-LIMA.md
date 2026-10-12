@@ -1359,6 +1359,15 @@ on none of them.
 
 **Track A: `--sudo` (D9 + D11)**
 
+Also with this track, the sbx way of signing in (sbx/NOTES.md, "Shared
+login"): `/login` in any sandbox, the host's egress proxy captures the
+OAuth exchange (it intercepts TLS), keeps and refreshes the token on the
+host, and every sandbox gets a placeholder. Docker's sbx works this way.
+nono 0.78's binary has an `oauth_capture` module and a standalone `nono
+proxy`; check whether `nono proxy` on the host does it. A full login also
+allows Remote Control, which the engineer wants for a contained agent
+(the remote side reaches only the sandbox, not the laptop).
+
 Revisit with this track: contained mode's local-port window (sbx/NOTES.md,
 "Local ports", the engineer's decision). Once track A brings external egress
 control, contained mode may use it too, and the window, `--landlock-only`,
@@ -1499,6 +1508,11 @@ Candidates (L1 measures them):
   - `resume`: no credential file in `/dev/shm` any more;
   - `SECURITY.md` §4: the VM holds no credential; the agent can spend it
     through the proxy while the sandbox exists; `rm` revokes the phantom.
+- **L4. `wmf-sbx login`** (built): `claude setup-token` in a throwaway
+  VM from the golden image, the token saved on the host, the VM deleted
+  (engineer's decision: no unsandboxed Claude Code on the host, and no
+  refresh logic; the token's limits are in README.md, "Sign-in"). The
+  expired-login message points to it.
 - **L3. Acceptance** (`lima-port/checks/credential-l3.sh`; RAN in the
   cloud VM with an API key, and on the engineer's host with the live
   login and the token file: `concurrent` and `scan` pass; `long`, the

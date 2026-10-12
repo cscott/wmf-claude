@@ -39,7 +39,10 @@ READ_DIRS = ("/usr/share/qemu", "/usr/share/seabios", "/usr/share/OVMF", "/usr/s
 LIMA_HOME = f"{vm_mod.AGENT_HOME}/.lima"
 # The inner wmf-sbx's own state and settings, and the repos of its
 # sandboxes (SETTINGS). Its images go in ~/.cache, which every session has.
-SRC_DIR = f"{vm_mod.AGENT_HOME}/wmf-sbx-src"
+# Not under the agent's home: the inner VM has the clones at their paths
+# here (D8), and its own agent has that home (RAN, N3: create refused
+# ~/wmf-sbx-src/extensions/Cite).
+SRC_DIR = "/home/wmf-sbx-src"
 WMF_SBX_DIRS = (f"{vm_mod.AGENT_HOME}/.local/state/wmf-sbx",
                 f"{vm_mod.AGENT_HOME}/.config/wmf-sbx", SRC_DIR)
 
@@ -55,22 +58,22 @@ DOMAINS = (
 )
 
 # The inner wmf-sbx's settings, if the engineer has none there: the
-# repos of inner sandboxes go to ~/wmf-sbx-src (RAN, N3: with no
+# repos of inner sandboxes go to SRC_DIR (RAN, N3: with no
 # settings, `create gerrit:...` has no rule). SRC_DIR is the one
 # writable directory the session gives them.
 SETTINGS = """\
 # Written by `wmf-sbx create --nested` (sbx/reference/example-settings.yaml).
 repos:
   - match: "gerrit:mediawiki/core"
-    path: "~/wmf-sbx-src/core"
+    path: "/home/wmf-sbx-src/core"
   - match: "gerrit:mediawiki/extensions/{name}"
-    path: "~/wmf-sbx-src/extensions/{name}"
+    path: "/home/wmf-sbx-src/extensions/{name}"
   - match: "gerrit:mediawiki/skins/{name}"
-    path: "~/wmf-sbx-src/skins/{name}"
+    path: "/home/wmf-sbx-src/skins/{name}"
   - match: "gerrit:**/{name}"
-    path: "~/wmf-sbx-src/{name}"
+    path: "/home/wmf-sbx-src/{name}"
   - match: "gitlab:**/{name}"
-    path: "~/wmf-sbx-src/{name}"
+    path: "/home/wmf-sbx-src/{name}"
 """
 
 # Default resources: an image build and one inner sandbox (D2 copies).
@@ -136,7 +139,8 @@ if ! echo {q(digest + '  ' + base_file)} | {algo}sum -c --quiet >/dev/null 2>&1;
   chmod 0644 {q(base_file + '.tmp')}
   mv {q(base_file + '.tmp')} {q(base_file)}
 fi
-runuser -u {q(vm_mod.AGENT)} -- mkdir -p -m 0700 {' '.join(q(d) for d in (LIMA_HOME,) + WMF_SBX_DIRS)}
+install -d -m 0700 -o {q(vm_mod.AGENT)} -g "$(id -g {q(vm_mod.AGENT)})" {q(SRC_DIR)}
+runuser -u {q(vm_mod.AGENT)} -- mkdir -p -m 0700 {' '.join(q(d) for d in (LIMA_HOME,) + WMF_SBX_DIRS if d != SRC_DIR)}
 runuser -u {q(vm_mod.AGENT)} -- sh -c {q('test -e "$1" || cat > "$1"')} sh {q(settings)} <<'WMF_SBX_SETTINGS'
 {SETTINGS}WMF_SBX_SETTINGS
 usermod -aG kvm {q(vm_mod.AGENT)}

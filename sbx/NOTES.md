@@ -94,8 +94,10 @@ to D12, and tracks A and B, which are not repeated here).
   files.pythonhosted.org (MCP venvs), and the nono pack registry (host not yet known: a
   denial will name it).
 - `limactl` logs proxy URLs with their password: `lima.redact` removes them from LimaError.
-- Inner sandboxes' repos go to `~/wmf-sbx-src` (settings written by the install, if none),
-  the one writable directory the session gives them.
+- Inner sandboxes' repos go to `/home/wmf-sbx-src` (settings written by the install, if
+  none), the one writable directory the session gives them. Not under `/home/agent`: the
+  inner VM has the clones at the same paths (D8), and uses that home itself (N3: create
+  refused `~/wmf-sbx-src`). A sandbox installed before this keeps its old settings.
 - `TMPDIR` must be the session's (`/tmp/claude-UID`, launch-claude.sh): `/tmp` is
   write-only under nono, and Lima builds its cloud-init ISO in TMPDIR.
 - In a nested session a new pty is not a terminal; `test_real_pty_*` skips.

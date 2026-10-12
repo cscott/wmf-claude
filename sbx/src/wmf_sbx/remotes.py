@@ -71,7 +71,8 @@ UNSET_SENTINEL = "(unset)"
 
 def _git(host_dir, args, run=subprocess.run):
     return run(
-        ["git", "-C", host_dir] + args, capture_output=True, text=True
+        ["git", "-C", host_dir] + args, capture_output=True, text=True,
+        stdin=subprocess.DEVNULL
     )
 
 
@@ -390,7 +391,8 @@ def unfetched_tips(state, run=subprocess.run):
         if not is_git_repo(host_dir, run=run):
             continue
         listed = run(
-            ["git", "ls-remote", url], capture_output=True, text=True
+            ["git", "ls-remote", url], capture_output=True, text=True,
+            stdin=subprocess.DEVNULL
         )
         if listed.returncode != 0:
             unreachable.append((host_dir, remote, (listed.stderr or "").strip()))

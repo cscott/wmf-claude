@@ -77,10 +77,6 @@ to D12, and tracks A and B, which are not repeated here).
   20 tools; the skills use 5 read-only ones; 15 write under the engineer's credential.
 - [ ] **Upstream topic: Claude Code's hooks tell the agent to offer profile changes after any
   nono denial, even a harmless `ls ~`**.
-- [ ] **Audit `capture_output=True` calls for `stdin=subprocess.DEVNULL`**. 8 of 11 lack it today (checked: `image.py` ×4, `remotes.py` 75 and 394
-  — `git ls-remote` can prompt for a host key or credentials —, `repos.py` 44,
-  `session.py` 312), and `lima.Limactl.call` captures output with `input=None`, so a
-  `limactl` prompt would hang invisibly. Make the check routine (one grep).
 
 ### From the design documents
 
@@ -301,7 +297,15 @@ to D12, and tracks A and B, which are not repeated here).
   host `claude -p` refreshed it. If `long` shows this mid-session, consider letting the
   proxy have the host's Claude Code refresh the login (not refreshing it itself: the
   refresh token rotates, and the host's copy would break).
-- Still to run on the engineer's host: `long` (started), a blind run, and macOS.
+- `long`, first version (the model asked to `sleep` in a loop): the session ended within 10
+  minutes (209 requests, all 200); Claude Code does not block on long commands. Now the
+  script feeds one `claude -p --input-format stream-json` session a message every 10
+  minutes (RAN: 3 of 3 replies, one proxy).
+- `limactl shell` passes stdin to SSH, which reads it even when the command does not:
+  piped input to `resume` was eaten by the checks before the session. `Limactl.call` now
+  gives limactl `/dev/null` unless the call has `input` or is `interactive` (the session,
+  `exec`); the other capturing subprocess calls also get `/dev/null`.
+- Still to run on the engineer's host: `long` (again), a blind run, and macOS.
 - A shallow host repo (`git clone --depth`): `git clone --shared` copies the objects and
   writes no alternates file; `sandbox-repos.sh` accepts that (RAN).
 

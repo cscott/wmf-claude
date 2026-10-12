@@ -677,7 +677,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
     if args.nested:
         print(color_mod.error(NESTED_WARNING), file=sys.stderr)
         say("+ nested: QEMU and Lima in the sandbox, the agent in the kvm group")
-        script = nested_mod.install_script(arch)
+        script = nested_mod.install_script(arch, image_mod.base_image(arch))
         argv = (["sudo", "env"] + [f"{k}={v}" for k, v in
                                    sorted(image_mod.guest_proxy_env(env).items())]
                 + ["bash", "-s"])

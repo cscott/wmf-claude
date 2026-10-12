@@ -78,6 +78,15 @@ to D12, and tracks A and B, which are not repeated here).
   grant for the inner SSH port: `--open-port` is connect and listen, and Lima's port comes
   from the ephemeral window the session opens. Still to RAN: N3, and the nono pack
   registry's host (not found in the binary; a denial will name it).
+- N3, first run: `limactl` refuses root (`must not run as the root user`), so the install
+  runs it as the agent. `cloud.debian.org` redirects to geo-picked mirrors
+  (`gemmei.ftp.acc.umu.se`), which no allowlist can list: the install downloads the base
+  image (checked against its digest) to `/var/cache/wmf-sbx/base`, and the builder boots
+  that copy (`image.local_base`; not in the cache key). A failed `limactl create` or
+  `start` of a builder deletes it. `limactl` logs proxy URLs with their password (nono's
+  session password, in a session): `lima.redact` removes them from LimaError. Inner
+  sandboxes' repos go to `~/wmf-sbx-src` (settings written by the install, if none).
+  Inner egress through the rewritten proxy URL is still not RAN.
 - `TMPDIR` must be the session's (`/tmp/claude-UID`, launch-claude.sh): `/tmp` is
   write-only under nono, and Lima builds its cloud-init ISO in TMPDIR.
 - Inner egress: Lima rewrites the session's proxy variables (nono's proxy on loopback) to

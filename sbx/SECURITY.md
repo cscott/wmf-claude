@@ -179,6 +179,14 @@ control comes with `--sudo` mode.)
 
 ## 6a. Nested sandboxes (`create --nested`)
 
+**A nested sandbox is less secure than a normal one. Use it only to work
+on wmf-claude or wmf-sbx itself; for all other work, do not pass
+`--nested`.** Inside the sandbox VM, nono gives the agent more: the
+attack surface of the outer VM's kernel through `/dev/kvm`, Lima's and
+QEMU's sockets and data, more writable directories, and more download
+hosts. The host boundary (section 1) is the same, but the nono layer in
+the sandbox is weaker.
+
 For work on wmf-sbx itself, a nested sandbox lets the agent run Lima VMs
 of its own. Root installs QEMU, OVMF and Lima at `create` and adds the
 agent to the `kvm` group; the sessions get `/dev/kvm`, `~/.lima` (with

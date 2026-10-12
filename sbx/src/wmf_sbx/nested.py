@@ -94,7 +94,7 @@ if ! /usr/local/bin/limactl --version 2>/dev/null | grep -q {q(LIMA_VERSION)}; t
   rm -rf "$tmp"
 fi
 install -d -m 0755 {' '.join(q(d) for d in READ_DIRS)}
-install -d -m 0700 -o {q(vm_mod.AGENT)} -g {q(vm_mod.AGENT)} {' '.join(q(d) for d in (LIMA_HOME,) + WMF_SBX_DIRS)}
+runuser -u {q(vm_mod.AGENT)} -- mkdir -p -m 0700 {' '.join(q(d) for d in (LIMA_HOME,) + WMF_SBX_DIRS)}
 usermod -aG kvm {q(vm_mod.AGENT)}
 install -d -m 0755 /etc/wmf-sbx
 touch {q(MARKER)}

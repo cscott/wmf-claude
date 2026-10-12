@@ -316,7 +316,9 @@ class ResumeArgsTests(unittest.TestCase):
 
     def test_conversations(self):
         self.assertTrue(resume.starts_a_conversation([]))
-        self.assertTrue(resume.starts_a_conversation(["-p", "mcp list"]))
+        self.assertTrue(resume.starts_a_conversation(["--model", "haiku"]))
+        self.assertFalse(resume.starts_a_conversation(["-p", "mcp list"]))
+        self.assertFalse(resume.starts_a_conversation(["--print", "hi"]))
         self.assertFalse(resume.starts_a_conversation(["mcp", "list"]))
         self.assertFalse(resume.starts_a_conversation(["--version"]))
         self.assertEqual(resume.default_claude_args(False), [])

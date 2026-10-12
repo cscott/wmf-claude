@@ -42,6 +42,7 @@ SESSION_FLAGS = CONTINUE_FLAGS + ("--resume", "-r")
 # nothing about whether there is anything to --continue next time. From
 # `claude --help`: the informational flags, and every subcommand.
 INFORMATIONAL_FLAGS = ("--version", "-v", "--help", "-h")
+PRINT_FLAGS = ("-p", "--print")
 AGENT_SUBCOMMANDS = frozenset(
     "agents attach auth auto-mode doctor gateway import install logs mcp "
     "plugin plugins project respawn rm setup-token stop kill ultrareview "
@@ -61,9 +62,11 @@ def starts_a_conversation(claude_args):
     """Whether this tail hands over to a conversation, which is what the
     `attached` flag records. `-- --version` or `-- mcp list` does not, and
     marking the sandbox attached for it makes the next resume pass
-    --continue to a Claude with nothing to continue, which exits 1."""
+    --continue to a Claude with nothing to continue, which exits 1. Nor
+    does `-p`: `--continue` does not take up a print-mode run (RAN: "No
+    conversation found to continue" after only `-p` runs)."""
     args = list(claude_args or [])
-    if any(a in INFORMATIONAL_FLAGS for a in args):
+    if any(a in INFORMATIONAL_FLAGS + PRINT_FLAGS for a in args):
         return False
     return not (args and args[0] in AGENT_SUBCOMMANDS)
 

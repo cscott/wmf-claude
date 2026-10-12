@@ -311,7 +311,13 @@ to D12, and tracks A and B, which are not repeated here).
   (two per message: Claude Code retries once). The token never changed: nothing refreshes
   an idle host's login. So a long session works through the proxy, and the host login is
   not a source to rely on; `wmf-sbx login` is.
-- Still to run on the engineer's host: a real `wmf-sbx login`, a blind run, and macOS.
+- `wmf-sbx login` on the engineer's host (Linux, KVM): the token was read from the
+  transcript and saved; `resume` then used it with no login prompt. With the pty at 2000
+  columns, Claude Code's text was garbled on the engineer's terminal; the pty now has the
+  terminal's width, at least 120 (the token is ~110 characters).
+- `--continue` does not take up a `-p` run ("No conversation found to continue"): only an
+  interactive session marks a sandbox attached.
+- Still to run on the engineer's host: a blind run, and macOS.
 - Docker sbx's sign-in (Docker's docs, and our pre-deletion SECURITY.md §7.5): `/login` ran
   in the sandbox; the host's egress proxy completed the OAuth exchange, kept the token on
   the host (one per host, shared by every sandbox), refreshed it, and swapped a

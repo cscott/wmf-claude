@@ -50,6 +50,13 @@ class FindTokenTests(unittest.TestCase):
                 f"Paste code here if prompted >\r\n\x1b[>0q{TOKEN}\r\n")
         self.assertEqual(login.find_token(text), TOKEN)
 
+    def test_the_pty_is_the_terminals_width_but_wide_enough_for_the_token(self):
+        import collections
+        size = collections.namedtuple("Size", "columns lines")
+        self.assertEqual(login.columns(lambda: size(200, 50)), 200)
+        self.assertEqual(login.columns(lambda: size(80, 24)), login.MIN_COLUMNS)
+        self.assertGreater(login.MIN_COLUMNS, len(TOKEN) + 4)
+
     def test_no_token(self):
         self.assertIsNone(login.find_token("Error: cancelled\r\n"))
 

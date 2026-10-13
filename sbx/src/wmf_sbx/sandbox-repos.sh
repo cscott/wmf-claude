@@ -92,7 +92,7 @@ clone_repo() {
   # upstream, `origin` stays the host's repository.
   remote=origin
   if [[ -z "$upstream" && "$reset" == 1 ]]; then
-    warn "$path: no upstream is known (no gerrit:/gitlab: name, no https origin on the host); it is reset to the host's branch, not upstream"
+    warn "$path: no upstream is known (no gerrit:/gitlab: name, no https origin on the host); it is reset to the host repo's master (or main), which may be behind upstream"
   fi
   if [[ -n "$upstream" ]]; then
     git -C "$path" remote rename origin local

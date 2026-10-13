@@ -40,8 +40,6 @@ Docker sbx leftovers:
   real `sbx create` uses"), create.py (`sbx create` requires ...), repos.py ("as with
   Docker sbx"), ls_remotes.py ("the name-prefix guess it used to make", "NOTES §48").
   `git grep -n -i -E 'docker sbx|sbx (create|run)|Docker Sandboxes' sbx`.
-- [ ] **`bin/git-review-check`'s `$SANDBOX_NAME`**: a Docker Sandboxes variable (the bug is
-  under "Git transport and host remotes"; fix that first).
 - [ ] **`sbx/reference/Secure_use_guidelines.wt`** recommends `docker sbx`: it is a copy of
   a wiki page; refresh the copy (or the page) or drop it.
 
@@ -83,9 +81,6 @@ Development scaffolding:
   Jest wiring, `tests/` dirs, `QUnitTestModule`, `tests/parser/*.txt`) and say which runners do
   not apply.
 - [ ] **VisualEditor's git submodule is not cloned or initialised** in the sandbox clone. `sandbox-repos.sh` has no submodule step.
-- [ ] **`--reset-all` semantics**. It must reset to the *upstream* branch
-  (Gerrit/GitLab), never to the host's branch. Today, a repo with no known upstream keeps the
-  host repo as `origin` and `safe-reset` goes there silently (`sandbox-repos.sh`, `clone_repo`). Refuse `--reset-all` (or warn per repo) when the upstream is unknown, and test it.
 - [ ] **Watch for the TCG segfaults on real hardware**: Claude Code (Bun),
   jsdoc, a Jest worker, and QEMU itself once at boot; each passed on retry. Maybe the same as
   an unexplained `limactl start` exit 1 after 24 s, seen once.
@@ -94,11 +89,6 @@ Development scaffolding:
 
 ### Git transport and host remotes
 
-- [ ] **`git safe-reset local` inside the VM falls through to the Gerrit check**. `git-review-check` trusts `local` only when `$SANDBOX_NAME`
-  is set, which was a Docker Sandboxes variable. Lima sets nothing like it, and
-  `wmf-sbx-ls-remotes` is not in the image. Give the VM a marker that the script can trust
-  (an env var in the launcher/settings `env`, or a file the image owns) and update the
-  comment at `bin/git-review-check` line 35.
 - [ ] **Verify host `git maintenance` and the alternates**:
   that the host's background maintenance does not prune objects that a `--shared` clone in
   the VM borrows while gc is suspended.
@@ -317,6 +307,11 @@ Development scaffolding:
 
 ### Clones, remotes, gc (host ↔ VM)
 
+- `git-review-check` treats `local` as the sandbox's mirror (a local-only "is HEAD there"
+  check, not Gerrit) only when its URL is under the VM's host mount
+  (`/run/wmf-sbx/host/`, `template.HOST_MOUNT_ROOT`), as `clone_repo` makes it. A host repo's
+  own remote named `local` gets the Gerrit check.
+
 - Lima transport: each repo's git dir is a read-only Lima mount under `/run/wmf-sbx/host/`;
   the VM has a `git clone --shared` at the host's absolute path; `origin` = upstream, `local` =
   the mount; VM → host through `wmfsbx://NAME/PATH` (`git-remote-wmfsbx`, upload-pack only, as
@@ -384,8 +379,10 @@ Development scaffolding:
   the old file and keys, with one note per run.
 - `--reset-all` (checked against the code and in tests): every clone is reset, each to
   `origin`, the upstream URL from its canonical (Gerrit, or GitLab followed to the fork's
-  root) or else the host's https `origin`. It falls back to the host's branch only when
-  upstream does not fetch or no upstream is known, and warns for both.
+  root) or else the host's https `origin`. Only when upstream does not fetch or no upstream
+  is known does it reset to the host repo's `master` (or `main`; `git safe-reset` with no
+  branch), never to the host's current branch, and it warns for both
+  (test_wmf_sbx_repos.py, `CloneRepoTests`).
 - `WMF_SBX_GIT_HASH_OVERRIDE=latest`: `create` takes the newest cached image for this
   arch and uid (`image.newest_image`, also used by `login`); it builds, keyed on HEAD,
   only when there is none.

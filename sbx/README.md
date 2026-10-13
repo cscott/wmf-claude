@@ -287,7 +287,8 @@ wmf-sbx create PRIMARY[:ro] [EXTRA[:ro] ...] [options]
   resets to its tip. `--reset-all` resets the repos you named too. Only
   if upstream cannot be fetched, or wmf-sbx cannot tell what it is (no
   `gerrit:`/`gitlab:` name and no https `origin` on the host), is a repo
-  reset to your host checkout's branch instead; `create` warns for each.
+  reset to your host repo's `master` (or `main`) instead, which may be
+  behind upstream; `create` warns for each.
 - `--name NAME`: the sandbox name (default `sbx-<primary>`). The host
   remote has the same name.
 - `--no-remotes`: add no host remote, and leave host gc as it is.

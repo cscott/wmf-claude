@@ -58,7 +58,7 @@ Development scaffolding:
   example paths.
 - [ ] **This file**: trim it to what a maintainer needs (the decisions and findings that
   the code depends on); move the to-dos to Phabricator (#WMF-Claude).
-- [ ] **`sbx/upstream/`**: drop what upstream took (the `ste-switch` topic and !130 are
+- [ ] **`sbx/upstream/`**: drop what upstream took (!130 and !133, the STE switch, are
   merged), file the rest, and remove the directory when it is empty.
 
 ### Testing and the MediaWiki setup
@@ -190,21 +190,23 @@ Development scaffolding:
 
 ### Upstream work and repo hygiene
 
-- [ ] **Follow MRs !130, !131, !132**: the branch's base (`lima-port-base`)
-  already carries their commits. Check their state with:
+- [ ] **Follow MRs !131 and !132**: `lima-port` is rebased on upstream `main` 70712f6
+  (!130 and !133 merged) and carries their commits. Check their state with:
   ```bash
   P='https://gitlab.wikimedia.org/api/v4/projects/repos%2Fproduct-safety-and-integrity%2Fwmf-claude'
-  for m in 130 131 132; do curl -s "$P/merge_requests/$m" \
+  for m in 131 132; do curl -s "$P/merge_requests/$m" \
     | jq -r '"!\(.iid) \(.state) \(.merge_commit_sha // .squash_commit_sha // "-") \(.title)"'; done
   ```
-  When one merges, rebase onto upstream `main` and take upstream's version of
-  its files (!132: `bin/session-start.sh`, `hooks/context/nono/`, the seam
-  tests; !131: `bin/wmf-claude-setup`; !130: `skills/run-tests`). Keep
-  `hooks/context/lima-sbx/`. A reviewer's change goes to the MR branch.
+  When one merges, rebase onto upstream `main` (`git rebase wmf/main`; on a conflict
+  in a file the MR changed, take the branch commit's own version, then check that the
+  tip's tree did not change) and take upstream's version of its files (!132:
+  `bin/session-start.sh`, `hooks/context/nono/`, the seam tests; !131:
+  `bin/wmf-claude-setup`). Keep `hooks/context/lima-sbx/`. A reviewer's change goes to
+  the MR branch.
 - [ ] **Shared-file edits must be upstreamable**. Outside `sbx/` and
   `lima-port/`, the branch now changes `bin/claude` (`--local-web=LO-HI` ranges),
   `hooks/context/lima-sbx/*`, `package.json`, `tests/test-templates.sh`, `SECURITY.md`,
-  `.gitignore` (checked: `git diff --stat lima-port-base..HEAD`). Split them into
+  `.gitignore` (checked: `git diff --stat wmf/main..HEAD -- ':!sbx' ':!lima-port'`). Split them into
   self-contained commits justified without sbx, or patch them at build time.
 - [ ] **File the tasks in `sbx/upstream/`**: (1) core REST
   header-case lookup; (2) `wdio-mediawiki` empty `MW_SCRIPT_PATH`; (3) Popups

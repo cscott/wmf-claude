@@ -92,7 +92,6 @@ Development scaffolding:
 - [ ] **Verify host `git maintenance` and the alternates**:
   that the host's background maintenance does not prune objects that a `--shared` clone in
   the VM borrows while gc is suspended.
-- [ ] **Known gap: gc stays enabled for a repo that is cloned but gets no host remote**. Suspend gc for every repo whose objects a clone borrows.
 - [ ] **A full `wmf-sbx ls`**: sandboxes, their clones, and unfetched-commit
   counts per clone; `wmf-sbx-ls-remotes` lists only the host-side remotes.
 - [ ] **Sandbox-to-sandbox `wmf-sbx cp`**. `cp.py` still refuses it ("write
@@ -303,6 +302,10 @@ Development scaffolding:
 
 ### Clones, remotes, gc (host ↔ VM)
 
+- gc: every host repo that a sandbox clones from lists the sandbox in `wmfSbx.borrower`
+  (multi-valued) and has gc suspended, with or without a host remote (a "name-taken" skip
+  gets none); `rm` unlists it, and gc comes back when no borrower and no marked remote is
+  left (`remotes.resume_gc`).
 - Submodules (VisualEditor's `lib/ve`, wmf-claude's MCP servers): `init_submodules` in
   `sandbox-repos.sh` takes each from the host's copy in the mounted git dir
   (`modules/NAME`), and else from the URL in `.gitmodules`. When the host's copy lacks the

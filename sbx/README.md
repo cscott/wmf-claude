@@ -363,6 +363,7 @@ Cypress binary.
 wmf-sbx rm NAME            # asks first; refuses if the agent has unfetched commits
 wmf-sbx rm --force NAME
 wmf-sbx rm --prune         # remotes and state of sandboxes whose VM is gone
+wmf-sbx rm --scan DIR      # remotes and gc entries, in the repos under DIR, of sandboxes with no state file
 wmf-sbx image prune        # golden images that no sandbox uses
 ```
 

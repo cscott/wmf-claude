@@ -10,9 +10,16 @@ commits runs first, as before.
 Usage:
   wmf-sbx-rm [--dry-run] [--keep-remotes] [-f|--force] NAME [NAME ...]
   wmf-sbx-rm --prune [--dry-run]
+  wmf-sbx-rm --scan DIR [--dry-run]
+
+--prune cleans up after a sandbox whose VM is gone but whose state file
+is not. --scan DIR is for the reverse, a lost state file: in every git
+repo under DIR, it removes the host remotes and gc entries of sandboxes
+that no state file knows, and turns gc back on.
 """
 
 import argparse
+import os
 import subprocess
 import sys
 
@@ -169,12 +176,30 @@ def main(argv=None, run=subprocess.run, env=None, lima=None, confirm=input):
         "--prune", action="store_true",
         help="Clean up state and remotes for sandboxes that no longer exist",
     )
+    parser.add_argument(
+        "--scan", metavar="DIR", action="append", default=[],
+        help="In every git repo under DIR, remove the host remotes and gc "
+        "entries of sandboxes that have no state file (a lost state file)",
+    )
     args = parser.parse_args(argv)
 
-    if not args.name and not args.prune:
-        parser.error("give a sandbox name, or --prune")
+    if not args.name and not args.prune and not args.scan:
+        parser.error("give a sandbox name, --prune or --scan DIR")
 
     status = 0
+    for root in args.scan:
+        root = os.path.abspath(os.path.expanduser(root))
+        if not os.path.isdir(root):
+            print(f"error: --scan {root}: not a directory", file=sys.stderr)
+            status = 1
+            continue
+        found = remotes_mod.scan_orphans(root, state_mod.list_names(env=env), run=run,
+                                         warn=warn, dry_run=args.dry_run)
+        prefix = "would remove" if args.dry_run else "removed"
+        for host_dir, what in found:
+            print(f"  {prefix} {what} in {host_dir}", file=sys.stderr)
+        if not found:
+            print(f"nothing of an unknown sandbox under {root}.", file=sys.stderr)
     if args.prune:
         try:
             pruned = prune(dry_run=args.dry_run, run=run, env=env, lima=lima)

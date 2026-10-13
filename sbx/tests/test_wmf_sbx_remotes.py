@@ -12,6 +12,8 @@ The daemon URLs are local paths, which `git ls-remote` accepts, so even
 unfetched_tips runs against real refs.
 """
 
+import contextlib
+import io
 import os
 import shutil
 import subprocess
@@ -365,6 +367,63 @@ class GcSuspensionTests(unittest.TestCase):
         m.remove_remotes(state, dry_run=True)
         self.assertEqual(self.local("gc.auto"), "0")
         self.assertEqual(self.local("wmfSbx.gcSuspended"), "true")
+
+
+@unittest.skipUnless(HAVE_GIT, "git not installed")
+class ScanOrphansTests(unittest.TestCase):
+    """`wmf-sbx rm --scan DIR`: what a lost state file left in host repos."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = os.path.join(self.tmp.name, "src")
+        self.shared = make_repo(os.path.join(self.root, "Extensions", "Cite"))
+        self.alone = make_repo(os.path.join(self.root, "core"))
+        os.makedirs(os.path.join(self.root, "core", "vendor", "x"))
+        for repo, sandbox in ((self.shared, "ghost"), (self.shared, "live"), (self.alone, "ghost")):
+            remote = "sandbox-" + sandbox
+            if sandbox == "ghost":
+                git(repo, "config", "--local", "gc.auto", "1500")
+            git(repo, "remote", "add", remote, "git://x/y")
+            m.set_marker(repo, remote, sandbox)
+            m.add_borrower(repo, sandbox)
+            m.suspend_gc(repo)
+
+    def local(self, repo, key):
+        r = subprocess.run(["git", "-C", repo, "config", "--local", "--get", key],
+                           capture_output=True, text=True)
+        return None if r.returncode else r.stdout.strip()
+
+    def test_finds_every_repo_but_not_inside_vendor(self):
+        self.assertEqual(sorted(m.find_repos(self.root)), sorted([self.shared, self.alone]))
+
+    def test_an_unknown_sandboxs_entries_go_and_gc_comes_back_when_nothing_is_left(self):
+        found = m.scan_orphans(self.root, ["live"])
+        self.assertEqual(sorted(f[1] for f in found),
+                         ["gc borrower (sandbox ghost)", "gc borrower (sandbox ghost)",
+                          "remote sandbox-ghost (sandbox ghost)",
+                          "remote sandbox-ghost (sandbox ghost)"])
+        self.assertEqual(m.marked_remotes(self.shared), ["sandbox-live"])
+        self.assertEqual(m.borrowers(self.shared), ["live"])
+        self.assertEqual(self.local(self.shared, "gc.auto"), "0")     # live still borrows
+        self.assertEqual(m.marked_remotes(self.alone), [])
+        self.assertEqual(self.local(self.alone, "gc.auto"), "1500")   # restored
+
+    def test_a_dry_run_changes_nothing(self):
+        found = m.scan_orphans(self.root, ["live"], dry_run=True)
+        self.assertEqual(len(found), 4)
+        self.assertEqual(sorted(m.marked_remotes(self.alone)), ["sandbox-ghost"])
+        self.assertEqual(self.local(self.alone, "gc.auto"), "0")
+
+    def test_rm_scan_uses_the_state_files(self):
+        import wmf_sbx.rm as rm
+        env = {"XDG_STATE_HOME": os.path.join(self.tmp.name, "state")}
+        state_mod.save(state_mod.new_state("live"), env=env)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(rm.main(["--scan", self.root], env=env), 0)
+        self.assertIn("removed remote sandbox-ghost (sandbox ghost)", err.getvalue())
+        self.assertEqual(m.marked_remotes(self.shared), ["sandbox-live"])
 
 
 @unittest.skipUnless(HAVE_GIT, "git not installed")

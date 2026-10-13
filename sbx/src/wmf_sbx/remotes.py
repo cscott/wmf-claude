@@ -509,3 +509,51 @@ def prune_dead(live_names, run=subprocess.run, warn=None, dry_run=False, env=Non
             state_mod.delete(name, env=env)
         pruned.append((name, results))
     return pruned
+
+
+# Not walked into by scan_orphans: no repo of ours is inside them, and
+# they can be large.
+SCAN_SKIP_DIRS = (".git", "node_modules", "vendor")
+
+
+def find_repos(root):
+    """Every git working tree under `root` (a directory with a .git dir
+    or file), `root` included."""
+    for dirpath, dirnames, filenames in os.walk(root):
+        if ".git" in dirnames or ".git" in filenames:
+            yield dirpath
+        dirnames[:] = sorted(d for d in dirnames if d not in SCAN_SKIP_DIRS)
+
+
+def scan_orphans(root, known_names, run=subprocess.run, warn=None, dry_run=False):
+    """For a lost state file (`wmf-sbx rm --scan DIR`): in every repo under
+    `root`, remove the sandbox remotes and the borrower entries of
+    sandboxes not in `known_names`, then turn gc back on if nothing is
+    left. Returns [(host_dir, what), ...] of what was (or would be)
+    removed. Only what carries our marker is touched."""
+    warn = warn or (lambda msg: None)
+    known = set(known_names)
+    found = []
+    for host_dir in find_repos(root):
+        changed = False
+        for remote in marked_remotes(host_dir, run=run):
+            owner = marker_value(host_dir, remote, run=run)
+            if owner is None or owner in known:
+                continue
+            found.append((host_dir, f"remote {remote} (sandbox {owner})"))
+            if not dry_run:
+                result = _git(host_dir, ["remote", "remove", remote], run=run)
+                if result.returncode not in (0, EXIT_NO_SUCH_REMOTE):
+                    warn(f"{host_dir}: could not remove remote {remote!r}: "
+                         f"{(result.stderr or '').strip()}")
+                changed = True
+        for owner in borrowers(host_dir, run=run):
+            if owner in known:
+                continue
+            found.append((host_dir, f"gc borrower (sandbox {owner})"))
+            if not dry_run:
+                remove_borrower(host_dir, owner, run=run)
+                changed = True
+        if changed:
+            resume_gc(host_dir, run=run, warn=warn)
+    return found

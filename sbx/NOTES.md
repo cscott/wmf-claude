@@ -232,11 +232,21 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
 - **The guest's clock** (found in item 6): nono signs each leaf certificate with
   `notBefore` = now, and the guest's clock ran a fraction of a second behind: the first
   request after boot failed "certificate is not yet valid", the next passed. With
-  `restrict=on` the guest has no NTP (`System clock synchronized: no`), so the skew can only
-  grow. `ptp_kvm` does not load in this nested guest ("Operation not supported"); to try
-  unnested. Else `start` sets the guest's clock, or a guestfwd time source. For A2.3.
-  Lima has its own guest time sync (the host agent logs "Time sync: drift 0ms within
-  threshold"); to check whether it covers this.
+  `restrict=on` the guest has no NTP (`System clock synchronized: no`). `ptp_kvm` does
+  not load in this nested guest ("Operation not supported").
+  - **Lima sets the guest's clock itself**, not over the network, so `restrict=on` does
+    not stop it (Lima 2.2.1, `pkg/hostagent/timesync.go`, `pkg/guestagent/api/server/
+    server.go`). 5 s after the guest agent is up, then every 10 s, the host agent sends
+    its time over the guest agent's virtio-serial channel; when the guest is more than
+    100 ms off, the guest agent steps the clock (`settimeofday`). In the inner VM: "guest
+    clock adjusted (was -908ms off)" 2 s after READY, then drift 0 to 17 ms.
+  - What is left: (a) from READY to the first sync (about 2 s here), the guest can be a
+    second behind; (b) after it, up to 100 ms behind, so the first request to a new host
+    can still fail while its new leaf is younger than the skew. The failure in item 6 was
+    (a).
+  - No guest agent, no sync: Lima runs none in `plain: true` mode
+    (`hostagent.go`: "Guest agent will not be running"). wmf-sbx's template is not plain;
+    `lima/wmf-claude.yaml` is.
 - **Item 9, contained mode behind the egress proxy** (a session's nono inside the guest,
   `--upstream-proxy 192.168.5.100:3128`):
   - The inner nono sends no credentials upstream, so it gets nothing from a proxy with a

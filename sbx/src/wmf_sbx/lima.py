@@ -60,7 +60,8 @@ class Limactl:
         the command is `interactive` (the engineer's terminal): `limactl
         shell` passes stdin to SSH, which reads it even when the command
         does not, so a pipe into `wmf-sbx resume` was eaten by the checks
-        before the session (RAN), and a prompt would hang invisibly."""
+        before the session (RAN), and a prompt would hang invisibly.
+        `extra_env` adds variables to this call's environment."""
         argv = [self.exe] + [str(a) for a in args]
         env = self.env
         if extra_env:

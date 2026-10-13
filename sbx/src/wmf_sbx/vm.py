@@ -14,6 +14,7 @@ it calls `limactl` through lima.Limactl, so the tests fake it.
   (lima/guest-claude.sh does the same).
 """
 
+import datetime
 import os
 import pwd
 import re
@@ -22,6 +23,7 @@ import shutil
 import tempfile
 
 from . import disk as disk_mod
+from . import egress as egress_mod
 from . import image as image_mod
 from . import lima as lima_mod
 from . import template as template_mod
@@ -87,11 +89,27 @@ def vm_type_of(name, lima, env=None):
     return m.group(1) if m else None
 
 
-def start_instance(name, lima, env=None, vm_type=None):
-    """`limactl start`, through the QEMU wrapper on QEMU."""
-    vm_type = vm_type or vm_type_of(name, lima, env)
-    lima.start(instance_name(name), timeout=START_TIMEOUT,
-               extra_env=qemu_env(vm_type, env) or None)
+def start_instance(name, lima, env=None, vm_type=None, log=print):
+    """`limactl start`, through the QEMU wrapper on QEMU. A sandbox behind
+    the egress proxy starts it in egress mode (egress.wrapper_env), and
+    then waits for Lima's first sync of the guest's clock."""
+    from . import state as state_mod
+    inst = instance_name(name)
+    if not egress_mod.enabled(state_mod.load(name, env)):
+        vm_type = vm_type or vm_type_of(name, lima, env)
+        lima.start(inst, timeout=START_TIMEOUT,
+                   extra_env=qemu_env(vm_type, env) or None)
+        return
+    try:
+        extra = egress_mod.wrapper_env(name, env)
+    except egress_mod.EgressError as e:
+        raise VmError(f"{name}: {e}") from None
+    since = datetime.datetime.now().astimezone().replace(microsecond=0)
+    lima.start(inst, timeout=START_TIMEOUT, extra_env=extra)
+    if not egress_mod.wait_time_sync(
+            os.path.join(lima_mod.lima_home(env), inst, "ha.stderr.log"), since):
+        log(f"warning: Lima has not synced {inst}'s clock yet; HTTPS through the "
+            f"egress proxy can fail until it does (a guest clock behind the host's)")
 
 
 def create(name, tmpl, lima=None, log=print, backing=None, env=None):
@@ -116,10 +134,11 @@ def create(name, tmpl, lima=None, log=print, backing=None, env=None):
         lima.overlay_disk(inst, backing, env=env)
         check_disk(name, lima=lima, env=env)
     log(f"+ limactl start {inst} (the first boot runs the provisioning)")
-    start_instance(name, lima, env=env, vm_type=tmpl.get("vmType"))
+    start_instance(name, lima, env=env, vm_type=tmpl.get("vmType"), log=log)
     if backing:
         check_disk(name, lima=lima, env=env, running=True)
     return inst
+
 
 
 def check_disk(name, lima=None, env=None, running=False):
@@ -191,7 +210,7 @@ def ensure_running(name, lima=None, log=print, env=None):
         except (image_mod.ImageError, OSError) as e:
             log(f"warning: could not refresh the extra CA certificates ({e})")
         log(f"+ limactl start {instance_name(name)}")
-        start_instance(name, lima, env=env)
+        start_instance(name, lima, env=env, log=log)
 
 
 def unsignalled_hostagent(name, env=None, kill=None):

@@ -18,6 +18,14 @@ Per sandbox, in egress_dir(NAME), all 0600 in a 0700 directory:
   port            the port of the proxy the guestfwd connects to now.
   wrapper.pid     the running wrapper (SIGUSR1 starts a new proxy).
   proxy.log       the proxy's log.
+  dns.sock        the fake-address resolver (fakedns.py), a thread of
+                  the wrapper; names is its mapping, append-only.
+  cred.sock       the session's credential proxy (credproxy.py), bound
+                  by `resume` while a session runs.
+
+The guest reaches the three on EGRESS_ADDR: the proxy on EGRESS_PORT,
+the resolver on DNS_PORT, the credential proxy on CRED_PORT. Each is a
+`guestfwd`, so the guest needs no route to the host.
 
 `nono proxy --upstream-proxy` sends no credentials (sbx/NOTES.md,
 "`--sudo` egress"). When the host's proxy needs them (a nested sandbox
@@ -30,8 +38,10 @@ this proxy, cannot send one (NOTES, item 9).
 
 import base64
 import contextlib
+import datetime
 import json
 import os
+import platform
 import shutil
 import socket
 import subprocess
@@ -47,6 +57,8 @@ from . import state as state_mod
 # DHCP range, not the gateway (192.168.5.2) or DNS (192.168.5.3).
 EGRESS_ADDR = "192.168.5.100"
 EGRESS_PORT = 3128
+DNS_PORT = 53
+CRED_PORT = 3129
 PROFILE = os.path.join(kit.REPO_ROOT, "profiles", "wmf-engineer.json")
 # The guest's apt sources (/etc/apt/mirrors/debian*.list in the image's
 # Debian 13 cloud base) are all on this host.
@@ -56,6 +68,12 @@ DEBIAN_DOMAINS = ("deb.debian.org",)
 CA_DAYS = 365
 # How long the wrapper waits for a new proxy to listen.
 LISTEN_TIMEOUT = 15
+# The state key of a sandbox behind the proxy (create --egress-proxy).
+STATE_KEY = "egress"
+STATE_VALUE = "proxy"
+WRAPPER = os.path.join(kit.REPO_ROOT, "sbx", "bin", "wmf-sbx-qemu")
+# How long `start` waits for Lima's first time sync of the guest.
+TIME_SYNC_TIMEOUT = 60
 
 
 class EgressError(Exception):
@@ -85,6 +103,23 @@ def port_file(name, env=None):
 
 def config_file(name, env=None):
     return _path(name, "proxy.json", env)
+
+
+def dns_socket(name, env=None):
+    return _path(name, "dns.sock", env)
+
+
+def cred_socket(name, env=None):
+    return _path(name, "cred.sock", env)
+
+
+def names_file(name, env=None):
+    return _path(name, "names", env)
+
+
+def make_dir(name, env=None):
+    """The sandbox's egress directory, 0700, made if missing."""
+    return _make_dir(name, env)
 
 
 def _write_private(path, text):
@@ -157,6 +192,74 @@ def remove(name, env=None):
     shutil.rmtree(egress_dir(name, env), ignore_errors=True)
 
 
+def enabled(state):
+    """Whether the sandbox runs behind the host egress proxy."""
+    return bool(state) and state.get(STATE_KEY) == STATE_VALUE
+
+
+def qemu_arch(machine=None):
+    machine = (machine or platform.machine()).lower()
+    if machine in ("x86_64", "amd64"):
+        return "x86_64"
+    if machine in ("arm64", "aarch64"):
+        return "aarch64"
+    raise EgressError(f"no QEMU architecture for this machine ({machine})")
+
+
+def wrapper_env(name, env=None, arch=None, which=shutil.which):
+    """Write proxy.json, and return the variables that make `limactl
+    start` run QEMU through the wrapper (qemu_wrapper.py). Lima's host
+    agent inherits them from `limactl start`, so they go on every start
+    of the VM: a start without them boots it with a route out."""
+    env = os.environ if env is None else env
+    arch = arch or qemu_arch()
+    real = which(f"qemu-system-{arch}", path=env.get("PATH"))
+    if not real:
+        raise EgressError(f"qemu-system-{arch} is not on PATH")
+    if os.path.realpath(real) == os.path.realpath(WRAPPER):
+        raise EgressError(f"qemu-system-{arch} on PATH is the egress wrapper, not QEMU")
+    return {f"QEMU_SYSTEM_{arch.upper()}": WRAPPER,
+            "WMF_SBX_QEMU_REAL": real,
+            "WMF_SBX_EGRESS_CONFIG": write_config(name, env)}
+
+
+TIME_SYNC_DONE = ("Time sync: guest clock adjusted", "Time sync: drift")
+
+
+def time_synced(log_text, since):
+    """Whether Lima's host agent log (ha.stderr.log, JSON lines) has a
+    finished time sync at or after `since` (an aware datetime)."""
+    for line in log_text.splitlines():
+        try:
+            entry = json.loads(line)
+            stamp = datetime.datetime.fromisoformat(entry["time"])
+        except (ValueError, KeyError, TypeError):
+            continue
+        if stamp >= since and str(entry.get("msg", "")).startswith(TIME_SYNC_DONE):
+            return True
+    return False
+
+
+def wait_time_sync(log_path, since, timeout=TIME_SYNC_TIMEOUT, clock=time.monotonic,
+                   sleep=time.sleep):
+    """Wait for Lima's first time sync after a start. The guest has no
+    NTP behind restrict=on, and nono's leaf certificates start at "now":
+    a guest clock behind the host's fails TLS through the proxy until the
+    sync (sbx/NOTES.md, "`--sudo` egress", item 7). True once synced,
+    False when the time runs out."""
+    deadline = clock() + timeout
+    while True:
+        try:
+            with open(log_path, encoding="utf-8", errors="replace") as f:
+                if time_synced(f.read(), since):
+                    return True
+        except OSError:
+            pass
+        if clock() >= deadline:
+            return False
+        sleep(0.5)
+
+
 def upstream(env=None):
     """The host's HTTPS proxy as a dict {host, port, user, password}, or
     None. Read from the host's own variables (a loopback address stays
@@ -199,7 +302,10 @@ def proxy_config(name, env=None, nono="nono"):
                     "XDG_STATE_HOME": os.path.join(egress_dir(name, env), "state")},
             "upstream": upstream(env),
             "portFile": port_file(name, env),
-            "pidFile": _path(name, "wrapper.pid", env)}
+            "pidFile": _path(name, "wrapper.pid", env),
+            "dnsSocket": dns_socket(name, env),
+            "namesFile": names_file(name, env),
+            "credSocket": cred_socket(name, env)}
 
 
 def write_config(name, env=None, nono="nono"):
@@ -237,14 +343,42 @@ def guest_environment(name, env=None):
 
 
 def guest_files(name, env=None):
-    """Files for the guest, {path: content}. With no guest DNS, apt and
-    git still work through the proxy, which gets the name in CONNECT."""
+    """Files for the guest, {path: content}. With no guest DNS, apt still
+    works through the proxy, which gets the name in CONNECT."""
     url = proxy_url()
     return {
         "/etc/apt/apt.conf.d/90wmf-sbx-proxy":
             f'Acquire::http::Proxy "{url}";\nAcquire::https::Proxy "{url}";\n',
-        "/etc/gitconfig": f"[http]\n\tproxy = {url}\n",
     }
+
+
+ENV_BEGIN = "# wmf-sbx egress begin"
+ENV_END = "# wmf-sbx egress end"
+
+
+def guest_provision(name=None, env=None):
+    """Shell for the guest's root provisioning (sandbox-provision.sh, at
+    every boot): the proxy variables in /etc/environment, between markers
+    (Lima's propagateProxyEnv is off), apt's and git's proxy, and glibc
+    straight to the fake-address resolver over TCP (`use-vc`).
+    systemd-resolved would try UDP first and go to TCP only after
+    timeouts (A2.0 item 9), so it is masked."""
+    lines = ["# The host egress proxy (egress.py).",
+             f"sed -i '/^{ENV_BEGIN}$/,/^{ENV_END}$/d' /etc/environment",
+             "cat >> /etc/environment <<'WMF_SBX_ENV'", ENV_BEGIN]
+    lines += [f"{k}={v}" for k, v in sorted(guest_environment(name, env).items())]
+    lines += [ENV_END, "WMF_SBX_ENV"]
+    for path, content in sorted(guest_files(name, env).items()):
+        lines += [f"install -d -m 0755 {os.path.dirname(path)}",
+                  f"cat > {path} <<'WMF_SBX_FILE'", content.rstrip("\n"), "WMF_SBX_FILE"]
+    lines += [f"git config --system http.proxy {proxy_url()}",
+              "if systemctl list-unit-files systemd-resolved.service >/dev/null 2>&1; then",
+              "  systemctl disable --now systemd-resolved.service >/dev/null 2>&1 || true",
+              "  systemctl mask systemd-resolved.service >/dev/null 2>&1 || true",
+              "fi",
+              "rm -f /etc/resolv.conf",
+              f"printf 'nameserver {EGRESS_ADDR}\\noptions use-vc\\n' > /etc/resolv.conf"]
+    return "\n".join(lines) + "\n"
 
 
 def free_port():
@@ -293,14 +427,40 @@ def remove_pid(path, pid):
                 os.unlink(path)
 
 
+def _check_fwd_path(path):
+    # ' ends the sh -c quote, `,` the netdev option, `:` a socat address,
+    # and a space splits $(cat ...).
+    if any(c in path for c in "', :"):
+        raise EgressError(f"cannot use {path!r} in a guestfwd: it has ', comma, : or space")
+
+
 def guestfwd(port_path):
     """The `guestfwd` netdev option. libslirp splits `cmd:` into argv
     itself, with no shell, so `sh -c`; the port is read at each guest
     connection, so replacing the proxy needs no restart (RAN)."""
-    if "'" in port_path or "," in port_path:
-        raise EgressError(f"cannot use {port_path!r} in a guestfwd: it has ' or ,")
+    _check_fwd_path(port_path)
     return (f"guestfwd=tcp:{EGRESS_ADDR}:{EGRESS_PORT}-cmd:"
             f"sh -c 'exec socat - TCP:127.0.0.1:$(cat {port_path})'")
+
+
+def socket_guestfwd(guest_port, sock_path):
+    """A `guestfwd` from EGRESS_ADDR:guest_port to a Unix socket on the
+    host. A socket with no listener refuses the connection; a port could
+    have been taken by another host service since."""
+    _check_fwd_path(sock_path)
+    return (f"guestfwd=tcp:{EGRESS_ADDR}:{int(guest_port)}-cmd:"
+            f"sh -c 'exec socat - UNIX-CONNECT:{sock_path}'")
+
+
+def guestfwds(config):
+    """Every guestfwd of the netdev, comma-separated: the proxy, and the
+    resolver and the credential proxy when the config names them."""
+    fwds = [guestfwd(config["portFile"])]
+    if config.get("dnsSocket"):
+        fwds.append(socket_guestfwd(DNS_PORT, config["dnsSocket"]))
+    if config.get("credSocket"):
+        fwds.append(socket_guestfwd(CRED_PORT, config["credSocket"]))
+    return ",".join(fwds)
 
 
 class AuthShim:

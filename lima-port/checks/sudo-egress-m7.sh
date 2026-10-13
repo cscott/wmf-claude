@@ -75,8 +75,8 @@ preflight() {
   [[ $(uname -s) == Darwin ]] && { sw_vers; sysctl -n machdep.cpu.brand_string; }
   [[ $(uname -s) == Linux ]] && ls -l /dev/kvm
   for t in limactl nono socat openssl python3 "qemu-system-$QARCH"; do
-    local v=--version; [[ $t == socat ]] && v=-V
-    if command -v "$t" >/dev/null; then pass "$t: $("$t" $v 2>&1 | grep -m1 -i version)"
+    local v=--version; [[ $t == socat ]] && v=-V; [[ $t == openssl ]] && v=version
+    if command -v "$t" >/dev/null; then pass "$t: $("$t" $v 2>&1 | grep -m1 '[0-9]\.[0-9]')"
     else fail "$t is not installed"; fi
   done
   git -C "$REPO" log --oneline -1
@@ -144,13 +144,15 @@ clock() {
 
 swap() {
   step "swap (item 8)"
-  # The proxy's own decision, from its log: a proxy upstream of it may
-  # refuse the host too.
+  # The proxy's own decision, from its log. A proxy upstream of it (in a
+  # nested run) may refuse the host too: the log says "deny" then, with
+  # another reason, and the guest gets no 200.
   local host=${M7_SWAP_HOST:-example.org}
-  decided() { grep "host=\"$host\"" "$E/proxy.log" | tail -1 | grep -o 'decision="[a-z]*"'; }
+  last() { grep "host=\"$host\"" "$E/proxy.log" | tail -1 | grep -o 'decision=.*'; }
+  listed() { last | grep -q 'not in the allowlist'; }
   local w old new; w=$(wrapper_pid); old=$(cat "$E/port")
   echo "before: $(gcurl "https://$host/")"
-  [[ $(decided) == 'decision="deny"' ]] && pass "$host denied before" || fail "$host not denied before: $(decided)"
+  listed && pass "$host denied by the allowlist before" || fail "$host not denied by the allowlist before: $(last)"
   echo "$host" >> "$E/allow"
   egress_py "e.write_config('$NAME')"
   kill -USR1 "$w"
@@ -160,7 +162,8 @@ swap() {
   listening "$new" && pass "the new proxy stays up" || fail "the new proxy is gone"
   listening "$old" && pass "the old proxy is still up" || fail "the old proxy is gone"
   echo "after: $(gcurl "https://$host/")"
-  [[ $(decided) == 'decision="allow"' ]] && pass "$host allowed after" || fail "$host not allowed after: $(decided)"
+  if listed; then fail "$host still denied by the allowlist after"
+  else pass "$host passes the allowlist after: $(last)"; fi
 }
 
 # $1: how to stop (stop, force, kill-wrapper, kill-qemu)

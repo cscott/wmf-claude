@@ -244,6 +244,12 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
     second behind; (b) after it, up to 100 ms behind, so the first request to a new host
     can still fail while its new leaf is younger than the skew. The failure in item 6 was
     (a).
+  - In the m7 script's runs (golden image, nested), the first sync came about 5 s after
+    "guest agent is alive" ("was -1530ms off", then "-1529ms"), and both times before
+    `limactl start` returned: right after it, guest - host was 0.042 s and the first
+    requests to three hosts all got 200. So (a) closes before READY when the guest agent
+    comes up early; A2.3 still waits for the first "Time sync:" line, so as not to depend
+    on that.
   - No guest agent, no sync: Lima runs none in `plain: true` mode
     (`hostagent.go`: "Guest agent will not be running"). wmf-sbx's template is not plain;
     `lima/wmf-claude.yaml` is.
@@ -274,7 +280,15 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   - Found here: `PR_SET_PDEATHSIG` is tied to the thread that forked the child. The wrapper
     started each replacement proxy from a short-lived thread, so the new proxy died
     when that thread ended. Fixed in the wrapper (one long-lived thread).
-- Not yet: 7 (unnested, macOS).
+- **Item 7, nested, with `lima-port/checks/sudo-egress-m7.sh all`** (a plain Lima VM
+  behind the wrapper; `M7_IMAGE` = the golden image, as the sandbox cannot download
+  Debian's): every check passed. The guest reaches a wiki (200), not an unlisted host, not
+  an address direct, no DNS; the swap moves the guestfwd to a new proxy and both stay up;
+  `limactl stop`, `stop -f`, killing QEMU, and killing the wrapper each leave no wrapper,
+  proxy or QEMU, and the VM starts again. In the swap, the session's own proxy refuses
+  example.org upstream of the egress proxy, so the script checks the egress proxy's
+  reason ("not in the allowlist" before, not after), not the HTTP status.
+- Not yet: 7 on the engineer's Linux host (unnested) and on macOS (TESTING-MACOS step 9).
 
 ### Testing in the sandbox
 

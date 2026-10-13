@@ -63,6 +63,9 @@ PROFILE = os.path.join(kit.REPO_ROOT, "profiles", "wmf-engineer.json")
 # The guest's apt sources (/etc/apt/mirrors/debian*.list in the image's
 # Debian 13 cloud base) are all on this host.
 DEBIAN_DOMAINS = ("deb.debian.org",)
+# What create's wmf-claude-setup needs that the profile has not: `nono
+# pull` of the base pack (RAN: denied, and the only host missing).
+SETUP_DOMAINS = ("registry.nono.sh",)
 # The CA's lifetime. It is per sandbox and its key stays on the host; a
 # year outlives a sandbox, and `status` shows the expiry.
 CA_DAYS = 365
@@ -292,7 +295,7 @@ def proxy_argv(name, env=None, nono="nono"):
     from . import session as session_mod
     argv = [nono, "proxy", "-v", "--no-auth", "--listen", "127.0.0.1", "--profile", PROFILE]
     for domain in (list(session_mod.REGISTRY_DOMAINS) + list(DEBIAN_DOMAINS)
-                   + extra_domains(name, env)):
+                   + list(SETUP_DOMAINS) + extra_domains(name, env)):
         argv += ["--allow-domain", domain]
     argv += ["--proxy-ca-cert", ca_cert(name, env), "--proxy-ca-key", ca_key(name, env),
              "--log-file", _path(name, "proxy.log", env)]

@@ -1454,7 +1454,11 @@ clonefile option stays open for later. Decided with cananian,
   - Exit: RAN in a new nested sandbox (not `dev`): a create on QEMU,
     its time and disk use against a full copy (D2), and the seven
     checks again through `wmf-sbx`.
-- **B3. Warm snapshots** (after B2 and the sync with track A).
+- **B3. Warm snapshots** (after B2 and the sync with track A). Status:
+  **built, not RAN** (`lima-port/checks/warm-b3.sh`). Decided
+  (cananian, 2026-10-13): a snapshot's clones borrow the host repos'
+  objects, and the key is a gc borrower in each (`snapshot-KEY`); a host
+  repo without the entry makes the create cold.
   - **Key:** the golden image's identity, `--nested`, and the sorted
     set of the resolved directories, each as (canonical, host path,
     read-only or not). Not the flags that only change the dependency

@@ -139,6 +139,13 @@ class FakeLima:
     def overlay_disk(self, name, backing, env=None):
         self.calls.append(("overlay", name, backing))
         self.backings[name] = backing
+        disk = self.disk_path(name, env)
+        os.makedirs(os.path.dirname(disk), exist_ok=True)
+        with open(disk, "wb") as f:
+            f.write(b"overlay")
+
+    def rebase_disk(self, path, backing):
+        self.calls.append(("rebase", path, backing))
 
     def disk_chain(self, name, env=None, force_share=False):
         """What `qemu-img info --backing-chain` says of an overlay made by
@@ -183,6 +190,8 @@ class Env(unittest.TestCase):
         self.env = {"XDG_STATE_HOME": os.path.join(self.tmp, "state"),
                     "XDG_CACHE_HOME": os.path.join(self.tmp, "cache"),
                     "HOME": self.tmp,
+                    # not the Lima instances of the machine that runs the tests
+                    "LIMA_HOME": os.path.join(self.tmp, "lima"),
                     # not the keychain of the machine that runs the tests
                     "WMF_SBX_HOST_LOGIN": "0"}
         d = image.entry_dir(self.KEY, self.env)
@@ -352,6 +361,106 @@ class CreateTests(Env):
         self.assertIn("Lima 2.3.0", self.err)
         self.assertIn("--full-disk", self.err)
 
+    # -- warm snapshots (track B3) --
+
+    def snapshots(self):
+        import wmf_sbx.snapshot as snapshot
+        return [(k, g, p, m) for k in snapshot.list_keys(self.env)
+                for g, p, m in snapshot.list_generations(k, self.env)]
+
+    def clone_calls(self):
+        return [i for i in self.lima_inputs if i and ("clone_repo " in i or "refresh_repo " in i)]
+
+    def create_tracking(self, *extra, lima=None):
+        """create(), with the guest scripts' stdin recorded."""
+        lima = lima or FakeLima()
+        self.lima_inputs = []
+        orig = lima.call
+
+        def call(*args, **kw):
+            self.lima_inputs.append(kw.get("input"))
+            return orig(*args, **kw)
+        lima.call = call
+        return self.create(*extra, lima=lima)
+
+    def test_a_cold_create_makes_a_snapshot_after_the_setup(self):
+        import wmf_sbx.snapshot as snapshot
+        self.assertEqual(self.create_tracking("--name", "one"), 0, self.err)
+        (key, _gen, path, meta), = self.snapshots()
+        self.assertIn("this create makes snapshot", self.err)
+        self.assertEqual(meta["sandbox"], "one")
+        self.assertEqual(meta["repos"], [{"canonical": None, "path": os.path.realpath(self.repo),
+                                          "readOnly": False}])
+        self.assertFalse(os.stat(path).st_mode & 0o222)
+        # sealed after the setup, stopped, rebased onto the golden image,
+        # and the sandbox is on a new overlay on the snapshot
+        inputs = [i or "" for i in self.lima_inputs]
+        setup_i = max(i for i, x in enumerate(inputs) if "def mediawiki_setup" in x)
+        seal_i = max(i for i, x in enumerate(inputs) if "cloud-init clean --logs" in x)
+        self.assertLess(setup_i, seal_i)
+        self.assertIn(("stop", "wmf-sbx-one"), self.lima.calls)
+        self.assertIn(("rebase", os.path.join(snapshot.key_dir(key, self.env),
+                                              "." + os.path.basename(path)),
+                       image.golden_path(self.KEY, self.env)), self.lima.calls)
+        self.assertEqual(self.lima.backings["wmf-sbx-one"], path)
+        self.assertEqual(state_mod.load("one", self.env)["snapshot"], path)
+        self.assertIn(snapshot.borrower_name(key),
+                      subprocess.run(["git", "-C", self.repo, "config", "--get-all",
+                                      "wmfSbx.borrower"], capture_output=True,
+                                     text=True).stdout)
+
+    def test_the_next_create_of_the_same_repos_is_warm(self):
+        self.assertEqual(self.create("--name", "one"), 0, self.err)
+        (_key, _g1, first, _m), = self.snapshots()
+        self.assertEqual(self.create_tracking("--name", "two"), 0, self.err)
+        self.assertIn("+ warm: from snapshot", self.err)
+        self.assertEqual(state_mod.load("two", self.env).get("disk"), "overlay")
+        # its disk was an overlay on the snapshot; its clones were refreshed
+        self.assertIn(("overlay", "wmf-sbx-two", first), self.lima.calls)
+        self.assertTrue(any("\nrefresh_repo " in i for i in self.clone_calls()))
+        self.assertFalse(any("\nclone_repo " in i for i in self.clone_calls()))
+        # and it froze the next generation
+        self.assertEqual(len(self.snapshots()), 2)
+
+    def test_cold_and_no_snapshot(self):
+        self.assertEqual(self.create("--name", "one"), 0, self.err)
+        self.assertEqual(self.create_tracking("--name", "two", "--cold"), 0, self.err)
+        self.assertIn("+ cold: --cold", self.err)
+        self.assertFalse(any("\nrefresh_repo " in i for i in self.clone_calls()))
+        self.assertEqual(len(self.snapshots()), 2)
+        self.assertEqual(self.create("--name", "three", "--no-snapshot"), 0, self.err)
+        self.assertEqual(len(self.snapshots()), 2)
+        self.assertNotIn("snapshot", state_mod.load("three", self.env))
+
+    def test_a_replaced_host_repo_makes_it_cold(self):
+        import wmf_sbx.snapshot as snapshot
+        self.assertEqual(self.create("--name", "one"), 0, self.err)
+        (key, _g, _p, _m), = self.snapshots()
+        subprocess.run(["git", "-C", self.repo, "config", "--unset-all", "wmfSbx.borrower"],
+                       check=True)
+        self.assertEqual(self.create_tracking("--name", "two"), 0, self.err)
+        self.assertIn("was replaced or removed", self.err)
+        self.assertFalse(any("\nrefresh_repo " in i for i in self.clone_calls()))
+        self.assertIn(snapshot.borrower_name(key),
+                      subprocess.run(["git", "-C", self.repo, "config", "--get-all",
+                                      "wmfSbx.borrower"], capture_output=True,
+                                     text=True).stdout)
+
+    def test_vz_makes_no_snapshot(self):
+        self.assertEqual(self.create("--name", "one", "--vm-type", "vz"), 0, self.err)
+        self.assertEqual(self.snapshots(), [])
+
+    def test_a_failed_freeze_keeps_the_sandbox_on_its_own_disk(self):
+        class NoRebase(FakeLima):
+            def rebase_disk(self, path, backing):
+                raise lima_mod.LimaError("qemu-img rebase failed")
+        lima = NoRebase()
+        self.assertEqual(self.create("--name", "one", lima=lima), 0, self.err)
+        self.assertIn("The sandbox is fine", self.err)
+        self.assertEqual(self.snapshots(), [])
+        self.assertTrue(os.path.exists(lima.disk_path("wmf-sbx-one", self.env)))
+        self.assertEqual(lima.vms["wmf-sbx-one"], "Running")
+
     def walk_create(self, *extra, maps=({}, {})):
         """A --dry-run create with the dependency walk (offline): its exit
         status, and how often it fetched WMF CI's maps."""
@@ -429,6 +538,23 @@ class CreateTests(Env):
         self.assertIn("epoch", built)
         self.assertEqual(state_mod.load("demo", self.env)["image"], image.cache_key(built))
         self.assertIn("building a new one", self.err)
+
+    def test_a_cold_snapshot_is_not_made_on_an_image_about_to_expire(self):
+        self.fake_build(self.inputs)
+        created = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
+            days=13, hours=12)
+        with open(os.path.join(image.entry_dir(image.cache_key(self.inputs), self.env),
+                               "manifest.json"), "w") as f:
+            json.dump({"created": created.isoformat(), "inputs": self.inputs}, f)
+        self.built = []
+        self.assertEqual(self.create("--name", "demo", inputs=False), 0, self.err)
+        (built,) = self.built
+        self.assertIn("epoch", built)
+        # Without a snapshot to make, the image has a day and a half left.
+        self.built = []
+        self.assertEqual(self.create("--name", "other", "--no-snapshot", inputs=False), 0,
+                         self.err)
+        self.assertNotIn("epoch", self.built[0])
 
     def test_no_expire_keeps_an_old_golden_image(self):
         self.old_entry_for_the_inputs()

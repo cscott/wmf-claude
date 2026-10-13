@@ -173,6 +173,12 @@ class Limactl:
         self._qemu_img("create", "-q", "-f", "qcow2", "-F", "qcow2", "-b", backing, tmp)
         os.replace(tmp, disk)
 
+    def rebase_disk(self, path, backing):
+        """`qemu-img rebase` of a stopped qcow2 file onto `backing`: what
+        the file's old backing chain held, and `backing` lacks, is copied
+        into it first (safe mode)."""
+        self._qemu_img("rebase", "-f", "qcow2", "-F", "qcow2", "-b", backing, path)
+
     def disk_chain(self, name, env=None, force_share=False):
         """`qemu-img info --backing-chain --output=json` of the instance's
         disk, as a list. `force_share` (-U) for a running instance, whose

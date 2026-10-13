@@ -136,7 +136,7 @@ class CreateFlowTests(Env):
 
     def argv(self):
         return ["--no-deps", "--config", os.path.join(self.tmp, "repos.yaml"),
-                "--image", self.KEY, "--name", "demo", self.repo]
+                "--image", self.KEY, "--name", "demo", "--no-snapshot", self.repo]
 
     def test_create_runs_the_setup_last(self):
         lima = FakeLima()

@@ -182,6 +182,18 @@ control comes with `--sudo` mode.)
   with Lima's key in `~/.lima/_config/user`).
 - **The golden image** is read-only in the cache and checked against
   its checksum by `status`. It holds no credential.
+- **Warm snapshots** (QEMU) carry a sandbox's disk to the next sandbox
+  of the same repos. A snapshot is frozen only at the end of `create`,
+  before any session ran (D1), so no agent wrote to it; but what
+  `create` ran (npm and composer install scripts, which also run in
+  every cold create) now lives on in later sandboxes of the same repos,
+  until the golden image is 14 days old (`images.maxAge`) and every
+  snapshot on it goes cold. `--cold` starts over at once. The freeze
+  removes the sandbox's identity (machine-id, SSH host keys, cloud-init
+  state) and its setup logs. The guest writes its filesystem, not the
+  qcow2 headers, and `create` checks the backing chain of every disk.
+  A snapshot keeps host gc off in the repos it borrows from, as a
+  sandbox does (above), for as long as the snapshot exists.
 
 ## 6a. Nested sandboxes (`create --nested`)
 

@@ -36,12 +36,14 @@ import hashlib
 import json
 import os
 import secrets
+import shutil
 import subprocess
 
 from . import disk as disk_mod
 from . import image as image_mod
 from . import lima as lima_mod
 from . import remotes as remotes_mod
+from . import vm as vm_mod
 
 SUBDIR = "snapshots"
 BORROWER_PREFIX = "snapshot-"
@@ -253,3 +255,77 @@ def prune(env=None, gc_age=None, now=None, run=subprocess.run, warn=None):
                         os.unlink(os.path.join(key_dir(key, env), leftover))
                     os.rmdir(key_dir(key, env))
     return gone
+
+
+# -- the freeze ------------------------------------------------------------
+
+def seal_script():
+    """Run as root in the sandbox before its disk is frozen: what makes it
+    this sandbox goes, as image-build.sh seals the golden image
+    (HANDOFF-LIMA.md §5.2). Each sandbox gets its machine-id and SSH host
+    keys again at its next boot, from Lima's per-instance cloud-init data;
+    the next `create` writes the plan, the setup log and the session files
+    again."""
+    home = vm_mod.AGENT_HOME
+    return f"""set -eu
+cd /
+rm -f {home}/wmf-sbx-plan.json {home}/.wmf-sbx/wmf-sbx-setup.log \\
+      {home}/.wmf-sbx/wmf-sbx-setup.status
+rm -rf {home}/.wmf-sbx/timings
+rm -f /etc/ssh/ssh_host_*
+rm -f /etc/sudoers.d/90-cloud-init-users
+rm -f /usr/local/share/ca-certificates/cloud-init-ca-cert-*.crt
+cloud-init clean --logs --seed --machine-id
+sync
+"""
+
+
+def freeze(name, key, golden, meta, lima=None, env=None, run=subprocess.run, log=print,
+           warn=None):
+    """Freeze the sandbox `name`'s disk as the key's next generation, and
+    put the sandbox on a new overlay on it (track B3). At the end of
+    `create` only, before any session (D1). Returns the generation's path.
+    On a failure the sandbox gets its own disk back, and SnapshotError."""
+    lima = lima or lima_mod.Limactl()
+    inst = vm_mod.instance_name(name)
+    disk = lima.disk_path(inst, env)
+    log(f"+ snapshot {key}: seal and stop {name}")
+    res = vm_mod.shell(name, ["sudo", "bash", "-s"], lima=lima, input=seal_script(),
+                       check=False)
+    if res.returncode != 0:
+        raise SnapshotError(f"sealing {name} failed (exit {res.returncode})")
+    lima.stop(inst)
+    moved = None
+    try:
+        with locked(key, env):
+            register_borrowers(key, host_dirs(meta), run=run, warn=warn)
+            gen = new_generation()
+            dest = os.path.join(key_dir(key, env), gen + ".qcow2")
+            tmp = os.path.join(key_dir(key, env), "." + gen + ".qcow2")
+            shutil.move(disk, tmp)
+            moved = tmp
+            if os.path.realpath(disk_mod.backing_file(tmp) or "") != os.path.realpath(golden):
+                log(f"+ qemu-img rebase -b {golden} (the snapshot sits on the golden "
+                    f"image directly)")
+                lima.rebase_disk(tmp, golden)
+            os.chmod(tmp, 0o444)
+            os.replace(tmp, dest)
+            moved = dest
+            write_meta(os.path.join(key_dir(key, env), gen + ".json"),
+                       dict(meta, key=key, golden_path=golden, sandbox=name,
+                            created=datetime.datetime.now(
+                                datetime.timezone.utc).isoformat(timespec="seconds")))
+        lima.overlay_disk(inst, dest, env=env)
+    except (OSError, lima_mod.LimaError, SnapshotError) as e:
+        if moved is not None and not os.path.exists(disk):
+            os.chmod(moved, 0o644)
+            shutil.move(moved, disk)
+            with contextlib.suppress(OSError):
+                os.unlink(moved[:-len(".qcow2")] + ".json")
+        log(f"+ limactl start {inst} (on its own disk: the snapshot failed)")
+        lima.start(inst, timeout=vm_mod.START_TIMEOUT)
+        raise SnapshotError(f"snapshot of {name} failed: {e}") from None
+    log(f"+ limactl start {inst} (on a new overlay on the snapshot)")
+    lima.start(inst, timeout=vm_mod.START_TIMEOUT)
+    vm_mod.check_disk(name, lima=lima, env=env, running=True)
+    return dest

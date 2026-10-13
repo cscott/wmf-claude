@@ -544,6 +544,16 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   and 33 MiB each. The outer sandbox for the run
   was made with Lima 2.3.0-beta.1 on the host: the overlay worked there too (`create`
   warned).
+- Warm snapshots (track B3, `snapshot.py`): the key is the golden image, `--nested` and the
+  set of (canonical, host path, read-only); the freeze runs at the end of every QEMU
+  `create`: the seal (identity, setup logs) in the guest, stop, the disk moved into
+  `snapshots/KEY/GEN.qcow2`, `qemu-img rebase` onto the golden image (depth 2), read-only,
+  a new overlay for the sandbox, start. A warm create refreshes the clones
+  (`refresh_repo`), runs `composer update`, `npm ci` where the lock file changed (a stamp in
+  node_modules) and `update.php`. Snapshots borrow the host repos' objects (the engineer's
+  choice over dissociating them): the key is a gc borrower, `snapshot-KEY`, and a host repo
+  without the entry makes the create cold. Golden images age (`images.maxAge`, an `epoch`
+  input); snapshots do not. Not RAN yet: `lima-port/checks/warm-b3.sh`.
 - Default VM memory is 8 GiB: phan on Translate was OOM-killed at 4 GiB.
 - Timings under TCG are 5–35× slower than a 16-core host (image build 26–41 min, create
   ~250–310 s, setup for Translate ~40 min); only compare them with each other.

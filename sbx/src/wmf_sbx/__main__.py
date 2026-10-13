@@ -10,6 +10,7 @@ import importlib
 import sys
 
 COMMANDS = {
+    "allow": "wmf_sbx.allow",
     "cp": "wmf_sbx.cp",
     "create": "wmf_sbx.create",
     "exec": "wmf_sbx.exec",

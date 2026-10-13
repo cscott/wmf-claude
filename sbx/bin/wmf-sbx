@@ -10,6 +10,7 @@
 #   wmf-sbx create PRIMARY [EXTRA...]   make a sandbox (a Lima VM)
 #   wmf-sbx start|stop|status NAME      boot, stop, check
 #   wmf-sbx exec NAME -- CMD...         run a command as the agent
+#   wmf-sbx allow NAME HOST...          open a host (sandboxes behind the egress proxy)
 #   wmf-sbx cp SRC DST                  copy; one side is NAME:PATH
 #   wmf-sbx rm NAME                     remove the VM, state and remotes
 #   wmf-sbx ls                          list the sandboxes
@@ -21,7 +22,7 @@ set -euo pipefail
 # any command this starts.
 unset SSH_AUTH_SOCK
 
-VERBS="cp create exec image login ls ls-remotes resolve resume rm run start status stop"
+VERBS="allow cp create exec image login ls ls-remotes resolve resume rm run start status stop"
 RETIRED="refresh-claude-md settings ports policy kit secret"
 
 usage() {

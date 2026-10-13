@@ -9,7 +9,7 @@ machine time and 30 minutes of yours.
 Nothing here changes your Mac outside these places: Homebrew packages,
 `~/wmf-claude`, `~/wmf-sbx-src` (the repos the sandbox works on),
 `~/.lima/wmf-sbx-*`, `~/.cache/wmf-sbx`, `~/.config/wmf-sbx`,
-`~/.local/state/wmf-sbx`, and `~/wmf-sbx-macos` for the results. Step 9
+`~/.local/state/wmf-sbx`, and `~/wmf-sbx-macos` for the results. Step 10
 removes everything wmf-sbx made.
 
 ## What you need
@@ -34,7 +34,7 @@ script -a session.log        # records everything you see from here on; `exit` s
 ```
 
 If a step fails, do not fix it: note the step number, keep going where you
-can, and say so in `RESULTS.md` (step 10). A failure on macOS is the
+can, and say so in `RESULTS.md` (step 11). A failure on macOS is the
 result we are looking for.
 
 ## 1. Install
@@ -168,7 +168,31 @@ wmf-sbx status mac-qemu
 wmf-sbx rm --force mac-qemu
 ```
 
-## 9. Clean up
+## 9. Optional: QEMU behind the host egress proxy (20 minutes)
+
+This is a measurement for a later mode of wmf-sbx (`--sudo`), not the
+sandbox you made above. A script makes one throwaway VM, `egress-m7`,
+from Lima's Debian 13 template. It runs the VM through a wrapper
+(`sbx/bin/wmf-sbx-qemu`) that cuts off the VM's network
+(QEMU `restrict=on`). The only way out is a `nono proxy` on the Mac,
+which the wrapper starts and stops. The script checks that the proxy
+lets the VM reach allowed hosts and nothing else, that a host can be
+allowed while the VM runs, what happens to the VM's clock, and that
+the proxy and QEMU stop with the VM.
+
+```bash
+brew install qemu socat nono
+~/wmf-claude/lima-port/checks/sudo-egress-m7.sh all
+~/wmf-claude/lima-port/checks/sudo-egress-m7.sh clean
+```
+
+It prints a PASS or FAIL line for each check and puts its logs in
+`~/wmf-sbx-macos/sudo-egress-m7-logs/`. One FAIL is expected on macOS:
+"kill-wrapper: still running". When the wrapper is killed, macOS does
+not stop its children the way Linux does, so QEMU and the proxy keep
+running. The script then kills them itself. Record any other FAIL.
+
+## 10. Clean up
 
 First check the recording for secrets, while the token is still there:
 
@@ -181,6 +205,7 @@ Want: `0 hits` for each credential found. (With an API key, keep
 
 ```bash
 wmf-sbx rm --force mac1
+~/wmf-claude/lima-port/checks/sudo-egress-m7.sh clean   # if you did step 9
 wmf-sbx rm --prune
 wmf-sbx image prune
 limactl list                               # want: no wmf-sbx-* left
@@ -192,13 +217,13 @@ To remove everything: also `rm -rf ~/.cache/wmf-sbx ~/.local/state/wmf-sbx
 use it otherwise. The token can be revoked at claude.ai (Settings, Claude
 Code) if you want.
 
-## 10. Send the results
+## 11. Send the results
 
 Stop the recording (`exit`), then write `~/wmf-sbx-macos/RESULTS.md`: the
-Mac model and chip, the macOS version, and for each step 1 to 9 "pass",
+Mac model and chip, the macOS version, and for each step 1 to 10 "pass",
 "fail" or "skipped", with a line about anything that surprised you.
 
-Then pack the directory (step 9 checked it for secrets):
+Then pack the directory (step 10 checked it for secrets):
 
 ```bash
 tar czf ~/wmf-sbx-macos.tgz -C ~ wmf-sbx-macos

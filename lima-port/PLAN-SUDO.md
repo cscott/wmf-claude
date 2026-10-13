@@ -104,7 +104,9 @@ and the Debian mirror:
    killed QEMU; the proxy goes with the VM each time; Lima's probe calls
    (`--version`, `-M none -accel help`, `-netdev help`) pass through.
 7. The same, unnested, on the engineer's host (KVM), and on macOS with
-   HVF (`TESTING-MACOS.md`; ask Kosta).
+   HVF (`TESTING-MACOS.md` step 9; ask Kosta). Both run
+   `checks/sudo-egress-m7.sh all` (items 2, 6 and 8 and the clock, on a
+   throwaway Lima VM; it passed nested, NOTES).
 
 8. Replacing the proxy under a running VM: a new proxy with one more
    host, `port` rewritten; a new guest connection to that host works, a
@@ -210,19 +212,29 @@ password went out after item 9: the proxy runs `--no-auth`.
   - A records only; AAAA answers NODATA, so clients use IPv4. Names in
     /etc/hosts (localhost, the guest's own name) are answered from that
     file first (nsswitch), never by the resolver.
-  - Where it runs: in the guest, as decided, or on the host as a thread
-    of the wrapper (like AuthShim), reached through a guestfwd. On the
-    host, root in the guest (`--sudo`) cannot change the mapping, and
-    the proxy can read it. But guestfwd carries TCP only, so the guest
-    would look names up over TCP (`options use-vc`; systemd-resolved
-    does TCP). To measure. Either way the mapping is an append-only
-    file in `egress/<name>/`.
+  - It runs **on the host**, next to the egress proxy (the engineer,
+    2026-10-13), as a thread of the wrapper like AuthShim, so the two can
+    share the mapping later. Root in the guest (`--sudo`) cannot change
+    the mapping. The mapping is an append-only file in `egress/<name>/`.
+  - The guest reaches it through a second guestfwd (e.g.
+    `192.168.5.101:53`), which is TCP only. guestfwd TCP is QEMU's
+    slirp: the guest's TCP ends inside QEMU, and the host side is a
+    local socket, so TCP costs little. To measure: the guest's resolver
+    must go to TCP at once. glibc does with `options use-vc`;
+    systemd-resolved tries UDP first and goes to TCP only after
+    timeouts (seen in item 9's journal). So point glibc straight at it,
+    or measure resolved's first lookup.
 - A contained session in a `sudo` sandbox: the session's nono gets
   `--upstream-proxy 192.168.5.100:3128 --allow-domain '*'` instead of
   the domain list, so `wmf-sbx allow` reaches it.
-- The guest's clock: no NTP behind `restrict=on`, and nono's leaf
-  certificates start at "now" (NOTES). Try `ptp_kvm` + chrony unnested;
-  else set the clock at each `start`.
+- The guest's clock: nono's leaf certificates start at "now", and the
+  guest has no NTP behind `restrict=on`. Lima's own time sync (guest
+  agent, virtio-serial) keeps the guest within 100 ms after its first
+  sync, about 2 s after READY (NOTES). So: keep `plain: false` (no guest
+  agent, no sync); `start` waits for the first "Time sync:" line in
+  `ha.stderr.log` before it returns; ask nono upstream to backdate
+  `notBefore` (mitmproxy backdates its leaves) for the 100 ms that is
+  left. `ptp_kvm` + chrony only if item 7 shows the sync is not enough.
 - The `sudo` invariants (replace "the agent is not in sudo"): an
   allowlisted host through the proxy answers; a host off the list, a
   POST to a read-only wiki, `host.lima.internal:22` and a direct

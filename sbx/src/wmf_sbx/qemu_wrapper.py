@@ -137,6 +137,23 @@ class Egress:
         except (OSError, ValueError, KeyError, egress_mod.EgressError) as e:
             self.log(f"could not start a new proxy, keeping the old one: {e}")
 
+    def start_replacer(self):
+        """Run replace() on a thread that lives as long as the wrapper, at
+        each request(). Not a thread per request: PR_SET_PDEATHSIG fires
+        when the thread that forked the proxy exits, so a short-lived one
+        would take its new proxy with it (seen in measurement 9)."""
+        self.wanted = threading.Event()
+
+        def loop():
+            while True:
+                self.wanted.wait()
+                self.wanted.clear()
+                self.replace()
+        threading.Thread(target=loop, daemon=True).start()
+
+    def request(self):
+        self.wanted.set()
+
     def stop(self):
         with self.lock:
             for proc in self.procs:
@@ -181,8 +198,8 @@ def run(args, env=None, popen=subprocess.Popen, execv=os.execv, self_path=None):
         qemu = popen(argv, preexec_fn=_die_with_parent)
         for sig in FORWARDED:
             signal.signal(sig, lambda s, _f: qemu.send_signal(s))
-        signal.signal(signal.SIGUSR1,
-                      lambda _s, _f: threading.Thread(target=egress.replace, daemon=True).start())
+        egress.start_replacer()
+        signal.signal(signal.SIGUSR1, lambda _s, _f: egress.request())
         return exit_status(qemu.wait())
     finally:
         signal.signal(signal.SIGUSR1, signal.SIG_IGN)

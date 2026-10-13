@@ -1,5 +1,5 @@
 ---
-description: Verify changes against a local MediaWiki dev wiki, cheapest tier first. Tier 1 is curl + /w/api.php (no browser, no MCP) for HTTP status, redirects, rendered HTML, and API responses; escalate to the chrome-devtools MCP only when you need pixels, the accessibility tree, console errors, or real interaction. Use when the user wants to manually test or verify a change on their local wiki.
+description: Verify changes against a local MediaWiki dev wiki, cheapest tier first. Tier 1 is curl + api.php (no browser, no MCP) for HTTP status, redirects, rendered HTML, and API responses; escalate to the chrome-devtools MCP only when you need pixels, the accessibility tree, console errors, or real interaction. Use when the user wants to manually test or verify a change on their local wiki.
 argument-hint: "[feature-description or url-path]"
 allowed-tools:
   - Bash
@@ -31,6 +31,8 @@ Requires the session launched with **`bin/claude --local-web`** (or `--chrome`, 
 
 Check the project's `CLAUDE.md` for a "Local development" / "Manual testing" section. If absent, ask for the base URL. Common patterns: `https://en.mediawiki.localhost` (MWDD), `http://localhost:8080` (docker), `http://dev.wiki.local.wmftest.net:8080`.
 
+Find the script path too (`$wgScriptPath`). Most dev wikis, MWDD among them, use `/w`: `/w/api.php`, `/w/rest.php`, pages at `/wiki/PageName`. A docroot install, such as CI's (Quibble) or a `composer serve` wiki, has the scripts at the root: `/api.php`, `/rest.php`, pages at `/index.php?title=PageName`. The examples below use `/w`. If `/w/api.php` returns `404`, try `/api.php`.
+
 ### Reach a vhost wiki
 
 Dev wikis are usually name-based vhosts on `127.0.0.1`, and outbound-by-hostname is routed through the profile's egress proxy (which only allows Wikimedia domains, so `*.localhost` gets a `403`). So connect to the loopback IP directly and carry the vhost in a `Host` header, which bypasses the proxy and hits the port `--local-web` opened:
@@ -52,8 +54,8 @@ Probe connectivity once before a batch of checks so you fail fast with a clear m
 ### What Tier 1 is good for
 
 - **HTTP behavior:** `-w "%{http_code} %{redirect_url}\n"` for status and redirects; `-D -` to dump headers (cache, `Content-Type`, a header a hook sets).
-- **Rendered HTML:** `curl ... /wiki/PageName | grep` for an element your change emits. Enough to confirm a hook fired or a parser tag rendered.
-- **The action/REST API** (`/w/api.php`, some setups `/api.php`, REST under `/w/rest.php`): drive logged-out or token flows, assert JSON with `jq`.
+- **Rendered HTML:** `curl ... /wiki/PageName | grep` (`/index.php?title=PageName` on a docroot install) for an element your change emits. Enough to confirm a hook fired or a parser tag rendered.
+- **The action/REST API** (`api.php` and `rest.php` under the script path: `/w/api.php`, or `/api.php` on a docroot install): drive logged-out or token flows, assert JSON with `jq`.
 
 ```bash
 curl -sS -k --resolve en.mediawiki.localhost:443:127.0.0.1 \
@@ -96,7 +98,7 @@ Only when Tier 1 can't answer it: visual output, accessibility tree, console err
 
 ### Authenticate (when needed)
 
-Navigate to `<BASE_URL>/wiki/Special:UserLogin`, `take_snapshot` for the username/password refs, `fill_form` both, then `click` submit. Or log in over the API in Tier 1 and only bring the browser up for the part that needs it.
+Navigate to `<BASE_URL>/wiki/Special:UserLogin` (`<BASE_URL>/index.php?title=Special:UserLogin` on a docroot install), `take_snapshot` for the username/password refs, `fill_form` both, then `click` submit. Or log in over the API in Tier 1 and only bring the browser up for the part that needs it.
 
 ---
 

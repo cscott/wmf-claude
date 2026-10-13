@@ -188,6 +188,21 @@ password went out after item 9: the proxy runs `--no-auth`.
 - `vm.ensure_running`: for a `sudo` sandbox, write `proxy.json` and give
   `limactl start` `QEMU_SYSTEM_<ARCH>=…/wmf-sbx-qemu`,
   `WMF_SBX_QEMU_REAL` and `WMF_SBX_EGRESS_CONFIG`.
+- Where this meets track B (B2 landed on `lima-port` before A2.3):
+  - `vm.create(name, tmpl, lima, log, backing, env)` makes the QEMU disk a
+    qcow2 overlay after `limactl create` and before the first `limactl
+    start`. The wrapper's environment goes on that first start (and on
+    every later one), so the order stays: create, overlay, check_disk,
+    start behind the wrapper, check_disk (`qemu-img info -U`).
+  - QEMU templates use `disk.placeholder_path` as the image. The egress CA
+    goes in `caCerts` beside the extra CA files (`template.py`).
+  - `image.images_in_use` reads each Lima instance's disk header and `rm`
+    removes the overlay with the instance; `rm` removes `egress/<name>/`
+    too.
+  - B3 stops and restarts the VM at the end of `create` to freeze a
+    snapshot. Each start runs a new wrapper with a new proxy (on a new
+    port) from the same config; item 7's lifecycle checks show a stopped
+    VM starts again behind it.
 - Name lookups in the guest: the inner nono of a contained session
   looks up each name before it CONNECTs upstream, and behind
   `restrict=on` with `hostResolver.enabled: false` nothing answers

@@ -26,9 +26,16 @@
 set -uo pipefail
 
 NAME=${M7_NAME:-egress-m7}
+# NAME goes into paths, a Python string and `rm -rf`: a plain name only.
+[[ $NAME =~ ^[a-z0-9][a-z0-9-]{0,40}$ ]] || { echo "M7_NAME: '$NAME' is not a plain name"; exit 2; }
 LOGS=${M7_LOGS:-sudo-egress-m7-logs}
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 E="${XDG_STATE_HOME:-$HOME/.local/state}/wmf-sbx/egress/$NAME"
+LIMA_DIR="${LIMA_HOME:-$HOME/.lima}/$NAME"
+# Written by `create` only. Every step that stops, kills or deletes needs
+# it, so that the script never acts on a Lima VM it did not make (an
+# M7_NAME that names one of yours).
+MARK="$E/made-by-sudo-egress-m7"
 PROXY=http://192.168.5.100:3128
 WIKI=https://en.wikipedia.org/w/api.php
 mkdir -p "$LOGS"
@@ -68,6 +75,10 @@ start_vm() {
       limactl start --tty=false "$NAME" 2>&1 | tail -3
 }
 wrapper_pid() { cat "$E/wrapper.pid" 2>/dev/null; }
+ours() {
+  [[ -e $MARK ]] && return 0
+  echo "refusing: this script did not make a Lima VM '$NAME' (no $MARK)"; exit 1
+}
 
 preflight() {
   step "preflight"
@@ -85,11 +96,17 @@ preflight() {
 
 create() {
   step "create"
+  if limactl list -q 2>/dev/null | grep -qx "$NAME"; then
+    fail "a Lima VM '$NAME' exists already: \`$0 clean\` if this script made it, or set M7_NAME"
+    return 1
+  fi
   egress_py "e.make_ca('$NAME'); print(e.write_config('$NAME'))" || { fail "egress config"; return 1; }
   local set=".caCerts.files = [\"$E/ca.pem\"] | .hostResolver.enabled = false | .propagateProxyEnv = false | .memory = \"${M7_MEMORY:-2GiB}\""
   [[ -n ${M7_IMAGE:-} ]] && set+=" | .images = [{\"location\": \"$M7_IMAGE\", \"arch\": \"$QARCH\"}]"
   limactl create --tty=false --name="$NAME" --vm-type=qemu --mount-none --containerd=none \
     --set "$set" template:debian-13 2>&1 | tail -2
+  limactl list -q 2>/dev/null | grep -qx "$NAME" || { fail "limactl create"; return 1; }
+  : > "$MARK"
   local t0=$SECONDS
   start_vm
   echo "first start took $((SECONDS - t0)) s"
@@ -99,14 +116,17 @@ create() {
 
 check() {
   step "check (items 2 and 6)"
+  ours
   local w; w=$(wrapper_pid)
   if [[ -n $w ]] && alive "$w"; then pass "wrapper pid $w"; else fail "no wrapper (pid file: '$w')"; return 1; fi
   children "$w"
   children "$w" | grep -q "qemu-system" && pass "QEMU is the wrapper's child" || fail "QEMU is not the wrapper's child"
   children "$w" | grep -q "nono proxy" && pass "nono proxy is the wrapper's child" || fail "no proxy under the wrapper"
   listening "$(cat "$E/port")" && pass "proxy on port $(cat "$E/port")" || fail "nothing on port $(cat "$E/port")"
-  grep -c 'wmf-sbx-qemu' "$HOME/.lima/$NAME/ha.stderr.log" | sed 's/^/wrapper lines in the Lima log: /'
-  ps -A -o command= | grep -- "-netdev user" | grep -v grep | tr ' ' '\n' | grep -A1 '^-netdev$' | tail -1
+  grep -c 'wmf-sbx-qemu' "$LIMA_DIR/ha.stderr.log" | sed 's/^/wrapper lines in the Lima log: /'
+  # This VM's QEMU only: its command line names the instance directory.
+  ps -A -o command= | grep -F -- "$LIMA_DIR/" | grep -- "-netdev user" | grep -v grep \
+    | tr ' ' '\n' | grep -A1 '^-netdev$' | tail -1
   [[ $(gcurl "$WIKI") == 200 ]] && pass "guest: wiki GET through the proxy is 200" || fail "guest: wiki GET is not 200"
   local off; off=$(gcurl https://example.com/)
   [[ $off != 200 ]] && pass "guest: example.com (off the list) refused ($off)" || fail "guest: example.com got through"
@@ -118,8 +138,9 @@ check() {
 
 clock() {
   step "clock"
-  grep 'Time sync' "$HOME/.lima/$NAME/ha.stderr.log" | grep -v 'within threshold' | tail -4
-  grep 'Time sync: drift' "$HOME/.lima/$NAME/ha.stderr.log" | tail -1
+  ours
+  grep 'Time sync' "$LIMA_DIR/ha.stderr.log" | grep -v 'within threshold' | tail -4
+  grep 'Time sync: drift' "$LIMA_DIR/ha.stderr.log" | tail -1
   gsh timedatectl show -p NTPSynchronized -p NTP 2>/dev/null
   if [[ $QARCH == x86_64 ]]; then
     gsh sudo modprobe ptp_kvm 2>&1 && gsh ls -l /dev/ptp0 && pass "ptp_kvm loads" || echo "ptp_kvm does not load"
@@ -138,12 +159,13 @@ clock() {
   done
   sleep 10
   # ha.stderr.log is rewritten at each start: this one is the restart's.
-  grep 'Time sync' "$HOME/.lima/$NAME/ha.stderr.log" | grep -v 'within threshold' | tail -3
-  grep 'Time sync: drift' "$HOME/.lima/$NAME/ha.stderr.log" | tail -1
+  grep 'Time sync' "$LIMA_DIR/ha.stderr.log" | grep -v 'within threshold' | tail -3
+  grep 'Time sync: drift' "$LIMA_DIR/ha.stderr.log" | tail -1
 }
 
 swap() {
   step "swap (item 8)"
+  ours
   # The proxy's own decision, from its log. A proxy upstream of it (in a
   # nested run) may refuse the host too: the log says "deny" then, with
   # another reason, and the guest gets no 200.
@@ -176,7 +198,8 @@ lifecycle_one() {
     stop) limactl stop "$NAME" >/dev/null 2>&1 ;;
     force) limactl stop --force "$NAME" >/dev/null 2>&1 ;;
     kill-wrapper) kill -9 "$w" ;;
-    kill-qemu) kill -9 "$(children "$w" | awk '/qemu-system/ {print $1}')" ;;
+    kill-qemu) local q; q=$(children "$w" | awk '/qemu-system/ {print $1}')
+               [[ -n $q ]] && kill -9 $q ;;
   esac
   sleep 5
   local left=""
@@ -185,7 +208,11 @@ lifecycle_one() {
   else
     fail "$1: still running:$left"
     ps -o pid=,command= -p "${left// /,}" 2>/dev/null | cut -c1-120
-    kill -9 $left 2>/dev/null
+    # Only what is still ours: a pid can be reused.
+    for p in $left; do
+      ps -o command= -p "$p" 2>/dev/null | grep -qE 'qemu-system|nono proxy|wmf-sbx-qemu' \
+        && kill -9 "$p" 2>/dev/null
+    done
   fi
   [[ -e $E/wrapper.pid ]] && echo "   wrapper.pid is left (expected after kill-wrapper only)"
   limactl stop --force "$NAME" >/dev/null 2>&1
@@ -193,25 +220,27 @@ lifecycle_one() {
 
 lifecycle() {
   step "lifecycle (item 6)"
+  ours
   for how in stop force kill-qemu kill-wrapper; do lifecycle_one "$how"; done
   start_vm >/dev/null && gsh true && pass "it starts again"
 }
 
 clean() {
   step "clean"
+  ours
   limactl delete --force "$NAME" 2>&1 | tail -1
   rm -rf "$E"
 }
 
 collect() {
   cp "$E/proxy.log" "$LOGS/" 2>/dev/null
-  cp "$HOME/.lima/$NAME/ha.stderr.log" "$LOGS/" 2>/dev/null
+  cp "$LIMA_DIR/ha.stderr.log" "$LOGS/" 2>/dev/null
 }
 
 case "${1:-}" in
   all) preflight; create && { check; clock; swap; lifecycle; } ;;
   preflight|create|check|clock|swap|lifecycle|clean) "$1" ;;
-  *) sed -n '2,22p' "$0"; exit 2 ;;
+  *) sed -n '2,25p' "$0"; exit 2 ;;
 esac
 [[ ${1:-} == clean ]] || collect
 echo; echo "$FAILS failed. Logs in $LOGS/"

@@ -638,6 +638,30 @@ class CpTests(Env):
         self.assertEqual(agent_cp[-1], "/home/agent/x.txt")
 
 
+class CaRefreshTests(Env):
+    """A stopped sandbox's start refreshes the extra CA file (a nested
+    sandbox's inner VMs get the current session's nono CA)."""
+
+    def test_a_start_refreshes_the_ca_file_a_running_vm_does_not(self):
+        calls = []
+        with mock.patch.object(image, "extra_ca_files", lambda env=None: calls.append(env) or []):
+            lima = self.sandbox(status="Stopped")
+            vm.ensure_running("sbx-demo", lima=lima, log=lambda m: None, env=self.env)
+            self.assertEqual(len(calls), 1)
+            vm.ensure_running("sbx-demo", lima=lima, log=lambda m: None, env=self.env)
+            self.assertEqual(len(calls), 1)
+
+    def test_a_refresh_failure_does_not_stop_the_start(self):
+        def fail(env=None):
+            raise image.ImageError("no such file")
+        logs = []
+        with mock.patch.object(image, "extra_ca_files", fail):
+            lima = self.sandbox(status="Stopped")
+            vm.ensure_running("sbx-demo", lima=lima, log=logs.append, env=self.env)
+        self.assertIn(("start", "wmf-sbx-sbx-demo"), lima.calls)
+        self.assertTrue(any("could not refresh" in m for m in logs))
+
+
 # -- rm -------------------------------------------------------------------
 
 class RmTests(Env):

@@ -136,7 +136,8 @@ Development scaffolding:
 - nono's CA: `$SSL_CERT_FILE` is the system bundle plus nono's CA (151 certificates);
   `image.session_ca_file` keeps the ones the system bundle lacks (compared as DER), at a
   fixed path (`~/.cache/wmf-sbx/session-ca.pem`), so a resume in a later session refreshes
-  it. Whether an inner VM reads the new file at its next start (Lima's cidata) is not RAN.
+  it, and so does every start of a stopped sandbox (`vm.ensure_running`). Whether an inner
+  VM reads the new file at its next start (Lima's cidata) is not RAN.
   An inner VM that runs across an outer session restart has the old proxy password and CA
   until it restarts.
 - `exec` gives the agent's command `image.guest_proxy_env`: `sudo` drops the proxy that

@@ -210,5 +210,84 @@ class GcTests(unittest.TestCase):
             image.gc_age({"images": {"gcAge": "a week"}})
 
 
+class GoldenAgeTests(unittest.TestCase):
+    """images.maxAge (track B3): the golden image is rebuilt, with the
+    same inputs and a new epoch, once it is too old."""
+
+    INPUTS = {"arch": "x86_64", "k": 1}
+
+    def setUp(self):
+        import datetime
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.env = {"XDG_CACHE_HOME": os.path.join(self.tmp, "cache"),
+                    "XDG_STATE_HOME": os.path.join(self.tmp, "state"), "HOME": self.tmp}
+        self.now = datetime.datetime(2026, 10, 13, 12, 0, tzinfo=datetime.timezone.utc)
+        self.day = datetime.timedelta(days=1)
+
+    def entry(self, inputs, age):
+        import json
+        key = image.cache_key(inputs)
+        d = image.entry_dir(key, self.env)
+        os.makedirs(d)
+        with open(os.path.join(d, "golden.qcow2"), "wb") as f:
+            f.write(b"x")
+        with open(os.path.join(d, "manifest.json"), "w") as f:
+            json.dump({"key": key, "inputs": inputs,
+                       "created": (self.now - age).isoformat()}, f)
+        return key
+
+    def choose(self, **kw):
+        kw.setdefault("now", self.now)
+        inputs, note = image.choose_inputs(dict(self.INPUTS), env=self.env, **kw)
+        return image.cache_key(inputs), note
+
+    def test_no_image_builds_the_plain_inputs(self):
+        self.assertEqual(self.choose(), (image.cache_key(self.INPUTS), None))
+
+    def test_a_young_image_is_used(self):
+        key = self.entry(self.INPUTS, 3 * self.day)
+        self.assertEqual(self.choose(), (key, None))
+
+    def test_an_old_image_gets_a_new_epoch_once(self):
+        old = self.entry(self.INPUTS, 20 * self.day)
+        key, note = self.choose()
+        self.assertNotEqual(key, old)
+        self.assertIn("20 days old", note)
+        # Built: the next create, an hour later, uses it (not a third).
+        new_inputs = dict(self.INPUTS, epoch=self.now.isoformat(timespec="seconds"))
+        self.assertEqual(self.entry(new_inputs, datetime_hours(1)), key)
+        self.assertEqual(self.choose(), (key, None))
+
+    def test_no_expire_keeps_it_with_a_warning_unless_renewed(self):
+        old = self.entry(self.INPUTS, 20 * self.day)
+        for kw in ({"expire": False}, {"config": {"images": {"expire": False}}}):
+            key, note = self.choose(**kw)
+            self.assertEqual(key, old)
+            self.assertIn("--cold", note)
+        key, _note = self.choose(expire=False, renew=True)
+        self.assertNotEqual(key, old)
+
+    def test_max_age_is_a_setting(self):
+        old = self.entry(self.INPUTS, 3 * self.day)
+        self.assertNotEqual(self.choose(config={"images": {"maxAge": "2d"}})[0], old)
+
+    def test_min_left_renews_an_image_about_to_expire(self):
+        old = self.entry(self.INPUTS, 13 * self.day + datetime_hours(12))
+        self.assertEqual(self.choose()[0], old)
+        key, note = self.choose(min_left=self.day)
+        self.assertNotEqual(key, old)
+        self.assertIn("12 h before", note)
+
+    def test_other_inputs_are_another_image(self):
+        self.entry(dict(self.INPUTS, k=2), 20 * self.day)
+        self.assertEqual(self.choose(), (image.cache_key(self.INPUTS), None))
+
+
+def datetime_hours(n):
+    import datetime
+    return datetime.timedelta(hours=n)
+
+
 if __name__ == "__main__":
     unittest.main()

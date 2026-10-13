@@ -506,6 +506,9 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
                         "to fetch the sandbox's work, and gc is not suspended")
     parser.add_argument("--vm-type", choices=sorted(template_mod.MOUNT_TYPES),
                         help="Lima driver (default: vz on macOS, qemu elsewhere)")
+    parser.add_argument("--no-expire", action="store_true",
+                        help="keep using a golden image older than settings.yaml "
+                             "images.maxAge (14 days), with a warning; for a demo")
     parser.add_argument("--full-disk", action="store_true",
                         help="on QEMU too, give the sandbox a full copy of the golden "
                              "image, not a copy-on-write overlay on it")
@@ -654,6 +657,15 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         else:
             inputs = (inputs_fn() if inputs_fn
                       else image_mod.image_inputs(env=env, packages=config["packages"]))
+            # The newest image of these inputs, or a new one when it is
+            # older than images.maxAge (track B3).
+            inputs, note = image_mod.choose_inputs(
+                inputs, env=env, config=config, expire=False if args.no_expire else None,
+                now=now)
+            if note and note.startswith("warning"):
+                print(note, file=sys.stderr)
+            elif note:
+                say(note)
             key = image_mod.cache_key(inputs)
             arch = inputs["arch"]
             claude_version = (inputs.get("claude") or {}).get("version")

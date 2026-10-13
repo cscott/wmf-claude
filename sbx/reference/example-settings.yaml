@@ -50,10 +50,15 @@ packages: []
   # - nano
 
 # The golden image cache. `image gc` (and the end of each `create`)
-# removes the images that no sandbox uses and that are older than gcAge
-# (14d, 12h, 30m, or a number of days).
+# removes the images that no sandbox uses and that are older than gcAge.
+# A golden image older than maxAge is built again at the next `create`
+# (with the Debian updates since); with expire: false it is kept, with a
+# warning (as `create --no-expire` does once). Durations: 14d, 12h, 30m,
+# or a number of days.
 images: {}
   # gcAge: 7d
+  # maxAge: 14d
+  # expire: true
 
 # A dependency in extension.json `requires` that is a display name, not a
 # project ("Abuse Filter"): map it to a project by hand.

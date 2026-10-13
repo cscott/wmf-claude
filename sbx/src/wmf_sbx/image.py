@@ -526,6 +526,71 @@ def gc_age(config=None):
     return parse_duration(images.get("gcAge", GC_AGE), "settings.yaml images.gcAge")
 
 
+# A golden image older than this is rebuilt at the next `create`, with the
+# same inputs (track B3): settings.yaml `images: {maxAge: ..., expire: ...}`.
+MAX_AGE = "14d"
+# The input that tells a rebuilt image of the same inputs from the first
+# (a new key, so a new file: a golden file is never rewritten).
+EPOCH = "epoch"
+
+
+def max_age(config=None):
+    images = (config or {}).get("images") or {}
+    return parse_duration(images.get("maxAge", MAX_AGE), "settings.yaml images.maxAge")
+
+
+def expires(config=None):
+    """settings.yaml `images.expire` (default true)."""
+    value = ((config or {}).get("images") or {}).get("expire", True)
+    if not isinstance(value, bool):
+        raise ImageError(f"settings.yaml images.expire: {value!r} is not true or false")
+    return value
+
+
+def _base(inputs):
+    return {k: v for k, v in (inputs or {}).items() if k != EPOCH}
+
+
+def images_for(inputs, env=None):
+    """[(key, manifest)] of the cached images built from `inputs` (any
+    epoch), newest first."""
+    want = _base(inputs)
+    return [(k, m) for k, m in reversed(list_images(env)) if _base(m.get("inputs")) == want]
+
+
+def choose_inputs(inputs, env=None, config=None, expire=None, renew=False, now=None,
+                  min_left=None):
+    """(inputs, note): the inputs of the golden image to use. The newest
+    cached image of `inputs` while it is younger than images.maxAge (with
+    at least `min_left` to go); else new inputs with an EPOCH, which
+    build() makes a new image of. With `expire` False (--no-expire,
+    images.expire: false) an old image stays, with a warning, unless
+    `renew` (--cold). `note` is a line to show, or None."""
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    found = images_for(inputs, env)
+    if not found:
+        return inputs, None
+    key, manifest = found[0]
+    limit = max_age(config)
+    created = _created(manifest)
+    age = now - created if created else limit
+    left = limit - age
+    if left > (min_left or datetime.timedelta(0)):
+        return manifest["inputs"], None
+    days = f"{age.days} days old" if left <= datetime.timedelta(0) else \
+        f"{age.days} days old, {left.total_seconds() / 3600:.0f} h before images.maxAge"
+    if expire is None:
+        expire = expires(config)
+    if not expire and not renew:
+        return manifest["inputs"], (
+            f"warning: golden image {key} is {days} ({limit.days} days); it is kept "
+            f"(--no-expire or images.expire: false). When it suits you, `wmf-sbx create "
+            f"--cold` builds a new one, with the Debian updates since.")
+    new = dict(_base(inputs))
+    new[EPOCH] = now.isoformat(timespec="seconds")
+    return new, f"+ golden image {key} is {days} ({limit.days} days): building a new one"
+
+
 def gc_images(env=None, config=None, keep=(), now=None):
     """`image gc`: remove the images that no sandbox uses and that are
     older than gc_age."""
@@ -870,6 +935,9 @@ def main(argv=None, env=None, lima=None, run=subprocess.run, out=sys.stdout):
             from . import resolve as resolve_mod
             config = resolve_mod.load_config(args.config or resolve_mod.DEFAULT_CONFIG)
             inputs = image_inputs(run=run, env=env, packages=config["packages"])
+            inputs, note = choose_inputs(inputs, env=env, config=config)
+            if note:
+                say(note)
             if args.dry_run:
                 say(json.dumps({"key": cache_key(inputs), "inputs": inputs},
                                indent=2, sort_keys=True))

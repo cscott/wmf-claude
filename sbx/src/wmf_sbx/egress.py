@@ -12,7 +12,6 @@ as a contained session.
 Per sandbox, in egress_dir(NAME), all 0600 in a 0700 directory:
   ca.pem, ca.key  the CA `nono proxy` signs intercepted TLS with; made
                   at create, put in the guest by Lima's caCerts.
-  password        what the guest gives the proxy (Proxy-Authorization).
   allow           extra hosts or URL globs, one per line (`wmf-sbx allow`).
   proxy.json      the proxy's argv and environment (write_config), which
                   the wrapper reads; written at each start.
@@ -23,13 +22,16 @@ Per sandbox, in egress_dir(NAME), all 0600 in a 0700 directory:
 `nono proxy --upstream-proxy` sends no credentials (sbx/NOTES.md,
 "`--sudo` egress"). When the host's proxy needs them (a nested sandbox
 always does), the wrapper runs AuthShim between the two.
+
+The guest gives the proxy no password (`--no-auth`). Only the guest
+reaches the guestfwd, and a contained session's own nono, chained to
+this proxy, cannot send one (NOTES, item 9).
 """
 
 import base64
 import contextlib
 import json
 import os
-import secrets
 import shutil
 import socket
 import subprocess
@@ -45,7 +47,6 @@ from . import state as state_mod
 # DHCP range, not the gateway (192.168.5.2) or DNS (192.168.5.3).
 EGRESS_ADDR = "192.168.5.100"
 EGRESS_PORT = 3128
-PROXY_USER = "nono"
 PROFILE = os.path.join(kit.REPO_ROOT, "profiles", "wmf-engineer.json")
 # The guest's apt sources (/etc/apt/mirrors/debian*.list in the image's
 # Debian 13 cloud base) are all on this host.
@@ -140,22 +141,6 @@ def make_ca(name, env=None, run=subprocess.run, days=CA_DAYS):
     return cert
 
 
-def password(name, env=None):
-    """The guest's proxy password, made on first use."""
-    path = _path(name, "password", env)
-    try:
-        with open(path, encoding="utf-8") as f:
-            value = f.read().strip()
-        if value:
-            return value
-    except FileNotFoundError:
-        pass
-    _make_dir(name, env)
-    value = secrets.token_hex(32)
-    _write_private(path, value + "\n")
-    return value
-
-
 def extra_domains(name, env=None):
     """The sandbox's `allow` entries: one host or URL glob per line; blank
     lines and `#` comments are skipped."""
@@ -193,10 +178,10 @@ def proxy_argv(name, env=None, nono="nono"):
     """`nono proxy` for the sandbox, without --port and --upstream-proxy,
     which the wrapper adds when it starts it. Not --silent: it also stops
     the log of allow/deny decisions (RAN). So the proxy prints a banner
-    with the password on stdout, which the wrapper sends to /dev/null."""
+    on stdout, which the wrapper sends to /dev/null."""
     # Imported here: session imports vm, which will import this module.
     from . import session as session_mod
-    argv = [nono, "proxy", "-v", "--listen", "127.0.0.1", "--profile", PROFILE]
+    argv = [nono, "proxy", "-v", "--no-auth", "--listen", "127.0.0.1", "--profile", PROFILE]
     for domain in (list(session_mod.REGISTRY_DOMAINS) + list(DEBIAN_DOMAINS)
                    + extra_domains(name, env)):
         argv += ["--allow-domain", domain]
@@ -207,11 +192,9 @@ def proxy_argv(name, env=None, nono="nono"):
 
 def proxy_config(name, env=None, nono="nono"):
     """What the wrapper needs to start the proxy: its argv and the
-    variables to set (the password goes by NONO_PROXY_PASS, not argv),
-    the upstream (or None), and where to write the port."""
+    variables to set, the upstream (or None), and where to write the port."""
     return {"argv": proxy_argv(name, env, nono=nono),
-            "env": {"NONO_PROXY_PASS": password(name, env),
-                    # nono writes its state (update check) here; under a
+            "env": {# nono writes its state (update check) here; under a
                     # session's nono ~/.local/state/nono is not writable.
                     "XDG_STATE_HOME": os.path.join(egress_dir(name, env), "state")},
             "upstream": upstream(env),
@@ -240,14 +223,14 @@ def proxy_env(base, config):
     return env
 
 
-def proxy_url(name, env=None, host=EGRESS_ADDR, port=EGRESS_PORT):
-    return f"http://{PROXY_USER}:{password(name, env)}@{host}:{port}"
+def proxy_url(host=EGRESS_ADDR, port=EGRESS_PORT):
+    return f"http://{host}:{port}"
 
 
 def guest_environment(name, env=None):
     """Variables for the guest's /etc/environment. NODE_USE_ENV_PROXY:
     Node's fetch ignores the proxy variables without it (RAN)."""
-    url = proxy_url(name, env)
+    url = proxy_url()
     no_proxy = "localhost,127.0.0.1"
     return {"http_proxy": url, "https_proxy": url, "HTTP_PROXY": url, "HTTPS_PROXY": url,
             "no_proxy": no_proxy, "NO_PROXY": no_proxy, "NODE_USE_ENV_PROXY": "1"}
@@ -255,13 +238,12 @@ def guest_environment(name, env=None):
 
 def guest_files(name, env=None):
     """Files for the guest, {path: content}. With no guest DNS, apt and
-    git still work through the proxy, which gets the name in CONNECT; git
-    aborts the CONNECT until proxyAuthMethod is basic (RAN)."""
-    url = proxy_url(name, env)
+    git still work through the proxy, which gets the name in CONNECT."""
+    url = proxy_url()
     return {
         "/etc/apt/apt.conf.d/90wmf-sbx-proxy":
             f'Acquire::http::Proxy "{url}";\nAcquire::https::Proxy "{url}";\n',
-        "/etc/gitconfig": f"[http]\n\tproxy = {url}\n\tproxyAuthMethod = basic\n",
+        "/etc/gitconfig": f"[http]\n\tproxy = {url}\n",
     }
 
 

@@ -122,7 +122,7 @@ class Egress:
                 argv += ["--upstream-proxy", f"{up['host']}:{up['port']}"]
             port = egress_mod.free_port()
             argv += ["--port", str(port)]
-            # stdout has the banner with the password (egress.proxy_argv).
+            # stdout has nono's banner (egress.proxy_argv).
             proc = self.popen(argv, env=egress_mod.proxy_env(self.env, config),
                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                               preexec_fn=_die_with_parent)

@@ -69,11 +69,11 @@ the VM does not notice:
   download through the old proxy finished.)
 - It runs on the host, as the engineer. Nothing in the guest can call
   it, so root in the guest still cannot widen its own egress.
-- Contained mode (nono inside too) gets the same only if the inner nono
-  stops filtering domains and chains everything to the outer proxy
-  (A2.0, item 9). Then the outer proxy is the single policy point for
-  both modes. Today, a contained session's allowlist is fixed when the
-  session starts.
+- Contained mode (nono inside too) gets the same when the inner nono
+  runs `--upstream-proxy 192.168.5.100:3128 --allow-domain '*'`: the
+  inner nono keeps the endpoint rules, and the outer proxy is the only
+  allowlist (A2.0 item 9 RAN; NOTES). The guest needs name lookups that
+  succeed (see A2.3).
 
 ## A2.0 Measure (throwaway scripts, `lima-port/checks/sudo-egress.sh`)
 
@@ -148,7 +148,7 @@ proxy and QEMU get `PR_SET_PDEATHSIG` on Linux. Items 5 and 6 RAN
   credentials (one process tree: the engineer's decision, 2026-10-13),
   waits for it to listen, runs QEMU, forwards signals, stops the proxy.
   The proxy's stdout goes to /dev/null: without `--silent` (which also
-  stops the decision log) it prints the password.
+  stops the decision log) it prints a banner.
 - Finds the real QEMU from `WMF_SBX_QEMU_REAL` or PATH, never itself.
 - Tests: argv rewriting and refusals as pure functions; the lifetime
   with a fake QEMU and a fake proxy (two small scripts).
@@ -157,7 +157,8 @@ proxy and QEMU get `PR_SET_PDEATHSIG` on Linux. Items 5 and 6 RAN
 
 Landed (2026-10-13), with the shim, the per-sandbox password and `rm`
 removing the directory; `--proxy-ca-cert` with its CA and the shim ran
-against the session proxy (wiki GET 200, POST 403, off-list 403).
+against the session proxy (wiki GET 200, POST 403, off-list 403). The
+password went out after item 9: the proxy runs `--no-auth`.
 
 
 - `proxy_argv(state, env)`: `nono proxy --silent --profile
@@ -166,12 +167,11 @@ against the session proxy (wiki GET 200, POST 403, off-list 403).
   `repos.yaml` extras; `--proxy-ca-cert/--proxy-ca-key` of the sandbox;
   `--upstream-proxy` when the host has one (as `session.upstream_proxy`);
   `--log-file` under `~/.local/state/wmf-sbx/egress/<name>/`.
-  The password goes in by `NONO_PROXY_PASS`, not argv.
 - Written at each start to `egress/<name>/proxy.json` (0600), which the
   wrapper reads, so a start picks up a new allowlist or upstream.
 - `make_ca(name)`: an EC P-256 CA, 0600 key, at create; `rm` removes the
   directory.
-- `guest_files(password)`: `/etc/environment` proxy variables with
+- `guest_files(name)`: `/etc/environment` proxy variables with
   `no_proxy=localhost,127.0.0.1`, `/etc/apt/apt.conf.d/90wmf-sbx-proxy`,
   for the provisioning script.
 - Tests: the argv and files from a sample state and env, no nono run.
@@ -186,6 +186,16 @@ against the session proxy (wiki GET 200, POST 403, off-list 403).
 - `vm.ensure_running`: for a `sudo` sandbox, write `proxy.json` and give
   `limactl start` `QEMU_SYSTEM_<ARCH>=…/wmf-sbx-qemu`,
   `WMF_SBX_QEMU_REAL` and `WMF_SBX_EGRESS_CONFIG`.
+- Name lookups in the guest: the inner nono of a contained session
+  looks up each name before it CONNECTs upstream, and behind
+  `restrict=on` with `hostResolver.enabled: false` nothing answers
+  (A2.0 item 9). It does not use the address. Proposal: a stub in the
+  guest that gives every name one fixed address, so no query leaves the
+  guest (a real resolver through a guestfwd would also be a DNS tunnel
+  past the allowlist). To decide with the engineer.
+- A contained session in a `sudo` sandbox: the session's nono gets
+  `--upstream-proxy 192.168.5.100:3128 --allow-domain '*'` instead of
+  the domain list, so `wmf-sbx allow` reaches it.
 - The guest's clock: no NTP behind `restrict=on`, and nono's leaf
   certificates start at "now" (NOTES). Try `ptp_kvm` + chrony unnested;
   else set the clock at each `start`.

@@ -235,7 +235,35 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   `restrict=on` the guest has no NTP (`System clock synchronized: no`), so the skew can only
   grow. `ptp_kvm` does not load in this nested guest ("Operation not supported"); to try
   unnested. Else `start` sets the guest's clock, or a guestfwd time source. For A2.3.
-- Not yet: 7 (unnested, macOS), 9 (contained mode chained to the outer proxy).
+  Lima has its own guest time sync (the host agent logs "Time sync: drift 0ms within
+  threshold"); to check whether it covers this.
+- **Item 9, contained mode behind the egress proxy** (a session's nono inside the guest,
+  `--upstream-proxy 192.168.5.100:3128`):
+  - The inner nono sends no credentials upstream, so it gets nothing from a proxy with a
+    password. The egress proxy runs `--no-auth` now (egress.py): only the guest reaches the
+    guestfwd, so the password protected nothing. `nono proxy` exits 2 on `--no-auth` with
+    `NONO_PROXY_PASS` set.
+  - **The inner nono resolves each name itself**, and behind `restrict=on` the guest has no
+    DNS (Lima's resolver is the host agent, at 192.168.5.2 and a random port; `getent
+    hosts` hung). Every request timed out (curl exit 28) and nothing got to the egress
+    proxy. With a line in /etc/hosts it went through, and the address in that line is not
+    used: 10.9.9.9 did as well as 1.1.1.1, because nono sends the name in the upstream
+    CONNECT. So the guest needs a lookup that succeeds, not a real resolver. Plain tools
+    given the proxy variables (curl, apt, git, npm) do not look up names.
+  - Two interceptions in a row work: the inner nono trusts the egress CA from the guest's
+    store, and the outer proxy still applies the endpoint rules (its log has the `l7`
+    decision for the wiki GET). A wiki POST gets 403.
+  - `--allow-net` is no use: the inner nono then removes the proxy variables from the
+    child's environment and does not proxy, so every connection goes direct and fails.
+  - **Inner `--allow-domain '*'`**: the inner nono lets every host through to the outer
+    proxy and still applies the profile's endpoint rules (POST 403). The outer proxy
+    is the only allowlist: example.com went to the outer proxy and was denied there,
+    and download.cypress.io, which only the outer list has, answered 200. So
+    `wmf-sbx allow` covers a contained session too.
+  - Found here: `PR_SET_PDEATHSIG` is tied to the thread that forked the child. The wrapper
+    started each replacement proxy from a short-lived thread, so the new proxy died
+    when that thread ended. Fixed in the wrapper (one long-lived thread).
+- Not yet: 7 (unnested, macOS).
 
 ### Testing in the sandbox
 

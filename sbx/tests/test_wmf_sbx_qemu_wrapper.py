@@ -101,7 +101,7 @@ FAKE_PROXY = textwrap.dedent("""\
     s = socket.socket(); s.bind(("127.0.0.1", port)); s.listen(8)
     with open(log, "a") as f:
         f.write(json.dumps({"pid": os.getpid(), "argv": sys.argv[2:],
-                            "pass": os.environ.get("NONO_PROXY_PASS"),
+                            "state": os.environ.get("XDG_STATE_HOME"),
                             "leak": os.environ.get("NONO_ALLOW_DOMAIN")}) + "\\n")
     signal.signal(signal.SIGTERM, lambda *a: sys.exit(0))
     while True:
@@ -172,7 +172,7 @@ class LifetimeTests(unittest.TestCase):
         with open(self.config, "w") as f:
             json.dump({"argv": [sys.executable, os.path.join(self.tmp.name, "proxy.py"),
                                 self.proxy_log] + list(extra),
-                       "env": {"NONO_PROXY_PASS": "pw"}, "upstream": upstream,
+                       "env": {"XDG_STATE_HOME": "/s"}, "upstream": upstream,
                        "portFile": self.port_file, "pidFile": self.pid_file}, f)
 
     def env(self, mode, **extra):
@@ -212,7 +212,7 @@ class LifetimeTests(unittest.TestCase):
         self.assertEqual(p.wait(timeout=20), 7, p.stderr.read())
         [proxy] = self.proxies()
         self.assertFalse(alive(proxy["pid"]))
-        self.assertEqual(proxy["pass"], "pw")
+        self.assertEqual(proxy["state"], "/s")
         self.assertIsNone(proxy["leak"])
         with open(self.port_file) as f:
             self.assertEqual(f.read().strip(), proxy["argv"][proxy["argv"].index("--port") + 1])

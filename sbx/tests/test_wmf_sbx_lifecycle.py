@@ -808,14 +808,14 @@ class RmTests(Env):
 
     def test_rm_deletes_the_egress_directory(self):
         lima = self.sandbox()
-        egress.password("sbx-demo", self.env)
+        egress.write_config("sbx-demo", self.env)
         self.assertEqual(self.quiet(rm.main, ["-f", "sbx-demo"], lima=lima, env=self.env,
                                     confirm=lambda q: "y"), 0, self.err)
         self.assertFalse(os.path.exists(egress.egress_dir("sbx-demo", self.env)))
 
     def test_declining_keeps_the_egress_directory(self):
         lima = self.sandbox()
-        egress.password("sbx-demo", self.env)
+        egress.write_config("sbx-demo", self.env)
         self.quiet(rm.main, ["sbx-demo"], lima=lima, env=self.env, confirm=lambda q: "n")
         self.assertTrue(os.path.exists(egress.egress_dir("sbx-demo", self.env)))
 

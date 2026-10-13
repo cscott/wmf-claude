@@ -12,9 +12,11 @@
 #          plus CY_GRANTS. A `nono` shim on PATH keeps bin/claude's nono
 #          arguments and replaces the command after `--` with the test,
 #          so no Claude Code and no tokens are involved.
-# cypress  the same, but the test is `cypress verify` and one Cite spec
-#          (CY_SPEC), in the Cite clone (CY_REPO). Needs the wiki running
-#          and `mw-install-cypress` done (outside nono is fine).
+# cypress  the same, but the test is `cypress verify` (its "verified"
+#          mark removed first, so that it runs under nono) and the repo's
+#          `npm run selenium-test`, or one spec (CY_SPEC), in CY_REPO
+#          (default: the current directory). Starts the wiki (outside
+#          nono) first. Needs `mw-install-cypress` done in the repo.
 #
 # CY_GRANTS: extra nono flags, one per word, to try (default: none).
 # WMF_CLAUDE_DIR: the wmf-claude tree with bin/claude and sbx/src
@@ -71,8 +73,16 @@ xvfb_test() {
   return $rc
 }
 
+# The session's environment (MW_SERVER, ...) is in the agent's settings
+# `env`; Claude Code would set it, and the shim runs no Claude Code.
+session_env() {
+  [ -r "$HOME/.claude/settings.json" ] || return 0
+  eval "$(jq -r '.env // {} | to_entries[] | "export \(.key)=\(.value|@sh)"' "$HOME/.claude/settings.json")"
+}
+
 cypress_test() {
   local repo=$1 spec=$2
+  session_env
   export TMPDIR="/tmp/claude-$(id -u)"; mkdir -p "$TMPDIR"
   cd "$repo" || { echo "== RESULT cypress: no repo $repo"; return 1; }
   # The repo's own cache folder (mw-install-cypress uses the same).
@@ -83,6 +93,7 @@ cypress_test() {
       const m = /CYPRESS_CACHE_FOLDER=(\S+)/.exec(v); if (m) { console.log(m[1]); break; } }')
   export CYPRESS_CACHE_FOLDER=${cache:-$HOME/.cache/Cypress}
   echo "== under nono: $(id -un), cache $CYPRESS_CACHE_FOLDER"
+  rm -f "$CYPRESS_CACHE_FOLDER"/*/binary_state.json
   local t0=$SECONDS
   if DEBUG=cypress:server:util:process_profiler,cypress:cli* npx cypress verify > "$TMPDIR/verify.log" 2>&1; then
     echo "-- cypress verify: ok in $((SECONDS - t0)) s"
@@ -91,13 +102,17 @@ cypress_test() {
     echo "== RESULT cypress: verify FAILED"; return 1
   fi
   t0=$SECONDS
-  if npx cypress run --spec "$spec" > "$TMPDIR/run.log" 2>&1; then
+  local run=(npm run selenium-test)
+  [ -n "$spec" ] && run=(npx cypress run --spec "$spec")
+  echo "-- ${run[*]}"
+  if "${run[@]}" > "$TMPDIR/run.log" 2>&1; then
     echo "-- cypress run: ok in $((SECONDS - t0)) s"
-    grep -E "Tests:|Passing:|Failing:|All specs passed|✔|✖" "$TMPDIR/run.log" | tail -15 | sed 's/^/   | /'
+    grep -E "Tests:|Passing:|Failing:|Pending:|Skipped:|All specs passed|✔|✖" "$TMPDIR/run.log" | tail -25 | sed 's/^/   | /'
     echo "== RESULT cypress: ok"
   else
     echo "-- cypress run FAILED in $((SECONDS - t0)) s; tail:"
-    tail -60 "$TMPDIR/run.log" | sed 's/^/   | /'
+    grep -E "Tests:|Passing:|Failing:|✔|✖" "$TMPDIR/run.log" | tail -25 | sed 's/^/   | /'
+    echo "   -- tail:"; tail -40 "$TMPDIR/run.log" | sed 's/^/   | /'
     echo "== RESULT cypress: run FAILED"; return 1
   fi
 }
@@ -109,7 +124,7 @@ under_nono() {
   {
     echo '#!/usr/bin/env bash'
     echo 'set -uo pipefail'
-    declare -f xvfb_test cypress_test
+    declare -f session_env xvfb_test cypress_test
     printf '%q ' "$@"; echo
   } > "$WORK/test.sh"
   cat > "$shim/nono" <<SHIM
@@ -149,7 +164,20 @@ mkdir -p "$WORK"
 case "${1:-}" in
   xvfb) under_nono xvfb xvfb_test "$WORK" "$DISPLAY_NUM" ;;
   cypress)
-    under_nono cypress cypress_test "${CY_REPO:-$PWD}" \
-      "${CY_SPEC:-tests/cypress/e2e/tests/backlinks/backlinks.cy.js}" ;;
+    # The wiki, outside nono, as the agent would start it in a session.
+    session_env
+    serve=""
+    if [ -n "${MW_INSTALL_PATH:-}" ]; then
+      (cd "$MW_INSTALL_PATH" && exec composer serve) > "$WORK/serve.log" 2>&1 &
+      serve=$!
+      for _ in $(seq 60); do
+        curl -sf --noproxy '*' -o /dev/null "$MW_SERVER/index.php?title=Special:Version" && break
+        sleep 1
+      done
+      echo "-- wiki: $(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' "$MW_SERVER/index.php?title=Special:Version")"
+    fi
+    under_nono cypress cypress_test "${CY_REPO:-$PWD}" "${CY_SPEC:-}"
+    # composer serve's php -S is its child; stop both.
+    [ -n "$serve" ] && { pkill -P "$serve" 2>/dev/null; kill "$serve" 2>/dev/null; } ;;
   *) sed -n '2,24p' "${BASH_SOURCE[0]:-/dev/stdin}"; exit 2 ;;
 esac

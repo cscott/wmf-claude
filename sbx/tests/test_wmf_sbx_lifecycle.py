@@ -463,6 +463,18 @@ class ExecTests(Env):
         self.assertEqual(argv[i + 6:i + 8], ("-C", "/srv/x"))
         self.assertEqual(argv[-1], "ls")
 
+    def test_exec_gives_the_agent_the_guests_proxy(self):
+        # sudo drops the proxy Lima put in the guest's environment; a
+        # nested sandbox's inner VM has no other way out (RAN, N3:
+        # mw-install-browser got ENETUNREACH).
+        lima = self.sandbox()
+        env = dict(self.env, HTTPS_PROXY="http://nono:pw@127.0.0.1:50723")
+        for args in (["sbx-demo", "--", "ls"], ["-w", "/srv/x", "sbx-demo", "--", "ls"]):
+            with self.subTest(args=args):
+                self.quiet(exec_mod.main, args, lima=lima, env=env)
+                self.assertIn("HTTPS_PROXY=http://nono:pw@192.168.5.2:50723",
+                              lima.shells()[-1])
+
     def test_exec_returns_the_commands_status(self):
         lima = self.sandbox(lima=FakeLima(rc=7))
         self.assertEqual(self.quiet(exec_mod.main, ["sbx-demo", "--", "false"],

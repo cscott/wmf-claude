@@ -107,6 +107,9 @@ to D12, and tracks A and B, which are not repeated here).
   it. Whether an inner VM reads the new file at its next start (Lima's cidata) is not RAN.
   An inner VM that runs across an outer session restart has the old proxy password and CA
   until it restarts.
+- `exec` gives the agent's command `image.guest_proxy_env`: `sudo` drops the proxy that
+  Lima writes to the inner VM's `/etc/environment`, and the inner VM has no other way out
+  (N3: `mw-install-browser` got ENETUNREACH to googlechromelabs.github.io).
 - `TMPDIR` must be the session's (`/tmp/claude-UID`, launch-claude.sh): `/tmp` is
   write-only under nono, and Lima builds its cloud-init ISO in TMPDIR.
 - In a nested session a new pty is not a terminal; `test_real_pty_*` skips.

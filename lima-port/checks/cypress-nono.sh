@@ -19,13 +19,13 @@
 #          nono) first. Needs `mw-install-cypress` done in the repo.
 #
 # CY_GRANTS: extra nono flags, one per word, to try (default: none).
-# WMF_CLAUDE_DIR: the wmf-claude tree with bin/claude and sbx/src
+# WMF_SBX_CLAUDE_DIR: the wmf-claude tree with bin/claude and sbx/src
 # (default /opt/wmf-claude, the image's).
 #
 # Every phase ends with `== RESULT ...` lines. Send all the output.
 set -uo pipefail
 
-WMF_CLAUDE_DIR=${WMF_CLAUDE_DIR:-/opt/wmf-claude}
+WMF_SBX_CLAUDE_DIR=${WMF_SBX_CLAUDE_DIR:-/opt/wmf-claude}
 # In the session's TMPDIR (launch-claude.sh), which nono lets it read.
 WORK=${CY_WORK:-/tmp/claude-$(id -u)/cypress-nono}
 DISPLAY_NUM=${CY_DISPLAY:-99}
@@ -139,7 +139,7 @@ SHIM
   chmod +x "$shim/nono"
   # The session's flags, as `wmf-sbx resume` builds them (session.py).
   local flags
-  flags=$(PYTHONPATH="$WMF_CLAUDE_DIR/sbx/src" python3 - "$PWD" <<'PY'
+  flags=$(PYTHONPATH="$WMF_SBX_CLAUDE_DIR/sbx/src" python3 - "$PWD" <<'PY'
 import shlex, sys
 import wmf_sbx.session as s
 argv = s.launcher_argv({"primaryDir": sys.argv[1], "repos": []}, proxy=s.upstream_proxy())
@@ -152,7 +152,7 @@ PY
   echo "-- extra grants: $(echo $grants)"
   eval "set -- $flags"
   WMF_CLAUDE_NO_PAUSE=1 PATH="$shim:$PATH" \
-    "$WMF_CLAUDE_DIR/bin/claude" "$@" $grants -- 2>&1 | tee "$WORK/$label.log"
+    "$WMF_SBX_CLAUDE_DIR/bin/claude" "$@" $grants -- 2>&1 | tee "$WORK/$label.log"
   local rc=${PIPESTATUS[0]}
   grep -q "== RESULT $label: ok" "$WORK/$label.log" \
     && result "$label under nono: ok with the grants above" \

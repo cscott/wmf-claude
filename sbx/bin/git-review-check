@@ -31,12 +31,11 @@ REMOTE="$1"
 # repo could have an unrelated remote literally named `local`, or one a
 # person named `sandbox-something` themselves, and either would silently
 # get the (weaker, local-only) check instead of the real Gerrit one.
-#   - `local` only qualifies when it is the sandbox's own mirror of the
-#     host repo: wmf-sbx clones each repo in the VM from the host's git
-#     dir, mounted read-only under /run/wmf-sbx/host/ (template.py,
-#     HOST_MOUNT_ROOT), and renames that remote `local`
-#     (sandbox-repos.sh). A host repo's remote named `local` does not
-#     point there. WMF_SBX_HOST_MOUNT_ROOT replaces the root, for tests.
+#   - `local` only qualifies when we can tell we're actually running
+#     inside a sandbox, via $SANDBOX_NAME -- set by the sandbox, not by
+#     the host: wmf-sbx puts it in the session's settings `env` and in
+#     `wmf-sbx exec`'s environment (Docker Sandboxes set it too), and a
+#     host repo's remote naming cannot spoof it.
 #   - any other REMOTE qualifies only if wmf-sbx's own host-side state
 #     (~/.local/state/wmf-sbx/sandboxes/*.json, one file per sandbox --
 #     see wmf_sbx_state.py) actually lists REMOTE among the remotes it
@@ -49,11 +48,7 @@ REMOTE="$1"
 #     just asks it whether REMOTE is in the list.
 is_local_check_target() {
     if [ "$1" = "local" ]; then
-        local root=${WMF_SBX_HOST_MOUNT_ROOT:-/run/wmf-sbx/host} url
-        url=$(git remote get-url local 2>/dev/null) || return 1
-        case "$url" in
-            "$root"/*) [ -d "$root" ] && return 0 ;;
-        esac
+        [ -n "$SANDBOX_NAME" ] && return 0
         return 1
     fi
     LS_REMOTES=""

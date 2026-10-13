@@ -307,10 +307,11 @@ Development scaffolding:
 
 ### Clones, remotes, gc (host ↔ VM)
 
-- `git-review-check` treats `local` as the sandbox's mirror (a local-only "is HEAD there"
-  check, not Gerrit) only when its URL is under the VM's host mount
-  (`/run/wmf-sbx/host/`, `template.HOST_MOUNT_ROOT`), as `clone_repo` makes it. A host repo's
-  own remote named `local` gets the Gerrit check.
+- `git-review-check` (host and sandbox alike) treats `local` as the sandbox's mirror (a
+  local-only "is HEAD there" check, not Gerrit) only when `$SANDBOX_NAME` is set. The
+  sandbox sets it, not the tool: `session.SANDBOX_NAME_VAR` in the session's settings `env`
+  and in `wmf-sbx exec` (not overridable in settings.yaml `environment:`). On the host it is
+  unset, so a host repo's own remote named `local` gets the Gerrit check.
 
 - Lima transport: each repo's git dir is a read-only Lima mount under `/run/wmf-sbx/host/`;
   the VM has a `git clone --shared` at the host's absolute path; `origin` = upstream, `local` =

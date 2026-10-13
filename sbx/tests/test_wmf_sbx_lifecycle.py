@@ -452,7 +452,11 @@ class ExecTests(Env):
         i = argv.index("--")
         self.assertEqual(argv[i + 1:i + 8], ("sudo", "-H", "-u", "agent", "env", "-C",
                                              "/home/agent"))
-        self.assertEqual(argv[i + 9:i + 11], ("sh", "-c"))
+        # PATH, then the variables (SANDBOX_NAME, ...), then the command.
+        self.assertTrue(argv[i + 8].startswith("PATH="))
+        j = argv.index("sh", i + 9)
+        self.assertTrue(all("=" in a for a in argv[i + 9:j]), argv[i + 9:j])
+        self.assertEqual(argv[j:j + 2], ("sh", "-c"))
         self.assertEqual(argv[-4:], ("sh", "/home/me/src/demo", "git", "status"))
 
     def test_an_explicit_workdir_is_used_as_is(self):
@@ -474,6 +478,14 @@ class ExecTests(Env):
                 self.quiet(exec_mod.main, args, lima=lima, env=env)
                 self.assertIn("HTTPS_PROXY=http://nono:pw@192.168.5.2:50723",
                               lima.shells()[-1])
+
+    def test_exec_names_the_sandbox_as_a_session_does(self):
+        # bin/git-review-check reads $SANDBOX_NAME (`git safe-reset local`).
+        lima = self.sandbox()
+        for args in (["sbx-demo", "--", "ls"], ["-w", "/srv/x", "sbx-demo", "--", "ls"]):
+            with self.subTest(args=args):
+                self.quiet(exec_mod.main, args, lima=lima, env=self.env)
+                self.assertIn("SANDBOX_NAME=sbx-demo", lima.shells()[-1])
 
     def test_exec_returns_the_commands_status(self):
         lima = self.sandbox(lima=FakeLima(rc=7))

@@ -301,7 +301,9 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   proxy is upstream. The cause is the host's resolver: `resolvectl query example.org`
   there says "Name 'example.org' not found", and a later request got the same reason (502).
   nono proxy looks up the name itself and does the right thing. The swap host is now
-  www.kernel.org (`M7_SWAP_HOST`).
+  www.kernel.org (`M7_SWAP_HOST`): rerun on the same VM, it was denied by the allowlist
+  before, the port moved, both proxies stayed up, and after it the guest got 200
+  (decision="allow"). Item 7 is done on Linux.
 - Not yet: 7 on macOS (TESTING-MACOS step 9).
 
 ### Testing in the sandbox

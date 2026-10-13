@@ -33,10 +33,10 @@ not the engineer -- a `git gc` in the host repo can collect objects the
 sandbox clone is still reading through the alternate, and the first
 symptom is a broken sandbox. So a repo we register a remote in also gets
 gc.auto=0 / gc.pruneExpire=never, with the previous values stashed in the
-repo's own config under wmfSbx.saved*, restored when the last sandbox
-remote goes away. Known gap: a repo we clone but *fail* to add a remote
-to (the "name-taken" skip) keeps gc enabled; the warning that skip prints
-is the only signal.
+repo's own config under wmfSbx.saved*. Each sandbox that borrows the
+repo's objects is listed in wmfSbx.borrower, whether or not it got a
+remote (the "name-taken" skip gets none), and gc comes back when no
+borrower and no sandbox remote is left.
 """
 
 import os
@@ -61,6 +61,8 @@ GC_SETTINGS = (
     ("gc.pruneExpire", "never", "wmfSbx.savedGcPruneExpire"),
 )
 GC_SUSPENDED_KEY = "wmfSbx.gcSuspended"
+# Multi-valued: the sandboxes whose clones borrow this repo's objects.
+BORROWER_KEY = "wmfSbx.borrower"
 
 # Distinguishes "the key was unset before we touched it" from "we have no
 # record of this key", which restore has to treat differently: the first
@@ -94,6 +96,30 @@ def _config_set(host_dir, key, value, run=subprocess.run):
 
 def _config_unset(host_dir, key, run=subprocess.run):
     result = _git(host_dir, ["config", "--local", "--unset", key], run=run)
+    return result.returncode in (0, EXIT_NOTHING_TO_UNSET)
+
+
+def borrowers(host_dir, run=subprocess.run):
+    """The sandboxes listed as borrowing this repo's objects."""
+    result = _git(host_dir, ["config", "--local", "--get-all", BORROWER_KEY], run=run)
+    if result.returncode != 0:
+        return []
+    return [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
+
+
+def add_borrower(host_dir, name, run=subprocess.run):
+    """List `name` as a borrower (once). True if it is listed."""
+    if name in borrowers(host_dir, run=run):
+        return True
+    return _git(host_dir, ["config", "--local", "--add", BORROWER_KEY, name],
+                run=run).returncode == 0
+
+
+def remove_borrower(host_dir, name, run=subprocess.run):
+    """Unlist `name` (a validated sandbox name: no regex characters but
+    `-` and `.`, which are escaped)."""
+    pattern = "^" + name.replace(".", "\\.") + "$"
+    result = _git(host_dir, ["config", "--local", "--unset-all", BORROWER_KEY, pattern], run=run)
     return result.returncode in (0, EXIT_NOTHING_TO_UNSET)
 
 
@@ -186,7 +212,7 @@ def resume_gc(host_dir, run=subprocess.run, warn=None, dry_run=False):
     repo. True if it restored (or would have, under dry_run)."""
     if _config_get(host_dir, GC_SUSPENDED_KEY, run=run) is None:
         return False
-    if marked_remotes(host_dir, run=run):
+    if marked_remotes(host_dir, run=run) or borrowers(host_dir, run=run):
         # Another sandbox -- or another of this sandbox's remotes -- still
         # has a clone reading this repo's objects through an alternate.
         return False
@@ -260,6 +286,15 @@ def sync_remotes(name, candidates, run=subprocess.run, warn=None):
             "adopted": False,
         }
 
+        # The clone borrows this repo's objects whether or not it gets a
+        # remote here, so gc goes off first. The borrower entry is what
+        # lets remove_remotes find its way back to turn it on again.
+        if add_borrower(host_dir, name, run=run):
+            suspend_gc(host_dir, run=run, warn=warn)
+        else:
+            warn(f"{host_dir}: could not record sandbox {name!r} as a borrower; "
+                 f"gc stays on here, so a `git gc --prune=now` can break its clone.")
+
         result = _git(host_dir, ["remote", "add", "--no-tags", remote, url], run=run)
         if result.returncode == EXIT_REMOTE_EXISTS:
             existing = marker_value(host_dir, remote, run=run)
@@ -298,11 +333,6 @@ def sync_remotes(name, candidates, run=subprocess.run, warn=None):
             _git(host_dir, ["remote", "remove", remote], run=run)
             skipped.append({"hostDir": host_dir, "reason": "marker-failed"})
             continue
-
-        # After the marker, not before: the marker is what lets us find our
-        # way back here to undo this. Best-effort like everything else --
-        # suspend_gc warns for itself.
-        suspend_gc(host_dir, run=run, warn=warn)
 
         remotes.append(entry)
     return remotes, skipped
@@ -365,11 +395,18 @@ def remove_remotes(state, run=subprocess.run, warn=None, dry_run=False):
             results.append((host_dir, remote, "gone"))
             continue
         results.append((host_dir, remote, remove_one(host_dir, remote)))
+    # Every repo this sandbox borrowed from, with or without a remote.
+    host_dirs = [e["hostDir"] for e in state.get("remotes", [])]
+    host_dirs += [e["hostDir"] for e in state.get("skipped", []) if e.get("hostDir")]
+    for host_dir in dict.fromkeys(host_dirs):
+        if dry_run or not is_git_repo(host_dir, run=run):
+            continue
+        remove_borrower(host_dir, name, run=run)
         # Unconditional, even after 'not-ours' or 'failed': resume_gc
-        # decides for itself, and its condition is "no sandbox remote is
-        # left in this repo", which is exactly the state that makes gc
-        # safe again regardless of how we got there.
-        resume_gc(host_dir, run=run, warn=warn, dry_run=dry_run)
+        # decides for itself, and its condition is "no sandbox remote and
+        # no borrower is left in this repo", which is exactly the state
+        # that makes gc safe again regardless of how we got there.
+        resume_gc(host_dir, run=run, warn=warn)
     return results
 
 

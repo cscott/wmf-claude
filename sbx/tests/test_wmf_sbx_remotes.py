@@ -315,6 +315,42 @@ class GcSuspensionTests(unittest.TestCase):
         self.assertEqual(self.local("gc.auto"), "1500")
         self.assertIsNone(self.local("wmfSbx.gcSuspended"))
 
+    def candidate(self, remote="sandbox-mw-cite"):
+        return {"hostDir": self.repo, "remote": remote, "url": "git://x/y",
+                "sandboxPath": "/home/agent/Wikimedia/Cite", "readOnly": False}
+
+    def test_a_name_taken_skip_still_suspends_gc_until_rm(self):
+        # The known gap: the engineer's own remote has the sandbox
+        # remote's name, so the sandbox gets no remote; its clone still
+        # borrows this repo's objects.
+        git(self.repo, "config", "--local", "gc.auto", "1500")
+        git(self.repo, "remote", "add", "sandbox-mw-cite", "git://mine/x")
+        added, skipped = m.sync_remotes("mw-cite", [self.candidate()],
+                                        warn=self.warnings.append)
+        self.assertEqual((added, [s["reason"] for s in skipped]), ([], ["name-taken"]))
+        self.assertEqual(self.local("gc.auto"), "0")
+        self.assertEqual(m.borrowers(self.repo), ["mw-cite"])
+
+        state = state_mod.new_state("mw-cite")
+        state["skipped"] = skipped
+        m.remove_remotes(state, warn=self.warnings.append)
+        self.assertEqual(self.local("gc.auto"), "1500")
+        self.assertEqual(m.borrowers(self.repo), [])
+        self.assertEqual(git(self.repo, "remote", "get-url", "sandbox-mw-cite").stdout.strip(),
+                         "git://mine/x")
+
+    def test_gc_waits_for_the_last_borrower(self):
+        git(self.repo, "config", "--local", "gc.auto", "1500")
+        git(self.repo, "remote", "add", "sandbox-mw-cite", "git://mine/x")
+        _a, skipped_a = m.sync_remotes("a.b", [self.candidate()])
+        _b, skipped_b = m.sync_remotes("c-d", [self.candidate()])
+        self.assertEqual(sorted(m.borrowers(self.repo)), ["a.b", "c-d"])
+        for name, skipped, want in (("a.b", skipped_a, "0"), ("c-d", skipped_b, "1500")):
+            state = state_mod.new_state(name)
+            state["skipped"] = skipped
+            m.remove_remotes(state)
+            self.assertEqual(self.local("gc.auto"), want, name)
+
     def test_a_dry_run_removal_leaves_gc_suspended(self):
         candidate = {
             "hostDir": self.repo,

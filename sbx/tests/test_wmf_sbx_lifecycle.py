@@ -31,6 +31,7 @@ import wmf_sbx.nested as nested  # noqa: E402
 import wmf_sbx.repos as repos  # noqa: E402
 import wmf_sbx.ls as ls  # noqa: E402
 import wmf_sbx.rm as rm  # noqa: E402
+import wmf_sbx.egress as egress  # noqa: E402
 import wmf_sbx.start as start  # noqa: E402
 import wmf_sbx.state as state_mod  # noqa: E402
 import wmf_sbx.status as status_mod  # noqa: E402
@@ -804,6 +805,19 @@ class RmTests(Env):
                                     confirm=lambda q: "y"), 0, self.err)
         self.assertNotIn("wmf-sbx-sbx-demo", lima.vms)
         self.assertIsNone(state_mod.load("sbx-demo", self.env))
+
+    def test_rm_deletes_the_egress_directory(self):
+        lima = self.sandbox()
+        egress.password("sbx-demo", self.env)
+        self.assertEqual(self.quiet(rm.main, ["-f", "sbx-demo"], lima=lima, env=self.env,
+                                    confirm=lambda q: "y"), 0, self.err)
+        self.assertFalse(os.path.exists(egress.egress_dir("sbx-demo", self.env)))
+
+    def test_declining_keeps_the_egress_directory(self):
+        lima = self.sandbox()
+        egress.password("sbx-demo", self.env)
+        self.quiet(rm.main, ["sbx-demo"], lima=lima, env=self.env, confirm=lambda q: "n")
+        self.assertTrue(os.path.exists(egress.egress_dir("sbx-demo", self.env)))
 
     def test_force_asks_nothing(self):
         lima = self.sandbox()

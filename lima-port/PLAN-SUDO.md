@@ -136,13 +136,22 @@ Go on `nono proxy`; 5, 6, 7 and 9 remain.
 - The boot call: exactly one `-netdev user,…`, no other `-netdev` or
   network `-device`, else refuse (exit non-zero, a message on stderr
   that Lima shows). Append `restrict=on,guestfwd=…`.
-- Starts the proxy (its argv from a file wmf-sbx wrote, see A2.2), waits
-  for it to listen, runs QEMU, forwards signals, stops the proxy.
+- Starts the proxy (its argv from a file wmf-sbx wrote, see A2.2), and
+  `egress.AuthShim` in its own process when the upstream needs
+  credentials (one process tree: the engineer's decision, 2026-10-13),
+  waits for it to listen, runs QEMU, forwards signals, stops the proxy.
+  The proxy's stdout goes to /dev/null: without `--silent` (which also
+  stops the decision log) it prints the password.
 - Finds the real QEMU from `WMF_SBX_QEMU_REAL` or PATH, never itself.
 - Tests: argv rewriting and refusals as pure functions; the lifetime
   with a fake QEMU and a fake proxy (two small scripts).
 
 ## A2.2 The proxy config: `sbx/src/wmf_sbx/egress.py`
+
+Landed (2026-10-13), with the shim, the per-sandbox password and `rm`
+removing the directory; `--proxy-ca-cert` with its CA and the shim ran
+against the session proxy (wiki GET 200, POST 403, off-list 403).
+
 
 - `proxy_argv(state, env)`: `nono proxy --silent --profile
   <this checkout>/profiles/wmf-engineer.json`, `--allow-domain`

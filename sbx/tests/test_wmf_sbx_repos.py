@@ -548,8 +548,10 @@ class CreateFlowTests(Env):
 
     def create(self, *extra):
         self.lima = FakeLima()
+        # No warm snapshot: its gc borrower entry is tested in the
+        # lifecycle tests.
         argv = ["--no-deps", "--config", os.path.join(self.tmp, "repos.yaml"),
-                "--image", self.KEY, "--name", "demo", self.repo] + list(extra)
+                "--image", self.KEY, "--name", "demo", "--no-snapshot", self.repo] + list(extra)
         return self.quiet(create.main, argv, lima=self.lima, env=self.env,
                           prompt=lambda q: "")
 

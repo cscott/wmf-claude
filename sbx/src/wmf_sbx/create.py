@@ -35,6 +35,7 @@ from . import nested as nested_mod
 from . import remotes as remotes_mod
 from . import repos as repos_mod
 from . import session as session_mod
+from . import snapshot as snapshot_mod
 from . import template as template_mod
 from . import vm as vm_mod
 
@@ -437,6 +438,26 @@ def lima_sandbox_names(lima, env=None):
     return names
 
 
+# A cold create does not make a snapshot on a golden image with less than
+# this to go before images.maxAge: it builds the image again first.
+SNAPSHOT_GRACE = datetime.timedelta(days=1)
+
+
+def usable_snapshot(skey, env, run=subprocess.run):
+    """The key's newest generation, (gen, path, meta), or None. None also
+    when a host repo no longer lists the key as a gc borrower: it was
+    replaced, and the snapshot may name objects that are gone."""
+    found = snapshot_mod.newest(skey, env)
+    if found is None:
+        return None
+    missing = snapshot_mod.borrowers_intact(skey, snapshot_mod.host_dirs(found[2]), run=run)
+    if missing:
+        print(f"warning: snapshot {skey}: {missing[0]} was replaced or removed since it was "
+              f"made; this create is cold.", file=sys.stderr)
+        return None
+    return found
+
+
 def gc_old_images(key, env, config, say):
     """At the end of a create: `image gc`, keeping the sandbox's own
     image. A failure is a warning: the sandbox does not depend on it."""
@@ -506,6 +527,11 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
                         "to fetch the sandbox's work, and gc is not suspended")
     parser.add_argument("--vm-type", choices=sorted(template_mod.MOUNT_TYPES),
                         help="Lima driver (default: vz on macOS, qemu elsewhere)")
+    parser.add_argument("--cold", action="store_true",
+                        help="do not start from the warm snapshot of these repos; make a "
+                             "new one (and a new golden image, if it is old)")
+    parser.add_argument("--no-snapshot", action="store_true",
+                        help="neither start from a warm snapshot nor make one")
     parser.add_argument("--no-expire", action="store_true",
                         help="keep using a golden image older than settings.yaml "
                              "images.maxAge (14 days), with a warning; for a demo")
@@ -638,6 +664,20 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         if args.name and name in taken:
             raise vm_mod.VmError(f"a sandbox named {name!r} exists already")
 
+        # On QEMU the disk is an overlay on the golden image (D12), and
+        # Lima gets the placeholder; `vz` copies the golden image (D2).
+        # Warm snapshots need the overlay (track B3).
+        vm_type = args.vm_type or template_mod.default_vm_type()
+        overlay = disk_mod.uses_overlay(vm_type) and not args.full_disk
+        use_snapshots = overlay and not args.no_snapshot
+        readonly = {path for (_spec, is_ro), (_c, path, _n) in zip(split, resolved) if is_ro}
+        snap_repos = [(c, path, path in readonly) for c, path, _n in resolved]
+
+        def snapshot_for(golden_key):
+            """(key, the newest usable generation or None)."""
+            skey = snapshot_mod.snapshot_key(golden_key, snap_repos, nested=args.nested)
+            return skey, (None if args.cold else usable_snapshot(skey, env, run=run))
+
         # The golden image: the cache entry for the current inputs, built
         # when it is missing (phase 2), or the one --image names, or with
         # WMF_SBX_GIT_HASH_OVERRIDE=latest the newest cached one.
@@ -658,10 +698,16 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
             inputs = (inputs_fn() if inputs_fn
                       else image_mod.image_inputs(env=env, packages=config["packages"]))
             # The newest image of these inputs, or a new one when it is
-            # older than images.maxAge (track B3).
+            # older than images.maxAge (track B3). A cold snapshot is not
+            # made on an image with less than SNAPSHOT_GRACE to go.
+            base_inputs = inputs
+            expire = False if args.no_expire else None
             inputs, note = image_mod.choose_inputs(
-                inputs, env=env, config=config, expire=False if args.no_expire else None,
-                now=now)
+                inputs, env=env, config=config, expire=expire, renew=args.cold, now=now)
+            if use_snapshots and snapshot_for(image_mod.cache_key(inputs))[1] is None:
+                inputs, note = image_mod.choose_inputs(
+                    base_inputs, env=env, config=config, expire=expire, renew=args.cold,
+                    now=now, min_left=SNAPSHOT_GRACE)
             if note and note.startswith("warning"):
                 print(note, file=sys.stderr)
             elif note:
@@ -674,14 +720,17 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
             if not args.dry_run:
                 (build or image_mod.build)(inputs, lima=lima, run=run, env=env, log=say)
         golden = image_mod.golden_path(key, env)
-        # On QEMU the disk is an overlay on the golden image (D12), and
-        # Lima gets the placeholder; `vz` copies the golden image (D2).
-        vm_type = args.vm_type or template_mod.default_vm_type()
-        overlay = disk_mod.uses_overlay(vm_type) and not args.full_disk
+        skey, snap = snapshot_for(key) if use_snapshots else (None, None)
+        backing = snap[1] if snap else golden
         disk_image = (disk_mod.placeholder_path(image_mod.cache_root(env)) if overlay
                       else golden)
+        if snap:
+            say(f"+ warm: from snapshot {skey}/{snap[0]} (made by {snap[2].get('sandbox')})")
+        elif use_snapshots:
+            say(f"+ cold: {'--cold' if args.cold else 'no snapshot of these repos yet'}; "
+                f"this create makes snapshot {skey}")
         if overlay:
-            say(f"+ disk: a copy-on-write overlay on {golden}")
+            say(f"+ disk: a copy-on-write overlay on {backing}")
             if not args.dry_run:
                 lima.placeholder(image_mod.cache_root(env))
                 warning = disk_mod.lima_version_warning(lima.version())
@@ -720,7 +769,6 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
     # The state first: a create that fails half-way leaves a VM that
     # `wmf-sbx rm NAME` can then remove.
     stamp = (now or datetime.datetime.now(datetime.timezone.utc)).isoformat(timespec="seconds")
-    readonly = {path for (_spec, is_ro), (_c, path, _n) in zip(split, resolved) if is_ro}
     state = state_mod.new_state(
         name, created=stamp, primary_dir=primary_dir, image=key,
         vm_type=tmpl["vmType"], repos=[path for _c, path, _n in resolved],
@@ -730,9 +778,11 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         state["nestedSrc"] = nested_src
     if overlay:
         state["disk"] = "overlay"
+    if snap:
+        state["snapshot"] = snap[1]
     state_mod.save(state, env)
     try:
-        vm_mod.create(name, tmpl, lima=lima, log=say, backing=golden if overlay else None,
+        vm_mod.create(name, tmpl, lima=lima, log=say, backing=backing if overlay else None,
                       env=env)
     except (vm_mod.VmError, lima_mod.LimaError) as e:
         print(color_mod.error(f"error: {e}"), file=sys.stderr)
@@ -772,7 +822,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
     try:
         upstreams = upstream_plan(resolved_for_kit, run=run)
         repos_mod.clone_in_vm(name, repos, upstreams, keep, readonly=readonly,
-                              lima=lima, env=env)
+                              lima=lima, env=env, refresh=snap is not None)
     except (repos_mod.RepoError, lima_mod.LimaError) as e:
         print(color_mod.error(f"error: {e}"), file=sys.stderr)
         print(f"  `wmf-sbx rm {name}` removes what was made.", file=sys.stderr)
@@ -815,6 +865,18 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
               f"problem with `wmf-sbx exec {name} -- ...`, or `wmf-sbx rm {name}`.",
               file=sys.stderr)
         return 1
+
+    if use_snapshots:
+        meta = {"golden": key, "nested": bool(args.nested),
+                "repos": [{"canonical": c, "path": p, "readOnly": ro} for c, p, ro in snap_repos]}
+        try:
+            state["snapshot"] = snapshot_mod.freeze(
+                name, skey, golden, meta, lima=lima, env=env, run=run, log=say,
+                warn=lambda m: print(f"warning: {m}", file=sys.stderr))
+            state_mod.save(state, env)
+        except (snapshot_mod.SnapshotError, vm_mod.VmError, lima_mod.LimaError) as e:
+            print(color_mod.error(f"warning: {e}. The sandbox is fine; the next create of "
+                                  f"these repos is cold."), file=sys.stderr)
 
     gc_old_images(key, env, config, say)
     print(f"\nSandbox {name} is ready (Lima instance {vm_mod.instance_name(name)}).\n"

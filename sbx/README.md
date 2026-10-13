@@ -253,6 +253,36 @@ a full copy instead, as on `vz` (macOS's default), which cannot boot an
 overlay. This relies on how Lima 2.2.1 behaves; `create` warns on any
 other Lima version.
 
+### Warm snapshots
+
+On QEMU, each `create` ends by freezing the sandbox's disk as a
+**snapshot** of its set of repos, before any session runs in it: the
+clones, composer's `vendor/`, `node_modules` and the installed wiki. The
+next `create` of the same set of repos (the same host paths, the same
+`:ro`s, the same golden image, `--nested` or not) starts from that
+snapshot: it fetches, checks out and updates only what changed (`git
+fetch`, `composer update`, `npm ci` only where `package-lock.json`
+changed, `update.php`), then freezes the result as the newest snapshot.
+How a repo got in (named, or as a dependency) does not matter, so the
+dependency flags change the snapshot only by changing the set.
+
+- The freeze stops and starts the sandbox once, at the end of `create`.
+- `--cold` ignores the snapshot and makes a new one (and builds a new
+  golden image first if the current one is old). `--no-snapshot`
+  neither uses nor makes one.
+- A snapshot's clones borrow your host repos' objects, as a sandbox's
+  do, so a host repo's gc stays off while a snapshot of it exists (the
+  repo lists `snapshot-KEY` in `git config wmfSbx.borrower`). A host
+  repo that you delete or clone again no longer lists it, and the next
+  `create` of it is cold.
+- Snapshots are cached images: `image ls` lists them, `image gc`
+  removes those that no sandbox uses and that are older than
+  `images.gcAge` (so a set of repos you have not created for a week is
+  cold again), and `image prune` removes every unused one. A snapshot
+  keeps its golden image.
+- A new golden image (every 14 days, or a new wmf-claude) starts new
+  snapshots: the first `create` of each set after it is cold.
+
 ## Quick start
 
 ```bash
@@ -322,6 +352,9 @@ wmf-sbx create PRIMARY[:ro] [EXTRA[:ro] ...] [options]
 - `--name NAME`: the sandbox name (default `sbx-<primary>`). The host
   remote has the same name.
 - `--no-remotes`: add no host remote, and leave host gc as it is.
+- `--cold`, `--no-snapshot`, `--no-expire`: see "Warm snapshots" and
+  "The golden image cache". `--full-disk`: a full copy of the golden
+  image on QEMU too, and no snapshot.
 - `--vm-type qemu|vz`, `--cpus N` (4), `--memory SIZE` (8GiB),
   `--disk SIZE` (60GiB).
 - `--nested`: **lower security; only for work on wmf-claude or wmf-sbx

@@ -321,10 +321,17 @@ class GitIdentityTests(unittest.TestCase):
         self.assertEqual(plan["env"]["FLAG"], "1")
         self.assertEqual(plan["env"]["WMF_CLAUDE_STE"], "0")
 
+    def test_the_session_env_names_the_sandbox(self):
+        # bin/git-review-check: `local` is the host's repo only in a
+        # sandbox, which it knows from $SANDBOX_NAME.
+        plan = session.session_plan("demo", [], preferences={"ste": False})
+        self.assertEqual(plan["env"]["SANDBOX_NAME"], "demo")
+
     def test_bad_or_reserved_environment_is_refused(self):
         for bad, why in (({"1X": "a"}, "not a variable name"),
                          ({"NO_PROXY": "x"}, "credential proxy"),
                          ({"ANTHROPIC_BASE_URL": "x"}, "credential proxy"),
+                         ({"SANDBOX_NAME": "x"}, "the sandbox's name"),
                          ({"A": ["x"]}, "want a string")):
             with self.subTest(bad=bad), self.assertRaisesRegex(session.SessionError, why):
                 session.check_environment(bad)

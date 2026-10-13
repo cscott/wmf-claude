@@ -117,6 +117,11 @@ REGISTRY_DOMAINS = (
 #   that is not Anthropic's unless told that the proxy forwards
 #   tool_reference blocks; this one forwards the requests as they are.
 SESSION_NO_PROXY = "localhost,127.0.0.1," + credproxy_mod.GUEST_HOST
+# In every agent command in the sandbox (the session's settings `env`, and
+# `wmf-sbx exec`): the sandbox's name. bin/git-review-check reads it to
+# know that it runs in a sandbox, where `local` is the host's repo.
+SANDBOX_NAME_VAR = "SANDBOX_NAME"
+
 CREDENTIAL_PROXY_ENV = {"NO_PROXY": SESSION_NO_PROXY, "no_proxy": SESSION_NO_PROXY,
                         "ENABLE_TOOL_SEARCH": "true"}
 
@@ -452,6 +457,9 @@ def check_environment(environment):
         if name in CREDENTIAL_PROXY_ENV or name.startswith("ANTHROPIC_"):
             raise SessionError(f"settings.yaml: `environment:` {name} is set by wmf-sbx "
                                f"for the credential proxy")
+        if name == SANDBOX_NAME_VAR:
+            raise SessionError(f"settings.yaml: `environment:` {name} is set by wmf-sbx "
+                               f"(the sandbox's name)")
         if isinstance(value, bool):
             value = "1" if value else "0"
         if not isinstance(value, (str, int, float)):
@@ -471,6 +479,7 @@ def session_plan(name, resolved_for_kit, readonly=(), identity=None, preferences
     env = session_env(resolved_for_kit, readonly, identity)
     env.update(check_environment(environment))
     env.update(settings.pop("env", {}))
+    env[SANDBOX_NAME_VAR] = name
     return {
         "env": env,
         "settings": settings,

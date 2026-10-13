@@ -7,7 +7,8 @@ agent's dotfiles do not run (vm.agent_argv). stdin, stdout and stderr
 are the caller's, and the exit status is the command's. The command
 gets the host's proxy variables, as the guest sees them
 (image.guest_proxy_env): `sudo` drops the ones Lima put in the guest's
-environment, and a nested sandbox's inner VM has no other way out.
+environment, and a nested sandbox's inner VM has no other way out. It
+also gets $SANDBOX_NAME, as a session does (bin/git-review-check).
 
 `--engineer` runs it as Lima's user instead, which has sudo. It refuses
 a working directory that the agent can write (its home, /tmp): the
@@ -24,6 +25,7 @@ import sys
 from . import color as color_mod
 from . import image as image_mod
 from . import lima as lima_mod
+from . import session as session_mod
 from . import state as state_mod
 from . import vm as vm_mod
 
@@ -48,7 +50,9 @@ def main(argv=None, lima=None, env=None):
         parser.error("give a command after the sandbox name: NAME -- CMD [ARGS...]")
     try:
         name, state = vm_mod.resolve(args.name, env=env)
-        proxy = image_mod.guest_proxy_env(env)
+        # The proxy, and the sandbox's name, as a session has them.
+        agent_env = dict(image_mod.guest_proxy_env(env))
+        agent_env[session_mod.SANDBOX_NAME_VAR] = name
         if args.engineer:
             workdir = args.workdir or vm_mod.ENGINEER_HOME
             if agent_writable(workdir):
@@ -56,7 +60,7 @@ def main(argv=None, lima=None, env=None):
                     f"--engineer refuses {workdir}: the agent can write there")
             argv_in = cmd
         elif args.workdir:
-            argv_in = vm_mod.agent_argv(cmd, workdir=args.workdir, env=proxy)
+            argv_in = vm_mod.agent_argv(cmd, workdir=args.workdir, env=agent_env)
             workdir = vm_mod.ENGINEER_HOME
         else:
             # The primary workspace, where the clone is (D8). Before the
@@ -64,7 +68,7 @@ def main(argv=None, lima=None, env=None):
             primary = state.get("primaryDir") or vm_mod.AGENT_HOME
             argv_in = vm_mod.agent_argv(
                 ["sh", "-c", 'cd -- "$1" 2>/dev/null || true; shift; exec "$@"',
-                 "sh", primary] + cmd, workdir=vm_mod.AGENT_HOME, env=proxy)
+                 "sh", primary] + cmd, workdir=vm_mod.AGENT_HOME, env=agent_env)
             workdir = vm_mod.ENGINEER_HOME
         vm_mod.ensure_running(name, lima=lima,
                               log=lambda m: print(color_mod.dim(m), file=sys.stderr))

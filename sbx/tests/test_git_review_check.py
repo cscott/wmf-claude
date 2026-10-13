@@ -25,7 +25,6 @@ import shutil
 import subprocess
 import tempfile
 import unittest
-from unittest import mock
 
 BIN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "bin")
 SCRIPT = os.path.join(BIN, "git-review-check")
@@ -83,9 +82,8 @@ class LocalIshRemoteTests(unittest.TestCase):
     this on Gerrit" -- answerable entirely from local refs.
 
     Which remotes qualify is deliberately not a name-prefix guess
-    (cananian's 2026-09-08 refinement): `local` must point under the VM's
-    host mount (/run/wmf-sbx/host/, here a temporary directory through
-    WMF_SBX_HOST_MOUNT_ROOT), as the sandbox's clones do, and any other remote
+    (cananian's 2026-09-08 refinement): `local` requires $SANDBOX_NAME to
+    be set (i.e. we're actually inside a sandbox), and any other remote
     requires a wmf-sbx state file that actually registers it against this
     repo -- see write_sandbox_state()."""
 
@@ -107,12 +105,12 @@ class LocalIshRemoteTests(unittest.TestCase):
 
         self.state_home = os.path.join(self.tmp.name, "state")
 
-    def run_script(self, *args, cwd=None, mount_root=None):
+    def run_script(self, *args, cwd=None, sandbox_name=None):
         env = dict(os.environ, GIT_TERMINAL_PROMPT="0",
                    XDG_STATE_HOME=self.state_home)
-        env.pop("WMF_SBX_HOST_MOUNT_ROOT", None)
-        if mount_root is not None:
-            env["WMF_SBX_HOST_MOUNT_ROOT"] = mount_root
+        env.pop("SANDBOX_NAME", None)
+        if sandbox_name is not None:
+            env["SANDBOX_NAME"] = sandbox_name
         return subprocess.run(
             ["bash", SCRIPT] + list(args),
             cwd=cwd or self.repo, capture_output=True, text=True, env=env,
@@ -126,40 +124,23 @@ class LocalIshRemoteTests(unittest.TestCase):
 
     def test_head_already_on_local_remote_passes(self):
         self.rename_origin("local")
-        result = self.run_script("local", mount_root=self.tmp.name)
+        result = self.run_script("local", sandbox_name="mw-cite-sbx")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("already reachable", result.stdout)
 
-    def test_local_remote_outside_the_host_mount_falls_through_to_gerrit(self):
-        # A host repo that happens to have a remote named `local` (not
-        # under /run/wmf-sbx/host/) must not get the weaker local-only
-        # check.
+    def test_local_remote_without_sandbox_name_falls_through_to_gerrit(self):
+        # No $SANDBOX_NAME -> we can't tell this is really a sandbox's
+        # mirror remote, so a host repo that happens to have a remote
+        # named `local` must not get the (weaker) local-only check.
         self.rename_origin("local")
         result = self.run_script("local")
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("No .gitreview found", result.stderr)
-
-    def test_local_remote_elsewhere_in_a_sandbox_falls_through_to_gerrit(self):
-        self.rename_origin("local")
-        other_root = os.path.join(self.tmp.name, "mount")
-        os.makedirs(other_root)
-        result = self.run_script("local", mount_root=other_root)
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("No .gitreview found", result.stderr)
-
-    def test_docker_sandboxes_sandbox_name_no_longer_counts(self):
-        # Lima sets no $SANDBOX_NAME (Docker Sandboxes did): with `local`
-        # outside the host mount, the variable does not make it qualify.
-        self.rename_origin("local")
-        with mock.patch.dict(os.environ, {"SANDBOX_NAME": "x"}):
-            result = self.run_script("local")
         self.assertEqual(result.returncode, 1)
         self.assertIn("No .gitreview found", result.stderr)
 
     def test_head_not_yet_on_local_remote_fails(self):
         self.rename_origin("local")
         stray = commit(self.repo, "LOCAL", "local-only work")
-        result = self.run_script("local", mount_root=self.tmp.name)
+        result = self.run_script("local", sandbox_name="mw-cite-sbx")
         self.assertEqual(result.returncode, 1)
         self.assertIn("Not yet reachable from 'local'", result.stderr)
         self.assertIn(stray, result.stderr)
@@ -212,7 +193,7 @@ class LocalIshRemoteTests(unittest.TestCase):
         commit(self.far, "MORE", "second, only on far")
         git(self.repo, "fetch", "-q", "local")
         self.assertEqual(head, git(self.repo, "rev-parse", "HEAD").stdout.strip())
-        result = self.run_script("local", mount_root=self.tmp.name)
+        result = self.run_script("local", sandbox_name="mw-cite-sbx")
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_a_remote_that_is_not_local_or_sandbox_shaped_is_unaffected(self):
@@ -275,7 +256,7 @@ class SafeResetAgainstSandboxRemoteTests(unittest.TestCase):
         # wmf_sbx_kit's real install puts them there.
         env = dict(os.environ, GIT_TERMINAL_PROMPT="0",
                    XDG_STATE_HOME=self.state_home)
-        env.pop("WMF_SBX_HOST_MOUNT_ROOT", None)
+        env.pop("SANDBOX_NAME", None)
         env["PATH"] = BIN + os.pathsep + env.get("PATH", "")
         return subprocess.run(
             ["bash", SAFE_RESET] + list(args),

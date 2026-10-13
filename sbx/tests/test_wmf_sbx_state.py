@@ -4,6 +4,8 @@
 """
 
 import json
+import contextlib
+import io
 import os
 import sys
 import tempfile
@@ -147,11 +149,32 @@ class ResolveNameArgTests(unittest.TestCase):
         with self.assertRaises(s.StateError):
             s.resolve_name_arg(self.repo.name, env=self.env)
 
-    def test_ambiguous_match_raises(self):
+    def two_sandboxes(self):
         s.save(s.new_state("mw-cite", primary_dir=self.repo.name), env=self.env)
         s.save(s.new_state("mw-ve", primary_dir=self.repo.name), env=self.env)
+
+    def test_ambiguous_match_raises_without_a_terminal(self):
+        self.two_sandboxes()
         with self.assertRaises(s.StateError):
-            s.resolve_name_arg(self.repo.name, env=self.env)
+            s.resolve_name_arg(self.repo.name, env=self.env, isatty=lambda: False,
+                               ask=lambda q: self.fail("asked without a terminal"))
+
+    def test_ambiguous_match_asks_on_a_terminal(self):
+        self.two_sandboxes()
+        for answer, want in (("2", "mw-ve"), ("mw-cite", "mw-cite")):
+            with self.subTest(answer=answer), contextlib.redirect_stderr(io.StringIO()) as err:
+                got = s.resolve_name_arg(self.repo.name, env=self.env, isatty=lambda: True,
+                                         ask=lambda q: answer)
+            self.assertEqual(got, want)
+            self.assertIn("1) mw-cite", err.getvalue())
+
+    def test_a_bad_answer_raises(self):
+        self.two_sandboxes()
+        for answer in ("3", "x", ""):
+            with self.subTest(answer=answer), self.assertRaises(s.StateError), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                s.resolve_name_arg(self.repo.name, env=self.env, isatty=lambda: True,
+                                   ask=lambda q: answer)
 
     def test_sandboxes_without_primary_dir_are_not_matched(self):
         # A state file written before `primaryDir` existed.

@@ -180,6 +180,31 @@ password went out after item 9: the proxy runs `--no-auth`.
 
 ## A2.3 The template and start
 
+Landed (2026-10-13), as `create --egress-proxy` (QEMU only; refused
+with `--nested` and `vz`), not yet `--sudo`: the agent still has no sudo,
+which is A3. The A2 exit RAN in a nested sandbox (NOTES): the invariants,
+the A2.0 item 3 installs, a contained nono behind the proxy, and `wmf-sbx
+allow` opening a host under a running contained process (000 → 200). How
+it differs from the plan below:
+
+- One guest address for the three guestfwds: 192.168.5.100, port 3128
+  the proxy, 53 the resolver, 3129 the session's credential proxy (on a
+  Unix socket, `egress/<name>/cred.sock`). So no nft rule per session,
+  and one session per egress sandbox at a time (a second is refused
+  while the socket answers).
+- The resolver: glibc straight at it (`nameserver 192.168.5.100`,
+  `options use-vc`), systemd-resolved masked.
+- `wmf-sbx allow NAME HOST... | --rm HOST... | --list` (no
+  `--for-session`, no URL globs): hosts only, as `--allow-domain`.
+- The egress list also has `registry.nono.sh`, which create's
+  `wmf-claude-setup` pulls the base pack from.
+- Found at the first real create: behind `restrict=on` the guest has no
+  default route (the host block now takes the interface toward
+  192.168.5.2), and Lima's first-boot step installs rsync before the
+  provisioning gives apt the proxy (the image now has rsync).
+- Not run end to end: a Claude session in an egress sandbox (the
+  credential proxy on its socket is covered by unit tests only).
+
 - `--sudo` template: `vmType: qemu` (refuse `vz`), `hostResolver.enabled:
   false`, `propagateProxyEnv: false`, the sandbox CA in `caCerts`, the
   guest proxy files in the provisioning. The `PROXY_PORTS` host block is

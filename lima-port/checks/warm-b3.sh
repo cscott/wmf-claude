@@ -61,9 +61,10 @@ timed_create() {
 }
 
 wiki_ok() {
-  # The wiki's PHP runs and its database is current.
-  in_vm "$1" 'cd "$(jq -r .env.MW_INSTALL_PATH ~/.claude/settings.json)" && php maintenance/run.php version' \
-    | tail -1
+  # The wiki's PHP runs and reads its database (RAN: there is no `version`
+  # script for run.php).
+  in_vm "$1" 'cd "$(jq -r .env.MW_INSTALL_PATH ~/.claude/settings.json)" && php maintenance/run.php showSiteStats' \
+    | tr '\n' ' ' | cut -c1-160
 }
 
 primary() { st "$1" .primaryDir; }

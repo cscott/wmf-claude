@@ -321,7 +321,10 @@ wmf-sbx create PRIMARY[:ro] [EXTRA[:ro] ...] [options]
   none. Defaults: 16 GiB of memory, a 120 GiB (sparse) disk. Nested KVM
   needs the host to allow it (Linux: `kvm_intel`/`kvm_amd` `nested=1`, the
   default on recent kernels; macOS: M3 or later with macOS 15, on `vz`);
-  without it the inner VMs run, slowly, without KVM. For example:
+  without it the inner VMs run, slowly, without KVM. A session cannot
+  stop an inner VM that an earlier session started, so `resume` first
+  stops the inner VMs that still run (not while another session runs in
+  the sandbox); start them again in the session. For example:
   `wmf-sbx create --nested --no-deps ~/src/wmf-claude`.
 - `--image KEY`: use a cached golden image (`wmf-sbx image ls`), not the
   one for the current inputs (see also `WMF_SBX_GIT_HASH_OVERRIDE`,

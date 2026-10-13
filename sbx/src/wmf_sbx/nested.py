@@ -14,6 +14,7 @@ import os
 import shlex
 
 from . import image as image_mod
+from . import lima as lima_mod
 from . import vm as vm_mod
 
 LIMA_VERSION = "2.2.1"
@@ -108,6 +109,66 @@ def session_grants(src):
     for d in DOMAINS:
         grants += ["--allow-domain", d]
     return grants
+
+
+# stop_inner_script's exit status while a session runs in the sandbox.
+SESSION_RUNNING = 3
+
+
+def stop_inner_script(limactl_path="/usr/local/bin/limactl"):
+    """A bash script, run as root in a nested sandbox before a session
+    starts: stop the inner VMs that still run. An inner VM's Lima host agent stays in the sandbox of the session
+    that started it; Landlock scopes signals to the sandbox, so a later
+    session cannot stop it (RAN; vm.unsignalled_hostagent), and it keeps
+    its old proxy password, port and CA. Root, outside nono, can. Not
+    while a session runs (an agent's nono process): its inner VMs are
+    in use. Exits SESSION_RUNNING then. Prints `stopped INSTANCE` or
+    `failed INSTANCE` for each."""
+    limactl = (f"runuser -u {shlex.quote(vm_mod.AGENT)} -- env HOME={vm_mod.AGENT_HOME} "
+               f"{shlex.quote(limactl_path)}")
+    return f"""set -uo pipefail
+if pgrep -u {shlex.quote(vm_mod.AGENT)} -x nono >/dev/null; then exit {SESSION_RUNNING}; fi
+[ -x {shlex.quote(limactl_path)} ] || exit 0
+{limactl} list --format '{{{{.Name}}}} {{{{.Status}}}}' 2>/dev/null |
+while read -r inst status; do
+  [ "$status" = Running ] || continue
+  # Not the list on stdin.
+  if {limactl} stop "$inst" </dev/null >/dev/null 2>&1; then
+    echo "stopped $inst"
+  else
+    echo "failed $inst"
+  fi
+done
+"""
+
+
+def stop_inner(name, lima=None, log=print):
+    """Run stop_inner_script in sandbox `name`; log what it stopped, or
+    that a session runs."""
+    try:
+        res = vm_mod.shell(name, ["sudo", "bash", "-s"], lima=lima,
+                           input=stop_inner_script(), check=False)
+    except lima_mod.LimaError as e:
+        log(f"warning: could not stop the inner VMs that an earlier session started ({e})")
+        return []
+    if res.returncode == SESSION_RUNNING:
+        log(f"note: a session runs in {name}; its inner VMs stay as they are")
+        return []
+    words = [line.split(None, 1) for line in (res.stdout or "").splitlines()]
+    shown = {"stopped": [], "failed": []}
+    for w in words:
+        if len(w) == 2 and w[0] in shown:
+            inst = w[1]
+            shown[w[0]].append(inst[len(vm_mod.PREFIX):] if inst.startswith(vm_mod.PREFIX)
+                               else inst)
+    stopped, failed = shown["stopped"], shown["failed"]
+    if stopped:
+        log(f"+ stopped the inner VMs that an earlier session started: {' '.join(stopped)} "
+            f"(`wmf-sbx start NAME` in the session starts one again, with its proxy and CA)")
+    if failed:
+        log(f"warning: could not stop the inner VMs {' '.join(failed)}; the session cannot "
+            f"stop them either")
+    return stopped
 
 
 def install_script(arch, base, src):

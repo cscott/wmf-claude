@@ -71,7 +71,7 @@ Development scaffolding:
   free). The real fix is upstream: mediawiki-phan-config's `$IP` (`MW_INSTALL_PATH`, else
   `'../..'`, so CI is unchanged) in the ~170 Gerrit repos' `.phan/config.php`, ideally
   through a helper there. Not yet RAN on real hardware: Cite's phan clean with CI's phan
-  dependencies and the links.
+  dependencies and the links (`lima-port/checks/phan-links.sh`).
 - [ ] **Generate the testing section of `~/.claude/CLAUDE.md` per sandbox**: name each repo's real entry points (composer/npm scripts,
   Jest wiring, `tests/` dirs, `QUnitTestModule`, `tests/parser/*.txt`) and say which runners do
   not apply.
@@ -125,7 +125,9 @@ Development scaffolding:
   nodejs.org, release-assets.githubusercontent.com, downloads.claude.ai, pypi.org and
   files.pythonhosted.org (MCP venvs). An inner create's `wmf-claude-setup` reaches the nono
   pack registry, `registry.nono.sh` (N3: a 403 that did not name the host; `RUST_LOG=debug
-  nono pull` did). nono also POSTs an update check to `update.nono.sh`; not granted.
+  nono pull` did).
+- nono in the sandbox POSTs an update check to `update.nono.sh`; the session refuses it.
+  This does no harm (nono goes on, and the image pins nono's version), so it gets no grant.
 - `limactl` logs proxy URLs with their password: `lima.redact` removes them from LimaError.
 - Inner sandboxes' repos go to `wmf-sbx-src` in the engineer's home path (state `nestedSrc`,
   e.g. `/home/cananian/wmf-sbx-src`; settings written by the install, if none), the one
@@ -145,9 +147,11 @@ Development scaffolding:
   and CA until it restarts, and the later session cannot restart it: its Lima host agent
   is in the earlier session's sandbox, and Landlock scopes signals to the sandbox, so
   `limactl stop` gets EPERM ("operation not permitted"), then waits 3 minutes for an exit
-  that never comes (RAN). `vm.stop` checks the host agent first (`kill -0` of `ha.pid`)
-  and refuses with where to stop it from: outside nono, as the outer VM's engineer
-  (`sudo -u agent limactl stop wmf-sbx-NAME`). The proxy-port warning says the same.
+  that never comes (RAN). So `resume` of a nested sandbox first stops, as root outside
+  nono, the inner VMs that still run (`nested.stop_inner`), unless a session runs in the
+  sandbox (an agent `nono` process: its inner VMs are in use). In a session, `vm.stop`
+  checks the host agent first (`kill -0` of `ha.pid`) and refuses with where to stop it
+  from; the proxy-port warning says the same. Not RAN: the stop at `resume`.
 - `exec` gives the agent's command `image.guest_proxy_env`: `sudo` drops the proxy that
   Lima writes to the inner VM's `/etc/environment`, and the inner VM has no other way out
   (N3: `mw-install-browser` got ENETUNREACH to googlechromelabs.github.io).

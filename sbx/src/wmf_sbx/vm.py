@@ -159,7 +159,8 @@ def outside_stop_advice(name, pid):
     user = pwd.getpwuid(os.getuid()).pw_name
     return (f"its Lima host agent (pid {pid}) runs outside this session's sandbox "
             f"(an earlier session started it), so it cannot be stopped from here; "
-            f"stop it from outside nono (in a nested sandbox, as the outer VM's "
+            f"the next `wmf-sbx resume` of the outer sandbox stops it, "
+            f"or stop it now from outside nono (as the outer VM's "
             f"engineer: `sudo -u {user} limactl stop {inst}`), then "
             f"`wmf-sbx start {name}`")
 

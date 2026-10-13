@@ -30,6 +30,7 @@ from . import color as color_mod
 from . import credproxy as credproxy_mod
 from . import image as image_mod
 from . import lima as lima_mod
+from . import nested as nested_mod
 from . import session as session_mod
 from . import start as start_mod
 from . import state as state_mod
@@ -110,6 +111,9 @@ def main(argv=None, lima=None, env=None):
                                   f"is started. `wmf-sbx rm {name}` and create it again."),
                   file=sys.stderr)
             return 1
+        if state.get("nested"):
+            nested_mod.stop_inner(name, lima=lima,
+                                  log=lambda m: print(color_mod.dim(m), file=sys.stderr))
         source = credproxy_mod.host_source(env)
     except (state_mod.StateError, vm_mod.VmError, lima_mod.LimaError,
             credproxy_mod.CredentialError) as e:

@@ -203,6 +203,12 @@ pins. What changes:
   points them at it), and the outer VM's nftables still bound it. The
   inner VMs trust the session's nono CA (it re-signs TLS for hosts with
   endpoint rules); an image build removes it before it seals.
+- Before a session in a nested sandbox (never in an ordinary one),
+  `resume` runs `limactl list` and `limactl stop` as the agent, outside
+  nono (an earlier session's inner VMs are out of the new session's
+  reach). `limactl` is root's; what it reads in `~/.lima` is the
+  agent's, and it runs with the agent's uid, so it can signal and write
+  only what the agent owns.
 - Every sandbox's invariants check that the agent is in the `kvm` group
   only in a nested sandbox (root writes `/etc/wmf-sbx/nested`, which the
   agent cannot).

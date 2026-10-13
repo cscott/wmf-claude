@@ -9,6 +9,7 @@ The real session ran in a VM (lima-port/HANDOFF-LIMA.md §11, phase 6)."""
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -26,7 +27,7 @@ import wmf_sbx.session as session  # noqa: E402
 import wmf_sbx.setup as setup  # noqa: E402
 import wmf_sbx.state as state_mod  # noqa: E402
 import wmf_sbx.vm as vm  # noqa: E402
-from test_wmf_sbx_lifecycle import Env, FakeLima, allow_tmp, git_repo  # noqa: E402
+from test_wmf_sbx_lifecycle import Done, Env, FakeLima, allow_tmp, git_repo  # noqa: E402
 
 REPO_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
 STATE = {"name": "demo", "primaryDir": "/home/me/src/Cite",
@@ -132,6 +133,51 @@ class LauncherTests(unittest.TestCase):
         grants = " ".join(nested.session_grants("/home/eng/wmf-sbx-src"))
         self.assertIn("--read " + image.LOCAL_BASE_DIR, grants)
         self.assertIn("--allow /home/eng/wmf-sbx-src", grants)
+
+    def run_stop_inner(self, list_out, nono_running=False, stop_rc=0):
+        """stop_inner_script with fake pgrep and runuser (which runs the
+        limactl it is given: a fake one). Returns (result, limactl calls)."""
+        import wmf_sbx.nested as nested
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        log = os.path.join(d, "calls")
+        fakes = {
+            "pgrep": f"exit {0 if nono_running else 1}",
+            # runuser -u agent -- env HOME=... LIMACTL ARGS
+            "runuser": 'shift 3; exec "$@"',
+            "limactl": (f'echo "$*" >> {log}\n'
+                        f'case $1 in list) printf %s {shlex.quote(list_out)};; '
+                        f'stop) read -r -t 0.1 x && exit 9; exit {stop_rc};; esac'),
+        }
+        for tool, body in fakes.items():
+            with open(os.path.join(d, tool), "w") as f:
+                f.write("#!/bin/bash\n" + body.replace("\\n", "\n") + "\n")
+            os.chmod(os.path.join(d, tool), 0o755)
+        res = subprocess.run(["bash"], input=nested.stop_inner_script(os.path.join(d, "limactl")),
+                             text=True, capture_output=True,
+                             env=dict(os.environ, PATH=d + ":" + os.environ["PATH"]))
+        if not os.path.exists(log):
+            return res, []
+        with open(log) as f:
+            return res, f.read().splitlines()
+
+    def test_resume_stops_the_inner_vms_that_still_run(self):
+        res, calls = self.run_stop_inner("wmf-sbx-inner Running\nwmf-sbx-old Stopped\n"
+                                         "wmf-sbx-two Running\n")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual(res.stdout, "stopped wmf-sbx-inner\nstopped wmf-sbx-two\n")
+        # each stop has no stdin: it did not take the rest of the list
+        self.assertEqual(calls[1:], ["stop wmf-sbx-inner", "stop wmf-sbx-two"])
+
+    def test_resume_leaves_the_inner_vms_of_a_running_session(self):
+        import wmf_sbx.nested as nested
+        res, calls = self.run_stop_inner("wmf-sbx-inner Running\n", nono_running=True)
+        self.assertEqual(res.returncode, nested.SESSION_RUNNING)
+        self.assertEqual(calls, [])
+
+    def test_resume_reports_an_inner_vm_it_could_not_stop(self):
+        res, _calls = self.run_stop_inner("wmf-sbx-inner Running\n", stop_rc=1)
+        self.assertEqual(res.stdout, "failed wmf-sbx-inner\n")
 
     def test_the_inner_repos_have_paths_an_inner_vm_can_use(self):
         # RAN (N3): the inner create refused ~/wmf-sbx-src/extensions/Cite,
@@ -535,6 +581,39 @@ class ResumeMainTests(Env):
     def test_info_commands_do_not_mark_it_attached(self):
         self.resume("--", "mcp", "list")
         self.assertFalse(state_mod.load("demo", self.env)["attached"])
+
+    def nested_resume(self, rc=0, stdout=""):
+        st = state_mod.load("demo", self.env)
+        st["nested"] = True
+        state_mod.save(st, self.env)
+        call = self.lima.call
+
+        def fake(*args, **kw):
+            if args[0] == "shell" and "pgrep" in (kw.get("input") or ""):
+                self.lima.calls.append(("call",) + args)
+                return Done(returncode=rc, stdout=stdout)
+            return call(*args, **kw)
+        self.lima.call = fake
+        return self.resume()
+
+    def stop_inner_shells(self):
+        return [i for i, s in enumerate(self.lima.shells()) if s[-3:] == ("sudo", "bash", "-s")]
+
+    def test_a_nested_resume_stops_the_inner_vms_first(self):
+        self.assertEqual(self.nested_resume(stdout="stopped wmf-sbx-inner\n"), 0, self.err)
+        (i,) = self.stop_inner_shells()
+        self.assertLess(i, self.lima.shells().index(self.launches()[0]))
+        self.assertIn("stopped the inner VMs that an earlier session started: inner", self.err)
+
+    def test_a_nested_resume_beside_a_session_starts_its_own(self):
+        import wmf_sbx.nested as nested
+        self.assertEqual(self.nested_resume(rc=nested.SESSION_RUNNING), 0, self.err)
+        self.assertIn("a session runs in demo", self.err)
+        self.assertEqual(len(self.launches()), 1)
+
+    def test_an_ordinary_resume_stops_no_inner_vms(self):
+        self.assertEqual(self.resume(), 0, self.err)
+        self.assertEqual(self.stop_inner_shells(), [])
 
     def test_run_is_an_alias(self):
         rc = self.quiet(resume.run_main, ["--name", "demo", "--", "-p", "x"],

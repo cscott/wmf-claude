@@ -187,6 +187,12 @@ def extra_domains(name, env=None):
     return [ln.strip() for ln in lines if ln.strip() and not ln.strip().startswith("#")]
 
 
+def set_extra_domains(name, domains, env=None):
+    """Write the sandbox's `allow` file (`wmf-sbx allow`)."""
+    _make_dir(name, env)
+    _write_private(_path(name, "allow", env), "".join(f"{d}\n" for d in domains))
+
+
 def remove(name, env=None):
     """Delete the sandbox's egress directory (at `rm`)."""
     shutil.rmtree(egress_dir(name, env), ignore_errors=True)

@@ -24,6 +24,7 @@ It must not import any sibling wmf_sbx module: it runs in the VM alone.
 Usage: wmf-sbx-setup --lima PLAN.json
 """
 
+import hashlib
 import json
 import os
 import pwd
@@ -85,6 +86,8 @@ DEFAULT_INSTALL_PARAMS = {
 
 # core's own composer script, which is what actually installs the wiki.
 INSTALL_SCRIPT_NAME = "mw-install:sqlite"
+# In node_modules: the sha256 of the package-lock.json of the last npm ci.
+NPM_STAMP_NAME = ".wmf-sbx-package-lock.sha256"
 
 # Shape from mediawiki-core-clean/.env. Read by `docker compose`, which
 # isn't running here -- the values that make the test harnesses work are
@@ -758,7 +761,20 @@ def npm_install(repo_path, run=subprocess.run):
     without the binary; `mw-install-cypress` fetches it on demand."""
     if not os.path.exists(os.path.join(repo_path, "package.json")):
         return None
-    if os.path.exists(os.path.join(repo_path, "package-lock.json")):
+    lock = os.path.join(repo_path, "package-lock.json")
+    stamp = os.path.join(repo_path, "node_modules", NPM_STAMP_NAME)
+    if os.path.exists(lock):
+        # A warm snapshot's node_modules (track B3): ci again only if the
+        # lock file changed since it was installed.
+        digest = _sha256(lock)
+        try:
+            with open(stamp, encoding="utf-8") as f:
+                if f.read().strip() == digest:
+                    print(f"{repo_path}: package-lock.json is as at the last npm ci; "
+                          f"skipping it", file=sys.stderr)
+                    return True
+        except OSError:
+            pass
         argv = ["npm", "ci", "--no-audit", "--no-fund"]
     else:
         argv = ["npm", "install", "--no-audit", "--no-fund"]
@@ -766,6 +782,28 @@ def npm_install(repo_path, run=subprocess.run):
     # environment it is given.
     result = as_agent(["env", "CYPRESS_INSTALL_BINARY=0"] + argv,
                       cwd=repo_path, run=run)
+    if result.returncode == 0 and os.path.exists(lock):
+        try:
+            with open(stamp, "w", encoding="utf-8") as f:
+                f.write(digest + "\n")
+        except OSError:
+            pass
+    return result.returncode == 0
+
+
+def _sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def update_mediawiki(core_path, run=subprocess.run):
+    """`update.php` for a wiki that a warm snapshot installed (track B3):
+    the refreshed code may have new tables or fields. True/False."""
+    result = as_agent(["php", "maintenance/run.php", "update", "--quick"],
+                      cwd=core_path, run=run)
     return result.returncode == 0
 
 
@@ -1054,6 +1092,9 @@ def mediawiki_setup(plan, core_path, core_readonly, links, clones, warnings,
     installed = install_mediawiki(core_path, run=run)
     if installed is False:
         print(f"error: {INSTALL_SCRIPT_NAME} failed in {core_path}", file=sys.stderr)
+        return 1
+    if installed is None and not update_mediawiki(core_path, run=run):
+        print(f"error: update.php failed in {core_path}", file=sys.stderr)
         return 1
 
     # After the install, and both non-fatal: a wiki with no phpunit.xml and

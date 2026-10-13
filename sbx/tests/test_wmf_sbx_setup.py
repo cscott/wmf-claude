@@ -319,6 +319,30 @@ class StepCommandTests(unittest.TestCase):
             self.argv(),
             ["env", "CYPRESS_INSTALL_BINARY=0", "npm", "ci", "--no-audit", "--no-fund"])
 
+    def test_npm_ci_is_skipped_when_the_lock_file_is_as_at_the_last_one(self):
+        # A warm snapshot's node_modules (track B3).
+        self.touch("package.json", "{}")
+        self.touch("package-lock.json", '{"v": 1}')
+        os.makedirs(os.path.join(self.repo, "node_modules"))
+        self.assertTrue(s.npm_install(self.repo, run=self.fake_run))
+        self.assertEqual(len(self.calls), 1)
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertTrue(s.npm_install(self.repo, run=self.fake_run))
+        self.assertEqual(len(self.calls), 1)
+        self.assertIn("skipping", err.getvalue())
+        self.touch("package-lock.json", '{"v": 2}')
+        self.assertTrue(s.npm_install(self.repo, run=self.fake_run))
+        self.assertEqual(len(self.calls), 2)
+
+    def test_a_failed_npm_ci_leaves_no_stamp(self):
+        self.touch("package.json", "{}")
+        self.touch("package-lock.json", "{}")
+        os.makedirs(os.path.join(self.repo, "node_modules"))
+        self.code = 1
+        self.assertFalse(s.npm_install(self.repo, run=self.fake_run))
+        self.assertFalse(os.path.exists(
+            os.path.join(self.repo, "node_modules", s.NPM_STAMP_NAME)))
+
     def test_npm_install_when_there_is_no_lockfile(self):
         self.touch("package.json", "{}")
         self.assertTrue(s.npm_install(self.repo, run=self.fake_run))
@@ -965,10 +989,18 @@ class LimaChainTests(unittest.TestCase):
         # are written either way.
         self.assertEqual(self.dirs("composer", "phpunit:config"), [core])
         self.assertEqual([a for a, _c in self.commands() if "mw-install:sqlite" in a], [])
+        # A wiki that is there (a warm snapshot's) gets update.php.
+        self.assertEqual(self.dirs("php", "maintenance/run.php", "update", "--quick"), [core])
         with open(os.path.join(core, s.API_TESTING_CONFIG_NAME), encoding="utf-8") as f:
             config = json.load(f)
         self.assertEqual(config["secret_key"], secret)
         self.assertEqual(config["base_uri"], "http://localhost:4000/")
+
+    def test_a_failed_update_php_fails_the_sandbox(self):
+        path, _core, _cite = self.core_and_cite(core_files=[("LocalSettings.php", "<?php\n")])
+        code, err = self.run_main(path, fail=lambda a, c: 1 if "update" in a else None)
+        self.assertEqual(code, 1)
+        self.assertIn("update.php failed", err)
 
     def test_the_env_file_lands_in_core(self):
         path, core, _cite = self.core_and_cite(core_files=[

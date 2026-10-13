@@ -119,6 +119,13 @@ def ensure_running(name, lima=None, log=print, env=None):
                       f"remove it with `wmf-sbx rm {name}` and create it again")
     refresh_proxy_ports(name, lima, env=env, log=log, running=st == "Running")
     if st != "Running":
+        # A nested sandbox's inner VMs read nono's CA from a fixed path
+        # (image.session_ca_file) when they start; this session's CA
+        # replaces the one an earlier session wrote there.
+        try:
+            image_mod.extra_ca_files(env)
+        except (image_mod.ImageError, OSError) as e:
+            log(f"warning: could not refresh the extra CA certificates ({e})")
         log(f"+ limactl start {instance_name(name)}")
         lima.start(instance_name(name), timeout=START_TIMEOUT)
 

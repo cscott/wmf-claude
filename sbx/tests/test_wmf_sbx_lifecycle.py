@@ -274,6 +274,39 @@ class CreateTests(Env):
         self.assertEqual(tmpl["images"][0]["location"], image.golden_path(self.KEY, self.env))
         self.assertIn("ready", self.err)
 
+    def walk_create(self, *extra, maps=({}, {})):
+        """A --dry-run create with the dependency walk (offline): its exit
+        status, and how often it fetched WMF CI's maps."""
+        fetched = []
+
+        def fetch_maps(*a, **kw):
+            fetched.append(1)
+            return maps
+        argv = ["--config", self.config, "--image", self.KEY, "--dry-run",
+                "--name", "demo", self.repo] + list(extra)
+        with mock.patch.object(create.ci_mod, "fetch_maps", fetch_maps), \
+                mock.patch.object(create.deps_mod, "fetch_manifest",
+                                  lambda canonical, warn=None, **kw: None):
+            rc = self.quiet(create.main, argv, lima=FakeLima(), env=self.env,
+                            build=self.fake_build, inputs_fn=self.fake_inputs,
+                            prompt=lambda q: "")
+        return rc, len(fetched)
+
+    def test_ci_deps_are_fetched_once_per_create(self):
+        other = os.path.join(self.tmp, "src", "other")
+        git_repo(other)
+        self.assertEqual(self.walk_create(other), (0, 1), self.err)
+
+    def test_no_ci_deps_and_no_deps_fetch_nothing(self):
+        for flag in ("--no-ci-deps", "--no-deps"):
+            with self.subTest(flag=flag):
+                self.assertEqual(self.walk_create(flag), (0, 0), self.err)
+
+    def test_unreachable_ci_deps_warn_and_go_on(self):
+        self.assertEqual(self.walk_create(maps=None), (0, 1), self.err)
+        self.assertIn("could not fetch WMF CI's dependency lists", self.err)
+        self.assertIn("--no-ci-deps", self.err)
+
     def test_dry_run_creates_nothing_and_prints_the_config(self):
         self.assertEqual(self.create("--dry-run", "--name", "demo"), 0, self.err)
         self.assertEqual(self.lima.calls, [])

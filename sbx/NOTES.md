@@ -63,19 +63,9 @@ Development scaffolding:
 
 ### Testing and the MediaWiki setup
 
-- [ ] **Use WMF CI's dependency set, not only the manifests**.
-  `deps.py` walks the `requires` field in `extension.json`/`skin.json`. CI (quibble) checks
-  out `integration/config`'s `zuul/dependencies.yaml` (test jobs, honour each entry's
-  `recurse`) and `zuul/phan_dependencies.yaml` (phan). For Translate that is 1 vs 5 vs 7 repos.
-  Stopgap, done: settings.yaml `extra_dependencies:` is walked for the named repos (roots
-  only: CI's lists are closures for the repo under test, and applying them at every node
-  takes a BlueSpice extension from 3 repos to 84), and `reference/ci-extra-dependencies.yaml`
-  is a snapshot of both maps, made by `python3 -m wmf_sbx.ci_deps --trim` (only what the
-  manifest walk does not find: 1238 of 1944 dependencies, 262 of 380 repos; 11 minutes of
-  anonymous gitiles fetches, rate-limited; 85 s, with no 429, with GERRITUA).
-  integration/config changes weekly, so the snapshot ages. Still open: a default the
-  engineer need not copy, fetched or refreshed at create; a cheap class of clone (shallow, no host remote, no
-  reset) for CI-only dependencies.
+- [ ] **A cheap class of clone for CI-only dependencies** (shallow, no host remote, no
+  reset): `create` now adds CI's dependencies of the named repos (below), which are full
+  clones like the others.
 - [ ] **Make `.phan/config.php`'s `../../extensions/<Name>` paths resolve**. Symlinks into `core/extensions/` resolve `..` from the real directory, so the paths
   fail in the engineer's layout. Options: bind-mount each repo into `core/extensions/<Name>`
   (only option that matches CI), lowercase `extensions/`/`skins/` symlink dirs, real clones of
@@ -264,6 +254,17 @@ Development scaffolding:
 
 ### Repo resolution and the dependency walk
 
+- WMF CI's dependencies (`ci_deps.py`): CI does not read extension.json; Zuul's
+  `set_mw_dependencies` reads integration/config's `zuul/dependencies.yaml` (test jobs,
+  closed as `get_dependencies` does, honouring `recurse:`) and `zuul/phan_dependencies.yaml`
+  (phan, direct entries). `create` fetches both from gitiles once per run (two requests,
+  about 90 KB, GERRITUA, the manifest fetch's retries; no cache) and adds, for each named
+  repo, what CI checks out when it is under test, with settings.yaml
+  `extra_dependencies:`. Roots only: CI's lists are closures for the repo under test, and
+  applying them at every node takes a BlueSpice extension from 3 repos to 84. Defaults
+  include the phan map's (so the agent's phan run matches CI); `--no-phan-deps` drops them,
+  `--no-ci-deps` the lookup. Unreachable: a warning, and the manifests' dependencies only.
+  Without CI's, Parsoid lacks ParserFunctions and 8 `ParserTest_Parsoid_*` tests fail.
 - `realpath` every host path that is mounted, stored or compared, including paths the code
   computes about itself (`_SBX_ROOT`, `kit.SBX_ROOT`, the `bin/` shims' `__file__`).
   `abspath` does not resolve symlinks. Do not realpath a host command (e.g. `node`).

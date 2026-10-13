@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import sys
 
+from . import ci_deps as ci_mod
 from . import color as color_mod
 from . import deps as deps_mod
 from . import resolve as resolve_mod
@@ -241,12 +242,17 @@ def find_nested_mount_conflict(dirs):
 
 
 def expand_dependencies(resolved, split, config, config_path, include_dev=True,
-                        include_suggests=True, fetch=None, warn=None):
+                        include_suggests=True, fetch=None, warn=None, ci_maps=None,
+                        phan_deps=True):
     """Grow the explicitly-named repo list into its full MediaWiki
     dependency closure. Returns
     (resolved, split, origins_by_path, unreachable) -- `unreachable` being
     the repos whose manifests couldn't be fetched, i.e. the reason to
     distrust the closure.
+
+    `ci_maps` is WMF CI's two dependency maps (ci_deps.fetch_maps), or
+    None: CI's dependencies of each named repo (without the phan map's,
+    with phan_deps False) are added to settings.yaml `extra_dependencies:`.
 
     Discovery reads manifests from local checkouts where they exist and
     from gitiles otherwise, so nothing is cloned until the whole plan is
@@ -279,6 +285,9 @@ def expand_dependencies(resolved, split, config, config_path, include_dev=True,
         extras = deps_mod.extra_edges(config.get("extra_dependencies"))
     except ValueError as e:
         raise resolve_mod.ResolutionError(f"{config_path}: {e}") from None
+    if ci_maps is not None:
+        for root, ci in ci_mod.edges(roots, *ci_maps, include_phan=phan_deps).items():
+            extras[root] = list(dict.fromkeys(extras.get(root, []) + ci))
     unreachable = set()
     discovered, origins = deps_mod.walk(
         roots,
@@ -480,6 +489,12 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         help="Use only the repos named on the command line -- no MediaWiki "
         "dependency walk, no implicit core/Vector",
     )
+    parser.add_argument("--no-ci-deps", action="store_true",
+                        help="Do not add WMF CI's dependencies of the named repos "
+                        "(integration/config, fetched from gitiles)")
+    parser.add_argument("--no-phan-deps", action="store_true",
+                        help="Add CI's test dependencies, but not those only its "
+                        "phan job checks out")
     parser.add_argument("--no-dev", action="store_true",
                         help="Skip 'dev-requires' when walking dependencies")
     parser.add_argument("--no-suggests", action="store_true",
@@ -533,10 +548,20 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         origins_by_path = {}
         unreachable = set()
         if not args.no_deps:
+            ci_maps = None
+            if not args.no_ci_deps:
+                # Once per create, for every repo named.
+                ci_maps = ci_mod.fetch_maps(
+                    deps_mod.gerrit_opener(deps_mod.gerrit_user_agent(config)), warn=_warn)
+                if ci_maps is None:
+                    _warn("could not fetch WMF CI's dependency lists "
+                          "(integration/config); the sandbox gets the manifests' "
+                          "dependencies only. --no-ci-deps skips the lookup.")
             resolved, split, origins_by_path, unreachable = expand_dependencies(
                 resolved, split, config, args.config,
                 include_dev=not args.no_dev,
                 include_suggests=not args.no_suggests,
+                ci_maps=ci_maps, phan_deps=not args.no_phan_deps,
             )
     except resolve_mod.ResolutionError as e:
         print(color_mod.error(f"error: {e}"), file=sys.stderr)

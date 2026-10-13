@@ -59,10 +59,10 @@ dependency_overrides: {}
 link_overrides: {}
   # "gerrit:mediawiki/extensions/Example": "ExampleExtension"
 
-# Dependencies that no manifest declares (CI-only ones, or one you are
-# adding), for the repos you name on the command line (not for their
-# dependencies). reference/ci-extra-dependencies.yaml has WMF CI's set
-# for every repo in integration/config; copy its block here.
+# Dependencies that no manifest declares, for the repos you name on the
+# command line (not for their dependencies). `create` adds WMF CI's own
+# (integration/config) by default; this is for others, for example one
+# you are adding.
 extra_dependencies: {}
   # gerrit:mediawiki/extensions/Example:
   #   - gerrit:mediawiki/extensions/OtherThing

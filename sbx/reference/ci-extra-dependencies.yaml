@@ -4,22 +4,18 @@
 # `extra_dependencies: {}`). Each entry is what CI checks out when that
 # repo is under test; `wmf-sbx create` adds it for the repos you name,
 # not for their dependencies. `# phan`: only CI's phan job has it.
+# Trimmed (--trim): without what create's extension.json/skin.json walk finds,
+# with dev-requires and suggests (so not with --no-dev or --no-suggests).
 extra_dependencies:
   gerrit:mediawiki/extensions/3D:
     - gerrit:mediawiki/extensions/MultimediaViewer
-  gerrit:mediawiki/extensions/AIEditingAssistant:
-    - gerrit:mediawiki/extensions/VisualEditor
-    - gerrit:mediawiki/extensions/VisualEditorPlus
   gerrit:mediawiki/extensions/AbuseFilter:
-    - gerrit:mediawiki/extensions/AntiSpoof
     - gerrit:mediawiki/extensions/CentralAuth
     - gerrit:mediawiki/extensions/CheckUser
     - gerrit:mediawiki/extensions/CodeEditor
     - gerrit:mediawiki/extensions/ConfirmEdit
     - gerrit:mediawiki/extensions/Echo
-    - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/Scribunto
-    - gerrit:mediawiki/extensions/WikiEditor
     - gerrit:mediawiki/extensions/CommunityConfiguration  # phan
     - gerrit:mediawiki/extensions/UserMerge  # phan
   gerrit:mediawiki/extensions/AchievementBadges:
@@ -31,12 +27,9 @@ extra_dependencies:
   gerrit:mediawiki/extensions/AdhocTranslation:
     - gerrit:mediawiki/extensions/BlueSpiceFoundation
     - gerrit:mediawiki/extensions/MenuEditor
-    - gerrit:mediawiki/extensions/OOJSPlus
-    - gerrit:mediawiki/extensions/StandardDialogs
     - gerrit:mediawiki/skins/BlueSpiceDiscovery
   gerrit:mediawiki/extensions/AdvancedSearch:
     - gerrit:mediawiki/extensions/Translate
-    - gerrit:mediawiki/extensions/UniversalLanguageSelector
   gerrit:mediawiki/extensions/AntiSpoof:
     - gerrit:mediawiki/extensions/UserMerge  # phan
   gerrit:mediawiki/extensions/ApiFeatureUsage:
@@ -52,12 +45,10 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/SpamBlacklist  # phan
     - gerrit:mediawiki/extensions/SpamRegex  # phan
   gerrit:mediawiki/extensions/ArticleGuidance:
-    - gerrit:mediawiki/extensions/CommunityConfiguration  # phan
     - gerrit:mediawiki/extensions/SpamBlacklist  # phan
     - gerrit:mediawiki/extensions/TestKitchen  # phan
   gerrit:mediawiki/extensions/ArticlePlaceholder:
     - gerrit:mediawiki/extensions/AbuseFilter
-    - gerrit:mediawiki/extensions/AntiSpoof
     - gerrit:mediawiki/extensions/BetaFeatures
     - gerrit:mediawiki/extensions/CentralAuth
     - gerrit:mediawiki/extensions/CheckUser
@@ -65,9 +56,6 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/Cite
     - gerrit:mediawiki/extensions/ConfirmEdit
     - gerrit:mediawiki/extensions/Echo
-    - gerrit:mediawiki/extensions/Elastica
-    - gerrit:mediawiki/extensions/EventBus
-    - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/EventStreamConfig
     - gerrit:mediawiki/extensions/GeoData
     - gerrit:mediawiki/extensions/GlobalBlocking
@@ -75,16 +63,11 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/MobileFrontend
     - gerrit:mediawiki/extensions/PdfHandler
     - gerrit:mediawiki/extensions/PropertySuggester
-    - gerrit:mediawiki/extensions/Scribunto
     - gerrit:mediawiki/extensions/SiteMatrix
     - gerrit:mediawiki/extensions/SpamBlacklist
-    - gerrit:mediawiki/extensions/TestKitchen
     - gerrit:mediawiki/extensions/TimedMediaHandler
-    - gerrit:mediawiki/extensions/UniversalLanguageSelector
     - gerrit:mediawiki/extensions/VisualEditor
     - gerrit:mediawiki/extensions/Wikibase
-    - gerrit:mediawiki/extensions/WikibaseCirrusSearch
-    - gerrit:mediawiki/extensions/WikibaseLexeme
     - gerrit:mediawiki/extensions/WikibaseLexemeCirrusSearch
     - gerrit:mediawiki/extensions/WikibaseMediaInfo
     - gerrit:mediawiki/extensions/WikibaseQualityConstraints
@@ -92,507 +75,161 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/cldr
     - gerrit:mediawiki/skins/MinervaNeue
   gerrit:mediawiki/extensions/AtMentions:
-    - gerrit:mediawiki/extensions/OOJSPlus
-    - gerrit:mediawiki/extensions/VisualEditor
-  gerrit:mediawiki/extensions/AutoModerator:
-    - gerrit:mediawiki/extensions/CommunityConfiguration
-    - gerrit:mediawiki/extensions/DiscussionTools
-    - gerrit:mediawiki/extensions/Linter
-    - gerrit:mediawiki/extensions/ORES
     - gerrit:mediawiki/extensions/VisualEditor
   gerrit:mediawiki/extensions/Babel:
     - gerrit:mediawiki/extensions/CommunityConfiguration
   gerrit:mediawiki/extensions/BlogPage:
-    - gerrit:mediawiki/extensions/Comments
     - gerrit:mediawiki/extensions/SocialProfile
-    - gerrit:mediawiki/extensions/VoteNY
     - gerrit:mediawiki/extensions/RandomGameUnit  # phan
     - gerrit:mediawiki/extensions/Video  # phan
-  gerrit:mediawiki/extensions/BlueSpiceAbout:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceArticleInfo:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceArticlePreviewCapture:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceAuthors:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
   gerrit:mediawiki/extensions/BlueSpiceAvatars:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
     - gerrit:mediawiki/extensions/MenuEditor
-    - gerrit:mediawiki/extensions/OOJSPlus
-    - gerrit:mediawiki/extensions/StandardDialogs
-    - gerrit:mediawiki/extensions/UserProfile
     - gerrit:mediawiki/skins/BlueSpiceDiscovery
     - gerrit:mediawiki/extensions/BlueSpicePrivacy  # phan
   gerrit:mediawiki/extensions/BlueSpiceBookshelf:
     - gerrit:mediawiki/extensions/BlueSpiceExtendedSearch
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
     - gerrit:mediawiki/extensions/BlueSpiceVisualEditorConnector
     - gerrit:mediawiki/extensions/ContentDroplets
-    - gerrit:mediawiki/extensions/MenuEditor
     - gerrit:mediawiki/extensions/NotifyMe
-    - gerrit:mediawiki/extensions/OOJSPlus
     - gerrit:mediawiki/extensions/VisualEditor
-    - gerrit:mediawiki/extensions/VisualEditorPlus
-    - gerrit:mediawiki/extensions/VueJsPlus
-  gerrit:mediawiki/extensions/BlueSpiceCategoryCheck:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceCategoryManager:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
   gerrit:mediawiki/extensions/BlueSpiceChecklist:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
     - gerrit:mediawiki/extensions/BlueSpiceVisualEditorConnector
-    - gerrit:mediawiki/extensions/OOJSPlus
     - gerrit:mediawiki/extensions/VisualEditor
-    - gerrit:mediawiki/extensions/VisualEditorPlus
-  gerrit:mediawiki/extensions/BlueSpiceConfigManager:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceContextMenu:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
   gerrit:mediawiki/extensions/BlueSpiceCountThings:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
     - gerrit:mediawiki/extensions/BlueSpiceVisualEditorConnector
-    - gerrit:mediawiki/extensions/OOJSPlus
     - gerrit:mediawiki/extensions/VisualEditor
-    - gerrit:mediawiki/extensions/VisualEditorPlus
   gerrit:mediawiki/extensions/BlueSpiceCustomMenu:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
     - gerrit:mediawiki/extensions/MenuEditor
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceDashboards:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
   gerrit:mediawiki/extensions/BlueSpiceDistributionConnector:
     - gerrit:mediawiki/extensions/BlueSpiceExtendedStatistics
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
     - gerrit:mediawiki/extensions/BlueSpiceSMWConnector
     - gerrit:mediawiki/extensions/BlueSpiceSmartList
     - gerrit:mediawiki/extensions/ContentDroplets
     - gerrit:mediawiki/extensions/Echo
-    - gerrit:mediawiki/extensions/Forms
-    - gerrit:mediawiki/extensions/OOJSPlus
     - gerrit:mediawiki/extensions/PDFCreator
     - gerrit:mediawiki/extensions/UserMerge
     - gerrit:mediawiki/extensions/VisualEditor
     - gerrit:mediawiki/extensions/VisualEditorPlus
-    - gerrit:mediawiki/extensions/VueJsPlus
     - gerrit:mediawiki/extensions/Workflows
-  gerrit:mediawiki/extensions/BlueSpiceEchoConnector:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/Echo
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceEmoticons:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
   gerrit:mediawiki/extensions/BlueSpiceExpiry:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/BlueSpiceReminder
-    - gerrit:mediawiki/extensions/Forms
-    - gerrit:mediawiki/extensions/OOJSPlus
     - gerrit:mediawiki/extensions/Workflows
   gerrit:mediawiki/extensions/BlueSpiceExportTables:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/BlueSpiceUEModuleTable2Excel
-    - gerrit:mediawiki/extensions/BlueSpiceVisualEditorConnector
-    - gerrit:mediawiki/extensions/OOJSPlus
     - gerrit:mediawiki/extensions/VisualEditor
-    - gerrit:mediawiki/extensions/VisualEditorPlus
-  gerrit:mediawiki/extensions/BlueSpiceExtendedFilelist:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
   gerrit:mediawiki/extensions/BlueSpiceExtendedSearch:
     - gerrit:mediawiki/extensions/BlueSpiceDistributionConnector
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
     - gerrit:mediawiki/extensions/BlueSpiceVisualEditorConnector
-    - gerrit:mediawiki/extensions/OOJSPlus
     - gerrit:mediawiki/extensions/PDFCreator
     - gerrit:mediawiki/extensions/VisualEditor
-    - gerrit:mediawiki/extensions/VisualEditorPlus
-    - gerrit:mediawiki/extensions/VueJsPlus
   gerrit:mediawiki/extensions/BlueSpiceExtendedStatistics:
     - gerrit:mediawiki/extensions/BlueSpiceExtendedSearch
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
   gerrit:mediawiki/extensions/BlueSpiceFilterableTables:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
     - gerrit:mediawiki/extensions/Lingo
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceFlaggedRevsConnector:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/FlaggedRevs
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceFoundation:
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceGroupManager:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceHideTitle:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceInsertCategory:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceInsertFile:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
   gerrit:mediawiki/extensions/BlueSpiceInsertLink:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/BlueSpiceVisualEditorConnector
-    - gerrit:mediawiki/extensions/OOJSPlus
     - gerrit:mediawiki/extensions/VisualEditor
-    - gerrit:mediawiki/extensions/VisualEditorPlus
-  gerrit:mediawiki/extensions/BlueSpiceInsertTemplate:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
   gerrit:mediawiki/extensions/BlueSpiceInstanceStatus:
     - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceInterWikiLinks:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
   gerrit:mediawiki/extensions/BlueSpiceInterwikiSearch:
     - gerrit:mediawiki/extensions/BlueSpiceExtendedSearch
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceMatomoConnector:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceMultiUpload:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
   gerrit:mediawiki/extensions/BlueSpiceNSFileRepoConnector:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
     - gerrit:mediawiki/extensions/EnhancedUpload
-    - gerrit:mediawiki/extensions/NSFileRepo
-    - gerrit:mediawiki/extensions/OOJSPlus
     - gerrit:mediawiki/extensions/PDFCreator
     - gerrit:mediawiki/extensions/VisualEditor
-    - gerrit:mediawiki/extensions/VueJsPlus
-  gerrit:mediawiki/extensions/BlueSpiceNamespaceCSS:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceNamespaceManager:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
   gerrit:mediawiki/extensions/BlueSpicePageAccess:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
     - gerrit:mediawiki/extensions/BlueSpiceVisualEditorConnector
-    - gerrit:mediawiki/extensions/OOJSPlus
     - gerrit:mediawiki/extensions/VisualEditor
-    - gerrit:mediawiki/extensions/VisualEditorPlus
   gerrit:mediawiki/extensions/BlueSpicePageAssignments:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
     - gerrit:mediawiki/extensions/NotifyMe
-    - gerrit:mediawiki/extensions/OOJSPlus
     - gerrit:mediawiki/extensions/VisualEditor
-  gerrit:mediawiki/extensions/BlueSpicePageFormsConnector:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
-    - gerrit:mediawiki/extensions/PageForms
   gerrit:mediawiki/extensions/BlueSpicePageTemplates:
     - gerrit:mediawiki/extensions/BlueSpiceDistributionConnector
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
     - gerrit:mediawiki/extensions/ContentDroplets
-    - gerrit:mediawiki/extensions/OOJSPlus
     - gerrit:mediawiki/extensions/PDFCreator
     - gerrit:mediawiki/extensions/VisualEditor
-    - gerrit:mediawiki/extensions/VueJsPlus
   gerrit:mediawiki/extensions/BlueSpicePageVersion:
     - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
   gerrit:mediawiki/extensions/BlueSpicePagesVisited:
     - gerrit:mediawiki/extensions/BlueSpiceDistributionConnector
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
     - gerrit:mediawiki/extensions/BlueSpiceVisualEditorConnector
-    - gerrit:mediawiki/extensions/BlueSpiceWhoIsOnline
-    - gerrit:mediawiki/extensions/OOJSPlus
     - gerrit:mediawiki/extensions/PDFCreator
     - gerrit:mediawiki/extensions/VisualEditor
-    - gerrit:mediawiki/extensions/VisualEditorPlus
-    - gerrit:mediawiki/extensions/VueJsPlus
   gerrit:mediawiki/extensions/BlueSpicePermissionManager:
-    - gerrit:mediawiki/extensions/BlueSpiceConfigManager
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
     - gerrit:mediawiki/extensions/BlueSpiceUserManager
-    - gerrit:mediawiki/extensions/OOJSPlus
   gerrit:mediawiki/extensions/BlueSpicePlayer:
     - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpicePrivacy:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
   gerrit:mediawiki/extensions/BlueSpiceProDistributionConnector:
-    - gerrit:mediawiki/extensions/BlueSpiceDistributionConnector
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
     - gerrit:mediawiki/extensions/BlueSpiceUniversalExport
     - gerrit:mediawiki/extensions/BlueSpiceVisualEditorConnector
     - gerrit:mediawiki/extensions/ContentDroplets
     - gerrit:mediawiki/extensions/Math
     - gerrit:mediawiki/extensions/MenuEditor
     - gerrit:mediawiki/extensions/OAuth
-    - gerrit:mediawiki/extensions/OOJSPlus
     - gerrit:mediawiki/extensions/PDFCreator
-    - gerrit:mediawiki/extensions/StandardDialogs
     - gerrit:mediawiki/extensions/VisualEditor
-    - gerrit:mediawiki/extensions/VisualEditorPlus
-    - gerrit:mediawiki/extensions/VueJsPlus
     - gerrit:mediawiki/skins/BlueSpiceDiscovery
   gerrit:mediawiki/extensions/BlueSpiceQrCode:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
     - gerrit:mediawiki/extensions/BlueSpiceVisualEditorConnector
-    - gerrit:mediawiki/extensions/OOJSPlus
     - gerrit:mediawiki/extensions/VisualEditor
-    - gerrit:mediawiki/extensions/VisualEditorPlus
-  gerrit:mediawiki/extensions/BlueSpiceRSSFeeder:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceRating:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
   gerrit:mediawiki/extensions/BlueSpiceReadConfirmation:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/BlueSpicePageAssignments
     - gerrit:mediawiki/extensions/NotifyMe
-    - gerrit:mediawiki/extensions/OOJSPlus
     - gerrit:mediawiki/extensions/VisualEditor
-  gerrit:mediawiki/extensions/BlueSpiceReaders:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
   gerrit:mediawiki/extensions/BlueSpiceReminder:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/Forms
-    - gerrit:mediawiki/extensions/OOJSPlus
     - gerrit:mediawiki/extensions/Workflows
   gerrit:mediawiki/extensions/BlueSpiceSMWConnector:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
     - gerrit:mediawiki/extensions/BlueSpiceSmartList
-    - gerrit:mediawiki/extensions/OOJSPlus
     - gerrit:mediawiki/extensions/VisualEditor
     - gerrit:mediawiki/extensions/VisualEditorPlus
-  gerrit:mediawiki/extensions/BlueSpiceSaferEdit:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
   gerrit:mediawiki/extensions/BlueSpiceSignHere:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
     - gerrit:mediawiki/extensions/BlueSpiceVisualEditorConnector
-    - gerrit:mediawiki/extensions/OOJSPlus
     - gerrit:mediawiki/extensions/VisualEditor
-    - gerrit:mediawiki/extensions/VisualEditorPlus
   gerrit:mediawiki/extensions/BlueSpiceSmartList:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
     - gerrit:mediawiki/extensions/BlueSpiceVisualEditorConnector
-    - gerrit:mediawiki/extensions/OOJSPlus
     - gerrit:mediawiki/extensions/VisualEditor
-    - gerrit:mediawiki/extensions/VisualEditorPlus
-  gerrit:mediawiki/extensions/BlueSpiceSocial:
-    - gerrit:mediawiki/extensions/BlueSpiceExtendedSearch
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceSocialArticleActions:
-    - gerrit:mediawiki/extensions/BlueSpiceExtendedSearch
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/BlueSpiceSocial
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceSocialBlog:
-    - gerrit:mediawiki/extensions/BlueSpiceExtendedSearch
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/BlueSpiceSocial
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceSocialComments:
-    - gerrit:mediawiki/extensions/BlueSpiceExtendedSearch
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/BlueSpiceSocial
-    - gerrit:mediawiki/extensions/BlueSpiceSocialTopics
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceSocialMicroBlog:
-    - gerrit:mediawiki/extensions/BlueSpiceExtendedSearch
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/BlueSpiceSocial
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceSocialProfile:
-    - gerrit:mediawiki/extensions/BlueSpiceAvatars
-    - gerrit:mediawiki/extensions/BlueSpiceExtendedSearch
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/BlueSpiceSocial
-    - gerrit:mediawiki/extensions/OOJSPlus
-    - gerrit:mediawiki/extensions/UserProfile
-  gerrit:mediawiki/extensions/BlueSpiceSocialRating:
-    - gerrit:mediawiki/extensions/BlueSpiceExtendedSearch
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/BlueSpiceRating
-    - gerrit:mediawiki/extensions/BlueSpiceSocial
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceSocialResolve:
-    - gerrit:mediawiki/extensions/BlueSpiceExtendedSearch
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/BlueSpiceSocial
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceSocialTags:
-    - gerrit:mediawiki/extensions/BlueSpiceExtendedSearch
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/BlueSpiceSocial
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceSocialTimelineUpdate:
-    - gerrit:mediawiki/extensions/BlueSpiceExtendedSearch
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/BlueSpiceSocial
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceSocialTopics:
-    - gerrit:mediawiki/extensions/BlueSpiceExtendedSearch
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/BlueSpiceSocial
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceSocialWatch:
-    - gerrit:mediawiki/extensions/BlueSpiceExtendedSearch
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/BlueSpiceSocial
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceSocialWikiPage:
-    - gerrit:mediawiki/extensions/BlueSpiceExtendedSearch
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/BlueSpiceMultiUpload
-    - gerrit:mediawiki/extensions/BlueSpiceSocial
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceSubPageTree:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
   gerrit:mediawiki/extensions/BlueSpiceTagCloud:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
     - gerrit:mediawiki/extensions/BlueSpiceVisualEditorConnector
-    - gerrit:mediawiki/extensions/OOJSPlus
     - gerrit:mediawiki/extensions/VisualEditor
-    - gerrit:mediawiki/extensions/VisualEditorPlus
-  gerrit:mediawiki/extensions/BlueSpiceTranslationTransfer:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/BlueSpiceVisualEditorConnector
-    - gerrit:mediawiki/extensions/ContentTransfer
-    - gerrit:mediawiki/extensions/MergeArticles
-    - gerrit:mediawiki/extensions/OOJSPlus
-    - gerrit:mediawiki/extensions/VisualEditor
-    - gerrit:mediawiki/extensions/VisualEditorPlus
-  gerrit:mediawiki/extensions/BlueSpiceUEModuleBookPDF:
-    - gerrit:mediawiki/extensions/BlueSpiceBookshelf
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/BlueSpiceUEModulePDF
-    - gerrit:mediawiki/extensions/BlueSpiceUniversalExport
-    - gerrit:mediawiki/extensions/MenuEditor
-    - gerrit:mediawiki/extensions/OOJSPlus
-    - gerrit:mediawiki/extensions/VueJsPlus
-  gerrit:mediawiki/extensions/BlueSpiceUEModuleDOCX:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/BlueSpiceUniversalExport
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceUEModuleHTML:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/BlueSpiceUniversalExport
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceUEModulePDF:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/BlueSpiceUniversalExport
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceUEModulePDFRecursive:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/BlueSpiceUniversalExport
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceUEModulePDFSubpages:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/BlueSpiceUniversalExport
-    - gerrit:mediawiki/extensions/OOJSPlus
   gerrit:mediawiki/extensions/BlueSpiceUEModuleTable2Excel:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
     - gerrit:mediawiki/extensions/BlueSpiceUniversalExport
-    - gerrit:mediawiki/extensions/BlueSpiceVisualEditorConnector
-    - gerrit:mediawiki/extensions/OOJSPlus
     - gerrit:mediawiki/extensions/VisualEditor
-    - gerrit:mediawiki/extensions/VisualEditorPlus
   gerrit:mediawiki/extensions/BlueSpiceUniversalExport:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
     - gerrit:mediawiki/extensions/BlueSpiceVisualEditorConnector
-    - gerrit:mediawiki/extensions/OOJSPlus
     - gerrit:mediawiki/extensions/VisualEditor
-    - gerrit:mediawiki/extensions/VisualEditorPlus
-  gerrit:mediawiki/extensions/BlueSpiceUsageTracker:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceUserInfo:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceUserManager:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
   gerrit:mediawiki/extensions/BlueSpiceUserSidebar:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
     - gerrit:mediawiki/extensions/MenuEditor
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/BlueSpiceVisualDiff:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
   gerrit:mediawiki/extensions/BlueSpiceVisualEditorConnector:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
     - gerrit:mediawiki/extensions/VisualEditor
-    - gerrit:mediawiki/extensions/VisualEditorPlus
   gerrit:mediawiki/extensions/BlueSpiceWatchList:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
     - gerrit:mediawiki/extensions/BlueSpiceVisualEditorConnector
-    - gerrit:mediawiki/extensions/OOJSPlus
     - gerrit:mediawiki/extensions/VisualEditor
-    - gerrit:mediawiki/extensions/VisualEditorPlus
   gerrit:mediawiki/extensions/BlueSpiceWhoIsOnline:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
     - gerrit:mediawiki/extensions/BlueSpiceVisualEditorConnector
-    - gerrit:mediawiki/extensions/OOJSPlus
     - gerrit:mediawiki/extensions/VisualEditor
-    - gerrit:mediawiki/extensions/VisualEditorPlus
-  gerrit:mediawiki/extensions/BlueSpiceWikiExplorer:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
   gerrit:mediawiki/extensions/BlueSpiceWikiFarm:
     - gerrit:mediawiki/extensions/BlueSpiceExtendedSearch
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
     - gerrit:mediawiki/extensions/EnhancedUpload
     - gerrit:mediawiki/extensions/MenuEditor
-    - gerrit:mediawiki/extensions/OOJSPlus
-    - gerrit:mediawiki/extensions/StandardDialogs
     - gerrit:mediawiki/extensions/VisualEditor
     - gerrit:mediawiki/skins/BlueSpiceDiscovery
   gerrit:mediawiki/extensions/BounceHandler:
-    - gerrit:mediawiki/extensions/AntiSpoof
     - gerrit:mediawiki/extensions/CentralAuth
     - gerrit:mediawiki/extensions/Echo
   gerrit:mediawiki/extensions/CampaignEvents:
-    - gerrit:mediawiki/extensions/AntiSpoof
     - gerrit:mediawiki/extensions/CentralAuth
     - gerrit:mediawiki/extensions/Translate
-    - gerrit:mediawiki/extensions/UniversalLanguageSelector
     - gerrit:mediawiki/extensions/UserMerge
     - gerrit:mediawiki/extensions/WikimediaCampaignEvents
-    - gerrit:mediawiki/extensions/cldr
     - gerrit:mediawiki/extensions/CommunityConfiguration  # phan
     - gerrit:mediawiki/extensions/Echo  # phan
     - gerrit:mediawiki/extensions/Wikibase  # phan
     - gerrit:mediawiki/extensions/WikimediaMessages  # phan
   gerrit:mediawiki/extensions/Campaigns:
-    - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/CentralAuth  # phan
     - gerrit:mediawiki/extensions/MobileFrontend  # phan
-  gerrit:mediawiki/extensions/Capiunto:
-    - gerrit:mediawiki/extensions/Scribunto
   gerrit:mediawiki/extensions/CategoryTree:
     - gerrit:mediawiki/extensions/Translate  # phan
   gerrit:mediawiki/extensions/CategoryWatch:
     - gerrit:mediawiki/extensions/Echo
   gerrit:mediawiki/extensions/CentralAuth:
     - gerrit:mediawiki/extensions/AbuseFilter
-    - gerrit:mediawiki/extensions/AntiSpoof
     - gerrit:mediawiki/extensions/CheckUser
     - gerrit:mediawiki/extensions/GlobalBlocking
     - gerrit:mediawiki/extensions/GlobalPreferences
@@ -600,11 +237,9 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/SecurePoll
     - gerrit:mediawiki/extensions/ConfirmEdit  # phan
     - gerrit:mediawiki/extensions/Echo  # phan
-    - gerrit:mediawiki/extensions/EventLogging  # phan
     - gerrit:mediawiki/extensions/MassMessage  # phan
     - gerrit:mediawiki/extensions/TitleBlacklist  # phan
   gerrit:mediawiki/extensions/CentralNotice:
-    - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/CentralAuth  # phan
     - gerrit:mediawiki/extensions/MobileFrontend  # phan
     - gerrit:mediawiki/extensions/Translate  # phan
@@ -614,38 +249,24 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/SocialProfile
     - gerrit:mediawiki/extensions/Echo  # phan
   gerrit:mediawiki/extensions/Chart:
-    - gerrit:mediawiki/extensions/JsonConfig
     - gerrit:mediawiki/extensions/Scribunto
     - gerrit:mediawiki/extensions/VisualEditor
   gerrit:mediawiki/extensions/ChatBot:
     - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
-    - gerrit:mediawiki/extensions/PDFCreator
     - gerrit:mediawiki/extensions/VisualEditor
-    - gerrit:mediawiki/extensions/VueJsPlus
-    - gerrit:mediawiki/extensions/WikiRAG
   gerrit:mediawiki/extensions/ChatIntegration:
-    - gerrit:mediawiki/extensions/NotifyMe
-    - gerrit:mediawiki/extensions/OOJSPlus
-    - gerrit:mediawiki/extensions/UserProfile
     - gerrit:mediawiki/extensions/VisualEditor
   gerrit:mediawiki/extensions/CheckUser:
     - gerrit:mediawiki/extensions/AbuseFilter
-    - gerrit:mediawiki/extensions/AntiSpoof
     - gerrit:mediawiki/extensions/BetaFeatures
     - gerrit:mediawiki/extensions/CentralAuth
     - gerrit:mediawiki/extensions/CentralNotice
     - gerrit:mediawiki/extensions/CirrusSearch
     - gerrit:mediawiki/extensions/Cite
     - gerrit:mediawiki/extensions/CodeEditor
-    - gerrit:mediawiki/extensions/CommunityConfiguration
     - gerrit:mediawiki/extensions/CommunityConfigurationExample
     - gerrit:mediawiki/extensions/ConfirmEdit
     - gerrit:mediawiki/extensions/DiscussionTools
-    - gerrit:mediawiki/extensions/Echo
-    - gerrit:mediawiki/extensions/Elastica
-    - gerrit:mediawiki/extensions/EventBus
-    - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/EventStreamConfig
     - gerrit:mediawiki/extensions/FlaggedRevs
     - gerrit:mediawiki/extensions/Flow
@@ -654,21 +275,15 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/GrowthExperiments
     - gerrit:mediawiki/extensions/GuidedTour
     - gerrit:mediawiki/extensions/IPInfo
-    - gerrit:mediawiki/extensions/IPReputation
-    - gerrit:mediawiki/extensions/Linter
     - gerrit:mediawiki/extensions/MobileApp
     - gerrit:mediawiki/extensions/MobileFrontend
     - gerrit:mediawiki/extensions/PageImages
     - gerrit:mediawiki/extensions/PageViewInfo
-    - gerrit:mediawiki/extensions/PersonalDashboard
     - gerrit:mediawiki/extensions/Scribunto
     - gerrit:mediawiki/extensions/SecurePoll
     - gerrit:mediawiki/extensions/TemplateData
-    - gerrit:mediawiki/extensions/TestKitchen
     - gerrit:mediawiki/extensions/Thanks
     - gerrit:mediawiki/extensions/TorBlock
-    - gerrit:mediawiki/extensions/VisualEditor
-    - gerrit:mediawiki/extensions/WikiEditor
     - gerrit:mediawiki/extensions/WikimediaMessages
     - gerrit:mediawiki/skins/MinervaNeue
     - gerrit:mediawiki/extensions/UserMerge  # phan
@@ -678,7 +293,6 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/BetaFeatures
     - gerrit:mediawiki/extensions/Cite
     - gerrit:mediawiki/extensions/Echo
-    - gerrit:mediawiki/extensions/Elastica
     - gerrit:mediawiki/extensions/EventBus
     - gerrit:mediawiki/extensions/EventStreamConfig
     - gerrit:mediawiki/extensions/GeoData
@@ -688,8 +302,6 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/TimedMediaHandler
     - gerrit:mediawiki/extensions/UniversalLanguageSelector
     - gerrit:mediawiki/extensions/Wikibase
-    - gerrit:mediawiki/extensions/WikibaseCirrusSearch
-    - gerrit:mediawiki/extensions/WikibaseLexeme
     - gerrit:mediawiki/extensions/WikibaseLexemeCirrusSearch
     - gerrit:mediawiki/skins/MinervaNeue
   gerrit:mediawiki/extensions/Cite:
@@ -711,29 +323,18 @@ extra_dependencies:
   gerrit:mediawiki/extensions/CloneDiff:
     - gerrit:mediawiki/extensions/AdminLinks  # phan
   gerrit:mediawiki/extensions/CodeEditor:
-    - gerrit:mediawiki/extensions/WikiEditor
     - gerrit:mediawiki/extensions/BetaFeatures  # phan
   gerrit:mediawiki/extensions/CodeMirror:
     - gerrit:mediawiki/extensions/BetaFeatures
     - gerrit:mediawiki/extensions/Cite
-    - gerrit:mediawiki/extensions/VisualEditor
-    - gerrit:mediawiki/extensions/WikiEditor
     - gerrit:mediawiki/extensions/Gadgets  # phan
     - gerrit:mediawiki/extensions/Scribunto  # phan
     - gerrit:mediawiki/extensions/TemplateStyles  # phan
   gerrit:mediawiki/extensions/CognitiveProcessDesigner:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
     - gerrit:mediawiki/extensions/BlueSpiceVisualEditorConnector
-    - gerrit:mediawiki/extensions/OOJSPlus
     - gerrit:mediawiki/extensions/PageForms
     - gerrit:mediawiki/extensions/VisualEditor
-    - gerrit:mediawiki/extensions/VisualEditorPlus
     - gerrit:mediawiki/extensions/BlueSpiceUEModulePDF  # phan
-  gerrit:mediawiki/extensions/CollabPads:
-    - gerrit:mediawiki/extensions/OOJSPlus
-    - gerrit:mediawiki/extensions/VisualEditor
-  gerrit:mediawiki/extensions/CollapsibleVector:
-    - gerrit:mediawiki/skins/Vector  # phan
   gerrit:mediawiki/extensions/CommentStreams:
     - gerrit:mediawiki/extensions/Echo  # phan
     - gerrit:mediawiki/extensions/SocialProfile  # phan
@@ -743,21 +344,10 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/SocialProfile  # phan
   gerrit:mediawiki/extensions/CommunityConfiguration:
     - gerrit:mediawiki/extensions/CommunityConfigurationExample
-  gerrit:mediawiki/extensions/CommunityConfigurationExample:
-    - gerrit:mediawiki/extensions/CommunityConfiguration
   gerrit:mediawiki/extensions/CommunityRequests:
     - gerrit:mediawiki/extensions/ConfirmEdit
-    - gerrit:mediawiki/extensions/DiscussionTools
-    - gerrit:mediawiki/extensions/Linter
-    - gerrit:mediawiki/extensions/TemplateData
-    - gerrit:mediawiki/extensions/Translate
-    - gerrit:mediawiki/extensions/UniversalLanguageSelector
-    - gerrit:mediawiki/extensions/VisualEditor
     - gerrit:mediawiki/extensions/WikimediaMessages
     - gerrit:mediawiki/extensions/Echo  # phan
-  gerrit:mediawiki/extensions/ConfigManager:
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
   gerrit:mediawiki/extensions/ConfirmEdit:
     - gerrit:mediawiki/extensions/AbuseFilter
     - gerrit:mediawiki/extensions/GlobalBlocking
@@ -773,35 +363,23 @@ extra_dependencies:
   gerrit:mediawiki/extensions/ContentDroplets:
     - gerrit:mediawiki/extensions/OOJSPlus
     - gerrit:mediawiki/extensions/VisualEditor
-  gerrit:mediawiki/extensions/ContentProvisioning:
-    - gerrit:mediawiki/extensions/OOJSPlus
   gerrit:mediawiki/extensions/ContentStabilization:
     - gerrit:mediawiki/extensions/BlueSpiceBookshelf
-    - gerrit:mediawiki/extensions/BlueSpiceFoundation
     - gerrit:mediawiki/extensions/BlueSpicePageAssignments
     - gerrit:mediawiki/extensions/BlueSpiceSMWConnector
     - gerrit:mediawiki/extensions/BlueSpiceSmartList
     - gerrit:mediawiki/extensions/BlueSpiceVisualEditorConnector
     - gerrit:mediawiki/extensions/ContentDroplets
-    - gerrit:mediawiki/extensions/Forms
-    - gerrit:mediawiki/extensions/MenuEditor
     - gerrit:mediawiki/extensions/NotifyMe
-    - gerrit:mediawiki/extensions/OOJSPlus
     - gerrit:mediawiki/extensions/PDFCreator
     - gerrit:mediawiki/extensions/VisualEditor
-    - gerrit:mediawiki/extensions/VisualEditorPlus
-    - gerrit:mediawiki/extensions/VueJsPlus
     - gerrit:mediawiki/extensions/Workflows
   gerrit:mediawiki/extensions/ContentTransfer:
     - gerrit:mediawiki/extensions/OOJSPlus
   gerrit:mediawiki/extensions/ContentTranslation:
     - gerrit:mediawiki/extensions/AbuseFilter
-    - gerrit:mediawiki/extensions/Cite
     - gerrit:mediawiki/extensions/Echo
     - gerrit:mediawiki/extensions/EventLogging
-    - gerrit:mediawiki/extensions/UniversalLanguageSelector
-    - gerrit:mediawiki/extensions/VisualEditor
-    - gerrit:mediawiki/extensions/WikimediaMessages
     - gerrit:mediawiki/extensions/BetaFeatures  # phan
     - gerrit:mediawiki/extensions/CentralAuth  # phan
     - gerrit:mediawiki/extensions/CommunityConfiguration  # phan
@@ -811,8 +389,6 @@ extra_dependencies:
   gerrit:mediawiki/extensions/CreateAPage:
     - gerrit:mediawiki/extensions/WikiEditor
     - gerrit:mediawiki/extensions/ConfirmEdit  # phan
-  gerrit:mediawiki/extensions/Dashiki:
-    - gerrit:mediawiki/extensions/JsonConfig
   gerrit:mediawiki/extensions/DataTable2:
     - gerrit:mediawiki/extensions/Scribunto  # phan
   gerrit:mediawiki/extensions/DataTransfer:
@@ -832,11 +408,8 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/Scribunto  # phan
   gerrit:mediawiki/extensions/DiscussionTools:
     - gerrit:mediawiki/extensions/ConfirmEdit
-    - gerrit:mediawiki/extensions/Echo
-    - gerrit:mediawiki/extensions/Linter
     - gerrit:mediawiki/extensions/MobileFrontend
     - gerrit:mediawiki/extensions/Thanks
-    - gerrit:mediawiki/extensions/VisualEditor
     - gerrit:mediawiki/extensions/BetaFeatures  # phan
     - gerrit:mediawiki/extensions/EventLogging  # phan
     - gerrit:mediawiki/extensions/Gadgets  # phan
@@ -847,7 +420,6 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/FundraisingEmailUnsubscribe  # phan
     - gerrit:mediawiki/extensions/ParserFunctions  # phan
     - gerrit:mediawiki/extensions/SyntaxHighlight_GeSHi  # phan
-    - gerrit:mediawiki/extensions/WikiEditor  # phan
     - gerrit:mediawiki/extensions/cldr  # phan
   gerrit:mediawiki/extensions/DrawioEditor:
     - gerrit:mediawiki/extensions/Forms
@@ -856,34 +428,24 @@ extra_dependencies:
   gerrit:mediawiki/extensions/DynamicPageListEngine:
     - gerrit:mediawiki/extensions/Scribunto  # phan
   gerrit:mediawiki/extensions/Echo:
-    - gerrit:mediawiki/extensions/AntiSpoof
     - gerrit:mediawiki/extensions/CentralAuth
     - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/MobileFrontend
     - gerrit:mediawiki/extensions/TestKitchen  # phan
     - gerrit:mediawiki/extensions/UserMerge  # phan
-  gerrit:mediawiki/extensions/EditNotify:
-    - gerrit:mediawiki/extensions/Echo
   gerrit:mediawiki/extensions/ElectronPdfService:
     - gerrit:mediawiki/extensions/Collection
     - gerrit:mediawiki/extensions/FlaggedRevs
   gerrit:mediawiki/extensions/EmailAuth:
-    - gerrit:mediawiki/extensions/AntiSpoof
     - gerrit:mediawiki/extensions/CentralAuth
     - gerrit:mediawiki/extensions/OATHAuth
-  gerrit:mediawiki/extensions/EmailAuthorization:
-    - gerrit:mediawiki/extensions/PluggableAuth
   gerrit:mediawiki/extensions/EncryptedUploads:
     - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/UploadWizard
-  gerrit:mediawiki/extensions/EnhancedStandardUIs:
-    - gerrit:mediawiki/extensions/OOJSPlus
   gerrit:mediawiki/extensions/EnhancedUpload:
-    - gerrit:mediawiki/extensions/OOJSPlus
     - gerrit:mediawiki/extensions/VisualEditor
   gerrit:mediawiki/extensions/EntitySchema:
     - gerrit:mediawiki/extensions/AbuseFilter
-    - gerrit:mediawiki/extensions/AntiSpoof
     - gerrit:mediawiki/extensions/ArticlePlaceholder
     - gerrit:mediawiki/extensions/BetaFeatures
     - gerrit:mediawiki/extensions/CentralAuth
@@ -892,9 +454,6 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/Cite
     - gerrit:mediawiki/extensions/ConfirmEdit
     - gerrit:mediawiki/extensions/Echo
-    - gerrit:mediawiki/extensions/Elastica
-    - gerrit:mediawiki/extensions/EventBus
-    - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/EventStreamConfig
     - gerrit:mediawiki/extensions/GeoData
     - gerrit:mediawiki/extensions/GlobalBlocking
@@ -902,16 +461,11 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/MobileFrontend
     - gerrit:mediawiki/extensions/PdfHandler
     - gerrit:mediawiki/extensions/PropertySuggester
-    - gerrit:mediawiki/extensions/Scribunto
     - gerrit:mediawiki/extensions/SiteMatrix
     - gerrit:mediawiki/extensions/SpamBlacklist
-    - gerrit:mediawiki/extensions/TestKitchen
     - gerrit:mediawiki/extensions/TimedMediaHandler
-    - gerrit:mediawiki/extensions/UniversalLanguageSelector
     - gerrit:mediawiki/extensions/VisualEditor
     - gerrit:mediawiki/extensions/Wikibase
-    - gerrit:mediawiki/extensions/WikibaseCirrusSearch
-    - gerrit:mediawiki/extensions/WikibaseLexeme
     - gerrit:mediawiki/extensions/WikibaseLexemeCirrusSearch
     - gerrit:mediawiki/extensions/WikibaseMediaInfo
     - gerrit:mediawiki/extensions/WikibaseQualityConstraints
@@ -931,16 +485,10 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/SyntaxHighlight_GeSHi  # phan
   gerrit:mediawiki/extensions/ExternalData:
     - gerrit:mediawiki/extensions/Scribunto  # phan
-  gerrit:mediawiki/extensions/ExternalGuidance:
-    - gerrit:mediawiki/extensions/MobileFrontend
-    - gerrit:mediawiki/extensions/UniversalLanguageSelector
-  gerrit:mediawiki/extensions/FacetedCategory:
-    - gerrit:mediawiki/extensions/CategoryTree
   gerrit:mediawiki/extensions/FanBoxes:
     - gerrit:mediawiki/extensions/SocialProfile
     - gerrit:mediawiki/extensions/SpamRegex  # phan
   gerrit:mediawiki/extensions/FileImporter:
-    - gerrit:mediawiki/extensions/AntiSpoof
     - gerrit:mediawiki/extensions/CentralAuth
     - gerrit:mediawiki/extensions/WikiEditor
     - gerrit:mediawiki/extensions/GlobalBlocking  # phan
@@ -951,12 +499,9 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/GoogleNewsSitemap  # phan
     - gerrit:mediawiki/extensions/MobileFrontend  # phan
     - gerrit:mediawiki/extensions/UserMerge  # phan
-    - gerrit:mediawiki/skins/Vector  # phan
   gerrit:mediawiki/extensions/FlexiSkin:
     - gerrit:mediawiki/extensions/BlueSpiceFoundation
     - gerrit:mediawiki/extensions/CodeEditor
-    - gerrit:mediawiki/extensions/OOJSPlus
-    - gerrit:mediawiki/extensions/WikiEditor
   gerrit:mediawiki/extensions/Flow:
     - gerrit:mediawiki/extensions/AbuseFilter
     - gerrit:mediawiki/extensions/BetaFeatures
@@ -966,52 +511,36 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/CheckUser  # phan
     - gerrit:mediawiki/extensions/CirrusSearch  # phan
     - gerrit:mediawiki/extensions/ConfirmEdit  # phan
-    - gerrit:mediawiki/extensions/Elastica  # phan
     - gerrit:mediawiki/extensions/GuidedTour  # phan
     - gerrit:mediawiki/extensions/LiquidThreads  # phan
     - gerrit:mediawiki/extensions/Nuke  # phan
     - gerrit:mediawiki/extensions/SpamBlacklist  # phan
   gerrit:mediawiki/extensions/Forms:
     - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/FundraiserLandingPage:
-    - gerrit:mediawiki/extensions/EventLogging
-  gerrit:mediawiki/extensions/FundraisingTranslateWorkflow:
-    - gerrit:mediawiki/extensions/Translate
-    - gerrit:mediawiki/extensions/UniversalLanguageSelector
   gerrit:mediawiki/extensions/Gadgets:
     - gerrit:mediawiki/extensions/CodeEditor  # phan
     - gerrit:mediawiki/extensions/CodeMirror  # phan
     - gerrit:mediawiki/extensions/Scribunto  # phan
   gerrit:mediawiki/extensions/GeoData:
     - gerrit:mediawiki/extensions/CirrusSearch
-    - gerrit:mediawiki/extensions/Elastica
   gerrit:mediawiki/extensions/GlobalBlocking:
-    - gerrit:mediawiki/extensions/AntiSpoof
     - gerrit:mediawiki/extensions/CentralAuth
     - gerrit:mediawiki/extensions/UserMerge  # phan
   gerrit:mediawiki/extensions/GlobalContributions:
     - gerrit:mediawiki/extensions/CentralAuth  # phan
   gerrit:mediawiki/extensions/GlobalPreferences:
     - gerrit:mediawiki/extensions/BetaFeatures  # phan
-    - gerrit:mediawiki/skins/Vector  # phan
   gerrit:mediawiki/extensions/GrowthExperiments:
     - gerrit:mediawiki/extensions/CentralNotice
     - gerrit:mediawiki/extensions/CirrusSearch
-    - gerrit:mediawiki/extensions/CommunityConfiguration
-    - gerrit:mediawiki/extensions/Echo
-    - gerrit:mediawiki/extensions/Elastica
-    - gerrit:mediawiki/extensions/EventBus
-    - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/EventStreamConfig
     - gerrit:mediawiki/extensions/Flow
     - gerrit:mediawiki/extensions/GuidedTour
     - gerrit:mediawiki/extensions/MobileFrontend
     - gerrit:mediawiki/extensions/PageImages
     - gerrit:mediawiki/extensions/PageViewInfo
-    - gerrit:mediawiki/extensions/PersonalDashboard
     - gerrit:mediawiki/extensions/TestKitchen
     - gerrit:mediawiki/extensions/Thanks
-    - gerrit:mediawiki/extensions/VisualEditor
     - gerrit:mediawiki/extensions/WikimediaMessages
     - gerrit:mediawiki/skins/MinervaNeue
     - gerrit:mediawiki/extensions/CentralAuth  # phan
@@ -1022,9 +551,6 @@ extra_dependencies:
   gerrit:mediawiki/extensions/HAWelcome:
     - gerrit:mediawiki/extensions/GlobalUserrights
     - gerrit:mediawiki/extensions/SocialProfile
-  gerrit:mediawiki/extensions/HierarchyBuilder:
-    - gerrit:mediawiki/extensions/PageForms
-    - gerrit:mediawiki/extensions/SemanticMediaWiki
   gerrit:mediawiki/extensions/HotCat:
     - gerrit:mediawiki/extensions/BetaFeatures
   gerrit:mediawiki/extensions/IPInfo:
@@ -1032,59 +558,31 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/BetaFeatures
     - gerrit:mediawiki/extensions/CheckUser
     - gerrit:mediawiki/extensions/GlobalPreferences
-    - gerrit:mediawiki/extensions/IPReputation
     - gerrit:mediawiki/extensions/MobileFrontend
-    - gerrit:mediawiki/extensions/EventLogging  # phan
   gerrit:mediawiki/extensions/IPReputation:
     - gerrit:mediawiki/extensions/AbuseFilter
     - gerrit:mediawiki/extensions/ConfirmEdit
   gerrit:mediawiki/extensions/ImageRating:
     - gerrit:mediawiki/extensions/VoteNY
     - gerrit:mediawiki/extensions/SocialProfile  # phan
-  gerrit:mediawiki/extensions/ImageSuggestions:
-    - gerrit:mediawiki/extensions/CirrusSearch
-    - gerrit:mediawiki/extensions/Echo
-    - gerrit:mediawiki/extensions/Elastica
   gerrit:mediawiki/extensions/InlineComments:
     - gerrit:mediawiki/extensions/Echo  # phan
   gerrit:mediawiki/extensions/InputBox:
     - gerrit:mediawiki/extensions/MediaSearch
-  gerrit:mediawiki/extensions/IssueTrackerLinks:
-    - gerrit:mediawiki/extensions/OOJSPlus
-    - gerrit:mediawiki/extensions/VisualEditor
-    - gerrit:mediawiki/extensions/VisualEditorPlus
-  gerrit:mediawiki/extensions/JWTAuth:
-    - gerrit:mediawiki/extensions/PluggableAuth
   gerrit:mediawiki/extensions/JsonConfig:
     - gerrit:mediawiki/extensions/Kartographer
     - gerrit:mediawiki/extensions/Scribunto
-    - gerrit:mediawiki/extensions/VisualEditor
     - gerrit:mediawiki/extensions/WikimediaMessages
     - gerrit:mediawiki/extensions/CodeEditor  # phan
     - gerrit:mediawiki/extensions/CodeMirror  # phan
   gerrit:mediawiki/extensions/Kartographer:
     - gerrit:mediawiki/extensions/FlaggedRevs
-    - gerrit:mediawiki/extensions/JsonConfig
     - gerrit:mediawiki/extensions/ParserFunctions
     - gerrit:mediawiki/extensions/VisualEditor
     - gerrit:mediawiki/extensions/WikimediaMessages
     - gerrit:mediawiki/extensions/GeoData  # phan
-  gerrit:mediawiki/extensions/LDAPAuthentication2:
-    - gerrit:mediawiki/extensions/LDAPProvider
-    - gerrit:mediawiki/extensions/PluggableAuth
-  gerrit:mediawiki/extensions/LDAPAuthorization:
-    - gerrit:mediawiki/extensions/LDAPProvider
-    - gerrit:mediawiki/extensions/PluggableAuth
-  gerrit:mediawiki/extensions/LDAPGroups:
-    - gerrit:mediawiki/extensions/LDAPProvider
   gerrit:mediawiki/extensions/LDAPProvider:
     - gerrit:mediawiki/extensions/WebDAV
-  gerrit:mediawiki/extensions/LDAPSyncAll:
-    - gerrit:mediawiki/extensions/LDAPGroups
-    - gerrit:mediawiki/extensions/LDAPProvider
-    - gerrit:mediawiki/extensions/LDAPUserInfo
-  gerrit:mediawiki/extensions/LDAPUserInfo:
-    - gerrit:mediawiki/extensions/LDAPProvider
   gerrit:mediawiki/extensions/LanguageTool:
     - gerrit:mediawiki/extensions/VisualEditor
   gerrit:mediawiki/extensions/LinkFilter:
@@ -1097,25 +595,16 @@ extra_dependencies:
   gerrit:mediawiki/extensions/Linter:
     - gerrit:mediawiki/extensions/VisualEditor
   gerrit:mediawiki/extensions/LoginNotify:
-    - gerrit:mediawiki/extensions/AntiSpoof
     - gerrit:mediawiki/extensions/CentralAuth
     - gerrit:mediawiki/extensions/CheckUser
-    - gerrit:mediawiki/extensions/Echo
-  gerrit:mediawiki/extensions/MagicLinkAuthentication:
-    - gerrit:mediawiki/extensions/PluggableAuth
   gerrit:mediawiki/extensions/MassMessage:
-    - gerrit:mediawiki/extensions/AntiSpoof
     - gerrit:mediawiki/extensions/CentralAuth
     - gerrit:mediawiki/extensions/Echo
     - gerrit:mediawiki/extensions/Flow
     - gerrit:mediawiki/extensions/LiquidThreads
-    - gerrit:mediawiki/extensions/VisualEditor
     - gerrit:mediawiki/extensions/CodeMirror  # phan
-  gerrit:mediawiki/extensions/MassMessageEmail:
-    - gerrit:mediawiki/extensions/MassMessage
   gerrit:mediawiki/extensions/Math:
     - gerrit:mediawiki/extensions/AbuseFilter
-    - gerrit:mediawiki/extensions/AntiSpoof
     - gerrit:mediawiki/extensions/ArticlePlaceholder
     - gerrit:mediawiki/extensions/BetaFeatures
     - gerrit:mediawiki/extensions/CentralAuth
@@ -1125,29 +614,19 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/ConfirmEdit
     - gerrit:mediawiki/extensions/DiscussionTools
     - gerrit:mediawiki/extensions/Echo
-    - gerrit:mediawiki/extensions/Elastica
-    - gerrit:mediawiki/extensions/EventBus
-    - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/EventStreamConfig
     - gerrit:mediawiki/extensions/FlaggedRevs
     - gerrit:mediawiki/extensions/GeoData
     - gerrit:mediawiki/extensions/GlobalBlocking
-    - gerrit:mediawiki/extensions/Linter
     - gerrit:mediawiki/extensions/MobileApp
     - gerrit:mediawiki/extensions/MobileFrontend
     - gerrit:mediawiki/extensions/PdfHandler
     - gerrit:mediawiki/extensions/PropertySuggester
-    - gerrit:mediawiki/extensions/Scribunto
     - gerrit:mediawiki/extensions/SiteMatrix
     - gerrit:mediawiki/extensions/SpamBlacklist
     - gerrit:mediawiki/extensions/TemplateData
-    - gerrit:mediawiki/extensions/TestKitchen
     - gerrit:mediawiki/extensions/TimedMediaHandler
-    - gerrit:mediawiki/extensions/UniversalLanguageSelector
-    - gerrit:mediawiki/extensions/VisualEditor
     - gerrit:mediawiki/extensions/Wikibase
-    - gerrit:mediawiki/extensions/WikibaseCirrusSearch
-    - gerrit:mediawiki/extensions/WikibaseLexeme
     - gerrit:mediawiki/extensions/WikibaseLexemeCirrusSearch
     - gerrit:mediawiki/extensions/WikibaseMediaInfo
     - gerrit:mediawiki/extensions/WikibaseQualityConstraints
@@ -1157,7 +636,6 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/Popups  # phan
   gerrit:mediawiki/extensions/MathSearch:
     - gerrit:mediawiki/extensions/AbuseFilter
-    - gerrit:mediawiki/extensions/AntiSpoof
     - gerrit:mediawiki/extensions/ArticlePlaceholder
     - gerrit:mediawiki/extensions/BetaFeatures
     - gerrit:mediawiki/extensions/CentralAuth
@@ -1167,30 +645,19 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/ConfirmEdit
     - gerrit:mediawiki/extensions/DiscussionTools
     - gerrit:mediawiki/extensions/Echo
-    - gerrit:mediawiki/extensions/Elastica
-    - gerrit:mediawiki/extensions/EventBus
-    - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/EventStreamConfig
     - gerrit:mediawiki/extensions/FlaggedRevs
     - gerrit:mediawiki/extensions/GeoData
     - gerrit:mediawiki/extensions/GlobalBlocking
-    - gerrit:mediawiki/extensions/Linter
-    - gerrit:mediawiki/extensions/Math
     - gerrit:mediawiki/extensions/MobileApp
     - gerrit:mediawiki/extensions/MobileFrontend
     - gerrit:mediawiki/extensions/PdfHandler
     - gerrit:mediawiki/extensions/PropertySuggester
-    - gerrit:mediawiki/extensions/Scribunto
     - gerrit:mediawiki/extensions/SiteMatrix
     - gerrit:mediawiki/extensions/SpamBlacklist
     - gerrit:mediawiki/extensions/TemplateData
-    - gerrit:mediawiki/extensions/TestKitchen
     - gerrit:mediawiki/extensions/TimedMediaHandler
-    - gerrit:mediawiki/extensions/UniversalLanguageSelector
-    - gerrit:mediawiki/extensions/VisualEditor
     - gerrit:mediawiki/extensions/Wikibase
-    - gerrit:mediawiki/extensions/WikibaseCirrusSearch
-    - gerrit:mediawiki/extensions/WikibaseLexeme
     - gerrit:mediawiki/extensions/WikibaseLexemeCirrusSearch
     - gerrit:mediawiki/extensions/WikibaseMediaInfo
     - gerrit:mediawiki/extensions/WikibaseQualityConstraints
@@ -1199,7 +666,6 @@ extra_dependencies:
     - gerrit:mediawiki/skins/MinervaNeue
   gerrit:mediawiki/extensions/MediaSearch:
     - gerrit:mediawiki/extensions/AbuseFilter
-    - gerrit:mediawiki/extensions/AntiSpoof
     - gerrit:mediawiki/extensions/ArticlePlaceholder
     - gerrit:mediawiki/extensions/BetaFeatures
     - gerrit:mediawiki/extensions/CentralAuth
@@ -1208,9 +674,6 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/Cite
     - gerrit:mediawiki/extensions/ConfirmEdit
     - gerrit:mediawiki/extensions/Echo
-    - gerrit:mediawiki/extensions/Elastica
-    - gerrit:mediawiki/extensions/EventBus
-    - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/EventStreamConfig
     - gerrit:mediawiki/extensions/GeoData
     - gerrit:mediawiki/extensions/GlobalBlocking
@@ -1218,16 +681,11 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/MobileFrontend
     - gerrit:mediawiki/extensions/PdfHandler
     - gerrit:mediawiki/extensions/PropertySuggester
-    - gerrit:mediawiki/extensions/Scribunto
     - gerrit:mediawiki/extensions/SiteMatrix
     - gerrit:mediawiki/extensions/SpamBlacklist
-    - gerrit:mediawiki/extensions/TestKitchen
     - gerrit:mediawiki/extensions/TimedMediaHandler
-    - gerrit:mediawiki/extensions/UniversalLanguageSelector
     - gerrit:mediawiki/extensions/VisualEditor
     - gerrit:mediawiki/extensions/Wikibase
-    - gerrit:mediawiki/extensions/WikibaseCirrusSearch
-    - gerrit:mediawiki/extensions/WikibaseLexeme
     - gerrit:mediawiki/extensions/WikibaseLexemeCirrusSearch
     - gerrit:mediawiki/extensions/WikibaseMediaInfo
     - gerrit:mediawiki/extensions/WikibaseQualityConstraints
@@ -1245,8 +703,6 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/SpamRegex  # phan
   gerrit:mediawiki/extensions/MenuEditor:
     - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
-    - gerrit:mediawiki/extensions/StandardDialogs
     - gerrit:mediawiki/skins/BlueSpiceDiscovery
   gerrit:mediawiki/extensions/MiniInvite:
     - gerrit:mediawiki/extensions/BlogPage  # phan
@@ -1267,13 +723,6 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/PageImages  # phan
     - gerrit:mediawiki/extensions/Wikibase  # phan
     - gerrit:mediawiki/extensions/XAnalytics  # phan
-  gerrit:mediawiki/extensions/MobileFrontendContentProvider:
-    - gerrit:mediawiki/extensions/MobileFrontend
-  gerrit:mediawiki/extensions/ModeratorToolkit:
-    - gerrit:mediawiki/extensions/CommunityConfiguration
-    - gerrit:mediawiki/extensions/PersonalDashboard
-  gerrit:mediawiki/extensions/Monstranto:
-    - gerrit:mediawiki/extensions/Scribunto
   gerrit:mediawiki/extensions/MultimediaViewer:
     - gerrit:mediawiki/extensions/BetaFeatures
     - gerrit:mediawiki/extensions/MobileFrontend  # phan
@@ -1282,16 +731,8 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/BlueSpiceFoundation
     - gerrit:mediawiki/extensions/EnhancedUpload
     - gerrit:mediawiki/extensions/Lockdown
-    - gerrit:mediawiki/extensions/OOJSPlus
     - gerrit:mediawiki/extensions/PDFCreator
     - gerrit:mediawiki/extensions/VisualEditor
-    - gerrit:mediawiki/extensions/VueJsPlus
-  gerrit:mediawiki/extensions/NamespacePopups:
-    - gerrit:mediawiki/extensions/PagePopups
-  gerrit:mediawiki/extensions/NavigationTiming:
-    - gerrit:mediawiki/extensions/EventLogging
-  gerrit:mediawiki/extensions/NaylorAMS:
-    - gerrit:mediawiki/extensions/PluggableAuth
   gerrit:mediawiki/extensions/NewSignupPage:
     - gerrit:mediawiki/extensions/SocialProfile  # phan
   gerrit:mediawiki/extensions/NewUserMessage:
@@ -1299,43 +740,30 @@ extra_dependencies:
   gerrit:mediawiki/extensions/Newsletter:
     - gerrit:mediawiki/extensions/Echo
   gerrit:mediawiki/extensions/NotifyMe:
-    - gerrit:mediawiki/extensions/OOJSPlus
     - gerrit:mediawiki/extensions/VisualEditor
   gerrit:mediawiki/extensions/Nuke:
     - gerrit:mediawiki/extensions/CheckUser
-    - gerrit:mediawiki/extensions/EventLogging
   gerrit:mediawiki/extensions/OATHAuth:
-    - gerrit:mediawiki/extensions/AntiSpoof
     - gerrit:mediawiki/extensions/CentralAuth
     - gerrit:mediawiki/extensions/CheckUser
     - gerrit:mediawiki/extensions/Echo
     - gerrit:mediawiki/extensions/WebAuthn
   gerrit:mediawiki/extensions/OAuth:
     - gerrit:mediawiki/extensions/AbuseFilter
-    - gerrit:mediawiki/extensions/AntiSpoof
     - gerrit:mediawiki/extensions/CentralAuth
     - gerrit:mediawiki/extensions/CheckUser
     - gerrit:mediawiki/extensions/Echo
-  gerrit:mediawiki/extensions/OAuthRateLimiter:
-    - gerrit:mediawiki/extensions/OAuth
   gerrit:mediawiki/extensions/ORES:
     - gerrit:mediawiki/extensions/AbuseFilter
-  gerrit:mediawiki/extensions/OpenIDConnect:
-    - gerrit:mediawiki/extensions/PluggableAuth
   gerrit:mediawiki/extensions/PDFCreator:
     - gerrit:mediawiki/extensions/BlueSpiceFoundation
     - gerrit:mediawiki/extensions/MenuEditor
-    - gerrit:mediawiki/extensions/OOJSPlus
-    - gerrit:mediawiki/extensions/StandardDialogs
     - gerrit:mediawiki/extensions/VisualEditor
-    - gerrit:mediawiki/extensions/VueJsPlus
     - gerrit:mediawiki/skins/BlueSpiceDiscovery
   gerrit:mediawiki/extensions/PageAssessments:
     - gerrit:mediawiki/extensions/Scribunto
     - gerrit:mediawiki/extensions/CirrusSearch  # phan
   gerrit:mediawiki/extensions/PageCheckout:
-    - gerrit:mediawiki/extensions/Forms
-    - gerrit:mediawiki/extensions/OOJSPlus
     - gerrit:mediawiki/extensions/Workflows
   gerrit:mediawiki/extensions/PageForms:
     - gerrit:mediawiki/extensions/AdminLinks  # phan
@@ -1353,27 +781,19 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/WikiLove
   gerrit:mediawiki/extensions/PageViewInfo:
     - gerrit:mediawiki/extensions/Scribunto  # phan
-  gerrit:mediawiki/extensions/PageViewInfoGA:
-    - gerrit:mediawiki/extensions/PageViewInfo
   gerrit:mediawiki/extensions/ParserFunctions:
     - gerrit:mediawiki/extensions/Scribunto
   gerrit:mediawiki/extensions/ParserMigration:
     - gerrit:mediawiki/extensions/ConfirmEdit  # phan
     - gerrit:mediawiki/extensions/MobileFrontend  # phan
   gerrit:mediawiki/extensions/PersonalDashboard:
-    - gerrit:mediawiki/extensions/CommunityConfiguration
-    - gerrit:mediawiki/extensions/Echo
-    - gerrit:mediawiki/extensions/EventBus
     - gerrit:mediawiki/extensions/FlaggedRevs
     - gerrit:mediawiki/extensions/TestKitchen
     - gerrit:mediawiki/extensions/Thanks
     - gerrit:mediawiki/extensions/ORES  # phan
     - gerrit:mediawiki/extensions/Wikibase  # phan
   gerrit:mediawiki/extensions/Petition:
-    - gerrit:mediawiki/extensions/cldr
     - gerrit:mediawiki/extensions/CheckUser  # phan
-  gerrit:mediawiki/extensions/Phonos:
-    - gerrit:mediawiki/extensions/TimedMediaHandler
   gerrit:mediawiki/extensions/PictureGame:
     - gerrit:mediawiki/extensions/SocialProfile
   gerrit:mediawiki/extensions/PollNY:
@@ -1384,8 +804,6 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/PageImages
     - gerrit:mediawiki/extensions/TextExtracts
     - gerrit:mediawiki/extensions/Gadgets  # phan
-  gerrit:mediawiki/extensions/PreviewLinks:
-    - gerrit:mediawiki/extensions/PageImages
   gerrit:mediawiki/extensions/Produnto:
     - gerrit:mediawiki/extensions/SyntaxHighlight_GeSHi  # phan
   gerrit:mediawiki/extensions/PronunciationRecording:
@@ -1397,11 +815,9 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/LabeledSectionTransclusion
     - gerrit:mediawiki/extensions/ParserFunctions
     - gerrit:mediawiki/extensions/Scribunto
-    - gerrit:mediawiki/extensions/VisualEditor
     - gerrit:mediawiki/extensions/CodeMirror  # phan
   gerrit:mediawiki/extensions/PropertySuggester:
     - gerrit:mediawiki/extensions/AbuseFilter
-    - gerrit:mediawiki/extensions/AntiSpoof
     - gerrit:mediawiki/extensions/ArticlePlaceholder
     - gerrit:mediawiki/extensions/BetaFeatures
     - gerrit:mediawiki/extensions/CentralAuth
@@ -1410,25 +826,17 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/Cite
     - gerrit:mediawiki/extensions/ConfirmEdit
     - gerrit:mediawiki/extensions/Echo
-    - gerrit:mediawiki/extensions/Elastica
-    - gerrit:mediawiki/extensions/EventBus
-    - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/EventStreamConfig
     - gerrit:mediawiki/extensions/GeoData
     - gerrit:mediawiki/extensions/GlobalBlocking
     - gerrit:mediawiki/extensions/MobileApp
     - gerrit:mediawiki/extensions/MobileFrontend
     - gerrit:mediawiki/extensions/PdfHandler
-    - gerrit:mediawiki/extensions/Scribunto
     - gerrit:mediawiki/extensions/SiteMatrix
     - gerrit:mediawiki/extensions/SpamBlacklist
-    - gerrit:mediawiki/extensions/TestKitchen
     - gerrit:mediawiki/extensions/TimedMediaHandler
-    - gerrit:mediawiki/extensions/UniversalLanguageSelector
     - gerrit:mediawiki/extensions/VisualEditor
     - gerrit:mediawiki/extensions/Wikibase
-    - gerrit:mediawiki/extensions/WikibaseCirrusSearch
-    - gerrit:mediawiki/extensions/WikibaseLexeme
     - gerrit:mediawiki/extensions/WikibaseLexemeCirrusSearch
     - gerrit:mediawiki/extensions/WikibaseMediaInfo
     - gerrit:mediawiki/extensions/WikibaseQualityConstraints
@@ -1446,19 +854,14 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/SocialProfile
   gerrit:mediawiki/extensions/ReaderExperiments:
     - gerrit:mediawiki/extensions/CirrusSearch
-    - gerrit:mediawiki/extensions/Elastica
-    - gerrit:mediawiki/extensions/EventBus
-    - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/EventStreamConfig
     - gerrit:mediawiki/extensions/MobileFrontend
     - gerrit:mediawiki/extensions/ParserMigration
-    - gerrit:mediawiki/extensions/TestKitchen
     - gerrit:mediawiki/extensions/WikimediaEvents
     - gerrit:mediawiki/extensions/WikimediaMessages
     - gerrit:mediawiki/skins/MinervaNeue
   gerrit:mediawiki/extensions/ReadingLists:
     - gerrit:mediawiki/extensions/BetaFeatures
-    - gerrit:mediawiki/extensions/EventBus
     - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/EventStreamConfig
     - gerrit:mediawiki/extensions/SiteMatrix
@@ -1475,19 +878,13 @@ extra_dependencies:
   gerrit:mediawiki/extensions/ReportIncident:
     - gerrit:mediawiki/extensions/CommunityConfiguration
     - gerrit:mediawiki/extensions/DiscussionTools
-    - gerrit:mediawiki/extensions/EventLogging
-    - gerrit:mediawiki/extensions/Linter
-    - gerrit:mediawiki/extensions/VisualEditor
     - gerrit:mediawiki/extensions/TestKitchen  # phan
   gerrit:mediawiki/extensions/RevisionSlider:
     - gerrit:mediawiki/extensions/MobileFrontend
   gerrit:mediawiki/extensions/Sanctions:
-    - gerrit:mediawiki/extensions/Echo
-    - gerrit:mediawiki/extensions/Flow
     - gerrit:mediawiki/extensions/VisualEditor
   gerrit:mediawiki/extensions/Score:
     - gerrit:mediawiki/extensions/AbuseFilter
-    - gerrit:mediawiki/extensions/AntiSpoof
     - gerrit:mediawiki/extensions/ArticlePlaceholder
     - gerrit:mediawiki/extensions/BetaFeatures
     - gerrit:mediawiki/extensions/CentralAuth
@@ -1497,29 +894,19 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/ConfirmEdit
     - gerrit:mediawiki/extensions/DiscussionTools
     - gerrit:mediawiki/extensions/Echo
-    - gerrit:mediawiki/extensions/Elastica
-    - gerrit:mediawiki/extensions/EventBus
-    - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/EventStreamConfig
     - gerrit:mediawiki/extensions/FlaggedRevs
     - gerrit:mediawiki/extensions/GeoData
     - gerrit:mediawiki/extensions/GlobalBlocking
-    - gerrit:mediawiki/extensions/Linter
     - gerrit:mediawiki/extensions/MobileApp
     - gerrit:mediawiki/extensions/MobileFrontend
     - gerrit:mediawiki/extensions/PdfHandler
     - gerrit:mediawiki/extensions/PropertySuggester
-    - gerrit:mediawiki/extensions/Scribunto
     - gerrit:mediawiki/extensions/SiteMatrix
     - gerrit:mediawiki/extensions/SpamBlacklist
     - gerrit:mediawiki/extensions/TemplateData
-    - gerrit:mediawiki/extensions/TestKitchen
     - gerrit:mediawiki/extensions/TimedMediaHandler
-    - gerrit:mediawiki/extensions/UniversalLanguageSelector
-    - gerrit:mediawiki/extensions/VisualEditor
     - gerrit:mediawiki/extensions/Wikibase
-    - gerrit:mediawiki/extensions/WikibaseCirrusSearch
-    - gerrit:mediawiki/extensions/WikibaseLexeme
     - gerrit:mediawiki/extensions/WikibaseLexemeCirrusSearch
     - gerrit:mediawiki/extensions/WikibaseMediaInfo
     - gerrit:mediawiki/extensions/WikibaseQualityConstraints
@@ -1531,23 +918,11 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/CodeMirror  # phan
     - gerrit:mediawiki/extensions/Produnto  # phan
     - gerrit:mediawiki/extensions/SyntaxHighlight_GeSHi  # phan
-  gerrit:mediawiki/extensions/SearchVue:
-    - gerrit:mediawiki/extensions/WikimediaMessages
   gerrit:mediawiki/extensions/SecurePoll:
     - gerrit:mediawiki/extensions/CentralAuth  # phan
     - gerrit:mediawiki/extensions/CodeMirror  # phan
     - gerrit:mediawiki/extensions/Flow  # phan
-  gerrit:mediawiki/extensions/Shibboleth:
-    - gerrit:mediawiki/extensions/PluggableAuth
-  gerrit:mediawiki/extensions/SimpleBlogPage:
-    - gerrit:mediawiki/extensions/OOJSPlus
-  gerrit:mediawiki/extensions/SimpleSAMLphp:
-    - gerrit:mediawiki/extensions/PluggableAuth
   gerrit:mediawiki/extensions/SimpleTasks:
-    - gerrit:mediawiki/extensions/AtMentions
-    - gerrit:mediawiki/extensions/Checklists
-    - gerrit:mediawiki/extensions/DateTimeTools
-    - gerrit:mediawiki/extensions/OOJSPlus
     - gerrit:mediawiki/extensions/VisualEditor
   gerrit:mediawiki/extensions/SiteMetrics:
     - gerrit:mediawiki/extensions/SocialProfile
@@ -1555,35 +930,23 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/WikiEditor
     - gerrit:mediawiki/extensions/Echo  # phan
     - gerrit:mediawiki/extensions/SpamRegex  # phan
-  gerrit:mediawiki/extensions/Sofa:
-    - gerrit:mediawiki/extensions/Scribunto
   gerrit:mediawiki/extensions/SoftRedirector:
     - gerrit:mediawiki/extensions/VisualEditor
   gerrit:mediawiki/extensions/SpamBlacklist:
     - gerrit:mediawiki/extensions/AbuseFilter
     - gerrit:mediawiki/extensions/CheckUser
-    - gerrit:mediawiki/extensions/EventLogging
-  gerrit:mediawiki/extensions/SpamDiffTool:
-    - gerrit:mediawiki/extensions/SpamBlacklist
-  gerrit:mediawiki/extensions/SpecialPageCaptcha:
-    - gerrit:mediawiki/extensions/ConfirmEdit
   gerrit:mediawiki/extensions/SpellingDictionary:
     - gerrit:mediawiki/extensions/UniversalLanguageSelector
   gerrit:mediawiki/extensions/SportsTeams:
     - gerrit:mediawiki/extensions/BlogPage
-    - gerrit:mediawiki/extensions/Comments
     - gerrit:mediawiki/extensions/SocialProfile
     - gerrit:mediawiki/extensions/UserStatus
-    - gerrit:mediawiki/extensions/VoteNY
   gerrit:mediawiki/extensions/Springboard:
     - gerrit:mediawiki/extensions/AdminLinks  # phan
-  gerrit:mediawiki/extensions/StandardDialogs:
-    - gerrit:mediawiki/extensions/OOJSPlus
   gerrit:mediawiki/extensions/StopForumSpam:
     - gerrit:mediawiki/extensions/AbuseFilter
   gerrit:mediawiki/extensions/StructuredNavigation:
     - gerrit:mediawiki/extensions/CodeEditor
-    - gerrit:mediawiki/extensions/WikiEditor
   gerrit:mediawiki/extensions/Survey:
     - gerrit:mediawiki/extensions/AdminLinks  # phan
   gerrit:mediawiki/extensions/SyntaxHighlight_GeSHi:
@@ -1592,10 +955,6 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/Cite
     - gerrit:mediawiki/extensions/CodeMirror
     - gerrit:mediawiki/extensions/Math
-    - gerrit:mediawiki/extensions/VisualEditor
-  gerrit:mediawiki/extensions/TableTools:
-    - gerrit:mediawiki/extensions/VisualEditor
-    - gerrit:mediawiki/extensions/VueJsPlus
   gerrit:mediawiki/extensions/TemplateData:
     - gerrit:mediawiki/extensions/CommunityConfiguration  # phan
     - gerrit:mediawiki/extensions/Wikibase  # phan
@@ -1603,63 +962,43 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/CodeEditor  # phan
     - gerrit:mediawiki/extensions/CodeMirror  # phan
     - gerrit:mediawiki/extensions/Scribunto  # phan
-  gerrit:mediawiki/extensions/TemplateWizard:
-    - gerrit:mediawiki/extensions/TemplateData
-    - gerrit:mediawiki/extensions/WikiEditor
   gerrit:mediawiki/extensions/TestKitchen:
     - gerrit:mediawiki/extensions/CentralNotice
     - gerrit:mediawiki/extensions/CirrusSearch
     - gerrit:mediawiki/extensions/Cite
-    - gerrit:mediawiki/extensions/CommunityConfiguration
     - gerrit:mediawiki/extensions/CommunityConfigurationExample
     - gerrit:mediawiki/extensions/ConfirmEdit
     - gerrit:mediawiki/extensions/DiscussionTools
-    - gerrit:mediawiki/extensions/Echo
-    - gerrit:mediawiki/extensions/Elastica
-    - gerrit:mediawiki/extensions/EventBus
-    - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/EventStreamConfig
     - gerrit:mediawiki/extensions/FlaggedRevs
     - gerrit:mediawiki/extensions/Flow
     - gerrit:mediawiki/extensions/GrowthExperiments
     - gerrit:mediawiki/extensions/GuidedTour
-    - gerrit:mediawiki/extensions/Linter
     - gerrit:mediawiki/extensions/MobileFrontend
     - gerrit:mediawiki/extensions/PageImages
     - gerrit:mediawiki/extensions/PageViewInfo
-    - gerrit:mediawiki/extensions/PersonalDashboard
     - gerrit:mediawiki/extensions/TemplateData
     - gerrit:mediawiki/extensions/Thanks
-    - gerrit:mediawiki/extensions/VisualEditor
     - gerrit:mediawiki/extensions/WikimediaMessages
     - gerrit:mediawiki/skins/MinervaNeue
   gerrit:mediawiki/extensions/Thanks:
     - gerrit:mediawiki/extensions/AbuseFilter
-    - gerrit:mediawiki/extensions/Echo
     - gerrit:mediawiki/extensions/Flow
     - gerrit:mediawiki/extensions/MobileFrontend
     - gerrit:mediawiki/extensions/VisualEditor
     - gerrit:mediawiki/extensions/CheckUser  # phan
   gerrit:mediawiki/extensions/TheWikipediaLibrary:
-    - gerrit:mediawiki/extensions/AntiSpoof
-    - gerrit:mediawiki/extensions/CentralAuth
     - gerrit:mediawiki/extensions/Echo
-    - gerrit:mediawiki/extensions/GlobalPreferences
   gerrit:mediawiki/extensions/TimedMediaHandler:
     - gerrit:mediawiki/extensions/BetaFeatures  # phan
   gerrit:mediawiki/extensions/TitleBlacklist:
     - gerrit:mediawiki/extensions/AntiSpoof
     - gerrit:mediawiki/extensions/Scribunto
-  gerrit:mediawiki/extensions/Toolhub:
-    - gerrit:mediawiki/extensions/Scribunto
-  gerrit:mediawiki/extensions/TopTenPages:
-    - gerrit:mediawiki/extensions/HitCounters
   gerrit:mediawiki/extensions/TorBlock:
     - gerrit:mediawiki/extensions/AbuseFilter
   gerrit:mediawiki/extensions/Translate:
     - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/Scribunto
-    - gerrit:mediawiki/extensions/UniversalLanguageSelector
     - gerrit:mediawiki/extensions/VisualEditor
     - gerrit:mediawiki/extensions/cldr
     - gerrit:mediawiki/extensions/AbuseFilter  # phan
@@ -1668,26 +1007,16 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/Elastica  # phan
     - gerrit:mediawiki/extensions/TranslationNotifications  # phan
   gerrit:mediawiki/extensions/TranslationNotifications:
-    - gerrit:mediawiki/extensions/MassMessage
-    - gerrit:mediawiki/extensions/Translate
-    - gerrit:mediawiki/extensions/UniversalLanguageSelector
     - gerrit:mediawiki/extensions/CentralAuth  # phan
     - gerrit:mediawiki/extensions/SiteMatrix  # phan
   gerrit:mediawiki/extensions/TuleapIntegration:
     - gerrit:mediawiki/extensions/TuleapWikiFarm
   gerrit:mediawiki/extensions/TuleapWikiFarm:
     - gerrit:mediawiki/extensions/TuleapIntegration
-  gerrit:mediawiki/extensions/TwitterCards:
-    - gerrit:mediawiki/extensions/TextExtracts
-  gerrit:mediawiki/extensions/TwnMainPage:
-    - gerrit:mediawiki/extensions/Translate
-    - gerrit:mediawiki/extensions/UniversalLanguageSelector
   gerrit:mediawiki/extensions/TwoColConflict:
     - gerrit:mediawiki/extensions/BetaFeatures
     - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/WikiEditor
-  gerrit:mediawiki/extensions/UnifiedTaskOverview:
-    - gerrit:mediawiki/extensions/OOJSPlus
   gerrit:mediawiki/extensions/UniversalLanguageSelector:
     - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/Babel  # phan
@@ -1709,19 +1038,11 @@ extra_dependencies:
   gerrit:mediawiki/extensions/UserProfile:
     - gerrit:mediawiki/extensions/BlueSpiceFoundation
     - gerrit:mediawiki/extensions/MenuEditor
-    - gerrit:mediawiki/extensions/OOJSPlus
-    - gerrit:mediawiki/extensions/StandardDialogs
     - gerrit:mediawiki/skins/BlueSpiceDiscovery
   gerrit:mediawiki/extensions/UserStatus:
     - gerrit:mediawiki/extensions/BlogPage
-    - gerrit:mediawiki/extensions/Comments
     - gerrit:mediawiki/extensions/SocialProfile
     - gerrit:mediawiki/extensions/SportsTeams
-    - gerrit:mediawiki/extensions/VoteNY
-  gerrit:mediawiki/extensions/VECancelButton:
-    - gerrit:mediawiki/extensions/VisualEditor
-  gerrit:mediawiki/extensions/VEForAll:
-    - gerrit:mediawiki/extensions/VisualEditor
   gerrit:mediawiki/extensions/VikiSemanticTitle:
     - gerrit:mediawiki/extensions/VIKI
   gerrit:mediawiki/extensions/VikiTitleIcon:
@@ -1733,32 +1054,18 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/ConfirmEdit
     - gerrit:mediawiki/extensions/DiscussionTools
     - gerrit:mediawiki/extensions/FlaggedRevs
-    - gerrit:mediawiki/extensions/Linter
     - gerrit:mediawiki/extensions/TemplateData
     - gerrit:mediawiki/extensions/BetaFeatures  # phan
   gerrit:mediawiki/extensions/VisualEditorPlus:
     - gerrit:mediawiki/extensions/VisualEditor
   gerrit:mediawiki/extensions/VoteNY:
     - gerrit:mediawiki/extensions/SocialProfile  # phan
-  gerrit:mediawiki/extensions/WSOAuth:
-    - gerrit:mediawiki/extensions/PluggableAuth
-  gerrit:mediawiki/extensions/WandaScore:
-    - gerrit:mediawiki/extensions/Wanda
-  gerrit:mediawiki/extensions/WandaScribe:
-    - gerrit:mediawiki/extensions/Wanda
-  gerrit:mediawiki/extensions/WandaVoice:
-    - gerrit:mediawiki/extensions/Wanda
   gerrit:mediawiki/extensions/WatchAnalytics:
     - gerrit:mediawiki/extensions/ApprovedRevs  # phan
   gerrit:mediawiki/extensions/WebAuthn:
     - gerrit:mediawiki/extensions/OATHAuth
-  gerrit:mediawiki/extensions/WhoIsWatching:
-    - gerrit:mediawiki/extensions/Echo
   gerrit:mediawiki/extensions/WikiEditor:
-    - gerrit:mediawiki/extensions/EventBus
-    - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/EventStreamConfig
-    - gerrit:mediawiki/extensions/TestKitchen
     - gerrit:mediawiki/extensions/WikimediaEvents
     - gerrit:mediawiki/extensions/BetaFeatures  # phan
     - gerrit:mediawiki/extensions/ConfirmEdit  # phan
@@ -1773,9 +1080,6 @@ extra_dependencies:
   gerrit:mediawiki/extensions/WikiLambda:
     - gerrit:mediawiki/extensions/CirrusSearch
     - gerrit:mediawiki/extensions/CommunityConfiguration
-    - gerrit:mediawiki/extensions/Elastica
-    - gerrit:mediawiki/extensions/UniversalLanguageSelector
-    - gerrit:mediawiki/extensions/WikimediaMessages
     - gerrit:mediawiki/extensions/AbuseFilter  # phan
     - gerrit:mediawiki/extensions/EventLogging  # phan
     - gerrit:mediawiki/extensions/SiteMatrix  # phan
@@ -1788,18 +1092,13 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/UserMerge  # phan
   gerrit:mediawiki/extensions/WikiRAG:
     - gerrit:mediawiki/extensions/BlueSpiceFoundation
-    - gerrit:mediawiki/extensions/OOJSPlus
   gerrit:mediawiki/extensions/WikiSEO:
     - gerrit:mediawiki/extensions/PageImages
     - gerrit:mediawiki/extensions/Scribunto
   gerrit:mediawiki/extensions/WikiToLDAP:
-    - gerrit:mediawiki/extensions/LDAPAuthentication2
-    - gerrit:mediawiki/extensions/LDAPProvider
-    - gerrit:mediawiki/extensions/PluggableAuth
     - gerrit:mediawiki/extensions/UserMerge
   gerrit:mediawiki/extensions/Wikibase:
     - gerrit:mediawiki/extensions/AbuseFilter
-    - gerrit:mediawiki/extensions/AntiSpoof
     - gerrit:mediawiki/extensions/ArticlePlaceholder
     - gerrit:mediawiki/extensions/BetaFeatures
     - gerrit:mediawiki/extensions/CentralAuth
@@ -1808,9 +1107,6 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/Cite
     - gerrit:mediawiki/extensions/ConfirmEdit
     - gerrit:mediawiki/extensions/Echo
-    - gerrit:mediawiki/extensions/Elastica
-    - gerrit:mediawiki/extensions/EventBus
-    - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/EventStreamConfig
     - gerrit:mediawiki/extensions/GeoData
     - gerrit:mediawiki/extensions/GlobalBlocking
@@ -1818,15 +1114,10 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/MobileFrontend
     - gerrit:mediawiki/extensions/PdfHandler
     - gerrit:mediawiki/extensions/PropertySuggester
-    - gerrit:mediawiki/extensions/Scribunto
     - gerrit:mediawiki/extensions/SiteMatrix
     - gerrit:mediawiki/extensions/SpamBlacklist
-    - gerrit:mediawiki/extensions/TestKitchen
     - gerrit:mediawiki/extensions/TimedMediaHandler
-    - gerrit:mediawiki/extensions/UniversalLanguageSelector
     - gerrit:mediawiki/extensions/VisualEditor
-    - gerrit:mediawiki/extensions/WikibaseCirrusSearch
-    - gerrit:mediawiki/extensions/WikibaseLexeme
     - gerrit:mediawiki/extensions/WikibaseLexemeCirrusSearch
     - gerrit:mediawiki/extensions/WikibaseMediaInfo
     - gerrit:mediawiki/extensions/WikibaseQualityConstraints
@@ -1838,7 +1129,6 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/PageImages  # phan
   gerrit:mediawiki/extensions/WikibaseCirrusSearch:
     - gerrit:mediawiki/extensions/AbuseFilter
-    - gerrit:mediawiki/extensions/AntiSpoof
     - gerrit:mediawiki/extensions/ArticlePlaceholder
     - gerrit:mediawiki/extensions/BetaFeatures
     - gerrit:mediawiki/extensions/CentralAuth
@@ -1847,9 +1137,6 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/Cite
     - gerrit:mediawiki/extensions/ConfirmEdit
     - gerrit:mediawiki/extensions/Echo
-    - gerrit:mediawiki/extensions/Elastica
-    - gerrit:mediawiki/extensions/EventBus
-    - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/EventStreamConfig
     - gerrit:mediawiki/extensions/GeoData
     - gerrit:mediawiki/extensions/GlobalBlocking
@@ -1857,15 +1144,11 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/MobileFrontend
     - gerrit:mediawiki/extensions/PdfHandler
     - gerrit:mediawiki/extensions/PropertySuggester
-    - gerrit:mediawiki/extensions/Scribunto
     - gerrit:mediawiki/extensions/SiteMatrix
     - gerrit:mediawiki/extensions/SpamBlacklist
-    - gerrit:mediawiki/extensions/TestKitchen
     - gerrit:mediawiki/extensions/TimedMediaHandler
-    - gerrit:mediawiki/extensions/UniversalLanguageSelector
     - gerrit:mediawiki/extensions/VisualEditor
     - gerrit:mediawiki/extensions/Wikibase
-    - gerrit:mediawiki/extensions/WikibaseLexeme
     - gerrit:mediawiki/extensions/WikibaseLexemeCirrusSearch
     - gerrit:mediawiki/extensions/WikibaseMediaInfo
     - gerrit:mediawiki/extensions/WikibaseQualityConstraints
@@ -1874,7 +1157,6 @@ extra_dependencies:
     - gerrit:mediawiki/skins/MinervaNeue
   gerrit:mediawiki/extensions/WikibaseLexeme:
     - gerrit:mediawiki/extensions/AbuseFilter
-    - gerrit:mediawiki/extensions/AntiSpoof
     - gerrit:mediawiki/extensions/ArticlePlaceholder
     - gerrit:mediawiki/extensions/BetaFeatures
     - gerrit:mediawiki/extensions/CentralAuth
@@ -1883,9 +1165,6 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/Cite
     - gerrit:mediawiki/extensions/ConfirmEdit
     - gerrit:mediawiki/extensions/Echo
-    - gerrit:mediawiki/extensions/Elastica
-    - gerrit:mediawiki/extensions/EventBus
-    - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/EventStreamConfig
     - gerrit:mediawiki/extensions/GeoData
     - gerrit:mediawiki/extensions/GlobalBlocking
@@ -1893,15 +1172,11 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/MobileFrontend
     - gerrit:mediawiki/extensions/PdfHandler
     - gerrit:mediawiki/extensions/PropertySuggester
-    - gerrit:mediawiki/extensions/Scribunto
     - gerrit:mediawiki/extensions/SiteMatrix
     - gerrit:mediawiki/extensions/SpamBlacklist
-    - gerrit:mediawiki/extensions/TestKitchen
     - gerrit:mediawiki/extensions/TimedMediaHandler
-    - gerrit:mediawiki/extensions/UniversalLanguageSelector
     - gerrit:mediawiki/extensions/VisualEditor
     - gerrit:mediawiki/extensions/Wikibase
-    - gerrit:mediawiki/extensions/WikibaseCirrusSearch
     - gerrit:mediawiki/extensions/WikibaseLexemeCirrusSearch
     - gerrit:mediawiki/extensions/WikibaseMediaInfo
     - gerrit:mediawiki/extensions/WikibaseQualityConstraints
@@ -1910,7 +1185,6 @@ extra_dependencies:
     - gerrit:mediawiki/skins/MinervaNeue
   gerrit:mediawiki/extensions/WikibaseLexemeCirrusSearch:
     - gerrit:mediawiki/extensions/AbuseFilter
-    - gerrit:mediawiki/extensions/AntiSpoof
     - gerrit:mediawiki/extensions/ArticlePlaceholder
     - gerrit:mediawiki/extensions/BetaFeatures
     - gerrit:mediawiki/extensions/CentralAuth
@@ -1919,9 +1193,6 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/Cite
     - gerrit:mediawiki/extensions/ConfirmEdit
     - gerrit:mediawiki/extensions/Echo
-    - gerrit:mediawiki/extensions/Elastica
-    - gerrit:mediawiki/extensions/EventBus
-    - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/EventStreamConfig
     - gerrit:mediawiki/extensions/GeoData
     - gerrit:mediawiki/extensions/GlobalBlocking
@@ -1929,16 +1200,11 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/MobileFrontend
     - gerrit:mediawiki/extensions/PdfHandler
     - gerrit:mediawiki/extensions/PropertySuggester
-    - gerrit:mediawiki/extensions/Scribunto
     - gerrit:mediawiki/extensions/SiteMatrix
     - gerrit:mediawiki/extensions/SpamBlacklist
-    - gerrit:mediawiki/extensions/TestKitchen
     - gerrit:mediawiki/extensions/TimedMediaHandler
-    - gerrit:mediawiki/extensions/UniversalLanguageSelector
     - gerrit:mediawiki/extensions/VisualEditor
     - gerrit:mediawiki/extensions/Wikibase
-    - gerrit:mediawiki/extensions/WikibaseCirrusSearch
-    - gerrit:mediawiki/extensions/WikibaseLexeme
     - gerrit:mediawiki/extensions/WikibaseMediaInfo
     - gerrit:mediawiki/extensions/WikibaseQualityConstraints
     - gerrit:mediawiki/extensions/WikimediaBadges
@@ -1946,7 +1212,6 @@ extra_dependencies:
     - gerrit:mediawiki/skins/MinervaNeue
   gerrit:mediawiki/extensions/WikibaseManifest:
     - gerrit:mediawiki/extensions/AbuseFilter
-    - gerrit:mediawiki/extensions/AntiSpoof
     - gerrit:mediawiki/extensions/ArticlePlaceholder
     - gerrit:mediawiki/extensions/BetaFeatures
     - gerrit:mediawiki/extensions/CentralAuth
@@ -1955,9 +1220,6 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/Cite
     - gerrit:mediawiki/extensions/ConfirmEdit
     - gerrit:mediawiki/extensions/Echo
-    - gerrit:mediawiki/extensions/Elastica
-    - gerrit:mediawiki/extensions/EventBus
-    - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/EventStreamConfig
     - gerrit:mediawiki/extensions/GeoData
     - gerrit:mediawiki/extensions/GlobalBlocking
@@ -1966,16 +1228,11 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/OAuth
     - gerrit:mediawiki/extensions/PdfHandler
     - gerrit:mediawiki/extensions/PropertySuggester
-    - gerrit:mediawiki/extensions/Scribunto
     - gerrit:mediawiki/extensions/SiteMatrix
     - gerrit:mediawiki/extensions/SpamBlacklist
-    - gerrit:mediawiki/extensions/TestKitchen
     - gerrit:mediawiki/extensions/TimedMediaHandler
-    - gerrit:mediawiki/extensions/UniversalLanguageSelector
     - gerrit:mediawiki/extensions/VisualEditor
     - gerrit:mediawiki/extensions/Wikibase
-    - gerrit:mediawiki/extensions/WikibaseCirrusSearch
-    - gerrit:mediawiki/extensions/WikibaseLexeme
     - gerrit:mediawiki/extensions/WikibaseLexemeCirrusSearch
     - gerrit:mediawiki/extensions/WikibaseMediaInfo
     - gerrit:mediawiki/extensions/WikibaseQualityConstraints
@@ -1984,7 +1241,6 @@ extra_dependencies:
     - gerrit:mediawiki/skins/MinervaNeue
   gerrit:mediawiki/extensions/WikibaseMediaInfo:
     - gerrit:mediawiki/extensions/AbuseFilter
-    - gerrit:mediawiki/extensions/AntiSpoof
     - gerrit:mediawiki/extensions/ArticlePlaceholder
     - gerrit:mediawiki/extensions/BetaFeatures
     - gerrit:mediawiki/extensions/CentralAuth
@@ -1993,9 +1249,6 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/Cite
     - gerrit:mediawiki/extensions/ConfirmEdit
     - gerrit:mediawiki/extensions/Echo
-    - gerrit:mediawiki/extensions/Elastica
-    - gerrit:mediawiki/extensions/EventBus
-    - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/EventStreamConfig
     - gerrit:mediawiki/extensions/GeoData
     - gerrit:mediawiki/extensions/GlobalBlocking
@@ -2003,16 +1256,11 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/MobileFrontend
     - gerrit:mediawiki/extensions/PdfHandler
     - gerrit:mediawiki/extensions/PropertySuggester
-    - gerrit:mediawiki/extensions/Scribunto
     - gerrit:mediawiki/extensions/SiteMatrix
     - gerrit:mediawiki/extensions/SpamBlacklist
-    - gerrit:mediawiki/extensions/TestKitchen
     - gerrit:mediawiki/extensions/TimedMediaHandler
-    - gerrit:mediawiki/extensions/UniversalLanguageSelector
     - gerrit:mediawiki/extensions/VisualEditor
     - gerrit:mediawiki/extensions/Wikibase
-    - gerrit:mediawiki/extensions/WikibaseCirrusSearch
-    - gerrit:mediawiki/extensions/WikibaseLexeme
     - gerrit:mediawiki/extensions/WikibaseLexemeCirrusSearch
     - gerrit:mediawiki/extensions/WikibaseQualityConstraints
     - gerrit:mediawiki/extensions/WikimediaBadges
@@ -2020,7 +1268,6 @@ extra_dependencies:
     - gerrit:mediawiki/skins/MinervaNeue
   gerrit:mediawiki/extensions/WikibaseQualityConstraints:
     - gerrit:mediawiki/extensions/AbuseFilter
-    - gerrit:mediawiki/extensions/AntiSpoof
     - gerrit:mediawiki/extensions/ArticlePlaceholder
     - gerrit:mediawiki/extensions/BetaFeatures
     - gerrit:mediawiki/extensions/CentralAuth
@@ -2029,9 +1276,6 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/Cite
     - gerrit:mediawiki/extensions/ConfirmEdit
     - gerrit:mediawiki/extensions/Echo
-    - gerrit:mediawiki/extensions/Elastica
-    - gerrit:mediawiki/extensions/EventBus
-    - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/EventStreamConfig
     - gerrit:mediawiki/extensions/GeoData
     - gerrit:mediawiki/extensions/GlobalBlocking
@@ -2039,16 +1283,11 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/MobileFrontend
     - gerrit:mediawiki/extensions/PdfHandler
     - gerrit:mediawiki/extensions/PropertySuggester
-    - gerrit:mediawiki/extensions/Scribunto
     - gerrit:mediawiki/extensions/SiteMatrix
     - gerrit:mediawiki/extensions/SpamBlacklist
-    - gerrit:mediawiki/extensions/TestKitchen
     - gerrit:mediawiki/extensions/TimedMediaHandler
-    - gerrit:mediawiki/extensions/UniversalLanguageSelector
     - gerrit:mediawiki/extensions/VisualEditor
     - gerrit:mediawiki/extensions/Wikibase
-    - gerrit:mediawiki/extensions/WikibaseCirrusSearch
-    - gerrit:mediawiki/extensions/WikibaseLexeme
     - gerrit:mediawiki/extensions/WikibaseLexemeCirrusSearch
     - gerrit:mediawiki/extensions/WikibaseMediaInfo
     - gerrit:mediawiki/extensions/WikimediaBadges
@@ -2056,7 +1295,6 @@ extra_dependencies:
     - gerrit:mediawiki/skins/MinervaNeue
   gerrit:mediawiki/extensions/Wikidata.org:
     - gerrit:mediawiki/extensions/AbuseFilter
-    - gerrit:mediawiki/extensions/AntiSpoof
     - gerrit:mediawiki/extensions/ArticlePlaceholder
     - gerrit:mediawiki/extensions/BetaFeatures
     - gerrit:mediawiki/extensions/CentralAuth
@@ -2065,9 +1303,6 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/Cite
     - gerrit:mediawiki/extensions/ConfirmEdit
     - gerrit:mediawiki/extensions/Echo
-    - gerrit:mediawiki/extensions/Elastica
-    - gerrit:mediawiki/extensions/EventBus
-    - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/EventStreamConfig
     - gerrit:mediawiki/extensions/GeoData
     - gerrit:mediawiki/extensions/GlobalBlocking
@@ -2075,16 +1310,11 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/MobileFrontend
     - gerrit:mediawiki/extensions/PdfHandler
     - gerrit:mediawiki/extensions/PropertySuggester
-    - gerrit:mediawiki/extensions/Scribunto
     - gerrit:mediawiki/extensions/SiteMatrix
     - gerrit:mediawiki/extensions/SpamBlacklist
-    - gerrit:mediawiki/extensions/TestKitchen
     - gerrit:mediawiki/extensions/TimedMediaHandler
-    - gerrit:mediawiki/extensions/UniversalLanguageSelector
     - gerrit:mediawiki/extensions/VisualEditor
     - gerrit:mediawiki/extensions/Wikibase
-    - gerrit:mediawiki/extensions/WikibaseCirrusSearch
-    - gerrit:mediawiki/extensions/WikibaseLexeme
     - gerrit:mediawiki/extensions/WikibaseLexemeCirrusSearch
     - gerrit:mediawiki/extensions/WikibaseMediaInfo
     - gerrit:mediawiki/extensions/WikibaseQualityConstraints
@@ -2093,7 +1323,6 @@ extra_dependencies:
     - gerrit:mediawiki/skins/MinervaNeue
   gerrit:mediawiki/extensions/WikidataPageBanner:
     - gerrit:mediawiki/extensions/AbuseFilter
-    - gerrit:mediawiki/extensions/AntiSpoof
     - gerrit:mediawiki/extensions/ArticlePlaceholder
     - gerrit:mediawiki/extensions/BetaFeatures
     - gerrit:mediawiki/extensions/CentralAuth
@@ -2102,9 +1331,6 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/Cite
     - gerrit:mediawiki/extensions/ConfirmEdit
     - gerrit:mediawiki/extensions/Echo
-    - gerrit:mediawiki/extensions/Elastica
-    - gerrit:mediawiki/extensions/EventBus
-    - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/EventStreamConfig
     - gerrit:mediawiki/extensions/GeoData
     - gerrit:mediawiki/extensions/GlobalBlocking
@@ -2112,16 +1338,11 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/MobileFrontend
     - gerrit:mediawiki/extensions/PdfHandler
     - gerrit:mediawiki/extensions/PropertySuggester
-    - gerrit:mediawiki/extensions/Scribunto
     - gerrit:mediawiki/extensions/SiteMatrix
     - gerrit:mediawiki/extensions/SpamBlacklist
-    - gerrit:mediawiki/extensions/TestKitchen
     - gerrit:mediawiki/extensions/TimedMediaHandler
-    - gerrit:mediawiki/extensions/UniversalLanguageSelector
     - gerrit:mediawiki/extensions/VisualEditor
     - gerrit:mediawiki/extensions/Wikibase
-    - gerrit:mediawiki/extensions/WikibaseCirrusSearch
-    - gerrit:mediawiki/extensions/WikibaseLexeme
     - gerrit:mediawiki/extensions/WikibaseLexemeCirrusSearch
     - gerrit:mediawiki/extensions/WikibaseMediaInfo
     - gerrit:mediawiki/extensions/WikibaseQualityConstraints
@@ -2133,11 +1354,8 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/AbuseFilter
     - gerrit:mediawiki/extensions/CheckUser
     - gerrit:mediawiki/extensions/Echo
-    - gerrit:mediawiki/extensions/EventBus
-    - gerrit:mediawiki/extensions/EventLogging
   gerrit:mediawiki/extensions/WikimediaBadges:
     - gerrit:mediawiki/extensions/AbuseFilter
-    - gerrit:mediawiki/extensions/AntiSpoof
     - gerrit:mediawiki/extensions/ArticlePlaceholder
     - gerrit:mediawiki/extensions/BetaFeatures
     - gerrit:mediawiki/extensions/CentralAuth
@@ -2146,9 +1364,6 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/Cite
     - gerrit:mediawiki/extensions/ConfirmEdit
     - gerrit:mediawiki/extensions/Echo
-    - gerrit:mediawiki/extensions/Elastica
-    - gerrit:mediawiki/extensions/EventBus
-    - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/EventStreamConfig
     - gerrit:mediawiki/extensions/GeoData
     - gerrit:mediawiki/extensions/GlobalBlocking
@@ -2156,66 +1371,46 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/MobileFrontend
     - gerrit:mediawiki/extensions/PdfHandler
     - gerrit:mediawiki/extensions/PropertySuggester
-    - gerrit:mediawiki/extensions/Scribunto
     - gerrit:mediawiki/extensions/SiteMatrix
     - gerrit:mediawiki/extensions/SpamBlacklist
-    - gerrit:mediawiki/extensions/TestKitchen
     - gerrit:mediawiki/extensions/TimedMediaHandler
-    - gerrit:mediawiki/extensions/UniversalLanguageSelector
     - gerrit:mediawiki/extensions/VisualEditor
     - gerrit:mediawiki/extensions/Wikibase
-    - gerrit:mediawiki/extensions/WikibaseCirrusSearch
-    - gerrit:mediawiki/extensions/WikibaseLexeme
     - gerrit:mediawiki/extensions/WikibaseLexemeCirrusSearch
     - gerrit:mediawiki/extensions/WikibaseMediaInfo
     - gerrit:mediawiki/extensions/WikibaseQualityConstraints
     - gerrit:mediawiki/extensions/cldr
     - gerrit:mediawiki/skins/MinervaNeue
-  gerrit:mediawiki/extensions/WikimediaCampaignEvents:
-    - gerrit:mediawiki/extensions/CampaignEvents
-    - gerrit:mediawiki/extensions/cldr
   gerrit:mediawiki/extensions/WikimediaCustomizations:
-    - gerrit:mediawiki/extensions/AntiSpoof
     - gerrit:mediawiki/extensions/CentralAuth
     - gerrit:mediawiki/extensions/CheckUser
-    - gerrit:mediawiki/extensions/Echo
     - gerrit:mediawiki/extensions/EmailAuth
-    - gerrit:mediawiki/extensions/EventBus
-    - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/EventStreamConfig
     - gerrit:mediawiki/extensions/FlaggedRevs
     - gerrit:mediawiki/extensions/GlobalPreferences
-    - gerrit:mediawiki/extensions/IPReputation
     - gerrit:mediawiki/extensions/LoginNotify
     - gerrit:mediawiki/extensions/OATHAuth
     - gerrit:mediawiki/extensions/PageViewInfo
-    - gerrit:mediawiki/extensions/TestKitchen
     - gerrit:mediawiki/extensions/WikimediaEvents
     - gerrit:mediawiki/extensions/cldr
     - gerrit:mediawiki/extensions/ParserMigration  # phan
   gerrit:mediawiki/extensions/WikimediaEvents:
     - gerrit:mediawiki/extensions/AbuseFilter
-    - gerrit:mediawiki/extensions/AntiSpoof
     - gerrit:mediawiki/extensions/CentralAuth
     - gerrit:mediawiki/extensions/CheckUser
     - gerrit:mediawiki/extensions/ConfirmEdit
     - gerrit:mediawiki/extensions/Echo
     - gerrit:mediawiki/extensions/EmailAuth
-    - gerrit:mediawiki/extensions/EventBus
-    - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/EventStreamConfig
     - gerrit:mediawiki/extensions/FlaggedRevs
     - gerrit:mediawiki/extensions/GlobalBlocking
     - gerrit:mediawiki/extensions/GlobalPreferences
-    - gerrit:mediawiki/extensions/IPReputation
     - gerrit:mediawiki/extensions/OATHAuth
-    - gerrit:mediawiki/extensions/TestKitchen
     - gerrit:mediawiki/extensions/cldr
     - gerrit:mediawiki/extensions/BetaFeatures  # phan
     - gerrit:mediawiki/extensions/GrowthExperiments  # phan
     - gerrit:mediawiki/extensions/MobileFrontend  # phan
   gerrit:mediawiki/extensions/WikimediaMaintenance:
-    - gerrit:mediawiki/extensions/AntiSpoof
     - gerrit:mediawiki/extensions/CentralAuth
     - gerrit:mediawiki/extensions/CheckUser
     - gerrit:mediawiki/extensions/Echo
@@ -2226,7 +1421,6 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/Wikibase  # phan
     - gerrit:mediawiki/extensions/cldr  # phan
   gerrit:mediawiki/extensions/WikimediaMessages:
-    - gerrit:mediawiki/extensions/cldr
     - gerrit:mediawiki/extensions/CampaignEvents  # phan
     - gerrit:mediawiki/extensions/Echo  # phan
     - gerrit:mediawiki/extensions/GuidedTour  # phan
@@ -2236,7 +1430,6 @@ extra_dependencies:
     - gerrit:mediawiki/skins/MinervaNeue  # phan
   gerrit:mediawiki/extensions/Wikisource:
     - gerrit:mediawiki/extensions/AbuseFilter
-    - gerrit:mediawiki/extensions/AntiSpoof
     - gerrit:mediawiki/extensions/ArticlePlaceholder
     - gerrit:mediawiki/extensions/BetaFeatures
     - gerrit:mediawiki/extensions/CentralAuth
@@ -2245,9 +1438,6 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/Cite
     - gerrit:mediawiki/extensions/ConfirmEdit
     - gerrit:mediawiki/extensions/Echo
-    - gerrit:mediawiki/extensions/Elastica
-    - gerrit:mediawiki/extensions/EventBus
-    - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/EventStreamConfig
     - gerrit:mediawiki/extensions/GeoData
     - gerrit:mediawiki/extensions/GlobalBlocking
@@ -2258,16 +1448,11 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/PdfHandler
     - gerrit:mediawiki/extensions/ProofreadPage
     - gerrit:mediawiki/extensions/PropertySuggester
-    - gerrit:mediawiki/extensions/Scribunto
     - gerrit:mediawiki/extensions/SiteMatrix
     - gerrit:mediawiki/extensions/SpamBlacklist
-    - gerrit:mediawiki/extensions/TestKitchen
     - gerrit:mediawiki/extensions/TimedMediaHandler
-    - gerrit:mediawiki/extensions/UniversalLanguageSelector
     - gerrit:mediawiki/extensions/VisualEditor
     - gerrit:mediawiki/extensions/Wikibase
-    - gerrit:mediawiki/extensions/WikibaseCirrusSearch
-    - gerrit:mediawiki/extensions/WikibaseLexeme
     - gerrit:mediawiki/extensions/WikibaseLexemeCirrusSearch
     - gerrit:mediawiki/extensions/WikibaseMediaInfo
     - gerrit:mediawiki/extensions/WikibaseQualityConstraints
@@ -2281,9 +1466,6 @@ extra_dependencies:
     - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/MobileFrontend
     - gerrit:mediawiki/skins/MinervaNeue
-  gerrit:mediawiki/extensions/Workflows:
-    - gerrit:mediawiki/extensions/Forms
-    - gerrit:mediawiki/extensions/OOJSPlus
   gerrit:mediawiki/extensions/intersection:
     - gerrit:mediawiki/extensions/PageImages  # phan
   gerrit:mediawiki/extensions/wikihiero:
@@ -2295,8 +1477,6 @@ extra_dependencies:
   gerrit:mediawiki/skins/BlueSpiceDiscovery:
     - gerrit:mediawiki/extensions/BlueSpiceFoundation
     - gerrit:mediawiki/extensions/MenuEditor
-    - gerrit:mediawiki/extensions/OOJSPlus
-    - gerrit:mediawiki/extensions/StandardDialogs
   gerrit:mediawiki/skins/Cosmos:
     - gerrit:mediawiki/extensions/AdminLinks
     - gerrit:mediawiki/extensions/CookieWarning
@@ -2311,7 +1491,6 @@ extra_dependencies:
   gerrit:mediawiki/skins/MinervaNeue:
     - gerrit:mediawiki/extensions/Cite
     - gerrit:mediawiki/extensions/Echo
-    - gerrit:mediawiki/extensions/EventBus
     - gerrit:mediawiki/extensions/EventLogging
     - gerrit:mediawiki/extensions/EventStreamConfig
     - gerrit:mediawiki/extensions/MobileFrontend
@@ -2324,7 +1503,6 @@ extra_dependencies:
   gerrit:mediawiki/skins/Refreshed:
     - gerrit:mediawiki/extensions/SocialProfile
   gerrit:mediawiki/skins/TuleapSkin:
-    - gerrit:mediawiki/extensions/TuleapIntegration
     - gerrit:mediawiki/extensions/TuleapWikiFarm
   gerrit:mediawiki/skins/Vector:
     - gerrit:mediawiki/extensions/CentralAuth  # phan

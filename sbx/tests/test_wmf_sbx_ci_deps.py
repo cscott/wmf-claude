@@ -76,5 +76,34 @@ class ExtraDependenciesTests(unittest.TestCase):
                                  [EXT + "ParserFunctions", EXT + "Scribunto"]})
 
 
+class TrimTests(unittest.TestCase):
+    # requires: R -> A; B -> C; D <-> E. Nothing else has a manifest.
+    REQUIRES = {"R": ["A"], "A": [], "B": ["C"], "C": [], "D": ["E"], "E": ["D"]}
+
+    def manifest_for(self, canonical):
+        name = canonical[len(EXT):] if canonical.startswith(EXT) else None
+        if name not in self.REQUIRES:
+            return None
+        return deps.Manifest("extension.json", {
+            "requires": {"extensions": {n: "*" for n in self.REQUIRES[name]}}})
+
+    def trim(self, names):
+        edges = {EXT + "R": [(EXT + n, n == "C") for n in names]}
+        return [(d[len(EXT):], phan) for d, phan in
+                ci.trim(edges, self.manifest_for).get(EXT + "R", [])]
+
+    def test_what_the_repos_own_walk_finds_goes(self):
+        self.assertEqual(self.trim(["A", "B"]), [("B", False)])
+
+    def test_what_another_extras_walk_finds_goes(self):
+        self.assertEqual(self.trim(["C", "B"]), [("B", False)])
+
+    def test_of_two_that_reach_each_other_the_first_stays(self):
+        self.assertEqual(self.trim(["E", "D"]), [("E", False)])
+
+    def test_a_repo_left_with_nothing_is_dropped(self):
+        self.assertEqual(ci.trim({EXT + "R": [(EXT + "A", False)]}, self.manifest_for), {})
+
+
 if __name__ == "__main__":
     unittest.main()

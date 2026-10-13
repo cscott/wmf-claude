@@ -36,10 +36,14 @@ def warn(msg):
 
 def remove_sandbox(name, force=False, lima=None, confirm=input):
     """Delete the sandbox's VM after a y/N question (unless `force`).
-    Returns True if the VM is gone."""
+    Returns True if the VM is gone. No answer (EOF: no terminal) is no."""
     if not force:
-        answer = confirm(f"Remove sandbox {name!r} and its VM "
-                         f"{vm_mod.instance_name(name)}? This cannot be undone. (y/N): ")
+        try:
+            answer = confirm(f"Remove sandbox {name!r} and its VM "
+                             f"{vm_mod.instance_name(name)}? This cannot be undone. (y/N): ")
+        except EOFError:
+            print(file=sys.stderr)
+            return False
         if answer.strip().lower() not in ("y", "yes"):
             return False
     print(f"+ limactl delete --force {vm_mod.instance_name(name)}", file=sys.stderr)

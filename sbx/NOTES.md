@@ -331,6 +331,11 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
     its NTP is dropped); harmless, Lima sets the clock.
 - Not yet: 7 on macOS (TESTING-MACOS step 9); a Claude session in an egress sandbox (the
   credential proxy on `cred.sock`).
+- **Then flip the default** (the engineer, 2026-10-13): once a real Claude session has run
+  in an egress sandbox, `create` makes egress-proxy sandboxes by default, and
+  `--no-egress-proxy` gives the present kind (the guest's own route, the per-port
+  credential proxy). Decide then what `--vm-type vz` and `--nested`, which refuse the
+  egress proxy, do by default: fall back with a note, or refuse.
 
 ### Testing in the sandbox
 

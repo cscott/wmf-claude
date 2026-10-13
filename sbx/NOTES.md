@@ -150,8 +150,7 @@ Development scaffolding:
 
 - The manual-test skill (upstream) takes the base URL from a "Manual testing" section in
   CLAUDE.md: the sandbox's `~/.claude/CLAUDE.md` has one (`session.RUNNING_TESTS_MD`;
-  docroot install, no `/w`). The skill's own `/w` wording: branch `manual-test-script-path`,
-  for an upstream MR.
+  docroot install, no `/w`). The skill's own `/w` wording: upstream !134.
 
 ### Session, credentials, Claude Code
 
@@ -190,11 +189,11 @@ Development scaffolding:
 
 ### Upstream work and repo hygiene
 
-- [ ] **Follow MRs !131 and !132**: `lima-port` is rebased on upstream `main` 70712f6
+- [ ] **Follow MRs !131, !132 and !134**: `lima-port` is rebased on upstream `main` 70712f6
   (!130 and !133 merged) and carries their commits. Check their state with:
   ```bash
   P='https://gitlab.wikimedia.org/api/v4/projects/repos%2Fproduct-safety-and-integrity%2Fwmf-claude'
-  for m in 131 132; do curl -s "$P/merge_requests/$m" \
+  for m in 131 132 134; do curl -s "$P/merge_requests/$m" \
     | jq -r '"!\(.iid) \(.state) \(.merge_commit_sha // .squash_commit_sha // "-") \(.title)"'; done
   ```
   When one merges, rebase onto upstream `main` (`git rebase wmf/main`; on a conflict

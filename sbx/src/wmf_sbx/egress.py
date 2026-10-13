@@ -4,7 +4,7 @@
 
 The guest has no route and no DNS. Its one way out is a QEMU `guestfwd`
 at EGRESS_ADDR:EGRESS_PORT, which the QEMU wrapper
-(helpers/wmf-sbx-qemu) connects to `nono proxy` on the host's loopback.
+(bin/wmf-sbx-qemu, qemu_wrapper.py) connects to `nono proxy` on the host's loopback.
 `nono proxy` enforces profiles/wmf-engineer.json (endpoint rules
 included) plus the hosts listed here, so the guest gets the same policy
 as a contained session.
@@ -17,6 +17,7 @@ Per sandbox, in egress_dir(NAME), all 0600 in a 0700 directory:
   proxy.json      the proxy's argv and environment (write_config), which
                   the wrapper reads; written at each start.
   port            the port of the proxy the guestfwd connects to now.
+  wrapper.pid     the running wrapper (SIGUSR1 starts a new proxy).
   proxy.log       the proxy's log.
 
 `nono proxy --upstream-proxy` sends no credentials (sbx/NOTES.md,
@@ -214,7 +215,8 @@ def proxy_config(name, env=None, nono="nono"):
                     # session's nono ~/.local/state/nono is not writable.
                     "XDG_STATE_HOME": os.path.join(egress_dir(name, env), "state")},
             "upstream": upstream(env),
-            "portFile": port_file(name, env)}
+            "portFile": port_file(name, env),
+            "pidFile": _path(name, "wrapper.pid", env)}
 
 
 def write_config(name, env=None, nono="nono"):
@@ -287,9 +289,26 @@ def wait_listening(port, proc, timeout=LISTEN_TIMEOUT, clock=time.monotonic,
         sleep(0.1)
 
 
-def set_port(name, port, env=None):
+def write_port(path, port):
     """Point the guestfwd at `port`: new guest connections go there."""
-    _write_private(port_file(name, env), f"{port}\n")
+    _write_private(path, f"{port}\n")
+
+
+def set_port(name, port, env=None):
+    write_port(port_file(name, env), port)
+
+
+def write_pid(path, pid):
+    _write_private(path, f"{pid}\n")
+
+
+def remove_pid(path, pid):
+    """Remove the pid file if it still names `pid` (a newer wrapper's
+    stays)."""
+    with contextlib.suppress(OSError, ValueError):
+        with open(path, encoding="utf-8") as f:
+            if int(f.read().strip()) == pid:
+                os.unlink(path)
 
 
 def guestfwd(port_path):

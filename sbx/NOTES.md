@@ -217,8 +217,25 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   through the old proxy finished (200, full size) after the swap. Nested, a host still needs
   the outer session's allowlist too: proxy 3 allowed `example.com` and the session proxy
   then refused it (403, "enterprise proxy rejected CONNECT").
-- Not yet: 5 (throughput), 6 (the wrapper as the proxy's parent through Lima stop/kill),
-  7 (unnested, macOS), 9 (contained mode chained to the outer proxy).
+- **The wrapper as the proxy's parent** (item 6, RAN with `bin/wmf-sbx-qemu` and
+  `egress.py`, inner VM, boot 13 s): Lima runs wrapper → `nono proxy` + QEMU; its probe
+  calls pass through. After `limactl stop`, `limactl stop --force` and `kill -9` of QEMU,
+  the wrapper and the proxy are gone and `wrapper.pid` removed; after the kill Lima shows
+  `Stopped`. A killed wrapper takes both children with it (`PR_SET_PDEATHSIG`, Linux only;
+  macOS has no equivalent: item 7).
+- **Throughput** (item 5, RAN): `npm ci --ignore-scripts` in Cite (708 packages, 37 MB,
+  empty cache): 7.6 s through the egress proxy (16 proxy connections), 9.4 s through Lima's
+  usual path to the same session proxy. No cost from the extra hop or `socat`.
+  - npm with no usable proxy variable (`HTTPS_PROXY=` set empty, so it went direct) hung
+    for over 10 minutes with no DNS, rather than failing: the guest's variables must be
+    complete.
+- **The guest's clock** (found in item 6): nono signs each leaf certificate with
+  `notBefore` = now, and the guest's clock ran a fraction of a second behind: the first
+  request after boot failed "certificate is not yet valid", the next passed. With
+  `restrict=on` the guest has no NTP (`System clock synchronized: no`), so the skew can only
+  grow. `ptp_kvm` does not load in this nested guest ("Operation not supported"); to try
+  unnested. Else `start` sets the guest's clock, or a guestfwd time source. For A2.3.
+- Not yet: 7 (unnested, macOS), 9 (contained mode chained to the outer proxy).
 
 ### Testing in the sandbox
 

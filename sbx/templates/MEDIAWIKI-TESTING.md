@@ -227,20 +227,22 @@ cd <repo>
 composer test     # parallel-lint, phpcs, minus-x   (Cite: 0.8 s)
 composer fix      # phpcbf, minus-x fix
 npm test          # usually grunt: eslint, stylelint, banana   (Translate: 9 s)
-composer phan     # Cite: 21 s -- but read the phan note below first
+composer phan     # Cite: 21 s -- read the phan note below
 ```
 
-**phan: expect undeclared-symbol errors that are not yours.** This is a
-temporary gap in the sandbox, not a problem with your tree. An extension's
-`.phan/config.php` can name sibling extensions it expects on disk. Cite's
-adds `../../extensions/cldr`, `../../extensions/CommunityConfiguration` and
-`../../extensions/Gadgets` to `directory_list`. The sandbox clones what
-`extension.json` requires, and it does not require those, so they are
-absent. Result, on a pristine upstream tree: Cite 32 to 42 issues,
-Translate about 160 (Elastica alone 109), Vector 4, ULS 2, PageImages 5,
-Popups 4, TextExtracts 0; core's own phan is clean. Read `.phan/config.php` to see which names it expects, and either
-ignore errors that name exactly those classes or run phan once before your
-change and diff. A missing sibling can also make a `@phan-suppress` unused:
+**phan: the sandbox has what CI's phan job has.** An extension's
+`.phan/config.php` can name sibling extensions it expects on disk, as
+`../../extensions/<Name>`: Cite's names `cldr`, `CommunityConfiguration`
+and `Gadgets`, which `extension.json` does not require. The sandbox clones
+what CI checks out for the repos it was made for, its phan job's too, and
+links `../../extensions` and `../../skins` beside each clone to core's. So
+phan should report what CI reports. Undeclared-symbol errors that name an
+extension the sandbox does not hold are not yours: the sandbox was made
+with `--no-phan-deps` or `--no-ci-deps`, the repo is a dependency and not
+one the sandbox was made for, or a real `extensions/` directory already
+sat where the link would go. Read `.phan/config.php` to see which names it
+expects, and either ignore errors that name exactly those classes or run
+phan once before your change and diff. A missing sibling can also make a `@phan-suppress` unused:
 Translate reports `UnusedPluginSuppression` at
 `src/TtmServer/ElasticSearchTtmServer.php:177`, because without Elastica
 phan cannot type the loop that defines the variable.
@@ -588,7 +590,7 @@ it.
    throws `MW_SERVER or MW_SCRIPT_PATH not defined`. Leave the environment's
    `/` alone.
 3. **`npm ci` where cypress is a devDependency** — §3.
-4. **phan errors about sibling extensions** — §3.
+4. **phan errors about an extension the sandbox does not hold** — §3.
 5. **`Chrome instance exited` from wdio**: you left out `CI=true` (§5.4),
    or you set a long `$TMPDIR`. Chrome puts a socket under `$TMPDIR`, and a
    Unix socket path has a length limit of about 108 bytes. Keep the

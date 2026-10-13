@@ -353,6 +353,52 @@ class StepCommandTests(unittest.TestCase):
         self.assertIn("already exists", err.getvalue())
 
 
+class LinkPhanPathsTests(unittest.TestCase):
+    """../../extensions/<Name> in a repo's .phan/config.php resolves."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        t = self.tmp.name
+        self.core = os.path.join(t, "src", "core")
+        for d in ("extensions", "skins"):
+            os.makedirs(os.path.join(self.core, d))
+        self.cite = os.path.join(t, "src", "Extensions", "Cite")
+        self.vector = os.path.join(t, "src", "Skins", "Vector")
+        os.makedirs(self.cite)
+        os.makedirs(self.vector)
+        os.symlink(self.cite, os.path.join(self.core, "extensions", "Cite"))
+        patched = unittest.mock.patch.object(os, "lchown", lambda *a: None)
+        patched.start()
+        self.addCleanup(patched.stop)
+
+    def phan(self, links):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            made = s.link_phan_paths(self.core, links)
+        return made, err.getvalue()
+
+    def test_the_relative_path_resolves_to_cores_link(self):
+        made, _ = self.phan([("extensions", "Cite", self.cite),
+                             ("skins", "Vector", self.vector)])
+        src = os.path.join(self.tmp.name, "src")
+        self.assertEqual(sorted(made), [os.path.join(src, "extensions"),
+                                        os.path.join(src, "skins")])
+        # What .phan/config.php in Cite names:
+        self.assertEqual(os.path.realpath(os.path.join(self.cite, "../../extensions/Cite")),
+                         os.path.realpath(self.cite))
+
+    def test_an_existing_directory_is_left_alone(self):
+        own = os.path.join(self.tmp.name, "src", "extensions")
+        os.makedirs(own)
+        made, _ = self.phan([("extensions", "Cite", self.cite)])
+        self.assertNotIn(own, made)
+        self.assertFalse(os.path.islink(own))
+
+    def test_nothing_without_core(self):
+        self.assertEqual(s.link_phan_paths(None, [("extensions", "Cite", self.cite)]), [])
+
+
 class LinkParsoidCheckoutTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

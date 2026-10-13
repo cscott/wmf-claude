@@ -10,9 +10,14 @@ the union of the two, as the dependencies of that repo when it is the
 one under test (deps.walk applies them to the roots only). A repo that
 only the phan map names is marked `# phan`.
 
+`--trim` leaves out what `wmf-sbx create`'s manifest walk finds anyway:
+from the repo itself, or from another of its extras that is kept. It
+fetches every manifest in those closures from gitiles (several hundred).
+
 Usage (from sbx/src):
   python3 -m wmf_sbx.ci_deps > ../reference/ci-extra-dependencies.yaml
   python3 -m wmf_sbx.ci_deps --dir DIR   # a local integration/config/zuul
+  python3 -m wmf_sbx.ci_deps --trim
 """
 
 import argparse
@@ -22,6 +27,7 @@ import os
 import sys
 import urllib.request
 
+from . import deps as deps_mod
 from . import image as image_mod
 
 PROJECT = "integration/config"
@@ -81,7 +87,33 @@ def extra_dependencies(tests, phan):
     return out
 
 
-def render(edges, source):
+def trim(edges, manifest_for):
+    """`edges` without what deps.walk finds from manifests (create's
+    defaults: dev-requires and suggests walked). An extra that another
+    kept extra's walk reaches goes; of two that reach each other, the
+    first in the list stays. An unknown manifest covers nothing, so a
+    failed fetch only leaves more in."""
+    def closure(canonical):
+        return set(deps_mod.walk([canonical], manifest_for)[0])
+
+    out = {}
+    for key, deps in edges.items():
+        base = closure(key)
+        left = [(dep, phan) for dep, phan in deps if dep not in base]
+        reach = {dep: closure(dep) for dep, _ in left}
+        order = {dep: i for i, (dep, _) in enumerate(left)}
+
+        def covered(dep):
+            return any(dep in reach[other] and (other not in reach[dep] or order[other] < order[dep])
+                       for other in reach if other != dep)
+
+        kept = [(dep, phan) for dep, phan in left if not covered(dep)]
+        if kept:
+            out[key] = kept
+    return out
+
+
+def render(edges, source, trimmed=False):
     lines = [
         "# settings.yaml `extra_dependencies:` from WMF CI's dependency maps:",
         f"# {source}. Made by `python3 -m wmf_sbx.ci_deps` in sbx/src.",
@@ -89,8 +121,11 @@ def render(edges, source):
         "# `extra_dependencies: {}`). Each entry is what CI checks out when that",
         "# repo is under test; `wmf-sbx create` adds it for the repos you name,",
         "# not for their dependencies. `# phan`: only CI's phan job has it.",
-        "extra_dependencies:",
     ]
+    if trimmed:
+        lines.append("# Trimmed (--trim): without what create's extension.json/skin.json walk finds,"
+                     "\n# with dev-requires and suggests (so not with --no-dev or --no-suggests).")
+    lines.append("extra_dependencies:")
     for key, deps in edges.items():
         lines.append(f"  {key}:")
         lines += [f"    - {dep}" + ("  # phan" if phan else "") for dep, phan in deps]
@@ -113,6 +148,8 @@ def _head():
 def main(argv=None, out=sys.stdout):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--dir", help="read the maps from this directory (zuul/)")
+    parser.add_argument("--trim", action="store_true",
+                        help="leave out what the manifest walk finds (fetches the manifests)")
     args = parser.parse_args(argv)
     if args.dir:
         texts = [open(os.path.join(args.dir, f), encoding="utf-8").read() for f in FILES]
@@ -121,7 +158,18 @@ def main(argv=None, out=sys.stdout):
         texts = [_fetch(f) for f in FILES]
         source = _head()
     tests, phan = (image_mod.yaml.safe_load(t) or {} for t in texts)
-    out.write(render(extra_dependencies(tests, phan), source))
+    edges = extra_dependencies(tests, phan)
+    if args.trim:
+        unreachable = set()
+
+        def warn(msg):
+            print(msg, file=sys.stderr)
+
+        edges = trim(edges, deps_mod.make_manifest_for(lambda _c: None, warn=warn,
+                                                      unreachable=unreachable))
+        if unreachable:
+            warn(f"{len(unreachable)} manifests could not be fetched; their entries are kept untrimmed.")
+    out.write(render(edges, source, trimmed=args.trim))
     return 0
 
 

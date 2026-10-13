@@ -12,7 +12,8 @@ only the phan map names is marked `# phan`.
 
 `--trim` leaves out what `wmf-sbx create`'s manifest walk finds anyway:
 from the repo itself, or from another of its extras that is kept. It
-fetches every manifest in those closures from gitiles (several hundred).
+fetches every manifest in those closures from gitiles (several hundred);
+with GERRITUA set, it is the User-Agent, for Gerrit's higher rate limit.
 
 Usage (from sbx/src):
   python3 -m wmf_sbx.ci_deps > ../reference/ci-extra-dependencies.yaml
@@ -25,7 +26,6 @@ import base64
 import json
 import os
 import sys
-import urllib.request
 
 from . import deps as deps_mod
 from . import image as image_mod
@@ -132,14 +132,18 @@ def render(edges, source, trimmed=False):
     return "\n".join(lines) + "\n"
 
 
+def _open(url, timeout=30):
+    return deps_mod.gerrit_opener(os.environ.get("GERRITUA"))(url, timeout=timeout)
+
+
 def _fetch(name):
-    with urllib.request.urlopen(GITILES + "zuul/" + name + "?format=TEXT", timeout=30) as r:
+    with _open(GITILES + "zuul/" + name + "?format=TEXT", timeout=30) as r:
         return base64.b64decode(r.read()).decode("utf-8")
 
 
 def _head():
     url = "https://gerrit.wikimedia.org/r/plugins/gitiles/" + PROJECT + "/+log/refs/heads/master?n=1&format=JSON"
-    with urllib.request.urlopen(url, timeout=30) as r:
+    with _open(url) as r:
         text = r.read().decode("utf-8")
     entry = json.loads(text.split("\n", 1)[1])["log"][0]
     return f"{PROJECT} {entry['commit'][:10]}, {entry['committer']['time']}"
@@ -152,7 +156,10 @@ def main(argv=None, out=sys.stdout):
                         help="leave out what the manifest walk finds (fetches the manifests)")
     args = parser.parse_args(argv)
     if args.dir:
-        texts = [open(os.path.join(args.dir, f), encoding="utf-8").read() for f in FILES]
+        texts = []
+        for f in FILES:
+            with open(os.path.join(args.dir, f), encoding="utf-8") as fh:
+                texts.append(fh.read())
         source = f"{PROJECT}, {os.path.abspath(args.dir)}"
     else:
         texts = [_fetch(f) for f in FILES]

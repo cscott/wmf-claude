@@ -15,6 +15,7 @@ import sys
 import tempfile
 import unittest
 import urllib.error
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
@@ -80,6 +81,36 @@ def http_error(url, code, reason):
     err = urllib.error.HTTPError(url, code, reason, {}, None)
     err.close()
     return err
+
+
+class GerritOpenerTests(unittest.TestCase):
+    def sent(self, user_agent, url):
+        seen = []
+        d.gerrit_opener(user_agent, urlopen=lambda req, timeout=None: seen.append(req))(url, 5)
+        req = seen[0]
+        return req.get_header("User-agent") if hasattr(req, "get_header") else None
+
+    def test_gerrit_gets_the_user_agent(self):
+        self.assertEqual(self.sent("ua", d.GITILES_URL.format(project="p", filename="f")), "ua")
+
+    def test_other_hosts_never_see_it(self):
+        self.assertIsNone(self.sent("ua", "https://gitlab.wikimedia.org/api/v4/projects"))
+        self.assertIsNone(self.sent("ua", "https://gerrit.wikimedia.org.example.com/r/x"))
+
+    def test_without_one_the_url_is_passed_as_is(self):
+        self.assertIsNone(self.sent(None, d.GITILES_URL.format(project="p", filename="f")))
+
+    def test_fetch_manifest_defaults_to_gerritua_from_the_environment(self):
+        seen = []
+
+        def urlopen(req, timeout=None):
+            seen.append(req.get_header("User-agent"))
+            raise http_error(req.full_url, 401, "Unauthorized")
+
+        with mock.patch.dict(os.environ, {"GERRITUA": "ua"}), \
+                mock.patch.object(d.urllib.request, "urlopen", urlopen):
+            self.assertIsNone(d.fetch_manifest(EXT + "Cite"))
+        self.assertEqual(seen, ["ua", "ua"])
 
 
 class FetchManifestTests(unittest.TestCase):

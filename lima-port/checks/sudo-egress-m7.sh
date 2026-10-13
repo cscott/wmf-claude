@@ -183,9 +183,15 @@ swap() {
   sleep 3
   listening "$new" && pass "the new proxy stays up" || fail "the new proxy is gone"
   listening "$old" && pass "the old proxy is still up" || fail "the old proxy is gone"
-  echo "after: $(gcurl "https://$host/")"
+  local after; after=$(gcurl "https://$host/")
+  echo "after: $after"
   if listed; then fail "$host still denied by the allowlist after"
   else pass "$host passes the allowlist after: $(last)"; fi
+  # With no proxy upstream (on the host), nothing else refuses the host:
+  # anything but a 200 is the egress proxy's failure (DNS, TLS, ...).
+  if ! env | grep -qi '^https\?_proxy='; then
+    [[ $after == 200 ]] && pass "$host answers 200 after" || fail "$host: $after after, not 200: $(last)"
+  fi
 }
 
 # $1: how to stop (stop, force, kill-wrapper, kill-qemu)

@@ -931,18 +931,18 @@ HOOK="$REPO_ROOT/bin/session-start.sh"
 # The default backend is nono. Its output must stay byte for byte what the
 # hook emitted before the backend seam, or every nono user's SessionStart
 # block changes without notice. The fixtures are copies of that output.
-# Unset the selectors, so that the result does not depend on the
+# Unset the selectors (and GERRITUA), so that the result does not depend on the
 # environment of the engineer who runs the test.
 FIXTURES="$REPO_ROOT/tests/fixtures/session-start"
 if diff -u "$FIXTURES/nono.txt" \
-     <(env -u WMF_CLAUDE_SANDBOX_BACKEND -u WMF_DOCKER_BROKER_URL \
+     <(env -u WMF_CLAUDE_SANDBOX_BACKEND -u GERRITUA -u WMF_DOCKER_BROKER_URL \
          -u WMF_CLAUDE_STE -u WMF_CLAUDE_IN_VM -u WMF_CLAUDE_CHROME_IN_VM \
          -u WMF_CLAUDE_MODEL_PROXY_PORT bash "$HOOK" 2>/dev/null) >/dev/null; then
   pass "session-start default output is byte-identical to the nono fixture"
 else
   fail "session-start default output differs from tests/fixtures/session-start/nono.txt"
 fi
-out="$(WMF_CLAUDE_STE=0 env -u WMF_CLAUDE_SANDBOX_BACKEND -u WMF_DOCKER_BROKER_URL bash "$HOOK" 2>/dev/null)"
+out="$(WMF_CLAUDE_STE=0 env -u WMF_CLAUDE_SANDBOX_BACKEND -u GERRITUA -u WMF_DOCKER_BROKER_URL bash "$HOOK" 2>/dev/null)"
 if ! grep -q 'ASD-STE100' <<<"$out" \
    && [[ "$(diff <(grep -v 'ASD-STE100' "$FIXTURES/nono.txt") <(echo "$out"))" == "" ]]; then
   pass "session-start with WMF_CLAUDE_STE=0 drops only the STE bullet"
@@ -950,7 +950,7 @@ else
   fail "session-start with WMF_CLAUDE_STE=0 did not drop exactly the STE bullet"
 fi
 if diff -u "$FIXTURES/nono-broker.txt" \
-     <(env -u WMF_CLAUDE_SANDBOX_BACKEND \
+     <(env -u WMF_CLAUDE_SANDBOX_BACKEND -u GERRITUA \
          -u WMF_CLAUDE_STE -u WMF_CLAUDE_IN_VM -u WMF_CLAUDE_CHROME_IN_VM \
          -u WMF_CLAUDE_MODEL_PROXY_PORT \
          WMF_DOCKER_BROKER_URL=http://127.0.0.1:5000 bash "$HOOK" 2>/dev/null) >/dev/null; then
@@ -994,6 +994,21 @@ for f in "$REPO_ROOT"/hooks/context/*/*.txt; do
     fail "backend context is missing from package.json artifacts: $rel"
   fi
 done
+
+echo "--- session-start hook: GERRITUA ---"
+# The bullet appears only when GERRITUA is set, and never shows its value.
+if [[ "$(env -u GERRITUA bash "$HOOK" 2>/dev/null | grep -c GERRITUA)" == "0" ]]; then
+  pass "session-start says nothing about GERRITUA when it is unset"
+else
+  fail "session-start mentions GERRITUA although it is unset"
+fi
+out="$(GERRITUA=sekrit-ua-value bash "$HOOK" 2>/dev/null)"
+if grep -q 'User-Agent on your own requests to gerrit.wikimedia.org' <<<"$out" \
+   && ! grep -q 'sekrit-ua-value' <<<"$out"; then
+  pass "session-start tells Claude to use \$GERRITUA, without its value"
+else
+  fail "session-start does not explain GERRITUA, or leaks its value"
+fi
 
 echo "--- session-start hook: Docker broker routing ---"
 # The hook is the always-present, repo-agnostic signal that tells Claude to run

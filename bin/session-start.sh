@@ -84,6 +84,15 @@ cat <<'CONTEXT'
   - If the review surfaces a fundamentally wrong approach, stop and escalate to the user rather than iterating on it.
 CONTEXT
 
+# Emitted only when the engineer gave the session GERRITUA (wmf-sbx's
+# settings.yaml `environment:`, or the launching shell). The hook names the
+# variable and never expands it: the value is a secret.
+if [[ -n "${GERRITUA:-}" ]]; then
+  cat <<'GERRITUA'
+- `$GERRITUA` is set. Send it as the User-Agent on your own requests to gerrit.wikimedia.org (gitiles, the REST API), e.g. `curl -A "$GERRITUA" ...` or `urllib.request.Request(url, headers={"User-Agent": os.environ["GERRITUA"]})`: Gerrit gives that User-Agent a higher rate limit than the default one, which earns `HTTP 429` with a 60-second `retry-after` after a burst. Its value is a secret: refer to it only as `$GERRITUA` or `os.environ["GERRITUA"]`, never print, log, or echo it, never write it into a file, a commit, or a commit message, and never send it to another host.
+GERRITUA
+fi
+
 # Emitted only when this session is attached to a Docker dev container (the
 # broker exports WMF_DOCKER_BROKER_URL into the sandbox). This is the reliable,
 # always-present signal that routes PHP/composer/npm through the container — it

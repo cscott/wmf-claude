@@ -30,6 +30,21 @@ def manifest(filename="extension.json", **data):
     return d.Manifest(filename, data)
 
 
+
+class GerritUserAgentRedirectTests(unittest.TestCase):
+    """GERRITUA is a secret: a redirect, to any host, does not carry it."""
+
+    def test_a_redirect_does_not_carry_the_user_agent(self):
+        import urllib.request
+        sent = []
+        d.gerrit_opener("sekrit-ua", urlopen=lambda req, timeout=None: sent.append(req))(
+            "https://gerrit.wikimedia.org/r/x")
+        (req,) = sent
+        self.assertEqual(req.get_header("User-agent"), "sekrit-ua")
+        new = urllib.request.HTTPRedirectHandler().redirect_request(
+            req, None, 302, "Found", {}, "https://example.org/y")
+        self.assertIsNone(new.get_header("User-agent"))
+
 class ParseManifestTests(unittest.TestCase):
     def test_parses(self):
         m = d.parse_manifest('{"name": "Cite"}', "extension.json", "src")

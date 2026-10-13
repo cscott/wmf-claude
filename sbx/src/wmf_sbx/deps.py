@@ -67,11 +67,14 @@ GERRIT_HOST = "gerrit.wikimedia.org"
 def gerrit_opener(user_agent=None, urlopen=None):
     """An `opener(url, timeout)` that sends `user_agent` (the engineer's
     GERRITUA) as the User-Agent to gerrit.wikimedia.org, which gives it a
-    higher rate limit than the default one. Other hosts never see it: the
-    value is a secret."""
+    higher rate limit than the default one. Other hosts never see it, not
+    even through a redirect: the value is a secret. (urllib copies a
+    request's headers to a redirect, to any host, but not its
+    "unredirected" ones.)"""
     def opener(url, timeout=None):
         if user_agent and urllib.parse.urlsplit(url).hostname == GERRIT_HOST:
-            url = urllib.request.Request(url, headers={"User-Agent": user_agent})
+            url = urllib.request.Request(url)
+            url.add_unredirected_header("User-Agent", user_agent)
         return (urlopen or urllib.request.urlopen)(url, timeout=timeout)
 
     return opener

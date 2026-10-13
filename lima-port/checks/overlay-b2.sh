@@ -110,7 +110,8 @@ phase_overlay() {
   ida=$("$WMF_SBX" exec b2a -- cat /etc/machine-id); idb=$("$WMF_SBX" exec b2b -- cat /etc/machine-id)
   ka=$("$WMF_SBX" exec b2a -- cat /etc/ssh/ssh_host_ed25519_key.pub | cut -d' ' -f2)
   kb=$("$WMF_SBX" exec b2b -- cat /etc/ssh/ssh_host_ed25519_key.pub | cut -d' ' -f2)
-  echo "-- machine-id: $ida / $idb; host key: ${ka:0:16}... / ${kb:0:16}..."
+  # The key's end: every ed25519 key starts with the same type header.
+  echo "-- machine-id: $ida / $idb; host key: ...${ka: -16} / ...${kb: -16}"
   [ -n "$ida" ] && [ "$ida" != "$idb" ] || fail "the machine-ids are the same"
   [ -n "$ka" ] && [ "$ka" != "$kb" ] || fail "the SSH host keys are the same"
   local a0 b0 a1 b1

@@ -186,6 +186,39 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   whether their egress works at all when nested.)
 - No live allowlist change: no reload flag, signal or control socket in 0.78. `wmf-sbx
   allow` replaces the proxy (PLAN-SUDO.md).
+- With `lima-port/checks/upstream-auth-shim.py` between them, the chain guest → `nono proxy`
+  (fixed EC P-256 CA, `--proxy-ca-cert/--proxy-ca-key`) → shim → session proxy works: two
+  TLS interceptions in a row, each trusting the next CA (RAN).
+- Inner VM `inner` booted through a throwaway `QEMU_SYSTEM_X86_64` wrapper that appends
+  `restrict=on,guestfwd=tcp:192.168.5.100:3128-cmd:sh -c '…socat…'` to the one `-netdev
+  user` (boot 14–16 s). From the guest, with `https_proxy=http://nono:PASS@
+  192.168.5.100:3128`: wiki GET 200, POST 403, off-list host 403, no password 407; direct
+  `140.82.112.3:443`, `192.168.5.2:22` and the session's proxy port fail; no DNS (getent,
+  `@192.168.5.3`), UDP unreachable, no default route. All after `nft flush ruleset` as guest
+  root (RAN).
+  - The image's nft host block drops 192.168.5.100:3128 too: a `sudo` template needs a rule
+    for it.
+  - libslirp splits the `cmd:` string into argv itself (no shell): `cmd:exec socat …`
+    aborts; wrap in `sh -c '…'`. A wrapper in bash must keep `$(cat port)` out of its own
+    expansion (`\$(…)`), or the port is fixed at boot.
+  - Lima writes the host's proxy variables (here the session proxy, with its password) to
+    the guest's `/etc/environment` unless `propagateProxyEnv: false`; the plan sets it.
+- With no guest DNS, every client that honours the proxy variables works, as they send the
+  name in CONNECT: `apt-get update/install` (with an apt proxy conf), `npm ci`, `composer
+  install`, `pip install`, `git clone https://…` (RAN). Two need settings: git aborts the
+  CONNECT until `http.proxyAuthMethod=basic` (put it in `/etc/gitconfig`); Node's `fetch`
+  ignores the variables unless `NODE_USE_ENV_PROXY=1`. `mw-install-browser`: not run.
+- Claude Code through `HTTPS_PROXY` reaches `api.anthropic.com` (a turn fails only with
+  "Invalid API key": no credentials given); its telemetry host is denied, harmlessly (RAN).
+- **Opening a host under a running VM works** (item 8, RAN): the guestfwd reads
+  `port` at each guest connection (`sh -c 'exec socat - TCP:127.0.0.1:$(cat …/port)'`).
+  A second `nono proxy` with `download.cypress.io` added, `port` rewritten (write + `mv`):
+  the next guest request to it went 000 → 200, with no restart; a 4 MB download started
+  through the old proxy finished (200, full size) after the swap. Nested, a host still needs
+  the outer session's allowlist too: proxy 3 allowed `example.com` and the session proxy
+  then refused it (403, "enterprise proxy rejected CONNECT").
+- Not yet: 5 (throughput), 6 (the wrapper as the proxy's parent through Lima stop/kill),
+  7 (unnested, macOS), 9 (contained mode chained to the outer proxy).
 
 ### Testing in the sandbox
 

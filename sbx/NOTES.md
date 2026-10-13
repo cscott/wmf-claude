@@ -162,17 +162,6 @@ Development scaffolding:
 
 ### Testing in the sandbox
 
-- **Cypress under nono**: the session grants `~/.config/Cypress` (Electron; without it
-  `cypress verify` dies with SIGTRAP) and `/var/lib/xkb` (Xvfb writes its compiled keymaps
-  there, else to `/tmp`, which the session cannot read back, and Xvfb stops: "Failed to
-  activate virtual core keyboard"). image-build.sh makes both for the agent: nono grants
-  only paths that exist. Xvfb's socket and lock in `/tmp` need no grant. Cypress's DevTools
-  port is OS-assigned, so it needs the VM's narrowed ephemeral range (sandbox-provision.sh):
-  outside it, `connect EACCES`. RAN (cloud container, an `agent` user set up as
-  image-build.sh does, the session's flags from `session.launcher_argv`,
-  `lima-port/checks/cypress-nono.sh`): Cypress 15.21.1 `verify` and a spec pass under nono;
-  without the two grants `verify` fails. Not yet RAN: Cite's specs against a wiki, in a
-  sandbox from a new image.
 - [ ] **CI's extra dependencies**: WMF CI adds ParserFunctions, Scribunto and
   TimedMediaHandler for Parsoid (`integration/config` `zuul/dependencies.yaml`, "extras");
   without ParserFunctions 8 `ParserTest_Parsoid_*` tests fail. Wire settings.yaml
@@ -478,6 +467,19 @@ Development scaffolding:
 
 ### nono, Landlock and the session
 
+- **Cypress under nono**: the session grants `~/.config/Cypress` (Electron; without it
+  `cypress verify` dies with SIGTRAP) and `/var/lib/xkb` (Xvfb writes its compiled keymaps
+  there, else to `/tmp`, which the session cannot read back, and Xvfb stops: "Failed to
+  activate virtual core keyboard"). image-build.sh makes both for the agent: nono grants
+  only paths that exist. Xvfb's socket and lock in `/tmp` need no grant. Cypress's DevTools
+  port is OS-assigned, so it needs the VM's narrowed ephemeral range (sandbox-provision.sh):
+  outside it, `connect EACCES`. RAN (cloud container, an `agent` user set up as
+  image-build.sh does, the session's flags from `session.launcher_argv`,
+  `lima-port/checks/cypress-nono.sh`): Cypress 15.21.1 `verify` and a spec pass under nono;
+  without the two grants `verify` fails. RAN (engineer's host, a sandbox from a new image,
+  2026-10-13): Cite's `npm run selenium-test` gives the same result under the session's nono
+  as outside it (referencePreviews 2 of 3; the failure is Cite's, under Parsoid without
+  `ExtTagPFragment`, T440934), and an agent that follows §5.6 installs and runs it unaided.
 - The profile grants no read of the agent's home, only its dot-directories: the session grants
   `~/MEDIAWIKI-TESTING.md` and `~/.wmf-sbx` by name; an engineer's file needs
   `wmf-sbx resume --read-file=PATH`.

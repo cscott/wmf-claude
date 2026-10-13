@@ -304,7 +304,33 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   www.kernel.org (`M7_SWAP_HOST`): rerun on the same VM, it was denied by the allowlist
   before, the port moved, both proxies stayed up, and after it the guest got 200
   (decision="allow"). Item 7 is done on Linux.
-- Not yet: 7 on macOS (TESTING-MACOS step 9).
+- **A2.3, `create --egress-proxy`, nested** (cached golden image, `--no-deps`, 2026-10-13):
+  - First create: the provisioning stopped at `Cannot find device ""`: behind `restrict=on`
+    the guest's only route is 192.168.5.0/24 on eth0, no default. Lima's
+    `30-install-packages.sh` also failed (rsync, "Temporary failure resolving"): it runs
+    before the provisioning writes the apt proxy. Both fixed (interface toward 192.168.5.2;
+    rsync in the image). A `limactl validate` test failed once in a full suite run while the
+    VM booted, and passed alone and on the rerun.
+  - Second create: every invariant passed, the CONNECT 403 one included (`%{http_connect}`
+    is 403). `wmf-claude-setup` then failed: `nono pull` got 403, "registry.nono.sh:443 is
+    not in the allowlist". `wmf-sbx allow egtest registry.nono.sh`, setup again: done, and
+    no other host denied. Now built in (`egress.SETUP_DOMAINS`).
+  - Guest: resolv.conf `nameserver 192.168.5.100` + `use-vc`, resolved inactive;
+    `getent ahostsv4 en.wikipedia.org` gives 198.18.0.7, the same after a restart (the
+    `names` file keeps it). As root: `apt-get update` and an install through the proxy. As
+    the agent: `npm install`, `composer require`, `git clone` from GitHub. A nono run as
+    the agent with `--allow-domain '*' --upstream-proxy 192.168.5.100:3128`: wiki GET 200,
+    POST 403, example.com 502 (the outer proxy's 403), registry.npmjs.org 200.
+  - `wmf-sbx allow` under a running contained process: pypi.org 000 before, `allow` 8 s in,
+    200 after (decision="allow"), no restart. www.kernel.org was allowed by the egress
+    proxy too, but the outer session's proxy (nested) refused it, as in item 8.
+  - `allow --rm`, `--list`, a bad host (exit 1), and `status` (proxy port, CA expiry, the
+    list) as designed. `stop` left no wrapper, proxy or QEMU and removed `wrapper.pid`;
+    `start` passed every check, and the first requests after it got 200.
+  - systemd-timesyncd still looks up `2.debian.pool.ntp.org` (it gets a fake address, and
+    its NTP is dropped); harmless, Lima sets the clock.
+- Not yet: 7 on macOS (TESTING-MACOS step 9); a Claude session in an egress sandbox (the
+  credential proxy on `cred.sock`).
 
 ### Testing in the sandbox
 

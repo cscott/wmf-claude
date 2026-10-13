@@ -162,6 +162,31 @@ Development scaffolding:
   write-only under nono, and Lima builds its cloud-init ISO in TMPDIR.
 - In a nested session a new pty is not a terminal; `test_real_pty_*` skips.
 
+### `--sudo` egress (track A)
+
+Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, nono 0.78.0,
+2026-10-13):
+
+- `nono proxy --profile profiles/wmf-engineer.json` (password by `NONO_PROXY_PASS`) loads the
+  profile and intercepts TLS for its 48 endpoint routes: through it, GET
+  `en.wikipedia.org/w/api.php` passes the endpoint policy and POST gets 403 ("no rule
+  matched"); a host off the list gets 403 at CONNECT. So the host proxy can enforce the same
+  policy as contained mode (RAN).
+- Its TLS-intercept CA goes under `$XDG_STATE_HOME/nono/sessions/`; under a session's nono
+  `~/.local/state/nono` is not writable and it skips interception with only a warning, so
+  set `XDG_STATE_HOME` (or pass `--proxy-ca-cert`, the plan's fixed CA). It also writes
+  `nono/update-check.json` there.
+- `--upstream-proxy HOST:PORT` sends no credentials: chained to the session's proxy it got
+  `407` (logged as "enterprise proxy rejected CONNECT"), and the client a 502. Neither
+  `user:pass@HOST:PORT` nor a URL helps, and the binary has no other upstream-auth setting.
+  A direct connection from inside the session is EPERM (Landlock). So in a nested sandbox,
+  and on a host behind an authenticated proxy, the host proxy needs a small shim that adds
+  `Proxy-Authorization` on the way to the upstream. (Inner contained sessions pass
+  `--upstream-proxy` the same way, `session.upstream_proxy`, without the password: check
+  whether their egress works at all when nested.)
+- No live allowlist change: no reload flag, signal or control socket in 0.78. `wmf-sbx
+  allow` replaces the proxy (PLAN-SUDO.md).
+
 ### Testing in the sandbox
 
 - The manual-test skill (upstream) takes the base URL from a "Manual testing" section in

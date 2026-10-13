@@ -117,6 +117,12 @@ and the Debian mirror:
 Exit: results in `sbx/NOTES.md` (a new "`--sudo` egress (track A)"
 section), and a go/no-go on `nono proxy`.
 
+**Found (2026-10-13, NOTES "`--sudo` egress"):** the policy part works
+(endpoint rules through `nono proxy`); `--upstream-proxy` cannot send
+credentials, so a host behind an authenticated proxy, and every nested
+sandbox, needs an auth-adding shim between `nono proxy` and the upstream
+(a small Python CONNECT forwarder; it can live in `egress.py`).
+
 ## A2.1 The wrapper: `sbx/helpers/wmf-sbx-qemu` (Python)
 
 - Probe calls (no `-pidfile`/`-qmp`): exec the real QEMU unchanged.

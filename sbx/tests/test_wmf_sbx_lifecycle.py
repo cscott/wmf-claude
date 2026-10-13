@@ -674,6 +674,49 @@ class CreateTests(Env):
         self.assertEqual(self.create("--name", "demo", "--nested"), 1)
         self.assertIn("--nested: /home/agent/wmf-sbx-src is under /home/agent", self.err)
 
+    def egress_create(self, *extra, lima=None):
+        def make_ca(name, env=None):
+            egress.make_dir(name, env)
+            with open(egress.ca_cert(name, env), "w") as f:
+                f.write("CA\n")
+            return egress.ca_cert(name, env)
+        self.wrapper_env = []
+        with mock.patch.object(egress, "make_ca", side_effect=make_ca) as made, \
+                mock.patch.object(egress, "wrapper_env",
+                                  side_effect=lambda n, e: self.wrapper_env.append(n)
+                                  or {"WMF_SBX_EGRESS_CONFIG": "x"}), \
+                mock.patch.object(egress, "wait_time_sync", return_value=True):
+            rc = self.create("--name", "demo", "--egress-proxy", *extra, lima=lima)
+        self.made_ca = made.call_count
+        return rc
+
+    def test_egress_proxy_records_it_and_starts_through_the_wrapper(self):
+        self.assertEqual(self.egress_create(), 0, self.err)
+        st = state_mod.load("demo", self.env)
+        self.assertEqual(st["egress"], "proxy")
+        self.assertEqual(st["vmType"], "qemu")
+        self.assertEqual(self.made_ca, 1)
+        tmpl = self.lima.templates["wmf-sbx-demo"]
+        self.assertEqual(tmpl["vmType"], "qemu")
+        self.assertIn(egress.ca_cert("demo", self.env), tmpl["caCerts"]["files"])
+        self.assertEqual(tmpl["hostResolver"], {"enabled": False})
+        self.assertIn("192.168.5.100", tmpl["provision"][0]["script"])
+        self.assertEqual(self.wrapper_env, ["demo"])
+        self.assertEqual(self.lima.start_env, {"WMF_SBX_EGRESS_CONFIG": "x"})
+        self.assertNotIn("snapshot", st)
+
+    def test_egress_proxy_refuses_vz_and_nested(self):
+        self.assertEqual(self.egress_create("--vm-type", "vz"), 1)
+        self.assertIn("qemu", self.err.lower())
+        self.assertIsNone(state_mod.load("demo", self.env))
+        self.assertEqual(self.egress_create("--nested"), 1)
+        self.assertIn("--egress-proxy does not work with --nested", self.err)
+
+    def test_not_behind_the_egress_proxy_by_default(self):
+        self.assertEqual(self.create("--name", "demo"), 0, self.err)
+        self.assertNotIn("egress", state_mod.load("demo", self.env))
+        self.assertNotIn("WMF_SBX_EGRESS_CONFIG", self.lima.start_env or {})
+
     def test_not_nested_by_default(self):
         self.assertEqual(self.create("--name", "demo", "--memory", "6GiB"), 0, self.err)
         self.assertNotIn("nested", state_mod.load("demo", self.env))

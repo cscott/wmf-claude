@@ -228,6 +228,41 @@ class ProxyTests(unittest.TestCase):
         self.assertEqual(status, 403)
         self.assertEqual(FakeUpstream.seen, [])
 
+    def test_a_unix_socket_proxy_serves_and_stop_removes_it(self):
+        path = os.path.join(self.tmp.name, "cred.sock")
+        proxy = cp.CredentialProxy(cp.Source("api-key", "test", lambda: REAL_KEY),
+                                   env={}, log_path=self.log)
+        port = self.upstream.server_address[1]
+        proxy.connect = lambda: http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        self.assertIsNone(proxy.start(unix_path=path))
+        self.addCleanup(proxy.stop)
+        self.assertIsNone(proxy.port)
+        self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+        self.assertTrue(cp.socket_in_use(path))
+        conn = http.client.HTTPConnection("localhost", timeout=10)
+        conn.sock = socket.socket(socket.AF_UNIX)
+        conn.sock.connect(path)
+        conn.request("POST", "/v1/messages", body=b"{}",
+                     headers={"x-api-key": proxy.phantom})
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(FakeUpstream.seen[0][2]["x-api-key"], REAL_KEY)
+        proxy.stop()
+        self.assertFalse(os.path.exists(path))
+        self.assertFalse(cp.socket_in_use(path))
+
+    def test_stop_leaves_a_socket_that_a_later_proxy_bound(self):
+        path = os.path.join(self.tmp.name, "cred.sock")
+        first = cp.CredentialProxy(cp.Source("api-key", "test", lambda: REAL_KEY), env={})
+        first.start(unix_path=path)
+        second = cp.CredentialProxy(cp.Source("api-key", "test", lambda: REAL_KEY), env={})
+        second.start(unix_path=path)
+        self.addCleanup(second.stop)
+        first.stop()
+        self.assertTrue(cp.socket_in_use(path))
+
     def test_the_probe_goes_through_without_a_credential(self):
         status, data = self.request("HEAD", "/api/hello")
         self.assertEqual((status, data), (200, b""))

@@ -26,6 +26,7 @@ import shlex
 import subprocess
 
 from . import credproxy as credproxy_mod
+from . import egress as egress_mod
 from . import image as image_mod
 from . import kit as kit_mod
 from . import nested as nested_mod
@@ -116,7 +117,10 @@ REGISTRY_DOMAINS = (
 # - ENABLE_TOOL_SEARCH: Claude Code turns tool search off for a base URL
 #   that is not Anthropic's unless told that the proxy forwards
 #   tool_reference blocks; this one forwards the requests as they are.
-SESSION_NO_PROXY = "localhost,127.0.0.1," + credproxy_mod.GUEST_HOST
+# A sandbox behind the egress proxy reaches the credential proxy at
+# egress.EGRESS_ADDR instead (resume.start_proxy).
+SESSION_NO_PROXY = ",".join(("localhost", "127.0.0.1", credproxy_mod.GUEST_HOST,
+                             egress_mod.EGRESS_ADDR))
 # In every agent command in the sandbox (the session's settings `env`, and
 # `wmf-sbx exec`): the sandbox's name. bin/git-review-check reads it to
 # know that it runs in a sandbox, where `local` is the host's repo.
@@ -237,11 +241,14 @@ def credential_file_contents(cred):
     return "".join(f"{k}={shlex.quote(v)}\n" for k, v in sorted(cred.items()))
 
 
-def upstream_proxy(env=None):
+def upstream_proxy(env=None, state=None):
     """HOST:PORT of the host's HTTPS proxy as the guest reaches it, or
     None. nono's own proxy must chain to it (--upstream-proxy): with a
     host proxy, a direct connection from the guest may be refused (RAN in
-    a cloud sandbox, phase 6)."""
+    a cloud sandbox, phase 6). Behind the egress proxy, that proxy: the
+    guest has no other way out."""
+    if egress_mod.enabled(state):
+        return f"{egress_mod.EGRESS_ADDR}:{egress_mod.EGRESS_PORT}"
     guest = image_mod.guest_proxy_env(env)
     url = guest.get("https_proxy") or guest.get("HTTPS_PROXY")
     if not url:
@@ -267,7 +274,11 @@ def launcher_argv(state, cred_path=None, launcher_flags=(), claude_args=(),
         grants += ["--read", path]
     for path in READ_FILE_GRANTS:
         grants += ["--read-file", path]
-    for domain in REGISTRY_DOMAINS:
+    # Behind the egress proxy, every host: the outer proxy is the only
+    # allowlist (it has REGISTRY_DOMAINS and `wmf-sbx allow`'s hosts), and
+    # the inner one still applies the profile's endpoint rules (A2.0
+    # item 9, RAN: a wiki POST got 403).
+    for domain in (["*"] if egress_mod.enabled(state) else REGISTRY_DOMAINS):
         grants += ["--allow-domain", domain]
     if proxy:
         grants += ["--upstream-proxy", proxy]
@@ -521,7 +532,7 @@ def wmf_claude_setup(name, username, lima=None, env=None, quiet=True):
         + (" && touch ~/.config/wmf-claude/landlock-only-ack" if quiet else "")
         + " && cat > ~/.config/wmf-claude/config.json"])
     vm_mod.shell(name, write, lima=lima, input=config, check=False)
-    proxy = image_mod.guest_proxy_env(env)
+    proxy = vm_mod.guest_proxy_env(name, env)
     # SKIP_UPDATE: the image pins Claude Code (image.claude_release; the
     # version is in the cache key). `claude update` would download ~250 MB
     # per sandbox into an agent-writable ~/.local/bin that sessions do not

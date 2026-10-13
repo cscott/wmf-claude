@@ -21,7 +21,6 @@ import os
 import shlex
 import subprocess
 
-from . import image as image_mod
 from . import template as template_mod
 from . import vm as vm_mod
 
@@ -133,7 +132,7 @@ def clone_in_vm(name, repos, upstreams, keep, readonly=(), lima=None, env=None,
     if res.returncode != 0:
         raise RepoError(f"preparing the clone directories in the VM failed "
                         f"(exit {res.returncode})")
-    proxy = image_mod.guest_proxy_env(env)
+    proxy = vm_mod.guest_proxy_env(name, env)
     for owner, script in clones.items():
         if owner == vm_mod.AGENT:
             argv = vm_mod.agent_argv(["bash", "-s"], env=proxy)

@@ -383,6 +383,9 @@ class CredentialProxy:
 
     @property
     def port(self):
+        """The TCP port, or None on a Unix socket."""
+        if self._unix_path:
+            return None
         return self._server.server_address[1]
 
     def start(self, unix_path=None):
@@ -465,6 +468,16 @@ def guest_rules_argv(add=(), remove=()):
             lines.append(f"nft insert rule inet wmf_sbx_hostblock {chain} ip daddr "
                          f"{GUEST_HOST} tcp dport {port} accept comment \"{RULE_TAG}{port}\"")
     return ["sudo", "-n", "sh", "-ec", "\n".join(lines)]
+
+
+def socket_in_use(path):
+    """Whether something listens on the Unix socket `path`."""
+    with socket.socket(socket.AF_UNIX) as s:
+        try:
+            s.connect(path)
+        except OSError:
+            return False
+        return True
 
 
 def port_in_use(port, host="127.0.0.1"):

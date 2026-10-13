@@ -140,6 +140,15 @@ def create(name, tmpl, lima=None, log=print, backing=None, env=None):
     return inst
 
 
+def guest_proxy_env(name, env=None):
+    """The proxy variables for a command in the guest: the host egress
+    proxy's for a sandbox behind it, else the host's own (image.
+    guest_proxy_env)."""
+    from . import state as state_mod
+    if egress_mod.enabled(state_mod.load(name, env)):
+        return egress_mod.guest_environment(name, env)
+    return image_mod.guest_proxy_env(env)
+
 
 def check_disk(name, lima=None, env=None, running=False):
     """The backing files of the sandbox's overlay disk, after

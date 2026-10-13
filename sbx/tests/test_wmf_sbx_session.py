@@ -21,6 +21,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 sys.path.insert(0, os.path.dirname(__file__))
 
 import wmf_sbx.create as create  # noqa: E402
+import wmf_sbx.credproxy as credproxy  # noqa: E402
+import wmf_sbx.egress as egress  # noqa: E402
 import wmf_sbx.image as image  # noqa: E402
 import wmf_sbx.resume as resume  # noqa: E402
 import wmf_sbx.session as session  # noqa: E402
@@ -55,6 +57,14 @@ class CredentialTests(unittest.TestCase):
         self.assertEqual(session.upstream_proxy({"HTTPS_PROXY": "http://u:p@proxy.example:8080"}),
                          "proxy.example:8080")
         self.assertIsNone(session.upstream_proxy({}))
+
+    def test_behind_the_egress_proxy_the_upstream_is_that_proxy(self):
+        self.assertEqual(session.upstream_proxy({"https_proxy": "http://127.0.0.1:3128/"},
+                                                dict(STATE, egress="proxy")),
+                         "192.168.5.100:3128")
+
+    def test_the_egress_address_skips_the_session_proxy(self):
+        self.assertIn("192.168.5.100", session.SESSION_NO_PROXY.split(","))
 
 
 class LauncherTests(unittest.TestCase):
@@ -99,6 +109,14 @@ class LauncherTests(unittest.TestCase):
         self.assertNotIn(("--allow", "/home/agent/.config/composer"), pairs)
         for domain in ("registry.npmjs.org", "repo.packagist.org"):
             self.assertIn(("--allow-domain", domain), pairs)
+
+    def test_behind_the_egress_proxy_every_host_goes_to_it(self):
+        a = session.launcher_argv(dict(STATE, egress="proxy"), proxy="192.168.5.100:3128")
+        launcher = a[a.index(session.LAUNCHER):]
+        pairs = list(zip(launcher, launcher[1:]))
+        self.assertIn(("--allow-domain", "*"), pairs)
+        self.assertNotIn(("--allow-domain", "registry.npmjs.org"), pairs)
+        self.assertIn(("--upstream-proxy", "192.168.5.100:3128"), pairs)
 
     def test_a_nested_sandbox_gets_the_lima_grants(self):
         argv = session.launcher_argv(dict(STATE, nested=True, nestedSrc="/home/eng/wmf-sbx-src"))
@@ -386,7 +404,7 @@ class GitIdentityTests(unittest.TestCase):
 
     def test_the_credential_proxys_address_bypasses_nonos_proxy(self):
         env = session.session_env([])
-        self.assertEqual(env["NO_PROXY"], "localhost,127.0.0.1,192.168.5.2")
+        self.assertEqual(env["NO_PROXY"], "localhost,127.0.0.1,192.168.5.2,192.168.5.100")
         self.assertEqual(env["no_proxy"], env["NO_PROXY"])
         self.assertEqual(env["ENABLE_TOOL_SEARCH"], "true")
 
@@ -614,6 +632,52 @@ class ResumeMainTests(Env):
     def test_an_ordinary_resume_stops_no_inner_vms(self):
         self.assertEqual(self.resume(), 0, self.err)
         self.assertEqual(self.stop_inner_shells(), [])
+
+    def egress_resume(self, *argv, env=None):
+        st = state_mod.load("demo", self.env)
+        st["egress"] = "proxy"
+        state_mod.save(st, self.env)
+        egress.make_dir("demo", self.env)
+        with mock.patch.object(egress, "wrapper_env", return_value={"WMF_SBX_X": "1"}), \
+                mock.patch.object(egress, "wait_time_sync", return_value=True):
+            return self.resume(*argv, env=env)
+
+    def test_behind_the_egress_proxy_the_credential_proxy_is_on_the_socket(self):
+        seen = {}
+        orig = credproxy.CredentialProxy.start
+
+        def start(proxy, unix_path=None):
+            seen["path"] = unix_path
+            seen["in_use"] = None
+            out = orig(proxy, unix_path=unix_path)
+            seen["in_use"] = credproxy.socket_in_use(unix_path)
+            return out
+        with mock.patch.object(credproxy.CredentialProxy, "start", start):
+            rc = self.egress_resume("--", "-p", "hi", env={"ANTHROPIC_API_KEY": SECRET})
+        self.assertEqual(rc, 0, self.err)
+        self.assertEqual(seen, {"path": egress.cred_socket("demo", self.env), "in_use": True})
+        self.assertFalse(os.path.exists(seen["path"]))   # stopped after the session
+        (cred,) = [i for i in self.inputs if i and "ANTHROPIC_BASE_URL" in i]
+        self.assertIn("ANTHROPIC_BASE_URL=http://192.168.5.100:3129\n", cred)
+        (launch,) = self.launches()
+        launcher = launch[launch.index(session.LAUNCHER):]
+        self.assertIn("--open-port=3129", launcher)
+        self.assertIn(("--upstream-proxy", "192.168.5.100:3128"),
+                      list(zip(launcher, launcher[1:])))
+        # no rule in the guest's host block: the guestfwd is already allowed
+        self.assertFalse(any(credproxy.RULE_TAG in " ".join(s) for s in self.lima.shells()))
+
+    def test_behind_the_egress_proxy_a_second_session_is_refused(self):
+        path = egress.cred_socket("demo", self.env)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        import socket
+        with socket.socket(socket.AF_UNIX) as s:
+            s.bind(path)
+            s.listen(1)
+            rc = self.egress_resume("--", "-p", "hi", env={"ANTHROPIC_API_KEY": SECRET})
+        self.assertEqual(rc, 1)
+        self.assertIn("another session runs in demo", self.err)
+        self.assertEqual(self.launches(), [])
 
     def test_run_is_an_alias(self):
         rc = self.quiet(resume.run_main, ["--name", "demo", "--", "-p", "x"],

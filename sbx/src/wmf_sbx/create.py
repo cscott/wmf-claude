@@ -26,6 +26,7 @@ from . import ci_deps as ci_mod
 from . import color as color_mod
 from . import deps as deps_mod
 from . import disk as disk_mod
+from . import egress as egress_mod
 from . import resolve as resolve_mod
 from . import state as state_mod
 from . import image as image_mod
@@ -566,6 +567,10 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
     parser.add_argument("--image", metavar="KEY",
                         help="use this cached golden image (`wmf-sbx image ls`) "
                         "instead of the one for the current inputs")
+    parser.add_argument("--egress-proxy", action="store_true",
+                        help="QEMU only: the VM's only way out is a proxy on the host, "
+                        "with the profile's allowlist (`wmf-sbx allow` adds a host); "
+                        "the VM has no route and no DNS of its own")
     parser.add_argument("--sudo", action="store_true",
                         help="give the agent sudo (not yet: track A, D9/D11)")
     parser.add_argument(
@@ -585,6 +590,10 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
             "error: --sudo is not ported yet: it needs the QEMU egress proxy "
             "(lima-port/HANDOFF-LIMA.md D9, D11, track A). Use the "
             "sbx-docker-final branch for a root agent until then."), file=sys.stderr)
+        return 1
+    if args.egress_proxy and args.nested:
+        print(color_mod.error("error: --egress-proxy does not work with --nested yet: the "
+                              "inner VMs would need a proxy of their own"), file=sys.stderr)
         return 1
 
     try:
@@ -682,9 +691,13 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         # On QEMU the disk is an overlay on the golden image (D12), and
         # Lima gets the placeholder; `vz` copies the golden image (D2).
         # Warm snapshots need the overlay (track B3).
-        vm_type = args.vm_type or template_mod.default_vm_type()
+        vm_type = args.vm_type or ("qemu" if args.egress_proxy
+                                   else template_mod.default_vm_type())
         overlay = disk_mod.uses_overlay(vm_type) and not args.full_disk
-        use_snapshots = overlay and not args.no_snapshot
+        # Not behind the egress proxy yet: its disk holds the sandbox's
+        # own egress CA and guest network setup, which the snapshot key
+        # does not cover.
+        use_snapshots = overlay and not args.no_snapshot and not args.egress_proxy
         readonly = {path for (_spec, is_ro), (_c, path, _n) in zip(split, resolved) if is_ro}
         snap_repos = [(c, path, path in readonly) for c, path, _n in resolved]
 
@@ -768,7 +781,8 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
             disk=args.disk or (nested_mod.DISK if args.nested else template_mod.DEFAULT_DISK),
             nested=args.nested,
             proxy_ports=template_mod.loopback_proxy_ports(env),
-            ca_files=image_mod.extra_ca_files(env))
+            ca_files=image_mod.extra_ca_files(env),
+            egress_ca=egress_mod.ca_cert(name, env) if args.egress_proxy else None)
     except (state_mod.StateError, vm_mod.VmError, image_mod.ImageError,
             template_mod.TemplateError, lima_mod.LimaError, repos_mod.RepoError,
             LaunchError, disk_mod.DiskError) as e:
@@ -796,11 +810,16 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         state["disk"] = "overlay"
     if snap:
         state["snapshot"] = snap[1]
+    if args.egress_proxy:
+        state[egress_mod.STATE_KEY] = egress_mod.STATE_VALUE
     state_mod.save(state, env)
     try:
+        if args.egress_proxy:
+            say(f"+ egress CA {egress_mod.ca_cert(name, env)} (behind the host egress proxy)")
+            egress_mod.make_ca(name, env)
         vm_mod.create(name, tmpl, lima=lima, log=say, backing=backing if overlay else None,
                       env=env)
-    except (vm_mod.VmError, lima_mod.LimaError) as e:
+    except (vm_mod.VmError, lima_mod.LimaError, egress_mod.EgressError) as e:
         print(color_mod.error(f"error: {e}"), file=sys.stderr)
         print(f"  the state is kept; `wmf-sbx rm {name}` removes what was made.",
               file=sys.stderr)

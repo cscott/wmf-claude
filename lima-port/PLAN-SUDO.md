@@ -189,10 +189,34 @@ password went out after item 9: the proxy runs `--no-auth`.
 - Name lookups in the guest: the inner nono of a contained session
   looks up each name before it CONNECTs upstream, and behind
   `restrict=on` with `hostResolver.enabled: false` nothing answers
-  (A2.0 item 9). It does not use the address. Proposal: a stub in the
-  guest that gives every name one fixed address, so no query leaves the
-  guest (a real resolver through a guestfwd would also be a DNS tunnel
-  past the allowlist). To decide with the engineer.
+  (A2.0 item 9). It does not use the address. Decided (the engineer,
+  2026-10-13): a **fake-address resolver**. It never asks a real
+  resolver: a real one through a guestfwd would be a DNS tunnel past
+  the allowlist.
+  - Each new name gets the next address in one private block, and the
+    resolver keeps the mapping for the sandbox's life: the same name
+    gets the same address, and no address is used twice. A record only.
+  - So a blocked request for an address can be mapped back to the name
+    it was for (diagnosis, in the proxy log or `wmf-sbx status`). Room
+    for later, nothing needs it now: the proxy could turn a CONNECT to a
+    mapped address back into a CONNECT to its name, then apply the
+    allowlist to the name.
+  - The block: 198.18.0.0/15 (reserved for benchmarking, RFC 2544; the
+    usual block for fake-address DNS) does not clash with Docker's
+    172.17/16, Lima's 192.168.5/24 or a LAN, and has 131,072 addresses.
+    It is not in the guest's `private4` set, so a direct connection to
+    one is dropped by `restrict=on`, not rejected by the nft rule: add
+    the block to that set, so a direct connection fails at once.
+  - A records only; AAAA answers NODATA, so clients use IPv4. Names in
+    /etc/hosts (localhost, the guest's own name) are answered from that
+    file first (nsswitch), never by the resolver.
+  - Where it runs: in the guest, as decided, or on the host as a thread
+    of the wrapper (like AuthShim), reached through a guestfwd. On the
+    host, root in the guest (`--sudo`) cannot change the mapping, and
+    the proxy can read it. But guestfwd carries TCP only, so the guest
+    would look names up over TCP (`options use-vc`; systemd-resolved
+    does TCP). To measure. Either way the mapping is an append-only
+    file in `egress/<name>/`.
 - A contained session in a `sudo` sandbox: the session's nono gets
   `--upstream-proxy 192.168.5.100:3128 --allow-domain '*'` instead of
   the domain list, so `wmf-sbx allow` reaches it.

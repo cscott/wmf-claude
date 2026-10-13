@@ -735,12 +735,15 @@ class CreateTests(Env):
         self.assertEqual(self.lima.start_env, {"WMF_SBX_EGRESS_CONFIG": "x"})
         self.assertNotIn("snapshot", st)
 
-    def test_egress_proxy_refuses_vz_and_nested(self):
+    def test_egress_proxy_refuses_vz(self):
         self.assertEqual(self.egress_create("--vm-type", "vz"), 1)
         self.assertIn("qemu", self.err.lower())
         self.assertIsNone(state_mod.load("demo", self.env))
-        self.assertEqual(self.egress_create("--nested"), 1)
-        self.assertIn("--egress-proxy does not work with --nested", self.err)
+
+    def test_egress_proxy_with_nested(self):
+        self.assertEqual(self.egress_create("--nested"), 0, self.err)
+        st = state_mod.load("demo", self.env)
+        self.assertEqual((st["egress"], st["nested"], st["vmType"]), ("proxy", True, "qemu"))
 
     def test_not_behind_the_egress_proxy_by_default(self):
         self.assertEqual(self.create("--name", "demo"), 0, self.err)

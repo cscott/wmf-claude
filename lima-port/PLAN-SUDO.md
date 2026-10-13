@@ -181,7 +181,8 @@ password went out after item 9: the proxy runs `--no-auth`.
 ## A2.3 The template and start
 
 Landed (2026-10-13), as `create --egress-proxy` (QEMU only; refused
-with `--nested` and `vz`), not yet `--sudo`: the agent still has no sudo,
+with `vz`; with `--nested` the egress list has `nested.DOMAINS` too, not
+yet run), not yet `--sudo`: the agent still has no sudo,
 which is A3. The A2 exit RAN in a nested sandbox (NOTES): the invariants,
 the A2.0 item 3 installs, a contained nono behind the proxy, and `wmf-sbx
 allow` opening a host under a running contained process (000 → 200). How

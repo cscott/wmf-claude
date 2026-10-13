@@ -291,11 +291,18 @@ def proxy_argv(name, env=None, nono="nono"):
     which the wrapper adds when it starts it. Not --silent: it also stops
     the log of allow/deny decisions (RAN). So the proxy prints a banner
     on stdout, which the wrapper sends to /dev/null."""
-    # Imported here: session imports vm, which will import this module.
+    # Imported here: session and nested import vm, which imports this module.
+    from . import nested as nested_mod
     from . import session as session_mod
     argv = [nono, "proxy", "-v", "--no-auth", "--listen", "127.0.0.1", "--profile", PROFILE]
-    for domain in (list(session_mod.REGISTRY_DOMAINS) + list(DEBIAN_DOMAINS)
-                   + list(SETUP_DOMAINS) + extra_domains(name, env)):
+    domains = (list(session_mod.REGISTRY_DOMAINS) + list(DEBIAN_DOMAINS)
+               + list(SETUP_DOMAINS))
+    # A nested sandbox's inner VMs reach the network through the session's
+    # nono proxy, whose upstream is this one: what its session grants
+    # (nested.session_grants), this proxy must allow too.
+    if (state_mod.load(name, env) or {}).get("nested"):
+        domains += list(nested_mod.DOMAINS)
+    for domain in dict.fromkeys(domains + extra_domains(name, env)):
         argv += ["--allow-domain", domain]
     argv += ["--proxy-ca-cert", ca_cert(name, env), "--proxy-ca-key", ca_key(name, env),
              "--log-file", _path(name, "proxy.log", env)]

@@ -591,10 +591,6 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
             "(lima-port/HANDOFF-LIMA.md D9, D11, track A). Use the "
             "sbx-docker-final branch for a root agent until then."), file=sys.stderr)
         return 1
-    if args.egress_proxy and args.nested:
-        print(color_mod.error("error: --egress-proxy does not work with --nested yet: the "
-                              "inner VMs would need a proxy of their own"), file=sys.stderr)
-        return 1
 
     try:
         config = resolve_mod.load_config(args.config)

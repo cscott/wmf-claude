@@ -233,6 +233,12 @@ To keep the image you already have, set the override to its commit:
 override has the tree of the HEAD at its build, which `image ls` shows
 in parentheses.
 
+A golden image older than 14 days (settings.yaml `images: {maxAge:
+14d}`) is built again at the next `create`, with the same inputs, so
+that new sandboxes get the Debian updates since. `--no-expire` (or
+`images: {expire: false}`) keeps the old one with a warning, for a demo
+that must not wait for a build.
+
 At its end, `create` runs `wmf-sbx image gc`: it deletes the images that
 no sandbox uses and that are older than 7 days (settings.yaml `images:
 {gcAge: 7d}`). `wmf-sbx image prune` deletes every unused image, to free

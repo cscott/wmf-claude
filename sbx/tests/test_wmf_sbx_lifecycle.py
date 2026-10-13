@@ -414,6 +414,29 @@ class CreateTests(Env):
         self.assertEqual(self.create("--name", "demo", inputs=False), 0, self.err)
         self.assertTrue(os.path.isdir(image.entry_dir(self.KEY, self.env)))
 
+    def old_entry_for_the_inputs(self):
+        """A cached image of self.inputs, built in January."""
+        self.fake_build(self.inputs)
+        with open(os.path.join(image.entry_dir(image.cache_key(self.inputs), self.env),
+                               "manifest.json"), "w") as f:
+            json.dump({"created": "2026-01-01T00:00:00+00:00", "inputs": self.inputs}, f)
+        self.built = []
+
+    def test_an_old_golden_image_is_built_again(self):
+        self.old_entry_for_the_inputs()
+        self.assertEqual(self.create("--name", "demo", inputs=False), 0, self.err)
+        (built,) = self.built
+        self.assertIn("epoch", built)
+        self.assertEqual(state_mod.load("demo", self.env)["image"], image.cache_key(built))
+        self.assertIn("building a new one", self.err)
+
+    def test_no_expire_keeps_an_old_golden_image(self):
+        self.old_entry_for_the_inputs()
+        self.assertEqual(self.create("--name", "demo", "--no-expire", inputs=False), 0,
+                         self.err)
+        self.assertEqual(self.built, [self.inputs])
+        self.assertIn("create --cold", self.err)
+
     def test_the_gc_age_is_a_setting(self):
         with open(self.config, "w") as f:
             f.write("images:\n  gcAge: 2d\n")

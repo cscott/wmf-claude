@@ -224,10 +224,31 @@ class CloneRepoTests(Tmp):
                          git(os.path.join(self.host, "mcp"), "rev-parse", "HEAD"))
         self.assertNotIn("could not be checked out", res.stderr)
 
-    def test_a_reset_with_no_upstream_says_it_uses_the_hosts_branch(self):
+    def test_a_reset_goes_to_upstream_not_to_the_hosts_branch(self):
+        # --reset-all on a repo the engineer named: the host's branch has
+        # work that upstream does not; the clone must not keep it.
+        dest = os.path.join(self.tmp, "vm", "reset")
+        host_work = git(self.host, "rev-parse", "HEAD")
+        res = self.clone(dest, "topic", host_work, self.upstream, "1")
+        self.assertEqual(git(dest, "rev-parse", "HEAD"),
+                         git(self.upstream, "rev-parse", "master"), res.stderr)
+        self.assertNotEqual(subprocess.run(
+            ["git", "-C", dest, "merge-base", "--is-ancestor", host_work, "HEAD"]).returncode, 0)
+        self.assertEqual(git(dest, "remote", "get-url", "origin"), self.upstream)
+        self.assertNotIn("warning", res.stderr)
+
+    def test_a_reset_with_no_upstream_says_it_uses_the_hosts_main_line(self):
         dest = os.path.join(self.tmp, "vm", "noup")
-        res = self.clone(dest, "topic", git(self.host, "rev-parse", "HEAD"), "", "1")
+        host_work = git(self.host, "rev-parse", "HEAD")
+        res = self.clone(dest, "topic", host_work, "", "1")
         self.assertIn("no upstream is known", res.stderr)
+        self.assertIn("reset to the host repo's master (or main)", res.stderr)
+        # It says so, and that is what it does: origin is the host's repo,
+        # and the clone is at its main line, not at the host's branch.
+        self.assertEqual(git(dest, "rev-parse", "HEAD"), git(self.host, "rev-parse", "main"))
+        self.assertNotEqual(git(dest, "rev-parse", "HEAD"), host_work)
+        self.assertEqual(git(dest, "remote", "get-url", "origin"),
+                         os.path.join(self.host, ".git"))
 
     def test_an_unreachable_upstream_says_so(self):
         dest = os.path.join(self.tmp, "vm", "unreach")
@@ -486,6 +507,9 @@ class CreateFlowTests(Env):
         self.assertEqual([c[5] for c in calls], ["1", "1"])
         upstream = {c[1]: c[4] for c in calls}
         self.assertEqual(upstream[other], "https://gerrit.wikimedia.org/r/other")
+        # A repo with no known upstream (no gerrit:/gitlab: name, no https
+        # origin): no URL, and sandbox-repos.sh warns per repo.
+        self.assertEqual(upstream[self.repo], "")
 
     def test_without_reset_all_the_named_repos_keep_the_hosts_commit(self):
         other = self.second_repo()

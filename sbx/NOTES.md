@@ -334,8 +334,14 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
 - **Then flip the default** (the engineer, 2026-10-13): once a real Claude session has run
   in an egress sandbox, `create` makes egress-proxy sandboxes by default, and
   `--no-egress-proxy` gives the present kind (the guest's own route, the per-port
-  credential proxy). Decide then what `--vm-type vz` and `--nested`, which refuse the
-  egress proxy, do by default: fall back with a note, or refuse.
+  credential proxy). `--vm-type vz` falls back to the present kind with a warning that
+  the guest, not the host, enforces the network policy (the engineer, 2026-10-13).
+- **`--nested` behind the egress proxy** needs no proxy of its own (create's refusal was
+  too cautious): Lima points the inner VMs at the session's nono proxy, as now, and that
+  proxy's upstream becomes the egress proxy; the inner wrapper's own proxy chains the same
+  way, through AuthShim (item 7 ran exactly that chain). What it needs: `nested.DOMAINS`
+  on the egress proxy's list for a nested sandbox (cloud.debian.org, nodejs.org,
+  downloads.claude.ai, ...), and a run. On macOS `--nested` means vz, so it falls back.
 
 ### Testing in the sandbox
 

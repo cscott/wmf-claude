@@ -553,7 +553,11 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   node_modules) and `update.php`. Snapshots borrow the host repos' objects (the engineer's
   choice over dissociating them): the key is a gc borrower, `snapshot-KEY`, and a host repo
   without the entry makes the create cold. Golden images age (`images.maxAge`, an `epoch`
-  input); snapshots do not. Not RAN yet: `lima-port/checks/warm-b3.sh`.
+  input); snapshots do not. RAN 2026-10-13, the freeze only: the host's `create --nested
+  --no-deps` of wmf-claude (Lima 2.3.0-beta.1) froze its snapshot and restarted on an
+  overlay on it, and `status` showed the chain sandbox → snapshot → golden. The warm create
+  is not RAN yet: `lima-port/checks/warm-b3.sh` (its first run was cut off; it now gives
+  each inner sandbox 4 GiB and stops it after its checks).
 - Default VM memory is 8 GiB: phan on Translate was OOM-killed at 4 GiB.
 - Timings under TCG are 5–35× slower than a 16-core host (image build 26–41 min, create
   ~250–310 s, setup for Translate ~40 min); only compare them with each other.

@@ -21,6 +21,9 @@
 #
 # WMF_SBX: the wmf-sbx to test (default: sbx/bin/wmf-sbx of this checkout).
 # B3_REPO: what to create (default gerrit:mediawiki/extensions/Cite).
+# B3_MEMORY: each inner sandbox's memory (default 4GiB). A nested
+# sandbox has 16 GiB, and two inner sandboxes at the default 8 GiB do not
+# fit (the first run was cut off). Each sandbox stops after its checks.
 #
 # Every phase ends with `== RESULT ...` lines. Send all the output.
 set -uo pipefail
@@ -29,6 +32,7 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)
 WMF_SBX=${WMF_SBX:-${HERE:+$HERE/../../sbx/bin/wmf-sbx}}
 [ -x "${WMF_SBX:-}" ] || { echo "== RESULT setup: no wmf-sbx (set WMF_SBX)"; exit 1; }
 REPO=${B3_REPO:-gerrit:mediawiki/extensions/Cite}
+MEMORY=${B3_MEMORY:-4GiB}
 LIMA_HOME=${LIMA_HOME:-$HOME/.lima}
 STATE=${XDG_STATE_HOME:-$HOME/.local/state}/wmf-sbx/sandboxes
 LOGS=/tmp/claude-$(id -u)/warm-b3
@@ -39,10 +43,13 @@ sbx() { echo "+ wmf-sbx $*" >&2; "$WMF_SBX" "$@"; }
 st() { jq -r "$2" "$STATE/$1.json" 2>/dev/null; }
 in_vm() { "$WMF_SBX" exec "$1" -- sh -c "$2" 2>&1; }
 
+phase() { echo; echo "== $* ($(date '+%H:%M:%S'); free: $(free -m | awk '/^Mem:/ {print $7}') MiB)"; }
+
 timed_create() {
   local name=$1; shift
   local t0=$SECONDS
-  if sbx create --name "$name" "$@" "$REPO" > "$LOGS/$name.log" 2>&1; then
+  echo "-- $name: create (its output: $LOGS/$name.log)"
+  if sbx create --name "$name" --memory "$MEMORY" "$@" "$REPO" > "$LOGS/$name.log" 2>&1; then
     echo "-- $name: create in $((SECONDS - t0)) s"
     grep -E '^\+ (warm|cold)|^\+ golden image|npm ci|skipping it|update\.php|composer update' \
       "$LOGS/$name.log" | sed 's/^/   | /' | head -40
@@ -61,7 +68,14 @@ wiki_ok() {
 
 primary() { st "$1" .primaryDir; }
 
+# Record what the later phases compare, then stop it: one inner VM at a time.
+done_with() {
+  in_vm "$1" 'cat /etc/machine-id' > "$LOGS/$1.machine-id"
+  sbx stop "$1" >/dev/null 2>&1 || echo "-- could not stop $1"
+}
+
 phase_cold() {
+  phase cold
   timed_create b3a --cold || { result "cold: create FAILED"; return 1; }
   local snap; snap=$(st b3a .snapshot)
   echo "-- snapshot: $snap ($(du -k "$snap" 2>/dev/null | cut -f1) KiB)"
@@ -69,10 +83,12 @@ phase_cold() {
   grep '^disk' "$LOGS/status-b3a.log" | sed 's/^/   | /'
   echo "-- wiki: $(wiki_ok b3a)"
   echo "-- borrower entries in $(primary b3a): $(git -C "$(primary b3a)" config --get-all wmfSbx.borrower | tr '\n' ' ')"
+  done_with b3a
   [ -n "$snap" ] && [ -f "$snap" ] && result "cold: ok" || result "cold: no snapshot FAILED"
 }
 
 phase_warm() {
+  phase warm
   local fails=0 host sha
   fail() { echo "-- FAIL: $*"; fails=$((fails + 1)); }
   host=$(primary b3a)
@@ -86,7 +102,7 @@ phase_warm() {
   local got; got=$(in_vm b3b "git -C '$host' rev-parse HEAD")
   [ "$got" = "$sha" ] && echo "-- the host's new commit is checked out" || fail "HEAD is $got, not $sha"
   echo "-- wiki: $(wiki_ok b3b)"
-  local a b; a=$(in_vm b3a 'cat /etc/machine-id'); b=$(in_vm b3b 'cat /etc/machine-id')
+  local a b; a=$(cat "$LOGS/b3a.machine-id" 2>/dev/null); b=$(in_vm b3b 'cat /etc/machine-id')
   echo "-- machine-id: $a / $b"
   [ -n "$a" ] && [ "$a" != "$b" ] || fail "the machine-ids are the same"
   "$WMF_SBX" status b3b > "$LOGS/status-b3b.log" 2>&1 || fail "status b3b"
@@ -94,15 +110,19 @@ phase_warm() {
   [ "$(st b3b .snapshot)" != "$(st b3a .snapshot)" ] || fail "no new generation"
   "$WMF_SBX" image ls 2>/dev/null | grep '^snapshot' | sed 's/^/   | /'
   git -C "$host" checkout -q - 2>/dev/null
+  done_with b3b
   [ $fails = 0 ] && result "warm: ok" || result "warm: $fails FAILED"
 }
 
 phase_again() {
+  phase again
   timed_create b3c || { result "again: create FAILED"; return 1; }
+  done_with b3c
   grep -q '^+ warm: from snapshot' "$LOGS/b3c.log" && result "again: ok" || result "again: not warm FAILED"
 }
 
 phase_gc() {
+  phase gc
   sbx image gc
   local n=0
   for s in b3a b3b b3c; do
@@ -113,6 +133,7 @@ phase_gc() {
 }
 
 phase_clean() {
+  phase clean
   for s in b3a b3b b3c; do sbx rm --force "$s" >/dev/null 2>&1; done
   "$WMF_SBX" image ls 2>/dev/null | grep '^snapshot' | sed 's/^/   | /'
   result "clean: ok (the snapshots stay until \`wmf-sbx image prune\`)"
@@ -124,5 +145,5 @@ echo "== $(limactl --version 2>&1), $(qemu-img --version | head -1)"
 case "${1:-}" in
   cold|warm|again|gc|clean) "phase_$1" ;;
   all) phase_cold && phase_warm && phase_again; phase_gc; phase_clean ;;
-  *) sed -n '2,25p' "${BASH_SOURCE[0]:-/dev/stdin}"; exit 2 ;;
+  *) sed -n '2,29p' "${BASH_SOURCE[0]:-/dev/stdin}"; exit 2 ;;
 esac

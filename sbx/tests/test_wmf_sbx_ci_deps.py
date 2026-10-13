@@ -3,20 +3,21 @@
   python3 -m unittest discover -s sbx/tests -v
 """
 
+import base64
+import contextlib
 import io
 import os
 import sys
-import tempfile
 import unittest
+import urllib.error
 
 SRC = os.path.join(os.path.dirname(__file__), "..", "src")
 sys.path.insert(0, SRC)
 
 import wmf_sbx.ci_deps as ci  # noqa: E402
-import wmf_sbx.deps as deps  # noqa: E402
-import wmf_sbx.image as image  # noqa: E402
 
 EXT = "gerrit:mediawiki/extensions/"
+PARSOID = "gerrit:mediawiki/services/parsoid"
 
 
 class CanonicalTests(unittest.TestCase):
@@ -49,61 +50,66 @@ class ClosureTests(unittest.TestCase):
         self.assertEqual(ci.ci_closure("X", self.TESTS), {"X", "Y"})
 
 
-class ExtraDependenciesTests(unittest.TestCase):
+class EdgesTests(unittest.TestCase):
+    TESTS = {"parsoid": {"recurse": False, "dependencies": ["ParserFunctions"]},
+             "Cite": {"recurse": True, "dependencies": ["Popups", "Cite"]},
+             "Popups": ["TextExtracts"]}
+    PHAN = {"parsoid": ["ParserFunctions", "Scribunto"], "Cite": ["VisualEditor"],
+            "skins/Vector": ["Echo"]}
+
     def test_tests_then_phan_only_and_never_itself(self):
-        edges = ci.extra_dependencies(
-            {"parsoid": {"recurse": False, "dependencies": ["ParserFunctions"]},
-             "X": {"recurse": True, "dependencies": ["X"]}},
-            {"parsoid": ["ParserFunctions", "Scribunto"], "skins/Vector": ["Echo"]})
-        self.assertEqual(edges, {
-            "gerrit:mediawiki/services/parsoid": [(EXT + "ParserFunctions", False),
-                                                  (EXT + "Scribunto", True)],
-            "gerrit:mediawiki/skins/Vector": [(EXT + "Echo", True)],
+        self.assertEqual(ci.edges([PARSOID, EXT + "Cite"], self.TESTS, self.PHAN), {
+            PARSOID: [EXT + "ParserFunctions", EXT + "Scribunto"],
+            EXT + "Cite": [EXT + "Popups", EXT + "TextExtracts", EXT + "VisualEditor"],
         })
 
-    def test_the_output_is_a_settings_block_the_walk_accepts(self):
-        with tempfile.TemporaryDirectory() as d:
-            with open(os.path.join(d, "dependencies.yaml"), "w") as f:
-                f.write("parsoid:\n  recurse: false\n  dependencies:\n    - ParserFunctions\n")
-            with open(os.path.join(d, "phan_dependencies.yaml"), "w") as f:
-                f.write("parsoid:\n  - Scribunto\n")
-            out = io.StringIO()
-            self.assertEqual(ci.main(["--dir", d], out=out), 0)
-        text = out.getvalue()
-        self.assertIn(f"    - {EXT}Scribunto  # phan\n", text)
-        edges = deps.extra_edges(image.yaml.safe_load(text)["extra_dependencies"])
-        self.assertEqual(edges, {"gerrit:mediawiki/services/parsoid":
-                                 [EXT + "ParserFunctions", EXT + "Scribunto"]})
+    def test_without_phan(self):
+        self.assertEqual(ci.edges([PARSOID], self.TESTS, self.PHAN, include_phan=False),
+                         {PARSOID: [EXT + "ParserFunctions"]})
+
+    def test_only_the_roots_and_only_what_the_maps_can_name(self):
+        self.assertEqual(ci.edges(["gerrit:mediawiki/skins/Vector", "gerrit:mediawiki/core",
+                                   None, "gitlab:x/y"], self.TESTS, self.PHAN),
+                         {"gerrit:mediawiki/skins/Vector": [EXT + "Echo"]})
+
+    def test_map_name_inverts_canonical(self):
+        for name in ("Cite", "skins/Vector", "parsoid"):
+            self.assertEqual(ci.map_name(ci.canonical(name)), name)
+        self.assertIsNone(ci.map_name("gerrit:mediawiki/core"))
 
 
-class TrimTests(unittest.TestCase):
-    # requires: R -> A; B -> C; D <-> E. Nothing else has a manifest.
-    REQUIRES = {"R": ["A"], "A": [], "B": ["C"], "C": [], "D": ["E"], "E": ["D"]}
+class FetchMapsTests(unittest.TestCase):
+    """Two requests to gitiles, as deps.fetch_manifest makes them."""
 
-    def manifest_for(self, canonical):
-        name = canonical[len(EXT):] if canonical.startswith(EXT) else None
-        if name not in self.REQUIRES:
-            return None
-        return deps.Manifest("extension.json", {
-            "requires": {"extensions": {n: "*" for n in self.REQUIRES[name]}}})
+    def opener(self, bodies, urls):
+        def opener(url, timeout=None):
+            urls.append(url)
+            body = bodies.pop(0)
+            if isinstance(body, Exception):
+                raise body
+            return contextlib.closing(io.BytesIO(base64.b64encode(body.encode())))
+        return opener
 
-    def trim(self, names):
-        edges = {EXT + "R": [(EXT + n, n == "C") for n in names]}
-        return [(d[len(EXT):], phan) for d, phan in
-                ci.trim(edges, self.manifest_for).get(EXT + "R", [])]
+    def test_both_maps(self):
+        urls = []
+        maps = ci.fetch_maps(self.opener(["Cite: [Popups]\n", "Cite:\n  - VisualEditor\n"], urls))
+        self.assertEqual(maps, ({"Cite": ["Popups"]}, {"Cite": ["VisualEditor"]}))
+        self.assertEqual([u.split("/+/refs/heads/master/")[1] for u in urls],
+                         ["zuul/dependencies.yaml?format=TEXT",
+                          "zuul/phan_dependencies.yaml?format=TEXT"])
+        self.assertTrue(all(u.startswith("https://gerrit.wikimedia.org/") for u in urls))
 
-    def test_what_the_repos_own_walk_finds_goes(self):
-        self.assertEqual(self.trim(["A", "B"]), [("B", False)])
+    def test_unreachable_is_none_with_a_warning(self):
+        warnings = []
+        err = urllib.error.URLError("no route")
+        maps = ci.fetch_maps(self.opener([err, err], []), warn=warnings.append,
+                             sleep=lambda s: None, attempts=2)
+        self.assertIsNone(maps)
+        self.assertTrue(warnings)
 
-    def test_what_another_extras_walk_finds_goes(self):
-        self.assertEqual(self.trim(["C", "B"]), [("B", False)])
-
-    def test_of_two_that_reach_each_other_the_first_stays(self):
-        self.assertEqual(self.trim(["E", "D"]), [("E", False)])
-
-    def test_a_repo_left_with_nothing_is_dropped(self):
-        self.assertEqual(ci.trim({EXT + "R": [(EXT + "A", False)]}, self.manifest_for), {})
-
+    def test_not_a_map_is_none(self):
+        self.assertIsNone(ci.fetch_maps(self.opener(["- a list\n", "{}"], []),
+                                        warn=lambda m: None))
 
 if __name__ == "__main__":
     unittest.main()

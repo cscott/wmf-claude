@@ -272,8 +272,20 @@ By default `create` walks `requires`, `dev-requires` and `suggests` in
 `extension.json` and `skin.json`, and adds core and Vector. So
 `wmf-sbx create Translate` also gives you core, Vector and
 UniversalLanguageSelector, linked into core and loaded by the wiki.
-`--no-deps` uses only the repos you name; `--no-dev` and `--no-suggests`
-narrow the walk.
+
+It also adds what WMF CI checks out when a repo you name is under test,
+which no manifest declares (as of October 2026: for Cite, ParserFunctions, Popups,
+VisualEditor and six more; for Parsoid, ParserFunctions, Scribunto and
+TimedMediaHandler). Without them some of the repo's own tests fail. `create`
+reads CI's lists from integration/config (`zuul/dependencies.yaml`, and
+`zuul/phan_dependencies.yaml` for CI's phan job) on gitiles, once per
+`create`: two requests, about 90 KB. If gitiles cannot be reached, it
+warns and goes on without them. settings.yaml `extra_dependencies:` adds
+your own.
+
+`--no-deps` uses only the repos you name; `--no-ci-deps` leaves out CI's
+lists, and `--no-phan-deps` only the phan job's part of them;
+`--no-dev` and `--no-suggests` narrow the walk.
 
 ## `create`
 

@@ -28,6 +28,10 @@ def patch_offline(testcase):
     )
     patcher.start()
     testcase.addCleanup(patcher.stop)
+    # WMF CI's dependency lists: empty maps.
+    patcher = mock.patch.object(c.ci_mod, "fetch_maps", lambda *a, **kw: ({}, {}))
+    patcher.start()
+    testcase.addCleanup(patcher.stop)
 
 
 def patch_host_probes(testcase, settings=True, skills=True):
@@ -460,6 +464,22 @@ class ExpandDependenciesTests(unittest.TestCase):
         pf = os.path.join(self.tmp.name, "ParserFunctions")
         self.assertIn(pf, [path for _canonical, path, _needs_clone in resolved])
         self.assertEqual(origins[pf], [self.EXT + "Cite", self.EXT + "ParserFunctions"])
+
+    @unittest.skipUnless(r.yaml is not None, "PyYAML not installed")
+    def test_ci_dependencies_join_the_settings_ones(self):
+        self.write_manifest(self.cite, name="Cite")
+        config = {"repos": self.rules,
+                  "extra_dependencies": {self.EXT + "Cite": [self.EXT + "Mine"]}}
+        maps = ({"Cite": ["ParserFunctions"]}, {"Cite": ["VisualEditor"]})
+        for phan, want in ((True, {"Mine", "ParserFunctions", "VisualEditor"}),
+                           (False, {"Mine", "ParserFunctions"})):
+            with self.subTest(phan=phan):
+                resolved, _split, origins, _u = c.expand_dependencies(
+                    [(self.EXT + "Cite", self.cite, False)], [(self.EXT + "Cite", False)],
+                    config, self.config_path, fetch=lambda canonical, warn=None: None,
+                    warn=lambda msg: None, ci_maps=maps, phan_deps=phan)
+                names = {os.path.basename(p) for _c, p, _n in resolved}
+                self.assertEqual(names & {"Mine", "ParserFunctions", "VisualEditor"}, want)
 
     def fetched_user_agent(self, environ, environment):
         """The User-Agent create's default fetch sends to gitiles."""

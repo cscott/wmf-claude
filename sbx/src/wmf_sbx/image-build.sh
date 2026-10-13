@@ -220,6 +220,9 @@ install -m 0644 "$WMF_SBX_STAGE/image.json" /etc/wmf-sbx-image.json
 # from its own cloud-init data, and the agent's uid differs per host
 # (D10). userdel -f, because this script runs in that user's session.
 step "seal"
+# userdel -r removes the directory this script runs in; without this, the
+# commands after it print "getcwd() failed" (RAN).
+cd /
 rm -rf "$WMF_SBX_STAGE"
 rm -f /etc/ssh/ssh_host_*
 rm -f /etc/sudoers.d/90-cloud-init-users
@@ -228,7 +231,12 @@ cloud-init clean --logs --seed --machine-id
 # CA certificates that the builder got for the build only ($WMF_SBX_CA_CERTS
 # in image.py; cloud-init's names on Debian). The image must not trust them.
 rm -f /usr/local/share/ca-certificates/cloud-init-ca-cert-*.crt
-update-ca-certificates --fresh >/dev/null
+# --fresh rehashes /etc/ssl/certs, which has Debian's own bundle in it, and
+# `openssl rehash` warns that the bundle is not one certificate (RAN). Drop
+# that one line; keep any other message and the exit status.
+ca_err=$(update-ca-certificates --fresh 2>&1 >/dev/null) || { printf '%s\n' "$ca_err" >&2; exit 1; }
+printf '%s\n' "$ca_err" \
+  | grep -v -e '^$' -e '^rehash: warning: skipping ca-certificates\.crt, it does not contain exactly one certificate or CRL$' >&2 || true
 
 # The agent, with the host user's uid and gid (D10), so that files on the
 # read-only mounts are its own, and files it makes have the host's owner.

@@ -173,8 +173,6 @@ Development scaffolding:
 - [ ] **Dependency walk, open questions:** a manifest `name` that is not the directory: an
   override table (`dependency_overrides`, today) or a fallback to the `name` field? Do
   `dev-requires` repos need another policy (`:ro` by default)?
-- [ ] **A lost state file:** `wmf-sbx rm --scan DIR` to find and remove host remotes
-  (`remote.<r>.wmfSbxSandbox`) of sandboxes that wmf-sbx no longer knows.
 - [ ] **Claude memory across sandboxes:** `~/.claude` (memory, projects) lives on the VM
   disk and goes with `rm`. Design: a host store (`global/` and `repos/<canonical>/`), seeded
   at create with `wmf-sbx cp`, extracted and merged at `rm`. Open: extract at `stop` too?

@@ -411,7 +411,9 @@ Development scaffolding:
   machine-id and SSH host key; stop and start kept the data; `image rm` was refused
   ("in use by" both overlays and the full copy, by state file); `image gc` kept the image;
   after `rm` the golden image was unchanged. With KVM and a local SSD the copy costs little
-  time, so B2 saves disk, not create time (B3 is for time). The outer sandbox for the run
+  time, so B2 saves disk, not create time (B3 is for time). The same check under the
+  session's nono (the agent ran it) passed too: full copy 44 s and 2.6 GiB, overlays 31 s
+  and 33 MiB each. The outer sandbox for the run
   was made with Lima 2.3.0-beta.1 on the host: the overlay worked there too (`create`
   warned).
 - Default VM memory is 8 GiB: phan on Translate was OOM-killed at 4 GiB.

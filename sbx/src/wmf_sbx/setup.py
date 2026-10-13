@@ -869,6 +869,42 @@ wfLoadExtension( 'Parsoid', "$parsoidInstallDir/extension.json" );
 unset( $parsoidInstallDir );"""
 
 
+def link_phan_paths(core_path, links):
+    """For phan: many repos' .phan/config.php name their siblings as
+    `../../extensions/<Name>` (and `../../skins/<Name>`), which resolves
+    in CI's layout, core/extensions/<Name>, but not at a clone's own host
+    path (D8). So beside each linked clone's grandparent directory, make
+    `extensions` and `skins` symlinks to core's. Only where the name is
+    free: a real directory there is the engineer's layout, left alone.
+    Never fatal. Returns the links made."""
+    if not links or core_path is None:
+        return []
+    made = []
+    for _link_dir, _link_name, target in links:
+        grandparent = os.path.dirname(os.path.dirname(os.path.normpath(target)))
+        if grandparent in ("", os.sep):
+            continue
+        for section in ("extensions", "skins"):
+            dest = os.path.join(grandparent, section)
+            core_dir = os.path.join(core_path, section)
+            if (dest in made or os.path.normpath(dest) == os.path.normpath(core_dir)
+                    or os.path.lexists(dest) or not os.path.isdir(core_dir)):
+                continue
+            try:
+                os.symlink(core_dir, dest)
+            except OSError as e:
+                print(f"warning: could not link {dest} -> {core_dir} for phan ({e})",
+                      file=sys.stderr)
+                continue
+            try:
+                os.lchown(dest, *sandbox_ids())
+            except OSError:
+                pass
+            print(f"linked {dest} -> {core_dir} (phan's ../../{section})", file=sys.stderr)
+            made.append(dest)
+    return made
+
+
 def link_parsoid_checkout(core_path, parsoid_path):
     """Rewrites <core_path>/LocalSettings.php so Parsoid loads from this
     sandbox's own writable gerrit:mediawiki/services/parsoid clone
@@ -965,6 +1001,7 @@ def mediawiki_setup(plan, core_path, core_readonly, links, clones, warnings,
     # every extension's and skin's composer.json that the links make
     # visible. See write_composer_local.
     link_into_core(core_path, links, core_readonly=core_readonly)
+    link_phan_paths(core_path, links)
     try:
         write_composer_local(core_path, parsoid_checkout=parsoid_path is not None,
                              run=run)

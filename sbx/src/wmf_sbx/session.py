@@ -393,9 +393,10 @@ MCP) is not set up in this sandbox: use Tier 1, or a selenium test.
 Cypress e2e tests (Cite's `selenium-test`, for one) need their own
 install, about 800 MB: read ~/MEDIAWIKI-TESTING.md §5.6 first.
 
-`composer phan` reports undeclared classes from sibling extensions that
-`.phan/config.php` names and this sandbox does not have. Those errors are
-not yours.
+`composer phan` sees what CI's phan job sees, for the repos this sandbox
+was made for. An undeclared class from an extension that
+`.phan/config.php` names and this sandbox does not have is not your error
+(~/MEDIAWIKI-TESTING.md §3).
 """
 
 

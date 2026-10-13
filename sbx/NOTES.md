@@ -66,18 +66,12 @@ Development scaffolding:
 - [ ] **A cheap class of clone for CI-only dependencies** (shallow, no host remote, no
   reset): `create` now adds CI's dependencies of the named repos (below), which are full
   clones like the others.
-- [ ] **Make `.phan/config.php`'s `../../extensions/<Name>` paths resolve**. Symlinks into `core/extensions/` resolve `..` from the real directory, so the paths
-  fail in the engineer's layout. Options: bind-mount each repo into `core/extensions/<Name>`
-  (only option that matches CI), lowercase `extensions/`/`skins/` symlink dirs, real clones of
-  CI dependencies under `core/extensions/`, or a sandbox-only phan config. Recommended
-  (2026-10-12): short term, a `../../extensions` (and `../../skins`) symlink to core's,
-  made at create when the grandparent is free and not `$HOME`, with a warning otherwise
-  (the default inner layout `~/wmf-sbx-src/extensions/<Name>` already resolves); long
-  term, upstream: mediawiki-phan-config's `$IP` (`MW_INSTALL_PATH`, else `'../..'`, so CI
-  is unchanged) in the ~170 Gerrit repos' `.phan/config.php`, ideally through a helper
-  there. No new quibble variable is needed. When fixed, remove
-  the "sibling" text from MEDIAWIKI-TESTING.md §3 and trap 4 of its §6, and session.py's
-  "Running tests" paragraph.
+- [ ] **Phan's `../../extensions/<Name>`, upstream**: the sandbox links `../../extensions` and
+  `../../skins` beside each clone to core's (`setup.link_phan_paths`, where the name is
+  free). The real fix is upstream: mediawiki-phan-config's `$IP` (`MW_INSTALL_PATH`, else
+  `'../..'`, so CI is unchanged) in the ~170 Gerrit repos' `.phan/config.php`, ideally
+  through a helper there. Not yet RAN on real hardware: Cite's phan clean with CI's phan
+  dependencies and the links.
 - [ ] **Generate the testing section of `~/.claude/CLAUDE.md` per sandbox**: name each repo's real entry points (composer/npm scripts,
   Jest wiring, `tests/` dirs, `QUnitTestModule`, `tests/parser/*.txt`) and say which runners do
   not apply.

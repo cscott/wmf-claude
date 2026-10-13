@@ -21,6 +21,9 @@
 # M7_MEMORY (default 2GiB) is the VM's memory.
 # M7_IMAGE=PATH boots a local qcow2 instead of the template's download
 # (e.g. a wmf-sbx golden image, `wmf-sbx image ls`).
+# M7_SWAP_HOST (default www.kernel.org) is the host that `swap` opens: one
+# off the profile's list, which the host's resolver must find (a resolver
+# on the engineer's host had no example.org).
 #
 # No check sends a POST: the endpoint rules were measured in item 2 and 9.
 set -uo pipefail
@@ -169,7 +172,7 @@ swap() {
   # The proxy's own decision, from its log. A proxy upstream of it (in a
   # nested run) may refuse the host too: the log says "deny" then, with
   # another reason, and the guest gets no 200.
-  local host=${M7_SWAP_HOST:-example.org}
+  local host=${M7_SWAP_HOST:-www.kernel.org}
   last() { grep "host=\"$host\"" "$E/proxy.log" | tail -1 | grep -o 'decision=.*'; }
   listed() { last | grep -q 'not in the allowlist'; }
   local w old new; w=$(wrapper_pid); old=$(cat "$E/port")

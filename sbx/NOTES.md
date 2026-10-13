@@ -298,7 +298,10 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   thing open: after the swap, the new proxy let example.org through its allowlist, but the
   request failed: "DNS resolution returned no addresses" (the host's own lookup, by nono
   proxy), so the guest got 000. The script now asks for a 200 after the swap when no
-  proxy is upstream. Cause not known yet: the host's resolver, or nono's address filter.
+  proxy is upstream. The cause is the host's resolver: `resolvectl query example.org`
+  there says "Name 'example.org' not found", and a later request got the same reason (502).
+  nono proxy looks up the name itself and does the right thing. The swap host is now
+  www.kernel.org (`M7_SWAP_HOST`).
 - Not yet: 7 on macOS (TESTING-MACOS step 9).
 
 ### Testing in the sandbox

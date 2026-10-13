@@ -78,6 +78,7 @@ class FakeLima:
         self.rc = rc
         self.templates = {}
         self.configs = {}
+        self.backings = {}
 
     def instances(self):
         return dict(self.vms)
@@ -117,6 +118,38 @@ class FakeLima:
 
     def edit(self, name, expression):
         self.calls.append(("edit", name, expression))
+
+    lima_version = "2.2.1"
+
+    def version(self):
+        return self.lima_version
+
+    def disk_path(self, name, env=None):
+        return os.path.join(lima_mod.lima_home(env), name, "disk")
+
+    def placeholder(self, cache_root):
+        path = os.path.join(cache_root, "placeholder.qcow2")
+        if not os.path.exists(path):
+            os.makedirs(cache_root, exist_ok=True)
+            with open(path, "wb") as f:
+                f.write(b"placeholder")
+        return path
+
+    def overlay_disk(self, name, backing, env=None):
+        self.calls.append(("overlay", name, backing))
+        self.backings[name] = backing
+
+    def disk_chain(self, name, env=None, force_share=False):
+        """What `qemu-img info --backing-chain` says of an overlay made by
+        overlay_disk: the disk, then its backing file."""
+        self.calls.append(("disk_chain", name, force_share))
+        disk = self.disk_path(name, env)
+        backing = self.backings.get(name)
+        if backing is None:
+            return [{"filename": disk, "format": "qcow2"}]
+        return [{"filename": disk, "format": "qcow2", "backing-filename": backing,
+                 "full-backing-filename": backing},
+                {"filename": backing, "format": "qcow2"}]
 
     def call(self, *args, check=True, capture=True, input=None, text=True, interactive=False):
         self.calls.append(("call",) + tuple(args))
@@ -248,7 +281,16 @@ class CreateTests(Env):
         return self.inputs
 
     def fake_build(self, inputs, **kw):
+        """Record the build; leave a read-only golden file, which the
+        overlay's chain check looks at."""
         self.built.append(inputs)
+        key = image.cache_key(inputs)
+        os.makedirs(image.entry_dir(key, self.env), exist_ok=True)
+        path = image.golden_path(key, self.env)
+        if not os.path.exists(path):
+            with open(path, "wb") as f:
+                f.write(b"golden")
+            os.chmod(path, 0o444)
 
     def create(self, *extra, lima=None, inputs=True):
         lima = lima or FakeLima()
@@ -267,12 +309,47 @@ class CreateTests(Env):
         self.assertEqual(st["image"], self.KEY)
         self.assertEqual(st["primaryDir"], os.path.realpath(self.repo))
         self.assertEqual(st["repos"], [os.path.realpath(self.repo)])
-        kinds = [c[0] for c in self.lima.calls]
-        self.assertEqual(kinds[:3], ["validate", "create", "start"])
+        self.assertEqual(st["disk"], "overlay")
+        # On QEMU: Lima gets the placeholder; then the disk becomes an
+        # overlay on the golden image, checked before and after the start.
+        golden = image.golden_path(self.KEY, self.env)
+        self.assertEqual(self.lima.calls[:5], [
+            ("validate",), ("create", "wmf-sbx-demo"), ("overlay", "wmf-sbx-demo", golden),
+            ("disk_chain", "wmf-sbx-demo", False), ("start", "wmf-sbx-demo")])
+        self.assertEqual(self.lima.calls[5], ("disk_chain", "wmf-sbx-demo", True))
         tmpl = self.lima.templates["wmf-sbx-demo"]
         template.check_template(tmpl, host_uid=os.getuid())
-        self.assertEqual(tmpl["images"][0]["location"], image.golden_path(self.KEY, self.env))
+        self.assertEqual(tmpl["images"][0]["location"],
+                         os.path.join(image.cache_root(self.env), "placeholder.qcow2"))
         self.assertIn("ready", self.err)
+
+    def test_full_disk_and_vz_copy_the_golden_image(self):
+        for flags in (["--full-disk", "--vm-type", "qemu"], ["--vm-type", "vz"]):
+            with self.subTest(flags=flags):
+                name = "full" if "--full-disk" in flags else "vz"
+                self.assertEqual(self.create("--name", name, *flags), 0, self.err)
+                self.assertNotIn("disk", state_mod.load(name, self.env))
+                self.assertFalse([c for c in self.lima.calls if c[0] == "overlay"])
+                self.assertEqual(self.lima.templates[f"wmf-sbx-{name}"]["images"][0]["location"],
+                                 image.golden_path(self.KEY, self.env))
+
+    def test_a_wrong_backing_chain_fails_the_create(self):
+        class Flat(FakeLima):
+            def overlay_disk(self, name, backing, env=None):
+                self.calls.append(("overlay", name, backing))   # but no backing file
+
+        lima = Flat()
+        self.assertEqual(self.create("--name", "demo", "--vm-type", "qemu", lima=lima), 1)
+        self.assertIn("has no backing file", self.err)
+        self.assertNotIn(("start", "wmf-sbx-demo"), lima.calls)
+
+    def test_an_untested_lima_gets_a_warning(self):
+        lima = FakeLima()
+        lima.lima_version = "2.3.0"
+        self.assertEqual(self.create("--name", "demo", "--vm-type", "qemu", lima=lima), 0,
+                         self.err)
+        self.assertIn("Lima 2.3.0", self.err)
+        self.assertIn("--full-disk", self.err)
 
     def walk_create(self, *extra, maps=({}, {})):
         """A --dry-run create with the dependency walk (offline): its exit
@@ -324,17 +401,25 @@ class CreateTests(Env):
         with open(path, "w") as f:
             json.dump({"key": self.KEY, "created": created, "inputs": self.MANIFEST_INPUTS}, f)
 
-    def test_a_build_removes_old_unused_images(self):
+    def test_a_create_removes_old_unused_images(self):
         self.date_image("2026-01-01T00:00:00+00:00")
         self.assertEqual(self.create("--name", "demo", inputs=False), 0, self.err)
         self.assertFalse(os.path.exists(image.entry_dir(self.KEY, self.env)))
-        self.assertIn(f"removed 1 unused golden image(s)", self.err)
+        self.assertIn("removed 1 unused golden image(s) older than 7 days", self.err)
 
-    def test_a_build_keeps_an_image_built_in_the_last_hour(self):
+    def test_a_create_keeps_unused_images_younger_than_the_gc_age(self):
         now = datetime.datetime.now(datetime.timezone.utc)
-        self.date_image((now - datetime.timedelta(minutes=5)).isoformat(timespec="seconds"))
+        self.date_image((now - datetime.timedelta(days=3)).isoformat(timespec="seconds"))
         self.assertEqual(self.create("--name", "demo", inputs=False), 0, self.err)
         self.assertTrue(os.path.isdir(image.entry_dir(self.KEY, self.env)))
+
+    def test_the_gc_age_is_a_setting(self):
+        with open(self.config, "w") as f:
+            f.write("images:\n  gcAge: 2d\n")
+        now = datetime.datetime.now(datetime.timezone.utc)
+        self.date_image((now - datetime.timedelta(days=3)).isoformat(timespec="seconds"))
+        self.assertEqual(self.create("--name", "demo", inputs=False), 0, self.err)
+        self.assertFalse(os.path.exists(image.entry_dir(self.KEY, self.env)))
 
     def test_latest_uses_the_newest_cached_image_and_builds_nothing(self):
         self.env[image.TREE_OVERRIDE_VAR] = "latest"

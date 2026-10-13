@@ -40,7 +40,7 @@ Every command is `wmf-sbx VERB ...`, or `wmf-sbx-VERB ...`:
 | `ls`, `status NAME` | list sandboxes; check one (VM, image, security invariants) |
 | `start NAME`, `stop NAME` | boot or stop the VM; nothing is lost |
 | `rm NAME` | remove the VM, its state and its host remotes |
-| `image build/ls/rm/prune` | manage the cached golden images |
+| `image build/ls/rm/gc/prune` | manage the cached golden images |
 | `login` | sign in to Claude once, for every sandbox ("Sign-in") |
 | `resolve`, `ls-remotes` | show how a repo name resolves; list a repo's sandbox remotes |
 
@@ -233,9 +233,19 @@ To keep the image you already have, set the override to its commit:
 override has the tree of the HEAD at its build, which `image ls` shows
 in parentheses.
 
-When `create` builds a new image, it deletes the images that no sandbox
-uses, except those built in the last hour (another `create` can be about
-to use one). `wmf-sbx image prune` deletes all unused images.
+At its end, `create` runs `wmf-sbx image gc`: it deletes the images that
+no sandbox uses and that are older than 7 days (settings.yaml `images:
+{gcAge: 7d}`). `wmf-sbx image prune` deletes every unused image, to free
+disk space.
+
+On QEMU (the default on Linux), a sandbox's disk is a copy-on-write
+overlay on the golden image: a new sandbox takes megabytes, not the
+image's gigabytes, and the golden image must stay where it is, read-only
+(`wmf-sbx status` checks both). An image that a sandbox's disk sits on
+is in use, with or without a state file. `--full-disk` gives the sandbox
+a full copy instead, as on `vz` (macOS's default), which cannot boot an
+overlay. This relies on how Lima 2.2.1 behaves; `create` warns on any
+other Lima version.
 
 ## Quick start
 
@@ -367,7 +377,8 @@ wmf-sbx rm NAME            # asks first; refuses if the agent has unfetched comm
 wmf-sbx rm --force NAME
 wmf-sbx rm --prune         # remotes and state of sandboxes whose VM is gone
 wmf-sbx rm --scan DIR      # remotes and gc entries, in the repos under DIR, of sandboxes with no state file
-wmf-sbx image prune        # golden images that no sandbox uses
+wmf-sbx image gc           # golden images that no sandbox uses, older than images.gcAge
+wmf-sbx image prune        # every golden image that no sandbox uses
 ```
 
 ## Troubleshooting
@@ -427,8 +438,9 @@ uid). `~/.cache/wmf-sbx/images/KEY/` holds the read-only image ("The
 golden image cache").
 
 **Sandbox VM** (`template.py`, `sandbox-provision.sh`, `vm.py`). Each
-sandbox is a Lima instance `wmf-sbx-NAME` with a copy of the golden
-image. It has two users: `engineer` (Lima's user, with sudo, drives
+sandbox is a Lima instance `wmf-sbx-NAME` whose disk is a copy-on-write
+overlay on the golden image on QEMU (`disk.py`), and a copy of it on
+`vz`. It has two users: `engineer` (Lima's user, with sudo, drives
 setup) and `agent` (no sudo, the host uid). Provisioning at every boot
 loads an nftables host block (no host, LAN or link-local addresses; the
 agent gets TCP 80 and 443 only, off the VM), narrows the ephemeral port

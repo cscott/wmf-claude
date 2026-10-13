@@ -4,7 +4,8 @@ invariants.
 
 The golden image is checked too: it must still exist, be read-only and
 match its recorded checksum (HANDOFF-LIMA.md D12: a changed golden image
-breaks every sandbox made from it). Exit 0 only if everything holds.
+breaks every sandbox made from it), and a QEMU sandbox's overlay disk
+must still sit on it (disk.check_chain). Exit 0 only if everything holds.
 
 Usage:
   wmf-sbx status NAME
@@ -43,6 +44,14 @@ def main(argv=None, lima=None, env=None):
     except (image_mod.ImageError, OSError, TypeError) as e:
         print(f"image     {key}: {color_mod.error('PROBLEM')} {e}")
         ok = False
+    if state.get("disk") == "overlay" and vm_status is not None:
+        try:
+            chain = vm_mod.check_disk(name, lima=lima, env=env,
+                                      running=vm_status == "Running")
+            print(f"disk      overlay on {', '.join(chain)}: ok")
+        except (vm_mod.VmError, lima_mod.LimaError) as e:
+            print(f"disk      {color_mod.error('PROBLEM')} {e}")
+            ok = False
     if vm_status is None:
         ok = False
     elif vm_status == "Running":

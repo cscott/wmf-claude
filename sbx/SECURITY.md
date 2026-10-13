@@ -23,9 +23,15 @@ design and threat model are D9 and D11 in
 
 ## 1. The layers
 
-1. **The VM.** Each sandbox is its own Lima instance with its own disk,
-   a copy of the golden image. Nothing of the host is mounted except
-   the git dirs of the sandbox's repos (§2).
+1. **The VM.** Each sandbox is its own Lima instance with its own disk:
+   on QEMU a copy-on-write overlay on the golden image, on `vz` a copy
+   of it. Nothing of the host is mounted except the git dirs of the
+   sandbox's repos (§2). Every QEMU sandbox reads the same golden file,
+   but none can write it: QEMU opens a backing file read-only, the file
+   is read-only on the host, and no mount shows the image cache. `create`
+   and `status` check that each file under the overlay is a read-only
+   qcow2 file in the cache (`disk.check_chain`), because the way the
+   overlay is attached goes around Lima's own backing-file check.
 2. **Two users.** `engineer` (Lima's user, with sudo) runs the setup.
    `agent` has no sudo and is not in the `sudo` or `docker` group. It
    has the host user's uid, so the mounted files are its own and the

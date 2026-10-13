@@ -17,7 +17,7 @@ from Kosta's pinned Debian image). In short:
   key, so a host with another uid gets another image. On most machines
   they never change (cananian, 2026-10-09).
 
-`wmf-sbx image build|ls|rm|prune` calls `main()`.
+`wmf-sbx image build|ls|rm|gc|prune` calls `main()`.
 """
 
 import argparse
@@ -40,6 +40,7 @@ try:
 except ImportError:  # pragma: no cover - exercised only when yaml is absent
     yaml = None
 
+from . import disk as disk_mod
 from . import kit
 from . import lima as lima_mod
 from . import state as state_mod
@@ -428,13 +429,19 @@ def verify_entry(key, env=None):
 
 
 def images_in_use(env=None):
-    """{key: [sandbox names]} from the sandbox state files. A state file
-    names its image as "image": KEY (written by create, phase 3)."""
+    """{key: [sandbox names]}. A state file names its image as "image":
+    KEY (written by create, phase 3). And a Lima instance whose disk is
+    an overlay uses every cache entry in its backing chain (D12), with or
+    without a state file: a write to, or the removal of, that file breaks
+    the instance."""
     used = {}
+
+    def add(key, name):
+        if name not in used.setdefault(key, []):
+            used[key].append(name)
+
     sdir = state_mod.state_dir(env)
-    if not os.path.isdir(sdir):
-        return used
-    for name in sorted(os.listdir(sdir)):
+    for name in sorted(os.listdir(sdir)) if os.path.isdir(sdir) else []:
         if not name.endswith(".json"):
             continue
         try:
@@ -443,7 +450,15 @@ def images_in_use(env=None):
         except (OSError, ValueError, AttributeError):
             continue
         if key:
-            used.setdefault(key, []).append(name[:-len(".json")])
+            add(key, name[:-len(".json")])
+    root = cache_root(env)
+    home = lima_mod.lima_home(env)
+    for inst in sorted(os.listdir(home)) if os.path.isdir(home) else []:
+        for path in disk_mod.header_chain(os.path.join(home, inst, "disk"))[1:]:
+            parent = os.path.dirname(os.path.realpath(path))
+            if os.path.dirname(parent) == root and KEY_RE.match(os.path.basename(parent)):
+                add(os.path.basename(parent), inst[len("wmf-sbx-"):]
+                    if inst.startswith("wmf-sbx-") else inst)
     return used
 
 
@@ -468,10 +483,10 @@ def _created(manifest):
 
 
 def prune_images(keep=(), env=None, min_age=None, now=None):
-    """Delete every entry that no sandbox uses and that is not in `keep`.
-    With `min_age` (a timedelta), keep entries younger than that too: a
-    concurrent `create` may have built one and not yet recorded its
-    sandbox. Returns [(key, bytes freed)]."""
+    """Delete every entry that no sandbox uses and that is not in `keep`
+    (`image prune`). With `min_age` (a timedelta), keep entries younger
+    than that too (`image gc`; and a concurrent `create` may have built
+    one and not yet recorded its sandbox). Returns [(key, bytes freed)]."""
     used = images_in_use(env)
     now = now or datetime.datetime.now(datetime.timezone.utc)
     gone = []
@@ -487,6 +502,34 @@ def prune_images(keep=(), env=None, min_age=None, now=None):
         remove_image(key, env)
         gone.append((key, size))
     return gone
+
+
+# `image gc` (and the gc at the end of `create`) removes the unused images
+# older than this; settings.yaml `images: {gcAge: ...}` changes it.
+GC_AGE = "7d"
+DURATION_RE = re.compile(r"^\s*(\d+)\s*([dhm]?)\s*$")
+
+
+def parse_duration(text, what="a duration"):
+    """'14d', '12h', '30m', or a number of days, as a timedelta."""
+    m = DURATION_RE.match(str(text))
+    if not m:
+        raise ImageError(f"{what}: {text!r} is not a duration (14d, 12h, 30m)")
+    n, unit = int(m.group(1)), m.group(2) or "d"
+    unit = {"d": "days", "h": "hours", "m": "minutes"}[unit]
+    return datetime.timedelta(**{unit: n})
+
+
+def gc_age(config=None):
+    """settings.yaml `images.gcAge`, as a timedelta."""
+    images = (config or {}).get("images") or {}
+    return parse_duration(images.get("gcAge", GC_AGE), "settings.yaml images.gcAge")
+
+
+def gc_images(env=None, config=None, keep=(), now=None):
+    """`image gc`: remove the images that no sandbox uses and that are
+    older than gc_age."""
+    return prune_images(keep=keep, env=env, min_age=gc_age(config), now=now)
 
 
 # -- the builder ----------------------------------------------------------
@@ -812,7 +855,11 @@ def main(argv=None, env=None, lima=None, run=subprocess.run, out=sys.stdout):
     sub.add_parser("ls", help="list the cached images")
     r = sub.add_parser("rm", help="remove one image (refused if a sandbox uses it)")
     r.add_argument("key")
-    sub.add_parser("prune", help="remove every image that no sandbox uses")
+    g = sub.add_parser("gc", help="remove the images that no sandbox uses and that are "
+                                  f"older than settings.yaml images.gcAge ({GC_AGE})")
+    g.add_argument("--config", default=None, help="the settings file")
+    sub.add_parser("prune", help="remove every image that no sandbox uses (to free "
+                                 "disk space)")
     args = parser.parse_args(argv)
 
     def say(msg):
@@ -844,8 +891,13 @@ def main(argv=None, env=None, lima=None, run=subprocess.run, out=sys.stdout):
         elif args.cmd == "rm":
             remove_image(args.key, env)
             say(f"removed {args.key}")
-        elif args.cmd == "prune":
-            gone = prune_images(env=env)
+        elif args.cmd in ("gc", "prune"):
+            if args.cmd == "gc":
+                from . import resolve as resolve_mod
+                config = resolve_mod.load_config(args.config or resolve_mod.DEFAULT_CONFIG)
+                gone = gc_images(env=env, config=config)
+            else:
+                gone = prune_images(env=env)
             say("removed: " + (", ".join(f"{k} ({_human(n)})" for k, n in gone)
                                if gone else "nothing"))
     except (ImageError, lima_mod.LimaError, state_mod.StateError) as e:

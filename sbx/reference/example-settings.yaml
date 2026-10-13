@@ -49,6 +49,12 @@ environment: {}
 packages: []
   # - nano
 
+# The golden image cache. `image gc` (and the end of each `create`)
+# removes the images that no sandbox uses and that are older than gcAge
+# (14d, 12h, 30m, or a number of days).
+images: {}
+  # gcAge: 7d
+
 # A dependency in extension.json `requires` that is a display name, not a
 # project ("Abuse Filter"): map it to a project by hand.
 dependency_overrides: {}

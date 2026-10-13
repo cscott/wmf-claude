@@ -397,8 +397,16 @@ Development scaffolding:
   only when there is none.
 - Golden image key: `WMF_SBX_GIT_HASH_OVERRIDE` replaces the HEAD commit (the engineer's
   choice over keying on tree hashes); the manifest's `commit` is the HEAD that was built.
-  After a build, `create` prunes unused images older than one hour (`PRUNE_MIN_AGE`: a
-  concurrent `create` records its sandbox only after its build).
+  At its end, `create` runs `image gc`: unused images older than `images.gcAge` (7 days).
+  `image prune` removes every unused image. An image is in use if a state file names it
+  or an instance's disk has it in its backing chain (the qcow2 headers, read without
+  `qemu-img`, so no lock on a running disk).
+- Copy-on-write disks (track B2, `disk.py`): on QEMU, `limactl create` with a shared
+  placeholder image, then the instance's `disk` is replaced by `qemu-img create -b
+  GOLDEN` (method B), and `disk.check_chain` runs before and after the first start.
+  `--full-disk` and `vz` keep the full copy. Not RAN through `wmf-sbx` yet: the method was
+  RAN by hand (HANDOFF-LIMA-QCOW2-OVERLAYS.md); the B2 check is
+  `lima-port/checks/overlay-b2.sh`.
 - Default VM memory is 8 GiB: phan on Translate was OOM-killed at 4 GiB.
 - Timings under TCG are 5–35× slower than a 16-core host (image build 26–41 min, create
   ~250–310 s, setup for Translate ~40 min); only compare them with each other.

@@ -414,6 +414,75 @@ def set_port(name, port, env=None):
     write_port(port_file(name, env), port)
 
 
+def read_port(name, env=None):
+    """The running proxy's port, or None."""
+    try:
+        with open(port_file(name, env), encoding="utf-8") as f:
+            return int(f.read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def listening(port, host="127.0.0.1"):
+    with socket.socket() as s:
+        s.settimeout(2)
+        try:
+            s.connect((host, port))
+        except OSError:
+            return False
+        return True
+
+
+# `status` warns when the CA has fewer days than this left.
+CA_WARN_DAYS = 30
+
+
+def ca_expiry(name, env=None, run=subprocess.run):
+    """The CA's notAfter, a datetime in UTC, or None."""
+    try:
+        res = run(["openssl", "x509", "-noout", "-enddate", "-in", ca_cert(name, env)],
+                  capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    except OSError:
+        return None
+    text = (res.stdout or "").strip()
+    if res.returncode != 0 or not text.startswith("notAfter="):
+        return None
+    try:
+        when = datetime.datetime.strptime(text.split("=", 1)[1], "%b %d %H:%M:%S %Y %Z")
+    except ValueError:
+        return None
+    return when.replace(tzinfo=datetime.timezone.utc)
+
+
+def status_lines(name, env=None, running=False, run=subprocess.run, now=None):
+    """[(text, ok)] for `wmf-sbx status`: the proxy, the CA, the hosts
+    `wmf-sbx allow` added."""
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    out = []
+    port = read_port(name, env)
+    if not running:
+        out.append(("proxy: not running (the VM is stopped)", True))
+    elif port and listening(port):
+        out.append((f"proxy: listening on 127.0.0.1:{port}", True))
+    else:
+        out.append((f"proxy: not listening (port {port or 'unknown'}); "
+                    f"`wmf-sbx stop {name}` and start it again", False))
+    end = ca_expiry(name, env, run=run)
+    if end is None:
+        out.append((f"CA {ca_cert(name, env)}: missing or unreadable", False))
+    elif end <= now:
+        out.append((f"CA expired on {end:%Y-%m-%d}: HTTPS through the proxy fails", False))
+    else:
+        days = (end - now).days
+        # Soon is a warning, not a failure: the sandbox still works.
+        out.append((f"CA expires {end:%Y-%m-%d}"
+                    + (f" (warning: in {days} days; make a new sandbox before then)"
+                       if days < CA_WARN_DAYS else ""), True))
+    extra = extra_domains(name, env)
+    out.append((f"allowed by `wmf-sbx allow`: {', '.join(extra) if extra else 'none'}", True))
+    return out
+
+
 def write_pid(path, pid):
     _write_private(path, f"{pid}\n")
 

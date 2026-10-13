@@ -827,7 +827,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
 
     from . import start as start_mod
     print(f"{name}: created; checking it", file=sys.stderr)
-    if not start_mod.check(name, lima=lima):
+    if not start_mod.check(name, lima=lima, env=env):
         print(color_mod.error(f"error: {name} breaks a security invariant; do not use "
                               f"it. `wmf-sbx rm {name}`."), file=sys.stderr)
         return 1

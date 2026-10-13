@@ -314,11 +314,44 @@ INVARIANTS = [
 ]
 
 
-def check_invariants(name, host_uid=None, lima=None):
-    """[(description, ok)] for each invariant, in one guest call."""
+# A sandbox behind the host egress proxy (create --egress-proxy) also has
+# these. Each passes offline: a failed connection is a pass. Root tries
+# them, as the nftables rules let root out where they block the agent.
+# Never a POST (sbx/tests must not POST to a production host).
+_DIRECT = "sudo -n curl -sS -m 5 --noproxy '*' -o /dev/null"
+EGRESS_INVARIANTS = [
+    # QEMU's restrict=on: the user network routes nothing but the guestfwds.
+    ("no route out but the egress proxy",
+     f"! {_DIRECT} -k https://140.82.112.3/ 2>/dev/null"),
+    # The egress proxy listens on the host's loopback, at the port the
+    # wrapper wrote (WMF_SBX_LOOPBACK_PORT): without restrict=on, the
+    # gateway reaches it.
+    ("the host's loopback is out of reach",
+     "! sudo -n timeout 5 bash -c 'exec 3<>/dev/tcp/192.168.5.2/'\"$WMF_SBX_LOOPBACK_PORT\" "
+     "2>/dev/null"),
+    ("the egress proxy refuses a host off its list",
+     "test \"$(curl -sS -m 10 -o /dev/null -w '%{http_connect}' "
+     f"-x {egress_mod.proxy_url()} https://wmf-sbx-check.invalid/ 2>/dev/null)\" = 403"),
+    # fakedns.py: every name gets an address in its block, none a real one.
+    ("names resolve only to the fake block",
+     "getent ahostsv4 wmf-sbx-check.invalid | awk '{print $1; exit}' "
+     "| grep -qE '^198\\.1[89]\\.'"),
+]
+
+
+def invariants(egress=False):
+    return INVARIANTS + (EGRESS_INVARIANTS if egress else [])
+
+
+def check_invariants(name, host_uid=None, lima=None, egress=False, loopback_port=22):
+    """[(description, ok)] for each invariant, in one guest call; with
+    `egress`, the egress proxy's too. `loopback_port`: a port that
+    listens on the host's loopback."""
     host_uid = os.getuid() if host_uid is None else host_uid
-    script = [f"WMF_SBX_HOST_UID={int(host_uid)}"]
-    for i, (_desc, test) in enumerate(INVARIANTS):
+    script = [f"WMF_SBX_HOST_UID={int(host_uid)}",
+              f"WMF_SBX_LOOPBACK_PORT={int(loopback_port)}"]
+    checks = invariants(egress)
+    for i, (_desc, test) in enumerate(checks):
         script.append(f"if {test}; then echo {i}:ok; else echo {i}:FAIL; fi")
     result = shell(name, ["bash", "-c", "\n".join(script)], lima=lima, check=False)
     seen = {}
@@ -326,7 +359,7 @@ def check_invariants(name, host_uid=None, lima=None):
         idx, _, verdict = line.strip().partition(":")
         if idx.isdigit():
             seen[int(idx)] = verdict == "ok"
-    return [(desc, seen.get(i, False)) for i, (desc, _t) in enumerate(INVARIANTS)]
+    return [(desc, seen.get(i, False)) for i, (desc, _t) in enumerate(checks)]
 
 
 def quote(argv):

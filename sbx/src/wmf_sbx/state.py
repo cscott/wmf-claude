@@ -21,6 +21,7 @@ can't leave a half-parsed file behind.
 import contextlib
 import json
 import os
+import sys
 import re
 import tempfile
 
@@ -238,12 +239,29 @@ def primary_dir_for(name, env=None):
     return (saved or {}).get("primaryDir")
 
 
-def resolve_name_arg(arg, env=None):
+def _ask_which(path, matches, isatty=None, ask=None):
+    """On a terminal, let the human pick one of `matches`; else None."""
+    if not (isatty or (lambda: sys.stdin.isatty() and sys.stderr.isatty()))():
+        return None
+    ask = ask or input
+    print(f"{path} is the primary workspace of {len(matches)} sandboxes:", file=sys.stderr)
+    for i, name in enumerate(matches, 1):
+        print(f"  {i}) {name}", file=sys.stderr)
+    try:
+        answer = ask(f"Which one? [1-{len(matches)}] ").strip()
+    except EOFError:
+        return None
+    if answer.isdigit() and 1 <= int(answer) <= len(matches):
+        return matches[int(answer) - 1]
+    return answer if answer in matches else None
+
+
+def resolve_name_arg(arg, env=None, isatty=None, ask=None):
     """If `arg` is a path shortcut (see is_path_shortcut), resolve it to
     the one sandbox whose primary workspace is that directory and return
     its name; otherwise return `arg` unchanged. Raises StateError if no
-    sandbox matches, or if more than one does -- both cases need a human
-    to pick, not a guess."""
+    sandbox matches, or if more than one does and no human on a terminal
+    picks one -- a guess is never right."""
     if not is_path_shortcut(arg):
         return arg
     path = os.path.realpath(os.path.expanduser(arg))
@@ -254,6 +272,9 @@ def resolve_name_arg(arg, env=None):
             f"name instead of {arg!r}."
         )
     if len(matches) > 1:
+        picked = _ask_which(path, matches, isatty=isatty, ask=ask)
+        if picked is not None:
+            return picked
         raise StateError(
             f"{path!r} is the primary workspace of {len(matches)} sandboxes "
             f"({', '.join(matches)}) -- name one explicitly instead of {arg!r}."

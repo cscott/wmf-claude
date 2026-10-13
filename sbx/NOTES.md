@@ -88,8 +88,6 @@ Development scaffolding:
   the VM borrows while gc is suspended.
 - [ ] **A full `wmf-sbx ls`**: sandboxes, their clones, and unfetched-commit
   counts per clone; `wmf-sbx-ls-remotes` lists only the host-side remotes.
-- [ ] **Ambiguous path shortcut on a TTY: prompt**. When `.` matches more than
-  one sandbox's `primaryDir`, prompt to choose instead of failing.
 
 ### GitLab
 

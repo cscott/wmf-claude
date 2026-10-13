@@ -296,8 +296,21 @@ def link_section(canonical, manifest=None):
     return "skins" if manifest.filename == "skin.json" else "extensions"
 
 
+def extra_edges(value):
+    """settings.yaml `extra_dependencies:` as {canonical: [canonical, ...]}.
+    Raises ValueError for any other shape."""
+    edges = {}
+    for key, deps in (value or {}).items():
+        if not (isinstance(deps, list) and all(isinstance(d, str) and ":" in d for d in deps)
+                and isinstance(key, str) and ":" in key):
+            raise ValueError(f"`extra_dependencies:` {key!r}: want a canonical "
+                             f"(gerrit:...) and a list of canonicals")
+        edges[key] = list(deps)
+    return edges
+
+
 def walk(roots, manifest_for, include_dev=True, include_suggests=True,
-         overrides=None, warn=None):
+         overrides=None, warn=None, extras=None):
     """Expand `roots` (canonicals; None entries -- raw paths that reverse
     resolution couldn't identify -- are kept as roots but not walked) into
     the full closure.
@@ -311,8 +324,15 @@ def walk(roots, manifest_for, include_dev=True, include_suggests=True,
     needs `core`, and `core` needs a skin (`Vector`). That makes a
     guaranteed cycle -- Vector has a skin.json, so Vector needs core, and
     core needs Vector -- which is why the visited set isn't optional.
+
+    `extras` (extra_edges) adds dependencies that no manifest declares, to
+    the roots only: like WMF CI's maps, an entry is what the repo needs
+    when it is the one under test, already closed over its own
+    dependencies. Applied at every node, CI's maps would pull in far more
+    than CI does (a BlueSpice extension: 84 repos, not 3).
     """
     warn = warn or _noop
+    extras = extras or {}
     root_set = [r for r in roots if r]
     seen = set()
     origins = {}
@@ -328,6 +348,10 @@ def walk(roots, manifest_for, include_dev=True, include_suggests=True,
                 origins.setdefault(dep, why)
                 frontier.append(dep)
 
+        if canonical in root_set:
+            for dep in extras.get(canonical, ()):
+                if dep != canonical:
+                    add(dep)
         if canonical == CORE:
             add(DEFAULT_SKIN)
             continue

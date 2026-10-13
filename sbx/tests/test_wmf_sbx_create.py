@@ -449,6 +449,27 @@ class ExpandDependenciesTests(unittest.TestCase):
         )
 
     @unittest.skipUnless(r.yaml is not None, "PyYAML not installed")
+    def test_extra_dependencies_from_the_settings_are_cloned(self):
+        self.write_manifest(self.cite, name="Cite")
+        config = {"repos": self.rules,
+                  "extra_dependencies": {self.EXT + "Cite": [self.EXT + "ParserFunctions"]}}
+        resolved, _split, origins, _unreachable = c.expand_dependencies(
+            [(self.EXT + "Cite", self.cite, False)], [(self.EXT + "Cite", False)],
+            config, self.config_path, fetch=lambda canonical, warn=None: None,
+            warn=lambda msg: None)
+        pf = os.path.join(self.tmp.name, "ParserFunctions")
+        self.assertIn(pf, [path for _canonical, path, _needs_clone in resolved])
+        self.assertEqual(origins[pf], [self.EXT + "Cite", self.EXT + "ParserFunctions"])
+
+    def test_a_malformed_extra_dependencies_entry_is_an_error(self):
+        config = {"repos": self.rules, "extra_dependencies": {self.EXT + "Cite": "Echo"}}
+        with self.assertRaisesRegex(r.ResolutionError, "extra_dependencies"):
+            c.expand_dependencies(
+                [(self.EXT + "Cite", self.cite, False)], [(self.EXT + "Cite", False)],
+                config, self.config_path, fetch=lambda canonical, warn=None: None,
+                warn=lambda msg: None)
+
+    @unittest.skipUnless(r.yaml is not None, "PyYAML not installed")
     def test_no_manifest_means_no_expansion(self):
         # Cite's directory exists but holds no extension.json, so there is
         # nothing to walk -- and, importantly, no gitiles fetch either.

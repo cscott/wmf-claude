@@ -136,10 +136,18 @@ Development scaffolding:
 - nono's CA: `$SSL_CERT_FILE` is the system bundle plus nono's CA (151 certificates);
   `image.session_ca_file` keeps the ones the system bundle lacks (compared as DER), at a
   fixed path (`~/.cache/wmf-sbx/session-ca.pem`), so a resume in a later session refreshes
-  it, and so does every start of a stopped sandbox (`vm.ensure_running`). Whether an inner
-  VM reads the new file at its next start (Lima's cidata) is not RAN.
-  An inner VM that runs across an outer session restart has the old proxy password and CA
-  until it restarts.
+  it, and so does every start of a stopped sandbox (`vm.ensure_running`). An inner VM
+  reads the new file at its next start (Lima's cidata; RAN 2026-10-13: after a session
+  restart, `start inner` gave the new CA in `session-ca.pem` and in the inner VM's
+  `cloud-init-ca-cert-1.crt`, and `curl https://nodejs.org/dist/index.json` from inner got
+  200, `issuer: CN=nono-session-ca`).
+  An inner VM that runs across an outer session restart has the old proxy password, port
+  and CA until it restarts, and the later session cannot restart it: its Lima host agent
+  is in the earlier session's sandbox, and Landlock scopes signals to the sandbox, so
+  `limactl stop` gets EPERM ("operation not permitted"), then waits 3 minutes for an exit
+  that never comes (RAN). `vm.stop` checks the host agent first (`kill -0` of `ha.pid`)
+  and refuses with where to stop it from: outside nono, as the outer VM's engineer
+  (`sudo -u agent limactl stop wmf-sbx-NAME`). The proxy-port warning says the same.
 - `exec` gives the agent's command `image.guest_proxy_env`: `sudo` drops the proxy that
   Lima writes to the inner VM's `/etc/environment`, and the inner VM has no other way out
   (N3: `mw-install-browser` got ENETUNREACH to googlechromelabs.github.io).

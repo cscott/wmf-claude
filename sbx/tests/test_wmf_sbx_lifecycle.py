@@ -450,6 +450,40 @@ class StartStopStatusTests(Env):
         self.assertEqual(self.quiet(stop.main, ["sbx-demo"], lima=lima, env=self.env), 0)
         self.assertEqual(lima.vms["wmf-sbx-sbx-demo"], "Stopped")
 
+    def hostagent(self, pid="4242"):
+        """A Lima home with the instance's host agent pidfile."""
+        self.env["LIMA_HOME"] = os.path.join(self.tmp, "lima")
+        d = os.path.join(self.env["LIMA_HOME"], "wmf-sbx-sbx-demo")
+        os.makedirs(d)
+        with open(os.path.join(d, "ha.pid"), "w") as f:
+            f.write(pid + "\n")
+
+    def test_stop_refuses_a_host_agent_outside_the_sandbox(self):
+        # An earlier nono session started the VM: Landlock gives EPERM,
+        # and limactl would wait 3 minutes for nothing (RAN, N3).
+        lima = self.sandbox()
+        self.hostagent()
+
+        def kill(pid, sig):
+            self.assertEqual((pid, sig), (4242, 0))
+            raise PermissionError(1, "Operation not permitted")
+        with mock.patch.object(vm.os, "kill", kill):
+            self.assertEqual(self.quiet(stop.main, ["sbx-demo"], lima=lima, env=self.env), 1)
+        self.assertNotIn(("stop", "wmf-sbx-sbx-demo"), lima.calls)
+        self.assertIn("pid 4242", self.err)
+        self.assertIn("limactl stop wmf-sbx-sbx-demo", self.err)
+
+    def test_stop_goes_ahead_after_a_stale_pidfile(self):
+        lima = self.sandbox()
+        self.hostagent()
+
+        def kill(pid, sig):
+            raise ProcessLookupError(3, "No such process")
+        with mock.patch.object(vm.os, "kill", kill):
+            self.assertEqual(self.quiet(stop.main, ["sbx-demo"], lima=lima, env=self.env), 0,
+                             self.err)
+        self.assertIn(("stop", "wmf-sbx-sbx-demo"), lima.calls)
+
     def test_status_is_good_for_a_running_sound_sandbox(self):
         lima = self.sandbox()
         self.assertEqual(self.quiet(status_mod.main, ["sbx-demo"], lima=lima, env=self.env), 0,

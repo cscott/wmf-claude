@@ -1424,7 +1424,8 @@ clonefile option stays open for later. Decided with cananian,
     unchanged;
   - stop, start and delete work, and delete leaves the golden image.
 - **B2. Overlays on the golden image.** A target of its own: ship it,
-  then sync with track A before B3.
+  then sync with track A before B3. Status: **done** (RAN 2026-10-13;
+  results in sbx/NOTES.md, "Lima, QEMU and the golden image").
   - `disk.py`: one shared placeholder (an empty qcow2 with no backing
     file, made once in the cache); `limactl create` with the
     placeholder; then `qemu-img create -f qcow2 -F qcow2 -b <golden,

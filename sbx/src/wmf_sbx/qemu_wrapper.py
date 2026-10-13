@@ -25,11 +25,14 @@ unchanged. The boot call:
 - must have exactly one `-netdev user,...` and no other network
   backend, else the wrapper refuses it (exit 1, a message on stderr);
 - gets `restrict=on` (no route out of QEMU's user network) and the
-  egress `guestfwd` on that netdev;
+  egress `guestfwd`s on that netdev (egress.guestfwds: the proxy, the
+  resolver, the session's credential proxy);
 - runs with the proxy up: the wrapper starts `nono proxy` (and an
   AuthShim thread when the upstream needs credentials), writes its port,
-  then runs QEMU as its child, passes SIGTERM/SIGINT/SIGHUP on, and stops
-  every proxy it started when QEMU exits. It exits with QEMU's status.
+  and the fake-address resolver (fakedns.py, a thread) when the config
+  names its socket, then runs QEMU as its child, passes
+  SIGTERM/SIGINT/SIGHUP on, and stops every proxy it started when QEMU
+  exits. It exits with QEMU's status.
 
 SIGUSR1 starts a new proxy from proxy.json, read again, and points the
 port file at it (`wmf-sbx allow`). The old proxy keeps the connections it
@@ -43,6 +46,7 @@ import sys
 import threading
 
 from . import egress as egress_mod
+from . import fakedns as fakedns_mod
 
 REAL_VAR = "WMF_SBX_QEMU_REAL"
 CONFIG_VAR = "WMF_SBX_EGRESS_CONFIG"
@@ -218,11 +222,15 @@ def run(args, env=None, popen=subprocess.Popen, execv=os.execv, self_path=None):
         execv(real, [real] + with_balloon(args))
         return 0
     config = egress_mod.read_config(config_path)
-    argv = [real] + with_balloon(boot_argv(list(args), egress_mod.guestfwd(config["portFile"])))
+    argv = [real] + with_balloon(boot_argv(list(args), egress_mod.guestfwds(config)))
 
     egress = Egress(config_path, dict(env), popen=popen)
+    resolver = None
     qemu = None
     try:
+        if config.get("dnsSocket"):
+            resolver = fakedns_mod.Resolver(fakedns_mod.Mapping(config["namesFile"]))
+            resolver.start(config["dnsSocket"])
         egress.start()
         # The SIGUSR1 handler before the pid file: whoever reads the pid
         # may signal at once, and SIGUSR1's default action ends the
@@ -240,6 +248,8 @@ def run(args, env=None, popen=subprocess.Popen, execv=os.execv, self_path=None):
             qemu.kill()
             qemu.wait()
         egress.stop()
+        if resolver is not None:
+            resolver.close()
         egress_mod.remove_pid(config["pidFile"], os.getpid())
 
 

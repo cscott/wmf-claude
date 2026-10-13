@@ -636,7 +636,7 @@ class FakeLima:
         self.calls.append(("create", name))
         self.names.add(name)
 
-    def start(self, name, timeout=None):
+    def start(self, name, timeout=None, env=None):
         self.calls.append(("start", name, timeout))
 
     def shell(self, name, argv, **kw):

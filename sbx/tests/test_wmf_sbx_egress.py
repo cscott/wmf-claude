@@ -8,6 +8,7 @@ nothing runs nono. The shim forwards to a fake upstream proxy on the
 loopback."""
 
 import base64
+import datetime
 import os
 import shutil
 import socket
@@ -180,9 +181,36 @@ class GuestTests(unittest.TestCase):
 
     def test_apt_and_git_use_the_proxy(self):
         files = egress.guest_files("demo", self.env)
-        self.assertIn("proxy = http://192.168.5.100:3128", files["/etc/gitconfig"])
         self.assertIn('Acquire::https::Proxy "http://192.168.5.100:3128";',
                       files["/etc/apt/apt.conf.d/90wmf-sbx-proxy"])
+        self.assertIn("git config --system http.proxy http://192.168.5.100:3128",
+                      egress.guest_provision())
+
+    def test_the_provisioning_points_glibc_at_the_resolver_over_tcp(self):
+        script = egress.guest_provision()
+        self.assertIn("printf 'nameserver 192.168.5.100\\noptions use-vc\\n' "
+                      "> /etc/resolv.conf", script)
+        self.assertIn("systemctl mask systemd-resolved.service", script)
+
+    def test_the_provisioning_replaces_its_own_environment_block(self):
+        script = egress.guest_provision()
+        self.assertIn("sed -i '/^# wmf-sbx egress begin$/,/^# wmf-sbx egress end$/d' "
+                      "/etc/environment", script)
+        self.assertIn("https_proxy=http://192.168.5.100:3128\n", script)
+        self.assertEqual(subprocess.run(["bash", "-n"], input=script, text=True).returncode, 0)
+
+    def test_the_guestfwds_reach_the_resolver_and_the_credential_proxy(self):
+        config = egress.proxy_config("demo", self.env)
+        fwds = egress.guestfwds(config).split(",")
+        self.assertEqual(len(fwds), 3)
+        self.assertTrue(fwds[0].startswith("guestfwd=tcp:192.168.5.100:3128-cmd:"))
+        self.assertEqual(fwds[1], "guestfwd=tcp:192.168.5.100:53-cmd:sh -c 'exec socat - "
+                                  f"UNIX-CONNECT:{egress.dns_socket('demo', self.env)}'")
+        self.assertEqual(fwds[2], "guestfwd=tcp:192.168.5.100:3129-cmd:sh -c 'exec socat - "
+                                  f"UNIX-CONNECT:{egress.cred_socket('demo', self.env)}'")
+
+    def test_the_guestfwds_of_an_old_config_are_the_proxy_only(self):
+        self.assertEqual(egress.guestfwds({"portFile": "/p"}), egress.guestfwd("/p"))
 
     def test_the_guestfwd_reads_the_port_at_each_connection(self):
         self.assertEqual(
@@ -191,9 +219,76 @@ class GuestTests(unittest.TestCase):
             "sh -c 'exec socat - TCP:127.0.0.1:$(cat /s/egress/demo/port)'")
 
     def test_a_port_path_that_breaks_the_option_is_refused(self):
-        for bad in ("/a,b/port", "/a'b/port"):
+        for bad in ("/a,b/port", "/a'b/port", "/a b/port", "/a:b/port"):
             with self.assertRaises(egress.EgressError):
                 egress.guestfwd(bad)
+            with self.assertRaises(egress.EgressError):
+                egress.socket_guestfwd(53, bad)
+
+
+class StartTests(unittest.TestCase):
+    """The wrapper's variables for `limactl start`, and the wait for
+    Lima's time sync."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.env = {"XDG_STATE_HOME": self.tmp.name, "PATH": "/usr/bin"}
+
+    def test_the_wrapper_runs_as_qemu_and_finds_the_real_one(self):
+        def which(cmd, path=None):
+            self.assertEqual((cmd, path), ("qemu-system-aarch64", "/usr/bin"))
+            return "/usr/bin/qemu-system-aarch64"
+        variables = egress.wrapper_env("demo", self.env, arch="aarch64", which=which)
+        self.assertEqual(variables["QEMU_SYSTEM_AARCH64"], egress.WRAPPER)
+        self.assertTrue(egress.WRAPPER.endswith("/sbx/bin/wmf-sbx-qemu"))
+        self.assertTrue(os.path.isfile(egress.WRAPPER))
+        self.assertEqual(variables["WMF_SBX_QEMU_REAL"], "/usr/bin/qemu-system-aarch64")
+        self.assertEqual(variables["WMF_SBX_EGRESS_CONFIG"], egress.config_file("demo", self.env))
+        self.assertTrue(os.path.isfile(variables["WMF_SBX_EGRESS_CONFIG"]))
+
+    def test_no_qemu_is_an_error(self):
+        with self.assertRaises(egress.EgressError):
+            egress.wrapper_env("demo", self.env, arch="x86_64", which=lambda c, path=None: None)
+
+    def test_the_machine_names_map_to_qemu_s(self):
+        self.assertEqual(egress.qemu_arch("arm64"), "aarch64")
+        self.assertEqual(egress.qemu_arch("AMD64"), "x86_64")
+        with self.assertRaises(egress.EgressError):
+            egress.qemu_arch("riscv64")
+
+    def test_only_the_state_key_turns_it_on(self):
+        self.assertTrue(egress.enabled({"egress": "proxy"}))
+        for state in (None, {}, {"egress": "none"}):
+            self.assertFalse(egress.enabled(state))
+
+    LOG = ('{"level":"info","msg":"Time sync: guest agent is alive, starting time '
+           'synchronization","time":"2026-10-13T12:38:16-04:00"}\n'
+           'not json\n'
+           '{"level":"info","msg":"Time sync: guest clock adjusted (was -1530ms off)",'
+           '"time":"2026-10-13T12:38:21-04:00"}\n')
+
+    def test_a_sync_after_the_start_counts(self):
+        since = datetime.datetime.fromisoformat("2026-10-13T16:38:00+00:00")
+        self.assertTrue(egress.time_synced(self.LOG, since))
+
+    def test_a_sync_before_the_start_does_not(self):
+        since = datetime.datetime.fromisoformat("2026-10-13T16:38:30+00:00")
+        self.assertFalse(egress.time_synced(self.LOG, since))
+
+    def test_a_sync_within_the_threshold_counts(self):
+        log = ('{"level":"debug","msg":"Time sync: drift 0ms within threshold",'
+               '"time":"2026-10-13T12:39:10-04:00"}\n')
+        since = datetime.datetime.fromisoformat("2026-10-13T12:39:00-04:00")
+        self.assertTrue(egress.time_synced(log, since))
+
+    def test_the_wait_gives_up(self):
+        t = [0.0]
+        since = datetime.datetime.now().astimezone()
+        ok = egress.wait_time_sync(os.path.join(self.tmp.name, "missing"), since, timeout=2,
+                                   clock=lambda: t[0],
+                                   sleep=lambda s: t.__setitem__(0, t[0] + s))
+        self.assertFalse(ok)
 
 
 class FakeProc:

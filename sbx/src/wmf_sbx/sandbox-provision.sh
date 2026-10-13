@@ -4,7 +4,9 @@
 # template.py puts it in the instance config, and fills in two values:
 # ENGINEER (Lima's user, the template's `user.name`), PROXY_PORTS
 # (host TCP ports of a loopback proxy, separated by spaces, or empty) and
-# EPHEMERAL_PORTS (template.EPHEMERAL_PORTS, "LO HI").
+# EPHEMERAL_PORTS (template.EPHEMERAL_PORTS, "LO HI") and EGRESS (the
+# guest's address of the host egress proxy, or empty; template.py also
+# puts the guest's proxy files in the egress block at the end).
 #
 # The security rules are Kosta's (lima/wmf-claude.yaml): two users, a
 # host and LAN block, the agent limited to TCP 80 and 443, and no TIOCSTI.
@@ -15,6 +17,7 @@ ENGINEER="@ENGINEER@"
 AGENT=agent
 PROXY_PORTS="@PROXY_PORTS@"
 EPHEMERAL_PORTS="@EPHEMERAL_PORTS@"
+EGRESS="@EGRESS@"
 
 id -u "$AGENT" >/dev/null 2>&1 || { echo "wmf-sbx: no user $AGENT in the image" >&2; exit 1; }
 
@@ -33,7 +36,9 @@ chmod 0750 "/home/$AGENT" "$(getent passwd "$ENGINEER" | cut -d: -f6)"
 # host at the gateway and NATs the rest through the host, so the host's
 # LAN, the LAN and any VPN are reachable. This refuses new connections to
 # private and link-local addresses out of the default interface; DNS and
-# DHCP to Lima's subnet pass. A loopback proxy on the host (the host's
+# DHCP to Lima's subnet pass. 198.18.0.0/15 is the fake-address
+# resolver's block (fakedns.py): a direct connection to one of its
+# addresses fails at once. A loopback proxy on the host (the host's
 # http_proxy names 127.0.0.1) is reachable on exactly its port; Lima
 # gives the guest that proxy as 192.168.5.2. The agent gets TCP 80 and
 # 443 only, plus that port.
@@ -44,6 +49,13 @@ PROXY_RULE=""
 if [[ -n "$PROXY_PORTS" ]]; then
   PROXY_RULE="ip daddr 192.168.5.2 tcp dport { ${PROXY_PORTS// /, } } accept"
 fi
+# Behind the host egress proxy (egress.py), the guest's only way out is
+# EGRESS: the proxy, the fake-address resolver and the credential proxy,
+# each a QEMU guestfwd.
+EGRESS_RULE=""
+if [[ -n "$EGRESS" ]]; then
+  EGRESS_RULE="ip daddr $EGRESS tcp dport { @EGRESS_PORTS@ } accept"
+fi
 if [[ -n "$DEV" && -n "$NET" ]]; then
   cat > /etc/nftables.conf <<NFT
 #!/usr/sbin/nft -f
@@ -53,7 +65,8 @@ delete table inet wmf_sbx_hostblock
 table inet wmf_sbx_hostblock {
   set private4 {
     type ipv4_addr; flags interval
-    elements = { 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16 }
+    elements = { 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16,
+                 198.18.0.0/15 }
   }
   set private6 {
     type ipv6_addr; flags interval
@@ -69,6 +82,7 @@ table inet wmf_sbx_hostblock {
     # (RAN: without it every lookup was rejected as a private address).
     meta l4proto { tcp, udp } ct original ip daddr $NET ct original proto-dst 53 accept
     $PROXY_RULE
+    $EGRESS_RULE
     ip daddr @private4 counter reject
     meta l4proto { tcp, udp } ip6 daddr @private6 counter reject
   }
@@ -76,6 +90,7 @@ table inet wmf_sbx_hostblock {
     ct state established,related accept
     tcp dport { 80, 443 } accept
     $PROXY_RULE
+    $EGRESS_RULE
     counter reject
   }
   chain output {
@@ -108,5 +123,6 @@ net.ipv4.tcp_tw_reuse = 1
 SYSCTL
 sysctl -q -p /etc/sysctl.d/91-wmf-sbx-ports.conf
 
+@EGRESS_FILES@
 install -d -m 0755 /run/wmf-sbx
 touch /run/wmf-sbx/provisioned

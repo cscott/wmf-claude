@@ -102,7 +102,7 @@ class FakeLima:
 
     def start(self, name, timeout=None, extra_env=None):
         self.calls.append(("start", name))
-        self.start_envs[name] = extra_env
+        self.start_envs[name] = self.start_env = extra_env
         self.vms[name] = "Running"
 
     def stop(self, name):

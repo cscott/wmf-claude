@@ -311,8 +311,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = do_HEAD = _guarded
 
 
-class _Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
-    daemon_threads = True
+class _LogErrors:
     proxy = None
 
     def handle_error(self, request, client_address):
@@ -322,9 +321,19 @@ class _Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
             self.proxy.log_error(traceback.format_exc())
 
 
+class _Server(_LogErrors, socketserver.ThreadingMixIn, http.server.HTTPServer):
+    daemon_threads = True
+
+
+class _UnixServer(_LogErrors, socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+    """For a sandbox behind the egress proxy, which reaches the proxy by a
+    guestfwd to this socket (egress.CRED_PORT)."""
+    daemon_threads = True
+
+
 class CredentialProxy:
-    """One session's proxy. start() binds 127.0.0.1 at a free port and
-    serves in a daemon thread; stop() closes it."""
+    """One session's proxy. start() binds 127.0.0.1 at a free port, or a
+    Unix socket, and serves in a daemon thread; stop() closes it."""
 
     def __init__(self, source, env=None, ca_files=(), log_path=None, phantom=None):
         self.source = source
@@ -333,6 +342,7 @@ class CredentialProxy:
         self.log_path = log_path
         self.phantom = phantom or "wmfsbx-" + secrets.token_urlsafe(32)
         self._server = None
+        self._unix_path = None
         self._lock = threading.Lock()
 
     def has_phantom(self, headers):
@@ -375,25 +385,51 @@ class CredentialProxy:
     def port(self):
         return self._server.server_address[1]
 
-    def start(self):
+    def start(self, unix_path=None):
+        """Serve on 127.0.0.1 at a free port (returned), or on the Unix
+        socket `unix_path` (0600; one left by an earlier session is
+        replaced)."""
         handler = type("Handler", (_Handler,), {"proxy": self})
-        self._server = _Server(("127.0.0.1", 0), handler)
+        if unix_path:
+            try:
+                os.unlink(unix_path)
+            except FileNotFoundError:
+                pass
+            old = os.umask(0o177)
+            try:
+                self._server = _UnixServer(unix_path, handler)
+            finally:
+                os.umask(old)
+            self._unix_path = unix_path
+            self._unix_ino = os.stat(unix_path).st_ino
+        else:
+            self._server = _Server(("127.0.0.1", 0), handler)
         self._server.proxy = self
         threading.Thread(target=self._server.serve_forever, args=(0.1,), daemon=True,
                          name="wmf-sbx-credproxy").start()
-        return self.port
+        return None if unix_path else self.port
 
     def stop(self):
         if self._server is not None:
             self._server.shutdown()
             self._server.server_close()
             self._server = None
+        if self._unix_path:
+            # Not a socket that a later session bound in its place.
+            try:
+                if os.stat(self._unix_path).st_ino == self._unix_ino:
+                    os.unlink(self._unix_path)
+            except OSError:
+                pass
+            self._unix_path = None
 
-    def session_env(self):
-        """The session's variables for Claude Code in the VM. NO_PROXY for
-        GUEST_HOST is in the agent's settings (session.CREDENTIAL_PROXY_ENV)."""
+    def session_env(self, base_url=None):
+        """The session's variables for Claude Code in the VM: by default
+        the proxy at GUEST_HOST:port; `base_url` for one the guest reaches
+        otherwise. NO_PROXY for the address is in the agent's settings
+        (session.CREDENTIAL_PROXY_ENV)."""
         return {self.source.phantom_var: self.phantom,
-                "ANTHROPIC_BASE_URL": f"http://{GUEST_HOST}:{self.port}"}
+                "ANTHROPIC_BASE_URL": base_url or f"http://{GUEST_HOST}:{self.port}"}
 
 
 # -- the guest's host block -------------------------------------------------

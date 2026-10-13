@@ -77,6 +77,15 @@ def gerrit_opener(user_agent=None, urlopen=None):
     return opener
 
 
+def gerrit_user_agent(config=None):
+    """GERRITUA from the environment, or else the one settings.yaml
+    `environment:` gives the sessions (wmf-sbx runs on the host, whose
+    shell may not have it). None if neither has one."""
+    return (os.environ.get("GERRITUA")
+            or ((config or {}).get("environment") or {}).get("GERRITUA")
+            or None)
+
+
 # fetch_manifest returns this -- rather than None -- when it could not find
 # out whether a manifest exists. None means "no manifest, this repo is a
 # leaf"; UNREACHABLE means "the closure computed from here is incomplete",
@@ -203,7 +212,7 @@ def fetch_manifest(canonical, opener=None, warn=None,
     wrong guess about *which* repos to mount, never wrong content.
     """
     warn = warn or _noop
-    opener = opener or gerrit_opener(os.environ.get("GERRITUA"))
+    opener = opener or gerrit_opener(gerrit_user_agent())
     project = gerrit_project(canonical)
     if project is None:
         return None

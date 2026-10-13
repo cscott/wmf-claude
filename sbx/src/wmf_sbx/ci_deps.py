@@ -133,7 +133,7 @@ def render(edges, source, trimmed=False):
 
 
 def _open(url, timeout=30):
-    return deps_mod.gerrit_opener(os.environ.get("GERRITUA"))(url, timeout=timeout)
+    return deps_mod.gerrit_opener(deps_mod.gerrit_user_agent())(url, timeout=timeout)
 
 
 def _fetch(name):

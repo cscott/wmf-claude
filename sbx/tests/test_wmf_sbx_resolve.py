@@ -400,6 +400,42 @@ class ResolveCanonicalPathTests(unittest.TestCase):
 class GerritSearchTests(unittest.TestCase):
     """gerrit_search() itself, mocking urllib.request.urlopen."""
 
+    def setUp(self):
+        env = {k: v for k, v in os.environ.items() if k != "GERRITUA"}
+        patcher = mock.patch.dict(os.environ, env, clear=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def user_agent_sent(self, call):
+        req = call[0][0]
+        return req.get_header("User-agent") if hasattr(req, "get_header") else None
+
+    def test_sends_gerritua_from_the_environment(self):
+        os.environ["GERRITUA"] = "shell"
+        with mock.patch.object(r.urllib.request, "urlopen",
+                               return_value=self._fake_response({})) as m:
+            r.gerrit_search("Cite")
+        self.assertEqual(self.user_agent_sent(m.call_args), "shell")
+
+    def test_resolve_sends_gerritua_from_the_settings(self):
+        with tempfile.TemporaryDirectory() as d:
+            settings = os.path.join(d, "settings.yaml")
+            with open(settings, "w", encoding="utf-8") as f:
+                f.write("repos: [{match: 'gerrit:**/{name}', path: '/x/{name}'}]\n"
+                        "environment: {GERRITUA: settings}\n")
+            payload = {"mediawiki/extensions/Cite": {}}
+            with mock.patch.object(r.urllib.request, "urlopen",
+                                   return_value=self._fake_response(payload)) as m:
+                canonical = r.resolve("Cite", config_path=settings, exists=lambda p: False)[0]
+        self.assertEqual(canonical, "gerrit:mediawiki/extensions/Cite")
+        self.assertEqual(self.user_agent_sent(m.call_args), "settings")
+
+    def test_sends_no_user_agent_without_gerritua(self):
+        with mock.patch.object(r.urllib.request, "urlopen",
+                               return_value=self._fake_response({})) as m:
+            r.gerrit_search("Cite")
+        self.assertIsNone(self.user_agent_sent(m.call_args))
+
     def _fake_response(self, payload):
         body = ")]}'\n" + json.dumps(payload)
         cm = mock.MagicMock()

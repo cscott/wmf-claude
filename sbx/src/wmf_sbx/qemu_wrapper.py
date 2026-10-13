@@ -194,12 +194,15 @@ def run(args, env=None, popen=subprocess.Popen, execv=os.execv, self_path=None):
     qemu = None
     try:
         egress.start()
+        # The SIGUSR1 handler before the pid file: whoever reads the pid
+        # may signal at once, and SIGUSR1's default action ends the
+        # wrapper, and the VM with it (a test saw it, under load).
+        egress.start_replacer()
+        signal.signal(signal.SIGUSR1, lambda _s, _f: egress.request())
         egress_mod.write_pid(config["pidFile"], os.getpid())
         qemu = popen(argv, preexec_fn=_die_with_parent)
         for sig in FORWARDED:
             signal.signal(sig, lambda s, _f: qemu.send_signal(s))
-        egress.start_replacer()
-        signal.signal(signal.SIGUSR1, lambda _s, _f: egress.request())
         return exit_status(qemu.wait())
     finally:
         signal.signal(signal.SIGUSR1, signal.SIG_IGN)

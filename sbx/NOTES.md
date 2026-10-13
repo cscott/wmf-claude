@@ -78,8 +78,6 @@ Development scaffolding:
 - [ ] **Watch for the TCG segfaults on real hardware**: Claude Code (Bun),
   jsdoc, a Jest worker, and QEMU itself once at boot; each passed on retry. Maybe the same as
   an unexplained `limactl start` exit 1 after 24 s, seen once.
-- [ ] **Optional: say `time env VAR=x cmd`** in MEDIAWIKI-TESTING.md's §6: the shell
-  `time` keyword does not take a `VAR=x` prefix.
 
 ### Git transport and host remotes
 

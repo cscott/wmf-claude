@@ -14,6 +14,8 @@ sandbox. Delete it, or move its content into `sbx/`, when the port lands.
   `lima.py`, `helpers/wmf-sbx-qemu`, `proxy.py`, `disk.py`), and the order
   of work (§11: phases 0–7 are the `--no-sudo` MVP; tracks A (`--sudo` on
   QEMU) and B (qcow2 copy-on-write disks) come after it). Read this first.
+- [`PLAN-SUDO.md`](PLAN-SUDO.md) — the plan for track A (`--sudo`),
+  egress proxy first: `nono proxy` on the host, owned by the QEMU wrapper.
 - [`HANDOFF-LIMA-QCOW2-OVERLAYS.md`](HANDOFF-LIMA-QCOW2-OVERLAYS.md) —
   the evidence and test procedure behind D12 (qcow2 overlays on an
   immutable golden image). Read it before track B.

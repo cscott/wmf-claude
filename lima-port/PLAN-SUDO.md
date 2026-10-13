@@ -23,7 +23,8 @@ nono 0.78 runs its proxy standalone: `nono proxy --profile FILE`,
   (today's nested-sandbox problem).
 - **Later, the shared login (track L / sbx-style `/login`):** nono's
   `--credential` and its `oauth_capture` sit in the same process.
-- **Cost:** nono becomes a host dependency (today it is only in the
+- **Cost:** nono becomes a host dependency (accepted by the engineer,
+  2026-10-13) (today it is only in the
   image). Pin the same version the image pins; macOS gets it from
   Homebrew or nono's release. Fallback, if A2.0 fails: a small Python
   CONNECT proxy with a hostname allowlist (credproxy.py's style), as D11
@@ -47,6 +48,30 @@ when QEMU exits**.
 - To check: Lima waits on the process it spawned and signals the pid in
   QEMU's `-pidfile`; a wrapper in between must pass SIGTERM/SIGINT on
   and exit with QEMU's status (A2.0, item 6).
+
+## Opening a host while a sandbox runs (`wmf-sbx allow`)
+
+The engineer often wants to let one unusual host through for the task at
+hand, without ending the session or rebuilding the sandbox. `nono proxy`
+cannot change its allowlist while it runs (no reload flag, signal or
+control socket in 0.78). So the proxy is **replaced**, not edited, and
+the VM does not notice:
+
+- The `guestfwd` command reads the port at each new guest connection:
+  `cmd:sh -c 'exec socat - TCP:127.0.0.1:$(cat <egress dir>/port)'`
+  (a fixed string the wrapper writes; no guest data in it).
+- `wmf-sbx allow NAME HOST|URL-glob [--for-session]`, on the host: adds
+  the entry to the sandbox's extra list, has the wrapper start a new
+  proxy with it, and rewrites `port`. New connections go to the new
+  proxy; the old one keeps its open tunnels and stops when the VM does
+  (or when idle). `wmf-sbx allow --rm`, `allow --list` the same way.
+- It runs on the host, as the engineer. Nothing in the guest can call
+  it, so root in the guest still cannot widen its own egress.
+- Contained mode (nono inside too) gets the same only if the inner nono
+  stops filtering domains and chains everything to the outer proxy
+  (A2.0, item 9). Then the outer proxy is the single policy point for
+  both modes. Today, a contained session's allowlist is fixed when the
+  session starts.
 
 ## A2.0 Measure (throwaway scripts, `lima-port/checks/sudo-egress.sh`)
 
@@ -78,6 +103,16 @@ and the Debian mirror:
    (`--version`, `-M none -accel help`, `-netdev help`) pass through.
 7. The same, unnested, on the engineer's host (KVM), and on macOS with
    HVF (`TESTING-MACOS.md`; ask Kosta).
+
+8. Replacing the proxy under a running VM: a new proxy with one more
+   host, `port` rewritten; a new guest connection to that host works, a
+   download that was running through the old proxy finishes.
+9. Contained mode behind the outer proxy: the session's nono with
+   `--upstream-proxy` to it and no domain filter of its own (is there an
+   allow-all, or does it need every host listed?), filesystem rules
+   unchanged. Does the outer proxy then see the hostnames (CONNECT) and
+   do its endpoint rules still apply (it must intercept TLS behind
+   nono's interception, or nono must not intercept)?
 
 Exit: results in `sbx/NOTES.md` (a new "`--sudo` egress (track A)"
 section), and a go/no-go on `nono proxy`.
@@ -128,10 +163,11 @@ section), and a go/no-go on `nono proxy`.
 - `status`: the proxy answers (a `CONNECT` from the guest), the CA's
   expiry.
 
-Exit for the proxy work (A2): a sandbox made with a hidden
-`--sudo-egress-only` (contained mode, agent without sudo, but QEMU,
-`restrict=on` and the host proxy) passes the invariants and the A2.0
-item 3 installs. This lets the proxy land before the trusted-VM session.
+Exit for the proxy work (A2): a contained sandbox on QEMU behind the
+host proxy (`restrict=on`, nono still inside; the engineer's decision,
+2026-10-13: a valuable step in itself) passes the invariants and the
+A2.0 item 3 installs, and `wmf-sbx allow` opens a host in it while a
+session runs. The proxy lands before the trusted-VM session.
 
 ## A3 `--sudo` end to end (after A2)
 

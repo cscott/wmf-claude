@@ -99,13 +99,15 @@ def _call(fn, *args):
     return fn + " " + " ".join(shlex.quote(str(a)) for a in args)
 
 
-def guest_scripts(repos, upstreams, keep, readonly):
+def guest_scripts(repos, upstreams, keep, readonly, refresh=False):
     """(root script, {owner: clone script}) for the guest.
 
     `upstreams` is {path: upstream URL}; `keep` is the set of paths that
     stay on the host's commit (the repos named on the command line,
     unless --reset-all); `readonly` is the set of ':ro' paths, which the
-    engineer owns, so the agent can read them but not change them."""
+    engineer owns, so the agent can read them but not change them.
+    `refresh`: the clones are in the VM already, from a warm snapshot
+    (refresh_repo, track B3)."""
     with open(GUEST_SCRIPT, encoding="utf-8") as f:
         lib = f.read()
     root = [lib]
@@ -114,16 +116,18 @@ def guest_scripts(repos, upstreams, keep, readonly):
         path = r["path"]
         owner = template_mod.ENGINEER if path in readonly else vm_mod.AGENT
         mount = template_mod.mount_point(r["gitDir"])
-        root.append(_call("prepare", mount, path, owner))
+        root.append(_call("prepare", mount, path, owner, *(["refresh"] if refresh else [])))
         clones.setdefault(owner, [lib]).append(_call(
-            "clone_repo", mount, path, r["branch"] or "", r["sha"],
+            "refresh_repo" if refresh else "clone_repo", mount, path, r["branch"] or "", r["sha"],
             upstreams.get(path, ""), "0" if path in keep else "1"))
     return "\n".join(root) + "\n", {o: "\n".join(s) + "\n" for o, s in clones.items()}
 
 
-def clone_in_vm(name, repos, upstreams, keep, readonly=(), lima=None, env=None):
-    """Make the clones in the VM. Raises RepoError if one fails."""
-    root, clones = guest_scripts(repos, upstreams, keep, set(readonly))
+def clone_in_vm(name, repos, upstreams, keep, readonly=(), lima=None, env=None,
+                refresh=False):
+    """Make the clones in the VM, or bring a warm snapshot's up to date
+    (`refresh`). Raises RepoError if one fails."""
+    root, clones = guest_scripts(repos, upstreams, keep, set(readonly), refresh=refresh)
     res = vm_mod.shell(name, ["sudo", "bash", "-s"], lima=lima, input=root,
                        check=False, capture=False)
     if res.returncode != 0:

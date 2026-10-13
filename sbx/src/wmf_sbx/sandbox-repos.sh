@@ -3,9 +3,13 @@
 # §6.1, D8, D10). repos.py sends this file to `bash -s` in the guest and
 # adds one call per repository after it:
 #
-#   prepare MOUNT PATH OWNER     as root, before the clones
+#   prepare MOUNT PATH OWNER [refresh]
+#                                as root, before the clones
 #   clone_repo MOUNT PATH BRANCH SHA UPSTREAM RESET
 #                                as OWNER (agent, or engineer for ':ro')
+#   refresh_repo MOUNT PATH BRANCH SHA UPSTREAM RESET
+#                                the same, for a clone that a warm snapshot
+#                                has already (track B3)
 #
 # MOUNT is the read-only mount of the host's git dir. PATH is the host
 # path of the repository; the clone has the same path in the VM (D8).
@@ -41,7 +45,7 @@ make_dirs() {
 }
 
 prepare() {
-  local mount=$1 path=$2 owner=$3
+  local mount=$1 path=$2 owner=$3 refresh=${4:-}
   if [[ ! -d "$mount/objects" ]]; then
     echo "wmf-sbx: $mount is not mounted, or is not a git dir" >&2
     return 1
@@ -53,6 +57,8 @@ prepare() {
     add_safe "$path"
     add_safe "$path/.git"
   fi
+  # A warm snapshot's clone is there already (refresh_repo).
+  [[ -n "$refresh" && -d "$path/.git" ]] && return 0
   make_dirs "$path" "$owner"
 }
 
@@ -87,26 +93,81 @@ clone_repo() {
     install -m 0755 -- "$mount/hooks/commit-msg" "$path/.git/hooks/commit-msg"
   fi
 
-  # `origin` is the real upstream, `local` the host's repository, as in
-  # sbx (configure_remotes). Without an
-  # upstream, `origin` stays the host's repository.
-  remote=origin
+  remote=$(set_remotes "$path" "$mount" "$upstream" "$reset")
+  if [[ "$reset" == 1 ]]; then
+    echo "+ git safe-reset --force $remote ($path)" >&2
+    git -C "$path" safe-reset --force "$remote" >/dev/null \
+      || warn "$path: git safe-reset $remote failed; it stays on the host's commit"
+  fi
+  init_submodules "$mount" "$path"
+}
+
+# `origin` is the real upstream, `local` the host's repository, as in
+# sbx (configure_remotes). Without an upstream, `origin` stays the host's
+# repository. For a fresh clone (origin is the host's) or a warm one (as
+# an earlier create left it). Prints the remote that a reset uses.
+set_remotes() {
+  local path=$1 mount=$2 upstream=$3 reset=$4
   if [[ -z "$upstream" && "$reset" == 1 ]]; then
     warn "$path: no upstream is known (no gerrit:/gitlab: name, no https origin on the host); it is reset to the host repo's master (or main), which may be behind upstream"
   fi
-  if [[ -n "$upstream" ]]; then
+  if [[ -z "$upstream" ]]; then
+    if git -C "$path" remote get-url local >/dev/null 2>&1; then
+      git -C "$path" remote remove origin
+      git -C "$path" remote rename local origin
+    fi
+    git -C "$path" remote set-url origin "$mount"
+    echo origin
+    return
+  fi
+  if git -C "$path" remote get-url local >/dev/null 2>&1; then
+    git -C "$path" remote set-url local "$mount"
+    git -C "$path" remote set-url origin "$upstream"
+  else
     git -C "$path" remote rename origin local
     git -C "$path" remote add origin "$upstream"
-    if git -C "$path" fetch -q origin; then
-      remote=origin
-    else
-      warn "$path: could not fetch $upstream; git safe-reset uses local"
-      remote=local
-    fi
-    # Two remotes have a `master`; tell `git checkout master` which.
-    git -C "$path" config checkout.defaultRemote "$remote"
   fi
+  local remote=origin
+  if ! git -C "$path" fetch -q origin; then
+    warn "$path: could not fetch $upstream; git safe-reset uses local"
+    remote=local
+  fi
+  # Two remotes have a `master`; tell `git checkout master` which.
+  git -C "$path" config checkout.defaultRemote "$remote"
+  echo "$remote"
+}
 
+# A clone from a warm snapshot (track B3): made by an earlier create,
+# before any session, so it holds no work. It still borrows the host's
+# objects (its alternates), so the host's new commits are there; fetch
+# its refs, then check out what clone_repo would: the host's branch at
+# the host's commit, or detached there, then the same reset. Its other
+# local branches came from earlier creates' host branches: removed.
+refresh_repo() {
+  local mount=$1 path=$2 branch=$3 sha=$4 upstream=$5 reset=$6 remote host b
+  if [[ ! -d "$path/.git" ]]; then
+    clone_repo "$@"
+    return
+  fi
+  echo "+ git fetch, checkout ${branch:-$sha} ($path, from the snapshot)" >&2
+  remote=$(set_remotes "$path" "$mount" "$upstream" "$reset")
+  host=origin
+  [[ -n "$upstream" ]] && host=local
+  git -C "$path" -c core.hooksPath=/dev/null fetch -q --prune "$host" \
+    || warn "$path: could not fetch the host repo's branches"
+  if [[ -n "$branch" ]]; then
+    git -C "$path" -c core.hooksPath=/dev/null checkout -q -f -B "$branch" "$sha"
+    git -C "$path" branch -q --set-upstream-to="$host/$branch" "$branch" 2>/dev/null || true
+  else
+    git -C "$path" -c core.hooksPath=/dev/null checkout -q -f --detach "$sha"
+  fi
+  git -C "$path" for-each-ref --format='%(refname:short)' refs/heads |
+  while read -r b; do
+    [[ "$b" == "$branch" ]] || git -C "$path" branch -q -D -- "$b"
+  done
+  if [[ -f "$path/.gitreview" && -f "$mount/hooks/commit-msg" ]]; then
+    install -m 0755 -- "$mount/hooks/commit-msg" "$path/.git/hooks/commit-msg"
+  fi
   if [[ "$reset" == 1 ]]; then
     echo "+ git safe-reset --force $remote ($path)" >&2
     git -C "$path" safe-reset --force "$remote" >/dev/null \

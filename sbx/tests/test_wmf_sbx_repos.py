@@ -117,9 +117,10 @@ class GuestScriptTests(unittest.TestCase):
              {"path": "/home/me/it's", "gitDir": "/home/me/it's/.git", "branch": "x",
               "sha": "c" * 40}]
 
-    def scripts(self):
+    def scripts(self, refresh=False):
         return repos.guest_scripts(self.REPOS, {"/home/me/core": "https://g/core"},
-                                   keep={"/home/me/core"}, readonly={"/home/me/Cite"})
+                                   keep={"/home/me/core"}, readonly={"/home/me/Cite"},
+                                   refresh=refresh)
 
     def test_root_prepares_each_mount_and_path(self):
         root, _ = self.scripts()
@@ -138,6 +139,14 @@ class GuestScriptTests(unittest.TestCase):
                       + "a" * 40 + " https://g/core 0", clones["agent"])
         self.assertIn("'' " + "b" * 40 + " '' 1", clones["engineer"])
 
+    def test_refresh_updates_the_snapshots_clones(self):
+        root, clones = self.scripts(refresh=True)
+        self.assertIn("prepare /run/wmf-sbx/host/home/me/core/.git /home/me/core agent refresh",
+                      root)
+        self.assertIn("refresh_repo /run/wmf-sbx/host/home/me/core/.git /home/me/core main ",
+                      clones["agent"])
+        self.assertNotIn("\nclone_repo ", clones["agent"])
+
     def test_the_scripts_parse_and_quote(self):
         root, clones = self.scripts()
         for script in [root] + list(clones.values()):
@@ -151,9 +160,9 @@ class GuestScriptTests(unittest.TestCase):
                                   "sandboxPath": "/home/me/core"}])
 
 
-class CloneRepoTests(Tmp):
-    """clone_repo from sandbox-repos.sh, run on the host: the "mount" is
-    the host repo's .git, the "upstream" another local repository."""
+class GuestScriptCase(Tmp):
+    """sandbox-repos.sh run on the host: the "mount" is the host repo's
+    .git, the "upstream" another local repository."""
 
     def setUp(self):
         super().setUp()
@@ -168,7 +177,8 @@ class CloneRepoTests(Tmp):
         git(self.upstream, "commit", "-q", "--allow-empty", "-m", "upstream moved")
         os.makedirs(os.path.join(self.host, ".git", "hooks"), exist_ok=True)
 
-    def clone(self, dest, branch, sha, upstream, reset, check=True, file_upstreams=False):
+    def clone(self, dest, branch, sha, upstream, reset, check=True, file_upstreams=False,
+              fn="clone_repo"):
         env = dict(os.environ, PATH=os.path.join(SBX, "bin") + ":" + os.environ["PATH"],
                    GIT_CONFIG_GLOBAL="/dev/null", GIT_AUTHOR_NAME="t",
                    GIT_AUTHOR_EMAIL="t@example.org", GIT_COMMITTER_NAME="t",
@@ -177,9 +187,13 @@ class CloneRepoTests(Tmp):
             env.update(GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="protocol.file.allow",
                        GIT_CONFIG_VALUE_0="always")
         script = open(repos.GUEST_SCRIPT).read() + "\n" + repos._call(
-            "clone_repo", os.path.join(self.host, ".git"), dest, branch, sha, upstream, reset)
+            fn, os.path.join(self.host, ".git"), dest, branch, sha, upstream, reset)
         return subprocess.run(["bash", "-s"], input=script, text=True, env=env,
                               capture_output=True, check=check)
+
+
+class CloneRepoTests(GuestScriptCase):
+    """clone_repo."""
 
     def test_a_requested_repo_stays_on_the_hosts_branch(self):
         dest = os.path.join(self.tmp, "vm", "host")
@@ -338,6 +352,65 @@ class CloneRepoTests(Tmp):
             "clone_repo", os.path.join(self.tmp, "nope", ".git"), dest, "main", "x", "", "0")
         res = subprocess.run(["bash", "-s"], input=script, text=True, capture_output=True)
         self.assertNotEqual(res.returncode, 0)
+
+
+class RefreshRepoTests(GuestScriptCase):
+    """refresh_repo (track B3): a clone from a warm snapshot, made by an
+    earlier create, brought to what clone_repo would make now."""
+
+    def refresh(self, *a, **kw):
+        return self.clone(*a, fn="refresh_repo", **kw)
+
+    def test_a_requested_repo_moves_to_the_hosts_new_branch(self):
+        dest = os.path.join(self.tmp, "vm", "r")
+        self.clone(dest, "topic", git(self.host, "rev-parse", "HEAD"), self.upstream, "0")
+        # vendor/ and the like, which setup made: ignored, and kept.
+        with open(os.path.join(dest, ".git", "info", "exclude"), "a") as f:
+            f.write("vendor/\n")
+        os.makedirs(os.path.join(dest, "vendor"))
+        open(os.path.join(dest, "vendor", "kept"), "w").close()
+        git(self.host, "checkout", "-q", "-b", "topic2")
+        git(self.host, "commit", "-q", "--allow-empty", "-m", "newer host work")
+        sha = git(self.host, "rev-parse", "HEAD")
+        res = self.refresh(dest, "topic2", sha, self.upstream, "0")
+        self.assertEqual(git(dest, "rev-parse", "HEAD"), sha, res.stderr)
+        self.assertEqual(git(dest, "symbolic-ref", "--short", "HEAD"), "topic2")
+        self.assertEqual(git(dest, "for-each-ref", "--format=%(refname:short)", "refs/heads"),
+                         "topic2")
+        self.assertEqual(git(dest, "rev-parse", "--abbrev-ref", "topic2@{upstream}"),
+                         "local/topic2")
+        self.assertEqual(git(dest, "remote", "get-url", "origin"), self.upstream)
+        self.assertTrue(os.path.exists(os.path.join(dest, "vendor", "kept")))
+
+    def test_a_dependency_follows_upstreams_new_master(self):
+        dest = os.path.join(self.tmp, "vm", "d")
+        self.clone(dest, "topic", git(self.host, "rev-parse", "HEAD"), self.upstream, "1")
+        git(self.upstream, "commit", "-q", "--allow-empty", "-m", "upstream moved again")
+        res = self.refresh(dest, "topic", git(self.host, "rev-parse", "HEAD"),
+                           self.upstream, "1")
+        self.assertEqual(git(dest, "rev-parse", "HEAD"),
+                         git(self.upstream, "rev-parse", "master"), res.stderr)
+
+    def test_a_detached_host_head_from_a_branch_clone(self):
+        dest = os.path.join(self.tmp, "vm", "x")
+        self.clone(dest, "topic", git(self.host, "rev-parse", "HEAD"), "", "0")
+        sha = git(self.host, "rev-parse", "HEAD~1")
+        self.refresh(dest, "", sha, "", "0")
+        self.assertEqual(git(dest, "rev-parse", "HEAD"), sha)
+        self.assertEqual(git(dest, "for-each-ref", "refs/heads"), "")
+
+    def test_an_upstream_known_now_but_not_then(self):
+        dest = os.path.join(self.tmp, "vm", "u")
+        self.clone(dest, "topic", git(self.host, "rev-parse", "HEAD"), "", "0")
+        self.refresh(dest, "topic", git(self.host, "rev-parse", "HEAD"), self.upstream, "0")
+        self.assertEqual(git(dest, "remote", "get-url", "origin"), self.upstream)
+        self.assertEqual(git(dest, "remote", "get-url", "local"),
+                         os.path.join(self.host, ".git"))
+
+    def test_no_clone_yet_is_a_clone(self):
+        dest = os.path.join(self.tmp, "vm", "new")
+        self.refresh(dest, "topic", git(self.host, "rev-parse", "HEAD"), "", "0")
+        self.assertEqual(git(dest, "rev-parse", "HEAD"), git(self.host, "rev-parse", "HEAD"))
 
 
 class HelperTests(Tmp):

@@ -87,6 +87,10 @@ class LauncherTests(unittest.TestCase):
         # The home is not readable under the profile; the guide is granted.
         self.assertIn(("--read-file", "/home/agent/MEDIAWIKI-TESTING.md"), pairs)
         self.assertIn(("--allow", "/home/agent/.npm"), pairs)
+        # Cypress: Electron's config dir and Xvfb's keymaps (RAN).
+        self.assertIn(("--allow", "/home/agent/.config/Cypress"), pairs)
+        self.assertIn(("--allow", "/var/lib/xkb"), pairs)
+        self.assertNotIn(("--allow", "/home/agent/.config"), pairs)
         self.assertNotIn(("--read-file", "/home/agent/.bashrc"), pairs)
         # A deny under an allowed path stops nono (Landlock).
         self.assertNotIn(("--allow", "/home/agent/.config/composer"), pairs)

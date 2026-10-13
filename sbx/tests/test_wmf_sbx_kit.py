@@ -155,11 +155,11 @@ class TestingGuideTests(unittest.TestCase):
         self.assertIn("mw-install-browser", session.RUNNING_TESTS_MD)
         self.assertIn("composer serve", session.RUNNING_TESTS_MD)
 
-    def test_claude_md_says_cypress_does_not_run_under_nono_yet(self):
-        # RAN (blind run, 2026-10-12): Electron cannot write ~/.config and
-        # Xvfb cannot start under nono. Until the session grants that, the
-        # agent must not spend 800 MB and a diagnosis on it.
-        self.assertIn("do not start under\nnono yet", session.RUNNING_TESTS_MD)
+    def test_claude_md_sends_cypress_to_the_guide_first(self):
+        # Cypress runs under nono now, but its install is 800 MB: the
+        # agent reads §5.6 (does a spec cover the change?) first.
+        self.assertIn("MEDIAWIKI-TESTING.md §5.6 first", session.RUNNING_TESTS_MD)
+        self.assertNotIn("nono yet", session.RUNNING_TESTS_MD)
         self.assertNotIn("mw-install-cypress", session.RUNNING_TESTS_MD)
 
 

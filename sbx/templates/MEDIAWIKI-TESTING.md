@@ -525,11 +525,11 @@ These tests edit the live dev wiki. That is expected.
 
 ### 5.6 Cypress, only when it covers your change
 
-**Not under nono yet** (sbx/NOTES.md): Cypress's Electron writes
-`~/.config/Cypress`, and the Xvfb it starts needs `/tmp/.X11-unix`; the
-session grants neither, so `cypress verify` dies with SIGTRAP. Do not try
-to work around it; say in your report that Cypress did not run. The
-engineer can run it outside nono with `wmf-sbx exec`.
+Cypress runs in a session: it writes `~/.config/Cypress`, and the Xvfb
+it starts writes `/var/lib/xkb`, which the session allows. If
+`cypress verify` dies with SIGTRAP and prints nothing, or Xvfb stops with
+"Failed to activate virtual core keyboard", the sandbox is older than
+that: say so in your report, and do not work around it.
 
 Some repos run Cypress, not wdio, as `npm run selenium-test` (Cite, for
 one; read the script). The npm package is installed, but its binary is not.

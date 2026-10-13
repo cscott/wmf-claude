@@ -85,6 +85,12 @@ DENIED_DOTFILES = (f"{setup_mod.SANDBOX_HOME}/.bashrc",)
 # refuses to start (RAN). COMPOSER_HOME is under ~/.cache instead.
 ALLOW_GRANTS = tuple(f"{vm_mod.AGENT_HOME}/{p}" for p in (".cache", ".npm"))
 COMPOSER_HOME = f"{vm_mod.AGENT_HOME}/.cache/composer-home"
+# Write grants for Cypress (image-build.sh makes both, for the agent):
+# Electron's config dir (without it, `cypress verify` dies with SIGTRAP),
+# and Xvfb's compiled keymaps (without it, Xvfb stops: "Failed to
+# activate virtual core keyboard"). Xvfb's socket in /tmp/.X11-unix needs
+# no grant (RAN, Xvfb and an X client under the session's flags).
+CYPRESS_GRANTS = (f"{vm_mod.AGENT_HOME}/.config/Cypress", "/var/lib/xkb")
 
 # The hosts that npm, composer and the browser installers download from
 # (D3, decided: per-session --allow-domain, no new profile). The
@@ -250,7 +256,7 @@ def launcher_argv(state, cred_path=None, launcher_flags=(), claude_args=(),
     for path in state.get("repos") or []:
         if path != primary:
             grants += ["--read" if path in readonly else "--allow", path]
-    for path in ALLOW_GRANTS:
+    for path in ALLOW_GRANTS + CYPRESS_GRANTS:
         grants += ["--allow", path]
     for path in READ_GRANTS:
         grants += ["--read", path]
@@ -379,9 +385,8 @@ The admin account is `Admin` / `adminpassword`. This session already
 reaches local web ports (`--local-web`). Tier 2 (the chrome-devtools
 MCP) is not set up in this sandbox: use Tier 1, or a selenium test.
 
-Cypress e2e tests (Cite's `selenium-test`, for one) do not start under
-nono yet (~/MEDIAWIKI-TESTING.md §5.6): do not install or try them; say in
-your report that they did not run.
+Cypress e2e tests (Cite's `selenium-test`, for one) need their own
+install, about 800 MB: read ~/MEDIAWIKI-TESTING.md §5.6 first.
 
 `composer phan` reports undeclared classes from sibling extensions that
 `.phan/config.php` names and this sandbox does not have. Those errors are

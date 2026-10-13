@@ -116,13 +116,17 @@ to D12, and tracks A and B, which are not repeated here).
 
 ### Testing in the sandbox
 
-- [ ] **Cypress under nono** (blind run, 2026-10-12): Electron writes `~/.config/Cypress`
-  (not granted; it dies with SIGTRAP and prints nothing), and Xvfb needs `/tmp/.X11-unix`
-  (read, socket bind) and a writable XKB output dir (`/var/lib/xkb`, else `/tmp`, which is
-  write-only under nono). Outside nono (`wmf-sbx exec`) Cite's specs pass (real hardware).
-  Candidate fix: grant `~/.config/Cypress`, `/tmp/.X11-unix` (with socket bind) and
-  `/var/lib/xkb` (made 1777 at boot); measure with the session's flags first. Until then the
-  guide and the sandbox CLAUDE.md say it does not run.
+- **Cypress under nono**: the session grants `~/.config/Cypress` (Electron; without it
+  `cypress verify` dies with SIGTRAP) and `/var/lib/xkb` (Xvfb writes its compiled keymaps
+  there, else to `/tmp`, which the session cannot read back, and Xvfb stops: "Failed to
+  activate virtual core keyboard"). image-build.sh makes both for the agent: nono grants
+  only paths that exist. Xvfb's socket and lock in `/tmp` need no grant. Cypress's DevTools
+  port is OS-assigned, so it needs the VM's narrowed ephemeral range (sandbox-provision.sh):
+  outside it, `connect EACCES`. RAN (cloud container, an `agent` user set up as
+  image-build.sh does, the session's flags from `session.launcher_argv`,
+  `lima-port/checks/cypress-nono.sh`): Cypress 15.21.1 `verify` and a spec pass under nono;
+  without the two grants `verify` fails. Not yet RAN: Cite's specs against a wiki, in a
+  sandbox from a new image.
 - [ ] **CI's extra dependencies**: WMF CI adds ParserFunctions, Scribunto and
   TimedMediaHandler for Parsoid (`integration/config` `zuul/dependencies.yaml`, "extras");
   without ParserFunctions 8 `ParserTest_Parsoid_*` tests fail. Wire settings.yaml

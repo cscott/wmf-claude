@@ -38,6 +38,7 @@ import json
 import os
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 MANIFEST_FILENAMES = ("extension.json", "skin.json")
@@ -59,6 +60,22 @@ GITILES_ATTEMPTS = 3
 RETRY_AFTER_DEFAULT = 5
 RETRY_AFTER_MAX = 60
 RETRYABLE_STATUS = (429, 500, 502, 503, 504)
+
+GERRIT_HOST = "gerrit.wikimedia.org"
+
+
+def gerrit_opener(user_agent=None, urlopen=None):
+    """An `opener(url, timeout)` that sends `user_agent` (the engineer's
+    GERRITUA) as the User-Agent to gerrit.wikimedia.org, which gives it a
+    higher rate limit than the default one. Other hosts never see it: the
+    value is a secret."""
+    def opener(url, timeout=None):
+        if user_agent and urllib.parse.urlsplit(url).hostname == GERRIT_HOST:
+            url = urllib.request.Request(url, headers={"User-Agent": user_agent})
+        return (urlopen or urllib.request.urlopen)(url, timeout=timeout)
+
+    return opener
+
 
 # fetch_manifest returns this -- rather than None -- when it could not find
 # out whether a manifest exists. None means "no manifest, this repo is a
@@ -168,7 +185,7 @@ def _fetch_file(url, opener, warn, sleep, attempts):
     return "unreachable", None
 
 
-def fetch_manifest(canonical, opener=urllib.request.urlopen, warn=None,
+def fetch_manifest(canonical, opener=None, warn=None,
                    sleep=time.sleep, attempts=GITILES_ATTEMPTS):
     """Fetch a manifest from Gerrit's gitiles without cloning, so the walk
     can complete before anything is cloned and `--dry-run` can be honest.
@@ -186,6 +203,7 @@ def fetch_manifest(canonical, opener=urllib.request.urlopen, warn=None,
     wrong guess about *which* repos to mount, never wrong content.
     """
     warn = warn or _noop
+    opener = opener or gerrit_opener(os.environ.get("GERRITUA"))
     project = gerrit_project(canonical)
     if project is None:
         return None

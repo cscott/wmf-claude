@@ -759,7 +759,7 @@ class LoadConfigTests(unittest.TestCase):
         config = r.load_config("/nonexistent/path/settings.yaml")
         self.assertEqual(config, {"repos": [], "environment": {}, "packages": [],
                                   "dependency_overrides": {}, "link_overrides": {},
-                                  "extra_dependencies": {}})
+                                  "extra_dependencies": {}, "images": {}})
 
     def write(self, name, text):
         d = tempfile.mkdtemp()

@@ -20,6 +20,7 @@ import re
 import shlex
 import tempfile
 
+from . import disk as disk_mod
 from . import image as image_mod
 from . import lima as lima_mod
 from . import template as template_mod
@@ -56,9 +57,12 @@ def write_template(tmpl, directory):
     return path
 
 
-def create(name, tmpl, lima=None, log=print):
+def create(name, tmpl, lima=None, log=print, backing=None, env=None):
     """Create the instance from `tmpl` (a template.py dict) and boot it.
-    `limactl create` copies the golden image (D2)."""
+    Without `backing`, `limactl create` copies the golden image (D2).
+    With it, the template's image is disk.py's placeholder, and the
+    instance's disk becomes a qcow2 overlay on `backing` (D12), checked
+    before and after the first start."""
     lima = lima or lima_mod.Limactl()
     inst = instance_name(name)
     if lima.exists(inst):
@@ -67,11 +71,31 @@ def create(name, tmpl, lima=None, log=print):
     with tempfile.TemporaryDirectory(prefix="wmf-sbx-tmpl.") as d:
         path = write_template(tmpl, d)
         lima.validate(path)
-        log(f"+ limactl create --name={inst} (copies the golden image)")
+        log(f"+ limactl create --name={inst} "
+            f"({'with a placeholder disk' if backing else 'copies the golden image'})")
         lima.create(inst, path)
+    if backing:
+        log(f"+ qemu-img create -b {backing} (the disk: a copy-on-write overlay)")
+        lima.overlay_disk(inst, backing, env=env)
+        check_disk(name, lima=lima, env=env)
     log(f"+ limactl start {inst} (the first boot runs the provisioning)")
     lima.start(inst, timeout=START_TIMEOUT)
+    if backing:
+        check_disk(name, lima=lima, env=env, running=True)
     return inst
+
+
+def check_disk(name, lima=None, env=None, running=False):
+    """The backing files of the sandbox's overlay disk, after
+    disk.check_chain; VmError if the chain is wrong."""
+    lima = lima or lima_mod.Limactl()
+    inst = instance_name(name)
+    infos = lima.disk_chain(inst, env=env, force_share=running)
+    try:
+        return disk_mod.check_chain(infos, lima.disk_path(inst, env),
+                                    image_mod.cache_root(env))
+    except disk_mod.DiskError as e:
+        raise VmError(f"{name}: {e}") from None
 
 
 def status(name, lima=None):

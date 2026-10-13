@@ -25,6 +25,7 @@ import sys
 from . import ci_deps as ci_mod
 from . import color as color_mod
 from . import deps as deps_mod
+from . import disk as disk_mod
 from . import resolve as resolve_mod
 from . import state as state_mod
 from . import image as image_mod
@@ -41,8 +42,6 @@ from . import vm as vm_mod
 NESTED_WARNING = ("warning: a nested sandbox is less secure: nono gives the agent /dev/kvm, "
                   "Lima's sockets and more hosts. Use it only to work on wmf-claude itself.")
 
-# `create` keeps unused golden images younger than this (prune_old_images).
-PRUNE_MIN_AGE = datetime.timedelta(hours=1)
 
 CLONE_URL_BUILDERS = {
     "gerrit": lambda path: f"https://gerrit.wikimedia.org/r/{path}",
@@ -438,19 +437,18 @@ def lima_sandbox_names(lima, env=None):
     return names
 
 
-def prune_old_images(new_key, env, say):
-    """After a build: delete the golden images that no sandbox uses, except
-    the new one and any built in the last PRUNE_MIN_AGE (another `create`
-    may be about to use it). A failure is a warning: the sandbox does not
-    depend on it."""
+def gc_old_images(key, env, config, say):
+    """At the end of a create: `image gc`, keeping the sandbox's own
+    image. A failure is a warning: the sandbox does not depend on it."""
     try:
-        gone = image_mod.prune_images(keep={new_key}, env=env, min_age=PRUNE_MIN_AGE)
+        gone = image_mod.gc_images(env=env, config=config, keep={key})
     except (OSError, image_mod.ImageError) as e:
         print(f"warning: could not remove old golden images ({e})", file=sys.stderr)
         return
     if gone:
         freed = sum(n for _k, n in gone)
-        say(f"+ removed {len(gone)} unused golden image(s), {freed / 2**30:.1f} GiB: "
+        say(f"+ removed {len(gone)} unused golden image(s) older than "
+            f"{image_mod.gc_age(config).days} days, {freed / 2**30:.1f} GiB: "
             + ", ".join(k for k, _n in gone))
 
 
@@ -463,8 +461,9 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
     3. clone the missing repos on the host, and find each repo's git dir;
     4. generate the sandbox's Lima config (template.py), which mounts the
        git dirs read-only (D10);
-    5. save the state, then create and boot the VM, which copies the
-       golden image (D2) and runs the provisioning;
+    5. save the state, then create and boot the VM, whose disk is a
+       copy-on-write overlay on the golden image on QEMU (D12), a copy of
+       it on vz (D2), and which runs the provisioning;
     6. check the security invariants;
     7. clone the repos in the VM at their host paths (D8), and add the
        host remotes, which also suspend gc (repos.py, remotes.py);
@@ -507,6 +506,9 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
                         "to fetch the sandbox's work, and gc is not suspended")
     parser.add_argument("--vm-type", choices=sorted(template_mod.MOUNT_TYPES),
                         help="Lima driver (default: vz on macOS, qemu elsewhere)")
+    parser.add_argument("--full-disk", action="store_true",
+                        help="on QEMU too, give the sandbox a full copy of the golden "
+                             "image, not a copy-on-write overlay on it")
     parser.add_argument("--cpus", type=int, default=template_mod.DEFAULT_CPUS)
     parser.add_argument("--memory",
                         help=f"default {template_mod.DEFAULT_MEMORY} "
@@ -659,9 +661,20 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
             say(f"+ golden image {key} ({'in the cache' if cached else 'to build'})")
             if not args.dry_run:
                 (build or image_mod.build)(inputs, lima=lima, run=run, env=env, log=say)
-                if not cached:
-                    prune_old_images(key, env, say)
         golden = image_mod.golden_path(key, env)
+        # On QEMU the disk is an overlay on the golden image (D12), and
+        # Lima gets the placeholder; `vz` copies the golden image (D2).
+        vm_type = args.vm_type or template_mod.default_vm_type()
+        overlay = disk_mod.uses_overlay(vm_type) and not args.full_disk
+        disk_image = (disk_mod.placeholder_path(image_mod.cache_root(env)) if overlay
+                      else golden)
+        if overlay:
+            say(f"+ disk: a copy-on-write overlay on {golden}")
+            if not args.dry_run:
+                lima.placeholder(image_mod.cache_root(env))
+                warning = disk_mod.lima_version_warning(lima.version())
+                if warning:
+                    print(warning, file=sys.stderr)
 
         if not args.dry_run:
             for canonical, path, needs_clone in resolved:
@@ -671,7 +684,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
                  for _c, path, needs_clone in resolved]
 
         tmpl = template_mod.sandbox_template(
-            golden, arch, gitdirs=repos_mod.git_dirs(repos), vm_type=args.vm_type,
+            disk_image, arch, gitdirs=repos_mod.git_dirs(repos), vm_type=vm_type,
             cpus=args.cpus,
             memory=args.memory or (nested_mod.MEMORY if args.nested
                                    else template_mod.DEFAULT_MEMORY),
@@ -681,7 +694,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
             ca_files=image_mod.extra_ca_files(env))
     except (state_mod.StateError, vm_mod.VmError, image_mod.ImageError,
             template_mod.TemplateError, lima_mod.LimaError, repos_mod.RepoError,
-            LaunchError) as e:
+            LaunchError, disk_mod.DiskError) as e:
         print(color_mod.error(f"error: {e}"), file=sys.stderr)
         return 1
 
@@ -703,9 +716,12 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
     if args.nested:
         state["nested"] = True
         state["nestedSrc"] = nested_src
+    if overlay:
+        state["disk"] = "overlay"
     state_mod.save(state, env)
     try:
-        vm_mod.create(name, tmpl, lima=lima, log=say)
+        vm_mod.create(name, tmpl, lima=lima, log=say, backing=golden if overlay else None,
+                      env=env)
     except (vm_mod.VmError, lima_mod.LimaError) as e:
         print(color_mod.error(f"error: {e}"), file=sys.stderr)
         print(f"  the state is kept; `wmf-sbx rm {name}` removes what was made.",
@@ -788,6 +804,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
               file=sys.stderr)
         return 1
 
+    gc_old_images(key, env, config, say)
     print(f"\nSandbox {name} is ready (Lima instance {vm_mod.instance_name(name)}).\n"
           f"  wmf-sbx resume {name}          start Claude Code in it\n"
           f"  wmf-sbx exec {name} -- CMD     run a command as the agent\n"

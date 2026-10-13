@@ -138,6 +138,55 @@ class Limactl:
         is the name before 2.0 (HANDOFF-LIMA.md, the measurement run)."""
         return os.path.join(lima_home(env), name, "disk")
 
+    def version(self):
+        """Lima's version ("2.2.1"), or None."""
+        try:
+            out = self.call("--version", check=False).stdout or ""
+        except LimaError:
+            return None
+        words = out.split()
+        return words[-1] if words else None
+
+    # -- the instance's disk (disk.py, D12) ------------------------------
+
+    def _qemu_img(self, *args):
+        try:
+            return self.run(["qemu-img"] + [str(a) for a in args], check=True,
+                            capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        except FileNotFoundError:
+            raise LimaError("qemu-img is not on PATH: install QEMU's tools "
+                            "(qemu-utils on Debian)") from None
+        except subprocess.CalledProcessError as e:
+            raise LimaError(f"qemu-img {args[0]} failed (exit {e.returncode}): "
+                            f"{(e.stderr or '').strip()[-2000:]}") from None
+
+    def placeholder(self, cache_root):
+        """disk.ensure_placeholder, with this object's `run`."""
+        from . import disk as disk_mod
+        return disk_mod.ensure_placeholder(cache_root, run=self.run)
+
+    def overlay_disk(self, name, backing, env=None):
+        """Replace the stopped instance's `disk` with a new qcow2 overlay
+        on `backing` (an absolute path). Method B (disk.py)."""
+        disk = self.disk_path(name, env)
+        tmp = disk + ".wmf-sbx-overlay"
+        self._qemu_img("create", "-q", "-f", "qcow2", "-F", "qcow2", "-b", backing, tmp)
+        os.replace(tmp, disk)
+
+    def disk_chain(self, name, env=None, force_share=False):
+        """`qemu-img info --backing-chain --output=json` of the instance's
+        disk, as a list. `force_share` (-U) for a running instance, whose
+        QEMU holds the lock."""
+        args = ["info", "--backing-chain", "--output=json"]
+        if force_share:
+            args.append("-U")
+        out = self._qemu_img(*args, self.disk_path(name, env)).stdout
+        try:
+            data = json.loads(out)
+        except ValueError:
+            raise LimaError(f"qemu-img info: not JSON: {out[:200]!r}") from None
+        return data if isinstance(data, list) else [data]
+
     # -- commands in the guest -------------------------------------------
 
     def shell(self, name, argv, workdir=None, input=None, check=True, text=True):

@@ -1120,6 +1120,16 @@ class RmTests(Env):
         self.quiet(rm.main, ["sbx-demo"], lima=lima, env=self.env, confirm=lambda q: "n")
         self.assertTrue(os.path.exists(egress.egress_dir("sbx-demo", self.env)))
 
+    def test_no_answer_is_no(self):
+        lima = self.sandbox()
+        def eof(q):
+            raise EOFError
+        self.assertEqual(self.quiet(rm.main, ["sbx-demo"], lima=lima, env=self.env,
+                                    confirm=eof), 1)
+        self.assertIn("wmf-sbx-sbx-demo", lima.vms)
+        self.assertIsNotNone(state_mod.load("sbx-demo", self.env))
+        self.assertNotIn("Traceback", self.err)
+
     def test_force_asks_nothing(self):
         lima = self.sandbox()
         def never(q):

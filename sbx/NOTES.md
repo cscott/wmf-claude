@@ -248,8 +248,9 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
     hosts` hung). Every request timed out (curl exit 28) and nothing got to the egress
     proxy. With a line in /etc/hosts it went through, and the address in that line is not
     used: 10.9.9.9 did as well as 1.1.1.1, because nono sends the name in the upstream
-    CONNECT. So the guest needs a lookup that succeeds, not a real resolver. Plain tools
-    given the proxy variables (curl, apt, git, npm) do not look up names.
+    CONNECT. So the guest needs a lookup that succeeds, not a real resolver (A2.3: a
+    fake-address resolver that keeps its mapping). Plain tools given the proxy variables
+    (curl, apt, git, npm) do not look up names.
   - Two interceptions in a row work: the inner nono trusts the egress CA from the guest's
     store, and the outer proxy still applies the endpoint rules (its log has the `l7`
     decision for the wiki GET). A wiki POST gets 403.

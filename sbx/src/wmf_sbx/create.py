@@ -447,7 +447,7 @@ def gc_old_images(key, env, config, say):
         return
     if gone:
         freed = sum(n for _k, n in gone)
-        say(f"+ removed {len(gone)} unused golden image(s) older than "
+        say(f"+ removed {len(gone)} unused golden image(s) and snapshot(s) older than "
             f"{image_mod.gc_age(config).days} days, {freed / 2**30:.1f} GiB: "
             + ", ".join(k for k, _n in gone))
 

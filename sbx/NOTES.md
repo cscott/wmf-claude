@@ -70,8 +70,11 @@ Development scaffolding:
   `../../skins` beside each clone to core's (`setup.link_phan_paths`, where the name is
   free). The real fix is upstream: mediawiki-phan-config's `$IP` (`MW_INSTALL_PATH`, else
   `'../..'`, so CI is unchanged) in the ~170 Gerrit repos' `.phan/config.php`, ideally
-  through a helper there. Not yet RAN on real hardware: Cite's phan clean with CI's phan
-  dependencies and the links (`lima-port/checks/phan-links.sh`).
+  through a helper there. The links work (RAN 2026-10-13, engineer's host,
+  `lima-port/checks/phan-links.sh`): Cite's phan is clean with CI's phan dependencies
+  (cldr, CommunityConfiguration, Gadgets) outside nono (21 s) and under the session's nono
+  (19 s), about 2.7 GB at its peak; with the links moved aside, 42 undeclared-symbol
+  findings, all in those three.
 - [ ] **Generate the testing section of `~/.claude/CLAUDE.md` per sandbox**: name each repo's real entry points (composer/npm scripts,
   Jest wiring, `tests/` dirs, `QUnitTestModule`, `tests/parser/*.txt`) and say which runners do
   not apply.

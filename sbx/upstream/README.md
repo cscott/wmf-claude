@@ -42,10 +42,10 @@ not as a task here. Those already sent or merged:
   [!133](https://gitlab.wikimedia.org/repos/product-safety-and-integrity/wmf-claude/-/merge_requests/133),
   merged; `lima-port` is rebased on it (its copy of the change sits on
   !132's seam).
-
-To file:
-
-- **The manual-test skill's `/w` path**: branch `manual-test-script-path`
-  on [cscott/wmf-claude](https://github.com/cscott/wmf-claude/tree/manual-test-script-path),
-  one commit on upstream `main` 70712f6. A docroot install (CI's, a
+- **The manual-test skill's `/w` path**: a docroot install (CI's, a
   `composer serve` wiki, a wmf-sbx sandbox) has its scripts at the root.
+  [!134](https://gitlab.wikimedia.org/repos/product-safety-and-integrity/wmf-claude/-/merge_requests/134)
+  (open), from branch `manual-test-script-path` on
+  [cscott/wmf-claude](https://github.com/cscott/wmf-claude/tree/manual-test-script-path),
+  one commit on upstream `main` 70712f6. `lima-port` does not carry it;
+  the sandbox's CLAUDE.md has its own "Manual testing" section.

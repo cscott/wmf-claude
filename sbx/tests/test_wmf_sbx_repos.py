@@ -168,11 +168,14 @@ class CloneRepoTests(Tmp):
         git(self.upstream, "commit", "-q", "--allow-empty", "-m", "upstream moved")
         os.makedirs(os.path.join(self.host, ".git", "hooks"), exist_ok=True)
 
-    def clone(self, dest, branch, sha, upstream, reset, check=True):
+    def clone(self, dest, branch, sha, upstream, reset, check=True, file_upstreams=False):
         env = dict(os.environ, PATH=os.path.join(SBX, "bin") + ":" + os.environ["PATH"],
                    GIT_CONFIG_GLOBAL="/dev/null", GIT_AUTHOR_NAME="t",
                    GIT_AUTHOR_EMAIL="t@example.org", GIT_COMMITTER_NAME="t",
                    GIT_COMMITTER_EMAIL="t@example.org")
+        if file_upstreams:
+            env.update(GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="protocol.file.allow",
+                       GIT_CONFIG_VALUE_0="always")
         script = open(repos.GUEST_SCRIPT).read() + "\n" + repos._call(
             "clone_repo", os.path.join(self.host, ".git"), dest, branch, sha, upstream, reset)
         return subprocess.run(["bash", "-s"], input=script, text=True, env=env,
@@ -223,6 +226,52 @@ class CloneRepoTests(Tmp):
         self.assertEqual(git(os.path.join(dest, "mcp"), "rev-parse", "HEAD"),
                          git(os.path.join(self.host, "mcp"), "rev-parse", "HEAD"))
         self.assertNotIn("could not be checked out", res.stderr)
+
+    def add_submodule(self, name="lib/ve"):
+        """A submodule at NAME in the host repo, as VisualEditor's lib/ve:
+        its upstream is a local repo; the host's copy is absorbed into
+        .git/modules/NAME. Returns the upstream's path."""
+        sub = os.path.join(self.tmp, "subupstream")
+        git_repo(sub)
+        env = dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null")
+        subprocess.run(["git", "-C", self.host, "-c", "protocol.file.allow=always",
+                        "submodule", "add", "-q", sub, name], check=True,
+                       capture_output=True, env=env)
+        git(self.host, "commit", "-q", "-m", "add a submodule")
+        return sub
+
+    def test_a_submodule_commit_the_host_lacks_comes_from_upstream(self):
+        # VisualEditor's lib/ve: the superproject points at a lib/ve commit
+        # that the host's copy (.git/modules/lib/ve) does not have.
+        sub = self.add_submodule()
+        git(sub, "commit", "-q", "--allow-empty", "-m", "only upstream has this")
+        new = git(sub, "rev-parse", "HEAD")
+        subprocess.run(["git", "-C", self.host, "update-index", "--cacheinfo",
+                        f"160000,{new},lib/ve"], check=True)
+        git(self.host, "commit", "-q", "-m", "bump lib/ve")
+        self.assertNotEqual(git(os.path.join(self.host, "lib", "ve"), "rev-parse", "HEAD"), new)
+        dest = os.path.join(self.tmp, "vm", "ve")
+        # The submodule's upstream is a local path here, not https.
+        res = self.clone(dest, "topic", git(self.host, "rev-parse", "HEAD"), "", "0",
+                         file_upstreams=True)
+        self.assertNotIn("could not be checked out", res.stderr)
+        self.assertEqual(git(os.path.join(dest, "lib", "ve"), "rev-parse", "HEAD"), new,
+                         res.stderr)
+
+    def test_a_submodule_the_host_never_initialised_comes_from_upstream(self):
+        # A host clone made without --recurse-submodules: no
+        # .git/modules/lib/ve, an empty lib/ve.
+        sub = self.add_submodule()
+        env = dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null")
+        subprocess.run(["git", "-C", self.host, "submodule", "deinit", "-q", "-f", "lib/ve"],
+                       check=True, capture_output=True, env=env)
+        shutil.rmtree(os.path.join(self.host, ".git", "modules"))
+        dest = os.path.join(self.tmp, "vm", "ve")
+        res = self.clone(dest, "topic", git(self.host, "rev-parse", "HEAD"), "", "0",
+                         file_upstreams=True)
+        self.assertIn("from its upstream", res.stderr)
+        self.assertEqual(git(os.path.join(dest, "lib", "ve"), "rev-parse", "HEAD"),
+                         git(sub, "rev-parse", "HEAD"), res.stderr)
 
     def test_a_reset_goes_to_upstream_not_to_the_hosts_branch(self):
         # --reset-all on a repo the engineer named: the host's branch has

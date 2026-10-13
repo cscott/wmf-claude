@@ -23,6 +23,7 @@ import os
 import subprocess
 import sys
 
+from . import egress as egress_mod
 from . import lima as lima_mod
 from . import remotes as remotes_mod
 from . import state as state_mod
@@ -150,6 +151,8 @@ def remove_one(name, args, run=subprocess.run, env=None, lima=None, confirm=inpu
         )
         return 1
 
+    # The VM is gone, so its egress CA and proxy password serve nothing.
+    egress_mod.remove(name, env=env)
     if args.keep_remotes:
         return 0
     cleanup_remotes(state, run=run)

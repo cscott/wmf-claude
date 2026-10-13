@@ -6,15 +6,18 @@
 #
 #   wmf-sbx exec NAME -- bash -s links   < lima-port/checks/phan-links.sh
 #   wmf-sbx exec NAME -- bash -s outside < lima-port/checks/phan-links.sh
-#   wmf-sbx exec NAME -- bash -s nono    < lima-port/checks/phan-links.sh
+#   wmf-sbx exec NAME -- bash -s nono "$(cat ~/.local/state/wmf-sbx/sandboxes/NAME.json)" \
+#     < lima-port/checks/phan-links.sh
 #   wmf-sbx exec NAME -- bash -s control < lima-port/checks/phan-links.sh
 #
 # links    the `../../extensions` and `../../skins` links beside the repo,
 #          and each sibling that .phan/config.php names: there or missing.
 # outside  `composer phan`, outside nono.
 # nono     `composer phan` under nono with the session's own flags
-#          (bin/claude, as `wmf-sbx resume` runs it); a `nono` shim on
-#          PATH replaces Claude Code with phan, so no tokens are used.
+#          (bin/claude, as `wmf-sbx resume` runs it, from the sandbox's
+#          state, which the VM does not have: the second argument); a
+#          `nono` shim on PATH replaces Claude Code with phan, so no
+#          tokens are used.
 # control  `composer phan` outside nono with the two links moved aside
 #          (put back on exit): it should report the siblings' classes as
 #          undeclared, which shows that the links are what phan uses.
@@ -57,6 +60,11 @@ phan_test() {
   grep -E ':[0-9]+ Phan' "$out" | sed -E 's/^.*:[0-9]+ (Phan[A-Za-z]+).*/\1/' | sort | uniq -c \
     | sort -rn | sed 's/^/   | /'
   echo "   -- first findings:"; grep -E ':[0-9]+ Phan' "$out" | head -15 | sed 's/^/   | /'
+  if [ $rc != 0 ]; then
+    echo "   -- errors:"
+    grep -m8 -iE "error|warning|exception|fatal|denied|not permitted" "$out" \
+      | grep -v ' Phan[A-Za-z]* ' | sed 's/^/   | /'
+  fi
   echo "   -- tail:"; tail -8 "$out" | sed 's/^/   | /'
   [ $rc = 0 ] && echo "== RESULT $label: clean" || echo "== RESULT $label: exit $rc"
   return $rc
@@ -84,7 +92,8 @@ links() {
 }
 
 under_nono() {
-  local shim=$WORK/shim
+  local state=$1 shim=$WORK/shim
+  [ -n "$state" ] || { result "nono: give the sandbox's state JSON as the second argument"; exit 2; }
   mkdir -p "$shim"
   {
     echo '#!/usr/bin/env bash'
@@ -103,10 +112,10 @@ SHIM
   chmod +x "$shim/nono"
   # The session's flags, as `wmf-sbx resume` builds them (session.py).
   local flags
-  flags=$(PYTHONPATH="$WMF_SBX_CLAUDE_DIR/sbx/src" python3 - "$REPO" <<'PY'
-import shlex, sys
+  flags=$(PYTHONPATH="$WMF_SBX_CLAUDE_DIR/sbx/src" python3 - "$state" <<'PY'
+import json, shlex, sys
 import wmf_sbx.session as s
-argv = s.launcher_argv({"primaryDir": sys.argv[1], "repos": []}, proxy=s.upstream_proxy())
+argv = s.launcher_argv(json.loads(sys.argv[1]), proxy=s.upstream_proxy())
 i = argv.index(s.LAUNCHER)
 j = argv.index("--", i)
 print(shlex.join(argv[i + 1:j]))
@@ -138,7 +147,7 @@ mkdir -p "$WORK"
 case "${1:-}" in
   links) links ;;
   outside) phan_test outside "$REPO" ;;
-  nono) under_nono ;;
+  nono) under_nono "${2:-}" ;;
   control) control ;;
-  *) sed -n '2,24p' "${BASH_SOURCE[0]:-/dev/stdin}"; exit 2 ;;
+  *) sed -n '2,27p' "${BASH_SOURCE[0]:-/dev/stdin}"; exit 2 ;;
 esac

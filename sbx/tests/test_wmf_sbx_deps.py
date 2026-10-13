@@ -326,6 +326,20 @@ class LinkSectionTests(unittest.TestCase):
         self.assertIsNone(d.link_section(None))
 
 
+class ExtraEdgesTests(unittest.TestCase):
+    def test_canonicals_are_kept(self):
+        self.assertEqual(d.extra_edges({EXT + "Cite": [EXT + "Echo"]}),
+                         {EXT + "Cite": [EXT + "Echo"]})
+        self.assertEqual(d.extra_edges(None), {})
+
+    def test_other_shapes_are_refused(self):
+        for value in ({EXT + "Cite": EXT + "Echo"}, {EXT + "Cite": ["Echo"]},
+                      {"Cite": [EXT + "Echo"]}, {EXT + "Cite": [None]}):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    d.extra_edges(value)
+
+
 class WalkTests(unittest.TestCase):
     def setUp(self):
         self.warnings = []
@@ -372,6 +386,31 @@ class WalkTests(unittest.TestCase):
         # plain repo shouldn't drag MediaWiki in.
         discovered, _origins = self.walk(["gerrit:operations/puppet"], {})
         self.assertEqual(discovered, [])
+
+    def test_extras_add_dependencies_no_manifest_declares(self):
+        manifests = {EXT + "Cite": manifest(name="Cite")}
+        discovered, origins = self.walk(
+            [EXT + "Cite"], manifests,
+            extras={EXT + "Cite": [EXT + "ParserFunctions", EXT + "Cite"]})
+        self.assertEqual(discovered, [CORE, EXT + "ParserFunctions", VECTOR])
+        self.assertEqual(origins[EXT + "ParserFunctions"], EXT + "Cite")
+
+    def test_extras_apply_to_the_roots_only(self):
+        # CI's maps are each repo's closure when it is under test: applied
+        # to a dependency, they would pull in far more than CI does.
+        manifests = {
+            EXT + "Cite": manifest(name="Cite", requires={"extensions": {"Echo": "*"}}),
+            EXT + "Echo": manifest(name="Echo"),
+        }
+        discovered, _origins = self.walk(
+            [EXT + "Cite"], manifests, extras={EXT + "Echo": [EXT + "CentralAuth"]})
+        self.assertNotIn(EXT + "CentralAuth", discovered)
+
+    def test_extras_of_a_repo_without_a_manifest_still_apply(self):
+        discovered, _origins = self.walk(
+            ["gerrit:mediawiki/services/parsoid"], {},
+            extras={"gerrit:mediawiki/services/parsoid": [EXT + "ParserFunctions"]})
+        self.assertEqual(discovered, [EXT + "ParserFunctions"])
 
     def test_roots_are_not_reported_as_discovered(self):
         manifests = {EXT + "Cite": manifest(name="Cite"), CORE: None}

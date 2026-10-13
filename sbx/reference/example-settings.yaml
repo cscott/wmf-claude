@@ -60,7 +60,9 @@ link_overrides: {}
   # "gerrit:mediawiki/extensions/Example": "ExampleExtension"
 
 # Dependencies that no manifest declares (CI-only ones, or one you are
-# adding). Not used yet (sbx/NOTES.md); this shows the shape.
+# adding), for the repos you name on the command line (not for their
+# dependencies). reference/ci-extra-dependencies.yaml has WMF CI's set
+# for every repo in integration/config; copy its block here.
 extra_dependencies: {}
   # gerrit:mediawiki/extensions/Example:
   #   - gerrit:mediawiki/extensions/OtherThing

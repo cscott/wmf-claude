@@ -271,6 +271,10 @@ def expand_dependencies(resolved, split, config, config_path, include_dev=True,
         return None if needs_clone else path
 
     roots = [canonical for canonical, _path in canonicals_for_kit(resolved, rules)]
+    try:
+        extras = deps_mod.extra_edges(config.get("extra_dependencies"))
+    except ValueError as e:
+        raise resolve_mod.ResolutionError(f"{config_path}: {e}") from None
     unreachable = set()
     discovered, origins = deps_mod.walk(
         roots,
@@ -280,6 +284,7 @@ def expand_dependencies(resolved, split, config, config_path, include_dev=True,
         include_suggests=include_suggests,
         overrides=config.get("dependency_overrides") or {},
         warn=warn,
+        extras=extras,
     )
 
     resolved = list(resolved)

@@ -13,14 +13,23 @@ to D12, and tracks A and B, which are not repeated here).
   `deps.py` walks the `requires` field in `extension.json`/`skin.json`. CI (quibble) checks
   out `integration/config`'s `zuul/dependencies.yaml` (test jobs, honour each entry's
   `recurse`) and `zuul/phan_dependencies.yaml` (phan). For Translate that is 1 vs 5 vs 7 repos.
-  Union the sets (the manifest walk still decides what the wiki loads). Clone CI-only
-  dependencies as a new, cheap class of clone (shallow, no host remote, no reset). Decide
-  whether to fetch the YAML over gitiles at create time, vendor a snapshot, or clone
-  `integration/config`.
+  Stopgap, done: settings.yaml `extra_dependencies:` is walked for the named repos (roots
+  only: CI's lists are closures for the repo under test, and applying them at every node
+  takes a BlueSpice extension from 3 repos to 84), and `reference/ci-extra-dependencies.yaml`
+  is a snapshot of both maps, made by `python3 -m wmf_sbx.ci_deps`. integration/config
+  changes weekly, so the snapshot ages. Still open: a default the engineer need not copy,
+  fetched or refreshed at create; a cheap class of clone (shallow, no host remote, no
+  reset) for CI-only dependencies.
 - [ ] **Make `.phan/config.php`'s `../../extensions/<Name>` paths resolve**. Symlinks into `core/extensions/` resolve `..` from the real directory, so the paths
   fail in the engineer's layout. Options: bind-mount each repo into `core/extensions/<Name>`
   (only option that matches CI), lowercase `extensions/`/`skins/` symlink dirs, real clones of
-  CI dependencies under `core/extensions/`, or a sandbox-only phan config. When fixed, remove
+  CI dependencies under `core/extensions/`, or a sandbox-only phan config. Recommended
+  (2026-10-12): short term, a `../../extensions` (and `../../skins`) symlink to core's,
+  made at create when the grandparent is free and not `$HOME`, with a warning otherwise
+  (the default inner layout `~/wmf-sbx-src/extensions/<Name>` already resolves); long
+  term, upstream: mediawiki-phan-config's `$IP` (`MW_INSTALL_PATH`, else `'../..'`, so CI
+  is unchanged) in the ~170 Gerrit repos' `.phan/config.php`, ideally through a helper
+  there. No new quibble variable is needed. When fixed, remove
   the "sibling" text from MEDIAWIKI-TESTING.md §3 and trap 4 of its §6, and session.py's
   "Running tests" paragraph.
 - [ ] **Generate the testing section of `~/.claude/CLAUDE.md` per sandbox**: name each repo's real entry points (composer/npm scripts,
@@ -123,10 +132,10 @@ to D12, and tracks A and B, which are not repeated here).
   Candidate fix: grant `~/.config/Cypress`, `/tmp/.X11-unix` (with socket bind) and
   `/var/lib/xkb` (made 1777 at boot); measure with the session's flags first. Until then the
   guide and the sandbox CLAUDE.md say it does not run.
-- [ ] **CI's extra dependencies**: WMF CI adds ParserFunctions, Scribunto and
-  TimedMediaHandler for Parsoid (`integration/config` `zuul/dependencies.yaml`, "extras");
-  without ParserFunctions 8 `ParserTest_Parsoid_*` tests fail. Wire settings.yaml
-  `extra_dependencies:` into the walk, and consider shipping CI's extras as defaults.
+- [x] **CI's extra dependencies**: WMF CI adds ParserFunctions, Scribunto and
+  TimedMediaHandler for Parsoid; without ParserFunctions 8 `ParserTest_Parsoid_*` tests
+  fail. `extra_dependencies:` is now walked, and `reference/ci-extra-dependencies.yaml` has
+  CI's set (see "Use WMF CI's dependency set").
 - [ ] **The manual-test skill says `/w/api.php`** (upstream skill); the sandbox wiki is a
   docroot install (`$MW_SERVER/api.php`). Upstream topic, or a line in the sandbox CLAUDE.md.
 

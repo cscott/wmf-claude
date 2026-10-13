@@ -404,9 +404,16 @@ Development scaffolding:
 - Copy-on-write disks (track B2, `disk.py`): on QEMU, `limactl create` with a shared
   placeholder image, then the instance's `disk` is replaced by `qemu-img create -b
   GOLDEN` (method B), and `disk.check_chain` runs before and after the first start.
-  `--full-disk` and `vz` keep the full copy. Not RAN through `wmf-sbx` yet: the method was
-  RAN by hand (HANDOFF-LIMA-QCOW2-OVERLAYS.md); the B2 check is
-  `lima-port/checks/overlay-b2.sh`.
+  `--full-disk` and `vz` keep the full copy. RAN 2026-10-13 (`lima-port/checks/overlay-b2.sh`
+  in a nested sandbox, Lima 2.2.1, KVM; every check passed): golden image 2.57 GiB; a
+  `--full-disk` create 32 s and 2.6 GiB, an overlay create 29–30 s and 31–54 MiB; 200 MiB
+  written in one overlay grew only that one; two overlays ran at once with their own
+  machine-id and SSH host key; stop and start kept the data; `image rm` was refused
+  ("in use by" both overlays and the full copy, by state file); `image gc` kept the image;
+  after `rm` the golden image was unchanged. With KVM and a local SSD the copy costs little
+  time, so B2 saves disk, not create time (B3 is for time). The outer sandbox for the run
+  was made with Lima 2.3.0-beta.1 on the host: the overlay worked there too (`create`
+  warned).
 - Default VM memory is 8 GiB: phan on Translate was OOM-killed at 4 GiB.
 - Timings under TCG are 5–35× slower than a 16-core host (image build 26–41 min, create
   ~250–310 s, setup for Translate ~40 min); only compare them with each other.

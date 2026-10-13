@@ -1547,9 +1547,8 @@ What is known (RAN 2026-10-11, cananian's Linux host, AMD, KVM):
   Without it the inner VMs run under TCG.
 
 Decided (cananian, 2026-10-11): under nono, not `--sudo` (track A is not
-needed for this). Interim, until N3: the agent edits and runs the unit
-tests under nono; the engineer runs the integration steps with
-`wmf-sbx exec` in the outer sandbox.
+needed for this). Since N3, the agent does the integration steps itself,
+in a sandbox made with `wmf-sbx create --nested` (sbx/README.md).
 
 - **N1. Spike** (no code; in a disposable sandbox such as `hw-check`).
   Script: `lima-port/checks/n1-spike.sh`, run in the VM; the host only
@@ -1582,7 +1581,7 @@ tests under nono; the engineer runs the integration steps with
     `deb.debian.org`, `security.debian.org`, `nodejs.org`,
     `downloads.claude.ai`, the nono pack registry, `github.com`
     (php-ast). Exit: the list, in `sbx/NOTES.md`.
-- **N2. Implement.** Status: **built** (unit tests; not yet RAN).
+- **N2. Implement.** Status: **done** (RAN in N3).
   Decided (cananian, 2026-10-12): no QEMU or Lima in the golden image;
   `create --nested` installs them in that sandbox (`nested.py`), so
   ordinary sandboxes are unchanged. Submodules are initialised from the
@@ -1607,11 +1606,16 @@ tests under nono; the engineer runs the integration steps with
   a change to wmf-sbx, runs the unit tests, builds an image, creates an
   inner sandbox, and runs `lima-port/checks/real-hardware.sh` against
   it. Compare the times with the host's.
-  Status: **in progress** (2026-10-12). Unit tests pass under nono in
-  24 s, and a change commits. The image build passes apt, the kernel,
-  php-ast, Node, nono and Claude Code; the next run is to get past the
-  MCP venvs (PyPI) and do the inner create and `real-hardware.sh`.
-  Findings: sbx/NOTES.md, "Nested Lima".
+  Status: **done** (2026-10-12, engineer's Linux host, KVM). The agent,
+  under nono in a nested sandbox: unit tests (729, 24 s); an image build
+  (6 min 10 s); `create --name inner gerrit:mediawiki/extensions/Cite`
+  with core and Vector, the wiki installed (7 min 20 s);
+  `real-hardware.sh browser` (8.6 s) and `qunit` (core 897 and Cite 3
+  completed, exit 0). The inner VM trusts the system's CAs and nono's
+  session CA only. No request refused. Across the runs the agent found
+  and fixed the credentialed proxy rewrite, PyPI and registry.nono.sh,
+  the inner repos' path, and `exec`'s proxy. Findings: sbx/NOTES.md,
+  "Nested Lima".
 
 Security: `/dev/kvm` is a large kernel interface, but it is the outer
 VM's kernel, which the agent already shares; the outer VM's nftables and

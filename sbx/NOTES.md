@@ -16,8 +16,10 @@ to D12, and tracks A and B, which are not repeated here).
   Stopgap, done: settings.yaml `extra_dependencies:` is walked for the named repos (roots
   only: CI's lists are closures for the repo under test, and applying them at every node
   takes a BlueSpice extension from 3 repos to 84), and `reference/ci-extra-dependencies.yaml`
-  is a snapshot of both maps, made by `python3 -m wmf_sbx.ci_deps`. integration/config
-  changes weekly, so the snapshot ages. Still open: a default the engineer need not copy,
+  is a snapshot of both maps, made by `python3 -m wmf_sbx.ci_deps --trim` (only what the
+  manifest walk does not find: 1238 of 1944 dependencies, 262 of 380 repos; 11 minutes of
+  gitiles fetches, rate-limited). integration/config changes weekly, so the snapshot
+  ages. Still open: a default the engineer need not copy,
   fetched or refreshed at create; a cheap class of clone (shallow, no host remote, no
   reset) for CI-only dependencies.
 - [ ] **Make `.phan/config.php`'s `../../extensions/<Name>` paths resolve**. Symlinks into `core/extensions/` resolve `..` from the real directory, so the paths

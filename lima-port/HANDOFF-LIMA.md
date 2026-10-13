@@ -1402,16 +1402,19 @@ a filtering DNS forwarder, sbx/NOTES.md) may go.
   demand through the proxy; the blind run passes in a `--sudo` sandbox
   on Linux.
 
-**Track B: copy-on-write disks (D12)**
+**Track B: copy-on-write disks (D12), then warm snapshots**
 
-- **B1. Research and measure** (no code). Answer the companion note's
-  source questions from Lima's v2 tree. Run its procedure on Linux and
-  on macOS with `vmType: qemu`. **Done on Linux with TCG** (READ and
+Goal: a `create` on QEMU writes only what the sandbox changes (B2), and a
+`create` of a set of repos that was made before starts from the disk
+that the last such `create` left, so it fetches only what changed
+upstream (B3). QEMU only; `vz` keeps the full copy (D2), and the APFS
+clonefile option stays open for later. Decided with cananian,
+2026-10-13.
+
+- **B1. Research and measure** (no code). **Done on Linux** (READ and
   RAN; results in the companion note): method A is refused by Lima,
-  method B passes all seven checks, and H1–H4 and H6 held. Still to do:
-  macOS with `vmType: qemu`. Exit: its seven success checks recorded in
-  `sbx/NOTES.md`, with the Lima, QEMU and host versions and which of
-  H1–H6 held:
+  method B passes all seven checks, and H1–H4 and H6 held. macOS with
+  `vmType: qemu` waits for a Mac (TESTING-MACOS.md). The seven checks:
   - the backing file survives create and start;
   - a fresh `disk` is MB, not GB;
   - the guest boots, and the shell, mounts and SSH work;
@@ -1420,16 +1423,92 @@ a filtering DNS forwarder, sbx/NOTES.md) may go.
   - writes stay in their own overlay, and the golden checksum is
     unchanged;
   - stop, start and delete work, and delete leaves the golden image.
-- **B2. Implement:** `disk.py` with method B and a placeholder image; `create`
-  verifies the backing chain and fails rather than flatten; the
-  in-use checks for `image rm`/`prune`; the `status` checks; the
-  Lima-version warning. Exit: unit tests with sample `qemu-img info`
-  output; a create on QEMU is faster and smaller than the phase-0
-  baseline.
-- **B3. Acceptance:** the blind run in an overlay-backed sandbox. Then
-  rebuild the golden image (a new hash) and confirm that existing
-  sandboxes still boot on the old file, and that `prune` keeps it until
-  they are gone.
+- **B2. Overlays on the golden image.** A target of its own: ship it,
+  then sync with track A before B3.
+  - `disk.py`: one shared placeholder (an empty qcow2 with no backing
+    file, made once in the cache); `limactl create` with the
+    placeholder; then `qemu-img create -f qcow2 -F qcow2 -b <golden,
+    absolute> <instance>/disk <size>` in its place (method B). The
+    overlay's virtual size is the larger of `--disk` and the golden
+    image's.
+  - The chain check: `qemu-img info --backing-chain --output=json`
+    (with `-U` on a running instance) must name only files in the image
+    cache, each read-only. `create` checks after the swap and after the
+    first start, and fails the create on a wrong chain: never a silent
+    flattened disk. The check takes any depth (B3 makes it two; later
+    work may make it more).
+  - In use: an image is in use if a state file names it (as today) or
+    if an instance's chain names its file. `image rm` refuses an image
+    in use.
+  - `image gc`: removes the images that are unused **and** older than
+    `images.gcAge` (settings.yaml; default 7 days). `create` runs it
+    after it is done, in place of today's prune of unused images older
+    than 1 hour. `image prune` removes **every** unused image (to free
+    disk space).
+  - `status`: the chain is sound, and the golden file is read-only and
+    matches its checksum.
+  - `create` warns on a Lima version other than 2.2.1 (method B relies
+    on Lima not checking the backing file at start).
+  - Unit tests with sample `qemu-img info` output.
+  - Exit: RAN in a new nested sandbox (not `dev`): a create on QEMU,
+    its time and disk use against a full copy (D2), and the seven
+    checks again through `wmf-sbx`.
+- **B3. Warm snapshots** (after B2 and the sync with track A).
+  - **Key:** the golden image's identity, `--nested`, and the sorted
+    set of the resolved directories, each as (canonical, host path,
+    read-only or not). Not the flags that only change the dependency
+    walk (`--no-dev`, `--no-suggests`, `--no-ci-deps`,
+    `--no-phan-deps`): the set already shows what they did. A repo is
+    the same full clone whether it was named or came in as a dependency.
+    Exact match only; the snapshot's metadata records the set itself,
+    not only its hash, for subset reuse later.
+  - **Freeze**, at the end of `create` only, before the sandbox's first
+    session (no other code path freezes; D1): stop the VM; in the
+    guest, the identity seal of image-build.sh (machine-id, SSH host
+    keys, `cloud-init clean`) and the sandbox's own files (`~/.claude`,
+    `SANDBOX_NAME`, the setup status and log); move `disk` into the
+    cache (`snapshots/<key>/<generation>.qcow2`, read-only); `qemu-img
+    rebase -b <golden>` so that it backs onto the golden image directly
+    (depth 2: golden ← snapshot ← sandbox; later depth is for subset
+    reuse); a new thin overlay on it as the sandbox's `disk`; start.
+    RAN check: the restarted sandbox has a new identity and passes its
+    invariants.
+  - **Warm create:** an overlay on the key's newest snapshot; boot;
+    refresh: `sandbox-repos.sh` gets an update path for an existing
+    clone (fetch from the host's git dir and upstream, then the checkout
+    a cold create would make: the host's branch for requested repos,
+    upstream master for the rest); `composer update`; `npm ci` where
+    the lock file changed; `update.php` in place of the install. Host
+    remotes and the gc borrower are per sandbox name, as now. Then
+    freeze as the next generation.
+  - **Age: the golden image's only.** Snapshots have no age of their
+    own: a warm create refreshes them, and none is older than its
+    golden image. A golden image older than `images.maxAge`
+    (settings.yaml; default 14 days) is rebuilt at the next `create`,
+    even with the same inputs (a new generation of the cache entry: a
+    golden file is never rewritten), and the snapshots on the old one
+    go cold, each once. A cold create on a golden image with less than
+    a day left rebuilds it first. `--no-expire` and `images.expire:
+    false` keep an old golden image, with a warning to run `--cold`
+    when convenient (for a demo).
+  - **Flags:** `--cold` (ignore the snapshot, make a new one),
+    `--no-snapshot` (neither use nor save one).
+  - **Retention:** a key keeps its newest snapshot and any that a
+    sandbox's chain names; `image gc` and `image prune` treat snapshots
+    as they treat golden images; `image ls` lists them.
+  - **Concurrency:** a lock per key around the freeze. Two creates
+    from generation n both freeze; the later is the newest. Each
+    sandbox keeps its own chain.
+  - **Security** (SECURITY.md): what a `create` ran (npm and composer
+    install scripts) now lives on in later sandboxes of the same key;
+    bounded by the freeze before any session and by the golden image's
+    age. The guest writes its filesystem, not the qcow2 headers (QEMU
+    does), and the chain check runs before a snapshot is used.
+- **B4. Acceptance:** a cold, then a warm create of Cite and its
+  dependencies (time, bytes fetched, disk); a warm create after an
+  upstream change brings it in; a blind run in a sandbox from a
+  snapshot; a golden rebuild (old sandboxes boot, gc keeps their
+  files); two creates at once.
 
 **Track L: a shared login (D6, after the MVP; first priority)**
 

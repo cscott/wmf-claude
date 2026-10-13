@@ -621,6 +621,10 @@ it.
    page about real documents. Use one as a fast check while you iterate if
    you like, but gate on the real runner. (Jest is not such a stand-in: it
    is the suite's real runner, and CI runs it the same way.)
+11. **`time VAR=x cmd` works only in bash.** In `sh` (an `sh -c`, an npm or
+   composer script) `time` is not a keyword: it is not found, or it is the
+   `/usr/bin/time` program, which runs `VAR=x` as the command. Write
+   `time env VAR=x cmd`, which works in every shell.
 
 ## 7. Quick reference
 

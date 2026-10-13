@@ -21,7 +21,7 @@ def main(argv=None, lima=None, env=None):
     args = parser.parse_args(argv)
     try:
         name, _state = vm_mod.resolve(args.name, env=env)
-        vm_mod.stop(name, lima=lima)
+        vm_mod.stop(name, lima=lima, env=env)
     except (state_mod.StateError, vm_mod.VmError, lima_mod.LimaError) as e:
         print(color_mod.error(f"error: {e}"), file=sys.stderr)
         return 1

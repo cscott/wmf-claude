@@ -9,10 +9,12 @@ The real session ran in a VM (lima-port/HANDOFF-LIMA.md §11, phase 6)."""
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 sys.path.insert(0, os.path.dirname(__file__))
@@ -394,6 +396,25 @@ class ProxyRefreshTests(unittest.TestCase):
         self.assertEqual(lima.calls, [])
         self.assertIn("stop demo", said[0])
 
+
+    def test_the_warning_says_where_to_stop_a_vm_out_of_reach(self):
+        lima = self.lima("1111")
+        lima.vms["wmf-sbx-demo"] = "Running"
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home)
+        os.makedirs(os.path.join(home, "wmf-sbx-demo"))
+        with open(os.path.join(home, "wmf-sbx-demo", "ha.pid"), "w") as f:
+            f.write("4242\n")
+
+        def kill(pid, sig):
+            raise PermissionError(1, "Operation not permitted")
+        said = []
+        with mock.patch.object(vm.os, "kill", kill):
+            vm.ensure_running("demo", lima=lima, log=said.append,
+                              env={"https_proxy": "http://127.0.0.1:2222", "LIMA_HOME": home})
+        self.assertEqual(lima.calls, [])
+        self.assertIn("outside this session's sandbox", said[0])
+        self.assertNotIn("`wmf-sbx stop demo`", said[0])
 
 class ResumeArgsTests(unittest.TestCase):
 

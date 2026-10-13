@@ -15,6 +15,7 @@ it calls `limactl` through lima.Limactl, so the tests fake it.
 """
 
 import os
+import pwd
 import re
 import shlex
 import tempfile
@@ -100,9 +101,11 @@ def refresh_proxy_ports(name, lima, env=None, log=print, running=False):
     if have is None or have == want:
         return False
     if running:
+        pid = unsignalled_hostagent(name, env)
+        how = (f"`wmf-sbx stop {name}` and start it again" if pid is None
+               else outside_stop_advice(name, pid))
         log(f"warning: the host's proxy port is now {' '.join(map(str, want)) or 'none'}, "
-            f"the VM allows {' '.join(map(str, have)) or 'none'}: "
-            f"`wmf-sbx stop {name}` and start it again")
+            f"the VM allows {' '.join(map(str, have)) or 'none'}: {how}")
         return False
     ports = " ".join(str(p) for p in want)
     log(f"+ limactl edit {instance_name(name)} (proxy ports {ports or 'none'})")
@@ -130,9 +133,40 @@ def ensure_running(name, lima=None, log=print, env=None):
         lima.start(instance_name(name), timeout=START_TIMEOUT)
 
 
-def stop(name, lima=None):
+def unsignalled_hostagent(name, env=None, kill=None):
+    """The pid of the instance's Lima host agent if it runs and this
+    process may not signal it, else None. Under nono, Landlock scopes
+    signals to the session's sandbox: a VM that an earlier session
+    started has a host agent outside it, and `limactl stop` gets EPERM,
+    then waits 3 minutes for an exit that never comes (RAN, N3)."""
+    try:
+        with open(os.path.join(lima_mod.lima_home(env), instance_name(name), "ha.pid"),
+                  encoding="utf-8") as f:
+            pid = int(f.read().strip())
+        (kill or os.kill)(pid, 0)
+    except PermissionError:
+        return pid
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def outside_stop_advice(name, pid):
+    inst = instance_name(name)
+    user = pwd.getpwuid(os.getuid()).pw_name
+    return (f"its Lima host agent (pid {pid}) runs outside this session's sandbox "
+            f"(an earlier session started it), so it cannot be stopped from here; "
+            f"stop it from outside nono (in a nested sandbox, as the outer VM's "
+            f"engineer: `sudo -u {user} limactl stop {inst}`), then "
+            f"`wmf-sbx start {name}`")
+
+
+def stop(name, lima=None, env=None, kill=None):
     lima = lima or lima_mod.Limactl()
     if status(name, lima) == "Running":
+        pid = unsignalled_hostagent(name, env, kill=kill)
+        if pid is not None:
+            raise VmError(f"cannot stop {name}: {outside_stop_advice(name, pid)}")
         lima.stop(instance_name(name))
 
 

@@ -7,6 +7,62 @@ to D12, and tracks A and B, which are not repeated here).
 
 ## To do
 
+### Before a wider release: remove the development leftovers
+
+Decided (cananian, 2026-10-13): while cananian is the only user, these stay, as reminders.
+Just before others use wmf-sbx, remove them; to others they are only cruft.
+
+Shims for old names and old local state:
+- [ ] **`WMF_CLAUDE_GIT_HASH_OVERRIDE`** (now `WMF_SBX_GIT_HASH_OVERRIDE`): remove
+  `image.OLD_TREE_OVERRIDE_VAR`, the note in `image.tree_override`, its test, and the
+  README's "first name" sentence.
+- [ ] **`repos.yaml` and its old keys** (`rules`, `extra_environment`, `extra_packages`):
+  remove `resolve.LEGACY_CONFIG`, `LEGACY_KEYS`, `_LEGACY_NOTED` and `load_config`'s
+  `legacy` argument, their tests, the README's "Before `settings.yaml`" sentence, and the
+  `settings.yaml` finding's "(was ...)" notes in this file.
+- [ ] **Sandboxes from an older image**: the "sandbox is older than that" sentence in
+  MEDIAWIKI-TESTING.md §5.6 (Cypress).
+- [ ] **State files from older code**: the "made before this key existed" fallbacks and
+  comments: `attached` and `primaryDir` (state.py, resume.py, exec.py), `nestedSrc`
+  (`nested.session_grants` with no src; the "keeps its old settings" note under "Nested
+  Lima"), and a manifest with no `commit` (`image.py`, `newest_image`'s caller). Check
+  each with `git log -S` first: keep a fallback that other users can hit.
+- [ ] **The Phabricator username from `claude mcp get phabricator`** (create.py,
+  `phabricator_username`, step 3, "for a host whose last install predates" config.json):
+  remove it if upstream's installer has written config.json for long enough.
+
+Docker sbx leftovers:
+- [ ] **`state.new_state` still writes `daemonPort`/`hostPort`**, which nothing reads.
+- [ ] **`bin/wmf-sbx`'s `RETIRED` verbs** and their "belonged to the Docker sbx backend"
+  message.
+- [ ] **Docstrings and comments that name Docker sbx or `sbx create`/`sbx run`**:
+  `__init__.py` ("host-side tooling for Docker Sandboxes"), color.py (the palette "the
+  real `sbx create` uses"), create.py (`sbx create` requires ...), repos.py ("as with
+  Docker sbx"), ls_remotes.py ("the name-prefix guess it used to make", "NOTES §48").
+  `git grep -n -i -E 'docker sbx|sbx (create|run)|Docker Sandboxes' sbx`.
+- [ ] **`bin/git-review-check`'s `$SANDBOX_NAME`**: a Docker Sandboxes variable (the bug is
+  under "Git transport and host remotes"; fix that first).
+- [ ] **`sbx/reference/Secure_use_guidelines.wt`** recommends `docker sbx`: it is a copy of
+  a wiki page; refresh the copy (or the page) or drop it.
+
+Development scaffolding:
+- [ ] **Process references in code comments**: `lima-port/HANDOFF-LIMA.md`, phase
+  numbers, D-numbers, N1–N3, and "(RAN ...)" in about 100 comments in 24 files
+  (`git grep -c -E 'HANDOFF-LIMA|RAN\b|phase [0-9]' -- sbx/src sbx/bin sbx/helpers
+  sbx/templates`). Keep the reason each one gives; drop the pointer to the process.
+- [ ] **`lima-port/`**: the handoff documents, `TESTING-MACOS.md`, `acceptance/` and
+  `checks/` are for this port. Decide what ships: move the checks that stay useful
+  (`real-hardware.sh`, `cypress-nono.sh`, `credential-scan.py`) to `sbx/tests/` or
+  `sbx/checks/`, the decisions that the code depends on to README.md or SECURITY.md, and
+  drop the rest. Then fix every link to `lima-port/`.
+- [ ] **Personal names and paths**: "cananian" (about 15 places in `sbx/`, not counting the
+  tests), `~/Projects/Wikimedia`, cananian's host in the findings. Write "the engineer" and
+  example paths.
+- [ ] **This file**: trim it to what a maintainer needs (the decisions and findings that
+  the code depends on); move the to-dos to Phabricator (#WMF-Claude).
+- [ ] **`sbx/upstream/`**: drop what upstream took (the `ste-switch` topic and !130 are
+  merged), file the rest, and remove the directory when it is empty.
+
 ### Testing and the MediaWiki setup
 
 - [ ] **Use WMF CI's dependency set, not only the manifests**.
@@ -158,7 +214,6 @@ to D12, and tracks A and B, which are not repeated here).
   `dev-requires` repos need another policy (`:ro` by default)?
 - [ ] **A lost state file:** `wmf-sbx rm --scan DIR` to find and remove host remotes
   (`remote.<r>.wmfSbxSandbox`) of sandboxes that wmf-sbx no longer knows.
-- [ ] **`state.new_state` still writes `daemonPort`/`hostPort`**, which nothing reads now.
 - [ ] **Claude memory across sandboxes:** `~/.claude` (memory, projects) lives on the VM
   disk and goes with `rm`. Design: a host store (`global/` and `repos/<canonical>/`), seeded
   at create with `wmf-sbx cp`, extracted and merged at `rm`. Open: extract at `stop` too?

@@ -127,8 +127,10 @@ to D12, and tracks A and B, which are not repeated here).
   TimedMediaHandler for Parsoid (`integration/config` `zuul/dependencies.yaml`, "extras");
   without ParserFunctions 8 `ParserTest_Parsoid_*` tests fail. Wire settings.yaml
   `extra_dependencies:` into the walk, and consider shipping CI's extras as defaults.
-- [ ] **The manual-test skill says `/w/api.php`** (upstream skill); the sandbox wiki is a
-  docroot install (`$MW_SERVER/api.php`). Upstream topic, or a line in the sandbox CLAUDE.md.
+- The manual-test skill (upstream) takes the base URL from a "Manual testing" section in
+  CLAUDE.md: the sandbox's `~/.claude/CLAUDE.md` has one (`session.RUNNING_TESTS_MD`;
+  docroot install, no `/w`). The skill's own `/w` wording: branch `manual-test-script-path`,
+  for an upstream MR.
 
 ### Session, credentials, Claude Code
 

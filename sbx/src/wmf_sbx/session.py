@@ -367,6 +367,18 @@ QUnit and selenium need a browser, which is not installed by default: run
 `composer serve`. Do not change `MW_SCRIPT_PATH`: it is `/` on purpose, as
 in CI.
 
+Manual testing (`/wmf-claude:manual-test`): the wiki is
+`$MW_SERVER` (`http://localhost:4000`), served by `composer serve` from
+core; start it first. It is a docroot install: the scripts are at the
+root, with no `/w` prefix (`$MW_SERVER/api.php`, `$MW_SERVER/rest.php`,
+`$MW_SERVER/index.php?title=Main_Page`). It is plain HTTP on localhost,
+with no vhost: do not use `-k`, `--resolve` or a `Host` header, but do
+use `--noproxy '*'`. For example:
+`curl -sS --noproxy '*' "$MW_SERVER/api.php?action=query&meta=siteinfo&format=json" | jq .query.general.generator`.
+The admin account is `Admin` / `adminpassword`. This session already
+reaches local web ports (`--local-web`). Tier 2 (the chrome-devtools
+MCP) is not set up in this sandbox: use Tier 1, or a selenium test.
+
 Cypress e2e tests (Cite's `selenium-test`, for one) do not start under
 nono yet (~/MEDIAWIKI-TESTING.md §5.6): do not install or try them; say in
 your report that they did not run.

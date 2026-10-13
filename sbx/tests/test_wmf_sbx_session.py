@@ -143,6 +143,15 @@ class LauncherTests(unittest.TestCase):
         self.assertIn("install -d -m 0700 -o agent", nested.install_script(
             "x86_64", image.base_image("x86_64"), src))
 
+    def test_the_sandbox_claude_md_gives_manual_test_its_base_url(self):
+        # The manual-test skill looks for a "Manual testing" section; the
+        # sandbox wiki is a docroot install, with no /w prefix.
+        md = session.home_claude_md("demo")
+        self.assertIn("Manual testing (`/wmf-claude:manual-test`)", md)
+        self.assertIn("`$MW_SERVER/api.php`", md)
+        self.assertNotIn("/w/api.php", md)
+        self.assertIn(f"http://localhost:{session.WIKI_PORT}", md)
+
     def test_proxy_flags_and_claude_args_are_in_their_places(self):
         a = self.argv(proxy="192.168.5.2:3128", launcher_flags=["--allow-post=x.org"],
                       claude_args=["-p", "hi"], cred_path="/dev/shm/wmf-sbx-cred.x")

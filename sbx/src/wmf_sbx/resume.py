@@ -28,6 +28,7 @@ import sys
 
 from . import color as color_mod
 from . import credproxy as credproxy_mod
+from . import egress as egress_mod
 from . import image as image_mod
 from . import lima as lima_mod
 from . import nested as nested_mod
@@ -131,11 +132,13 @@ def main(argv=None, lima=None, env=None):
     try:
         cred_path = None
         if source is not None:
-            proxy, cred_path = start_proxy(name, source, lima=lima, env=env)
-            launcher_flags = list(launcher_flags) + [f"--open-port={proxy.port}"]
+            proxy, cred_path = start_proxy(name, source, lima=lima, env=env,
+                                           egress=egress_mod.enabled(state))
+            port = egress_mod.CRED_PORT if proxy.port is None else proxy.port
+            launcher_flags = list(launcher_flags) + [f"--open-port={port}"]
         argv = session_mod.launcher_argv(
             state, cred_path=cred_path, launcher_flags=launcher_flags,
-            claude_args=claude_args, proxy=session_mod.upstream_proxy(env))
+            claude_args=claude_args, proxy=session_mod.upstream_proxy(env, state))
         print(color_mod.dim(f"+ claude in {vm_mod.instance_name(name)}, as the agent, in "
                             f"{state['primaryDir']}"), file=sys.stderr)
         result = vm_mod.shell(name, argv, lima=lima, workdir="/", check=False,
@@ -156,16 +159,43 @@ def proxy_log_path(name, env=None):
     return os.path.join(state_mod.state_dir(env), f"{name}.credproxy.log")
 
 
-def start_proxy(name, source, lima=None, env=None):
+def start_proxy(name, source, lima=None, env=None, egress=False):
     """Start the session's credential proxy on the host, open the guest's
     host block to its port, and pass the phantom and the proxy's address
-    into the VM. Returns (proxy, the credential file's path in the VM)."""
+    into the VM. Returns (proxy, the credential file's path in the VM).
+
+    Behind the egress proxy (`egress`), the guest cannot reach the host's
+    loopback (restrict=on): the proxy listens on the sandbox's Unix
+    socket, which the QEMU wrapper's guestfwd at EGRESS_ADDR:CRED_PORT
+    connects to, and the guest's nftables already let that through
+    (sandbox-provision.sh)."""
     problem = credproxy_mod.check_source(source)
     if problem:
         print(color_mod.error(f"warning: {problem}"), file=sys.stderr)
     proxy = credproxy_mod.CredentialProxy(
         source, env=env, ca_files=image_mod.extra_ca_files(env),
         log_path=proxy_log_path(name, env))
+    if egress:
+        # One socket per sandbox (the guestfwd is fixed when QEMU starts):
+        # a second session would take it over, and the first one's
+        # phantom would then be refused.
+        path = egress_mod.cred_socket(name, env)
+        if credproxy_mod.socket_in_use(path):
+            raise session_mod.SessionError(
+                f"another session runs in {name}; behind the egress proxy, a sandbox "
+                f"has one session at a time")
+        try:
+            proxy.start(unix_path=path)
+        except OSError as e:
+            raise session_mod.SessionError(
+                f"could not start the credential proxy on {path} ({e})") from None
+        try:
+            return proxy, session_mod.put_credential(name, proxy.session_env(
+                base_url=f"http://{egress_mod.EGRESS_ADDR}:{egress_mod.CRED_PORT}"),
+                lima=lima)
+        except BaseException:
+            proxy.stop()
+            raise
     proxy.start()
     try:
         # A rule whose port has no listener on the host was left by a
@@ -189,6 +219,9 @@ def start_proxy(name, source, lima=None, env=None):
 
 def stop_proxy(name, proxy, lima=None):
     """Close the guest's host block to the proxy's port again, then stop it."""
+    if proxy.port is None:   # on the egress Unix socket: no rule
+        proxy.stop()
+        return
     try:
         vm_mod.shell(name, credproxy_mod.guest_rules_argv(remove=[proxy.port]),
                      lima=lima, check=False)

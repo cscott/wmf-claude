@@ -18,7 +18,6 @@ is kept in the VM at setup.SANDBOX_PLAN_FILE.
 import json
 import os
 
-from . import image as image_mod
 from . import kit as kit_mod
 from . import setup as setup_mod
 from . import vm as vm_mod
@@ -49,7 +48,7 @@ def run_setup(name, plan, lima=None, env=None):
     with open(SETUP_SOURCE, encoding="utf-8") as f:
         source = f.read()
     argv = vm_mod.agent_argv(["python3", "-", "--lima", setup_mod.SANDBOX_PLAN_FILE],
-                             env=image_mod.guest_proxy_env(env))
+                             env=vm_mod.guest_proxy_env(name, env))
     res = vm_mod.shell(name, argv, lima=lima, input=source, check=False, capture=False)
     if res.returncode != 0:
         raise SetupError(

@@ -25,6 +25,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from . import deps as deps_mod
+
 try:
     import yaml
 except ImportError:  # pragma: no cover - exercised only when yaml is absent
@@ -71,7 +73,7 @@ def _strip_xssi(body):
 _ARCHIVED_MARKER = "[ARCHIVED]"
 
 
-def gerrit_search(substring):
+def gerrit_search(substring, opener=None):
     """Query Gerrit's REST API for projects whose path contains `substring`
     anywhere (the server does the substring match; we still filter the
     result down to an exact final-segment match ourselves).
@@ -90,8 +92,9 @@ def gerrit_search(substring):
     # key=value param -- we always ask for it since we need descriptions to
     # flag archived projects.
     url = GERRIT_URL + "?" + urllib.parse.urlencode(params) + "&d"
+    opener = opener or deps_mod.gerrit_opener(deps_mod.gerrit_user_agent())
     try:
-        with urllib.request.urlopen(url, timeout=10) as resp:
+        with opener(url, timeout=10) as resp:
             body = resp.read().decode("utf-8")
     except (urllib.error.URLError, OSError) as e:
         raise ResolutionError(f"Could not reach Gerrit ({url}): {e}") from e
@@ -557,6 +560,13 @@ def resolve(spec, config_path=DEFAULT_CONFIG, search=gerrit_search, exists=os.pa
     """End-to-end convenience entry point. Returns (canonical, path, rule,
     needs_clone)."""
     config = load_config(config_path)
+    if search is gerrit_search:
+        # GERRITUA (deps.gerrit_opener), from the shell or the settings.
+        opener = deps_mod.gerrit_opener(deps_mod.gerrit_user_agent(config))
+
+        def search(substring):
+            return gerrit_search(substring, opener=opener)
+
     canonical = resolve_canonical_path(spec, search=search, warn=warn, gitlab=gitlab)
     path, rule, needs_clone = resolve_directory(canonical, config["repos"], exists=exists)
     return canonical, path, rule, needs_clone

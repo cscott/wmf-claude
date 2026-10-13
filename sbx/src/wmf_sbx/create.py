@@ -261,11 +261,7 @@ def expand_dependencies(resolved, split, config, config_path, include_dev=True,
     # Looked up here rather than as a default argument so tests (and
     # anything else) can substitute the network call by patching the module.
     if fetch is None:
-        # create runs on the host: GERRITUA from its shell, or else the one
-        # settings.yaml gives the sessions.
-        user_agent = (os.environ.get("GERRITUA")
-                      or (config.get("environment") or {}).get("GERRITUA"))
-        opener = deps_mod.gerrit_opener(user_agent)
+        opener = deps_mod.gerrit_opener(deps_mod.gerrit_user_agent(config))
 
         def fetch(canonical, warn=None):
             return deps_mod.fetch_manifest(canonical, opener=opener, warn=warn)

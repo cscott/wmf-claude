@@ -461,6 +461,38 @@ class ExpandDependenciesTests(unittest.TestCase):
         self.assertIn(pf, [path for _canonical, path, _needs_clone in resolved])
         self.assertEqual(origins[pf], [self.EXT + "Cite", self.EXT + "ParserFunctions"])
 
+    def fetched_user_agent(self, environ, environment):
+        """The User-Agent create's default fetch sends to gitiles."""
+        seen = []
+
+        def fetch_manifest(canonical, opener=None, warn=None):
+            opener(c.deps_mod.GITILES_URL.format(project="p", filename="f"), 5)
+
+        def urlopen(req, timeout=None):
+            seen.append(req.get_header("User-agent") if hasattr(req, "get_header") else None)
+
+        config = {"repos": self.rules, "environment": environment}
+        self.write_manifest(self.cite, name="Cite")
+        env = {k: v for k, v in os.environ.items() if k != "GERRITUA"}
+        env.update(environ)
+        with mock.patch.dict(os.environ, env, clear=True), \
+                mock.patch.object(c.deps_mod, "fetch_manifest", fetch_manifest), \
+                mock.patch.object(c.deps_mod.urllib.request, "urlopen", urlopen):
+            c.expand_dependencies(
+                [(self.EXT + "Cite", self.cite, False)], [(self.EXT + "Cite", False)],
+                config, self.config_path, warn=lambda msg: None)
+        return set(seen)
+
+    def test_fetches_send_gerritua_from_the_hosts_environment_first(self):
+        self.assertEqual(self.fetched_user_agent({"GERRITUA": "shell"}, {"GERRITUA": "settings"}),
+                         {"shell"})
+
+    def test_fetches_send_gerritua_from_the_settings_otherwise(self):
+        self.assertEqual(self.fetched_user_agent({}, {"GERRITUA": "settings"}), {"settings"})
+
+    def test_fetches_send_no_user_agent_without_gerritua(self):
+        self.assertEqual(self.fetched_user_agent({}, {}), {None})
+
     def test_a_malformed_extra_dependencies_entry_is_an_error(self):
         config = {"repos": self.rules, "extra_dependencies": {self.EXT + "Cite": "Echo"}}
         with self.assertRaisesRegex(r.ResolutionError, "extra_dependencies"):

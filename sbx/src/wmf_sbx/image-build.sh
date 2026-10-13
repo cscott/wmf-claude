@@ -245,6 +245,12 @@ getent group "$WMF_SBX_AGENT_GID" >/dev/null || groupadd -g "$WMF_SBX_AGENT_GID"
 useradd -m -u "$WMF_SBX_AGENT_UID" -g "$WMF_SBX_AGENT_GID" -s /bin/bash \
   -c 'wmf-sbx agent (runs Claude Code)' agent
 chmod 0750 /home/agent
+# Cypress under nono (session.CYPRESS_GRANTS). nono grants only paths that
+# exist, so Electron's config dir is made here. Xvfb writes its compiled
+# keymaps to /var/lib/xkb if it can, else to /tmp, which a session cannot
+# read back, and Xvfb stops (RAN).
+install -d -m 0700 -o agent -g "$WMF_SBX_AGENT_GID" /home/agent/.config /home/agent/.config/Cypress
+install -d -m 0755 -o agent -g "$WMF_SBX_AGENT_GID" /var/lib/xkb
 # Give the freed blocks back to the qcow2 file (the drive has discard=on).
 fstrim -av || true
 sync

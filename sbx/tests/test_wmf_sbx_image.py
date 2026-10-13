@@ -354,6 +354,16 @@ class BuilderTests(unittest.TestCase):
         self.assertIn('"$WMF_SBX_CLAUDE_SHA256  $CC_DIR/claude" | sha256sum -c --strict', script)
         self.assertNotRegex(script, r"curl[^\n]*\|\s*(ba)?sh")
 
+    def test_the_build_script_makes_the_cypress_dirs_for_the_agent(self):
+        # nono grants only paths that exist (session.CYPRESS_GRANTS).
+        with open(image.BUILD_SCRIPT, encoding="utf-8") as f:
+            script = f.read()
+        useradd = script.index("useradd ")
+        for d in ("/home/agent/.config/Cypress", "/var/lib/xkb"):
+            line = next(l for l in script.splitlines() if l.startswith("install -d") and d in l)
+            self.assertIn("-o agent", line)
+            self.assertGreater(script.index(line), useradd)
+
     def test_the_build_script_seals_the_identity_last(self):
         with open(image.BUILD_SCRIPT, encoding="utf-8") as f:
             script = f.read()

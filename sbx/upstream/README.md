@@ -28,8 +28,8 @@ not as a task here. Those already sent or merged:
   came with
   [!57](https://gitlab.wikimedia.org/repos/product-safety-and-integrity/wmf-claude/-/merge_requests/57).
 - `run-tests` and `vendor/bin/phpunit`:
-  [!130](https://gitlab.wikimedia.org/repos/product-safety-and-integrity/wmf-claude/-/merge_requests/130)
-  (open). The `lima-port` branch carries it.
+  [!130](https://gitlab.wikimedia.org/repos/product-safety-and-integrity/wmf-claude/-/merge_requests/130),
+  merged; `lima-port` is rebased on it.
 - The SessionStart backend seam and the Phabricator username in
   `config.json`:
   [!132](https://gitlab.wikimedia.org/repos/product-safety-and-integrity/wmf-claude/-/merge_requests/132)
@@ -37,14 +37,15 @@ not as a task here. Those already sent or merged:
   [!131](https://gitlab.wikimedia.org/repos/product-safety-and-integrity/wmf-claude/-/merge_requests/131)
   (open). The `lima-port` branch carries them.
 
-Filed:
-
 - **`WMF_CLAUDE_STE=0`** leaves the ASD-STE100 writing bullet out of the
   SessionStart context:
-  [!133](https://gitlab.wikimedia.org/repos/product-safety-and-integrity/wmf-claude/-/merge_requests/133)
-  (open), from branch `ste-switch` on
-  [cscott/wmf-claude](https://github.com/cscott/wmf-claude/tree/ste-switch),
-  one commit (de1117f) on upstream `main` 10aefc1. If !132 merges first,
-  the rebase conflicts in the hook's heredoc; redo the same split there.
-  The `lima-port` branch has its own copy of the change, on top of !132's
-  seam; when !133 merges, take upstream's version in the next rebase.
+  [!133](https://gitlab.wikimedia.org/repos/product-safety-and-integrity/wmf-claude/-/merge_requests/133),
+  merged; `lima-port` is rebased on it (its copy of the change sits on
+  !132's seam).
+
+To file:
+
+- **The manual-test skill's `/w` path**: branch `manual-test-script-path`
+  on [cscott/wmf-claude](https://github.com/cscott/wmf-claude/tree/manual-test-script-path),
+  one commit on upstream `main` 70712f6. A docroot install (CI's, a
+  `composer serve` wiki, a wmf-sbx sandbox) has its scripts at the root.

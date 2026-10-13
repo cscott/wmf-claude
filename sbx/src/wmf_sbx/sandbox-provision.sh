@@ -42,7 +42,12 @@ chmod 0750 "/home/$AGENT" "$(getent passwd "$ENGINEER" | cut -d: -f6)"
 # http_proxy names 127.0.0.1) is reachable on exactly its port; Lima
 # gives the guest that proxy as 192.168.5.2. The agent gets TCP 80 and
 # 443 only, plus that port.
+# Behind the egress proxy (restrict=on) the guest has no default route:
+# take the interface that reaches Lima's gateway.
 DEV=$(ip -4 route show default | awk '{print $5; exit}')
+if [[ -z "$DEV" ]]; then
+  DEV=$(ip -4 -o route get 192.168.5.2 | awk '{for (i = 1; i < NF; i++) if ($i == "dev") {print $(i+1); exit}}')
+fi
 NET=$(ip -4 -o route show dev "$DEV" scope link | awk '{print $1; exit}')
 AGENT_UID=$(id -u "$AGENT")
 PROXY_RULE=""

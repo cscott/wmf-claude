@@ -115,12 +115,15 @@ CLAUDE_CHANNELS = ("stable", "latest")
 # - xz-utils, to unpack the Node tarball;
 # - nftables, for the host block (§5.3);
 # - unzip and zstd, for the helpers;
+# - rsync: Lima installs it at a sandbox's first boot when it is missing,
+#   which a sandbox behind the egress proxy cannot (Lima's step runs
+#   before the provisioning gives apt the proxy);
 # - the shared libraries that Chrome for Testing needs on Debian 13
 #   (`ldd`, RAN 2026-10-09). Contained sandboxes cannot apt-get, so
 #   mw-install-browser must find them already here (§5.2).
 IMAGE_PACKAGES = list(kit.BASE_PACKAGES) + [
     "ca-certificates", "curl", "git", "jq", "python3", "python3-venv",
-    "nftables", "unzip", "xz-utils", "zstd",
+    "nftables", "rsync", "unzip", "xz-utils", "zstd",
     "libnss3", "libnspr4", "libatk1.0-0t64", "libatk-bridge2.0-0t64",
     "libx11-6", "libxcomposite1", "libxdamage1", "libxext6", "libxfixes3",
     "libxrandr2", "libgbm1", "libxcb1", "libxkbcommon0", "libasound2t64",

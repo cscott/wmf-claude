@@ -459,6 +459,11 @@ def images_in_use(env=None):
             if os.path.dirname(parent) == root and KEY_RE.match(os.path.basename(parent)):
                 add(os.path.basename(parent), inst[len("wmf-sbx-"):]
                     if inst.startswith("wmf-sbx-") else inst)
+    # A warm snapshot keeps the golden image it is backed by (track B3).
+    from . import snapshot as snapshot_mod
+    for key, users in snapshot_mod.golden_keys_in_use(env).items():
+        for name in users:
+            add(key, name)
     return used
 
 
@@ -592,9 +597,20 @@ def choose_inputs(inputs, env=None, config=None, expire=None, renew=False, now=N
 
 
 def gc_images(env=None, config=None, keep=(), now=None):
-    """`image gc`: remove the images that no sandbox uses and that are
-    older than gc_age."""
-    return prune_images(keep=keep, env=env, min_age=gc_age(config), now=now)
+    """`image gc`: remove the warm snapshots, then the golden images, that
+    no sandbox uses and that are older than gc_age. Returns [(name,
+    bytes)]."""
+    from . import snapshot as snapshot_mod
+    gone = [(f"snapshot {k}/{g}", n) for k, g, n in
+            snapshot_mod.prune(env=env, gc_age=gc_age(config), now=now)]
+    return gone + prune_images(keep=keep, env=env, min_age=gc_age(config), now=now)
+
+
+def prune_all(env=None):
+    """`image prune`: every unused snapshot, then every unused image."""
+    from . import snapshot as snapshot_mod
+    gone = [(f"snapshot {k}/{g}", n) for k, g, n in snapshot_mod.prune(env=env)]
+    return gone + prune_images(env=env)
 
 
 # -- the builder ----------------------------------------------------------
@@ -956,6 +972,14 @@ def main(argv=None, env=None, lima=None, run=subprocess.run, out=sys.stdout):
                 say(f"{key}  {m.get('created', '?')}  {_human(size):>9}  "
                     f"wmf-claude {tree}  claude {inp.get('claude', {}).get('version', '?')}  "
                     f"nono {inp.get('nono', '?')}  used by: {users}")
+            from . import snapshot as snapshot_mod
+            snap_used = snapshot_mod.in_use(env)
+            for skey in snapshot_mod.list_keys(env):
+                for gen, path, meta in snapshot_mod.list_generations(skey, env):
+                    users = ", ".join(snap_used.get(os.path.realpath(path), [])) or "-"
+                    say(f"snapshot {skey}/{gen}  {_human(os.path.getsize(path)):>9}  "
+                        f"on {meta.get('golden', '?')}  {len(meta.get('repos') or [])} "
+                        f"repos (made by {meta.get('sandbox', '?')})  used by: {users}")
         elif args.cmd == "rm":
             remove_image(args.key, env)
             say(f"removed {args.key}")
@@ -965,7 +989,7 @@ def main(argv=None, env=None, lima=None, run=subprocess.run, out=sys.stdout):
                 config = resolve_mod.load_config(args.config or resolve_mod.DEFAULT_CONFIG)
                 gone = gc_images(env=env, config=config)
             else:
-                gone = prune_images(env=env)
+                gone = prune_all(env=env)
             say("removed: " + (", ".join(f"{k} ({_human(n)})" for k, n in gone)
                                if gone else "nothing"))
     except (ImageError, lima_mod.LimaError, state_mod.StateError) as e:

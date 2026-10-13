@@ -196,7 +196,11 @@ def main(argv=None, run=subprocess.run, env=None, lima=None, confirm=input):
             print(f"error: --scan {root}: not a directory", file=sys.stderr)
             status = 1
             continue
-        found = remotes_mod.scan_orphans(root, state_mod.list_names(env=env), run=run,
+        # A warm snapshot is a borrower too (snapshot.py): keep its entries.
+        from . import snapshot as snapshot_mod
+        known = list(state_mod.list_names(env=env)) + [
+            snapshot_mod.borrower_name(k) for k in snapshot_mod.list_keys(env)]
+        found = remotes_mod.scan_orphans(root, known, run=run,
                                          warn=warn, dry_run=args.dry_run)
         prefix = "would remove" if args.dry_run else "removed"
         for host_dir, what in found:

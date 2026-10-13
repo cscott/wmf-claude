@@ -406,7 +406,7 @@ class CreateTests(Env):
         self.date_image("2026-01-01T00:00:00+00:00")
         self.assertEqual(self.create("--name", "demo", inputs=False), 0, self.err)
         self.assertFalse(os.path.exists(image.entry_dir(self.KEY, self.env)))
-        self.assertIn("removed 1 unused golden image(s) older than 7 days", self.err)
+        self.assertIn("removed 1 unused golden image(s) and snapshot(s) older than 7 days", self.err)
 
     def test_a_create_keeps_unused_images_younger_than_the_gc_age(self):
         now = datetime.datetime.now(datetime.timezone.utc)

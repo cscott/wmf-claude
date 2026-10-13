@@ -6,10 +6,13 @@ with:
 The proxy ran against api.anthropic.com in L1 (sbx/NOTES.md, "Shared
 login"); here it forwards to a fake upstream on the loopback."""
 
+import contextlib
 import http.client
 import http.server
+import io
 import json
 import os
+import socket
 import socketserver
 import subprocess
 import sys
@@ -137,6 +140,19 @@ class FakeUpstream(http.server.BaseHTTPRequestHandler):
         body = self.rfile.read(length) if length else b""
         FakeUpstream.seen.append((self.command, self.path,
                                   {k.lower(): v for k, v in self.headers.items()}, body))
+        if self.path.startswith("/v1/stream"):
+            # A long streamed response, as /v1/messages sends.
+            self.send_response(200)
+            self.send_header("content-type", "text/event-stream")
+            self.send_header("content-length", str(200 * 65536))
+            self.end_headers()
+            try:
+                for _ in range(200):
+                    self.wfile.write(b"x" * 65536)
+                    time.sleep(0.005)
+            except OSError:
+                pass
+            return
         out = json.dumps({"ok": True, "path": self.path}).encode() * 3
         self.send_response(200)
         self.send_header("content-type", "application/json")
@@ -241,6 +257,40 @@ class ProxyTests(unittest.TestCase):
         self.assertIn("POST /v1/messages 200", text)
         for s in (REAL_KEY, self.proxy.phantom, "secret body"):
             self.assertNotIn(s, text)
+
+    def test_a_client_that_goes_away_is_logged_not_printed(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            conn = http.client.HTTPConnection("127.0.0.1", self.proxy.port, timeout=10)
+            conn.request("POST", "/v1/stream", body=b"{}",
+                         headers={"x-api-key": self.proxy.phantom})
+            resp = conn.getresponse()
+            resp.read(1000)
+            conn.sock.shutdown(socket.SHUT_RDWR)
+            conn.close()
+            text = ""
+            for _ in range(100):
+                if os.path.exists(self.log):
+                    with open(self.log) as f:
+                        text = f.read()
+                if "closed the connection" in text:
+                    break
+                time.sleep(0.05)
+        self.assertIn("POST /v1/stream - 0B", text)
+        self.assertIn("the client closed the connection", text)
+        self.assertEqual(err.getvalue(), "")
+        # The proxy still serves.
+        status, _ = self.request("POST", "/v1/messages", body=b"{}",
+                                 headers={"x-api-key": self.proxy.phantom})
+        self.assertEqual(status, 200)
+
+    def test_other_errors_go_to_the_log(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.proxy._server.handle_error(None, ("127.0.0.1", 1))
+        self.assertEqual(err.getvalue(), "")
+        with open(self.log) as f:
+            self.assertIn("error in the proxy", f.read())
 
     def test_the_session_env(self):
         env = self.proxy.session_env()

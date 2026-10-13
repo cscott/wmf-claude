@@ -126,7 +126,7 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(argv[7].endswith("/profiles/wmf-engineer.json"))
         allowed = [argv[i + 1] for i, a in enumerate(argv) if a == "--allow-domain"]
         self.assertEqual(allowed, list(session.REGISTRY_DOMAINS)
-                         + ["deb.debian.org", "example.org"])
+                         + ["deb.debian.org", "registry.nono.sh", "example.org"])
         self.assertEqual(argv[argv.index("--proxy-ca-cert") + 1],
                          egress.ca_cert("demo", self.env))
         self.assertNotIn("--port", argv)

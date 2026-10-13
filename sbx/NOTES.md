@@ -331,10 +331,10 @@ to D12, and tracks A and B, which are not repeated here).
   `origin`, the upstream URL from its canonical (Gerrit, or GitLab followed to the fork's
   root) or else the host's https `origin`. It falls back to the host's branch only when
   upstream does not fetch or no upstream is known, and warns for both.
-- `WMF_CLAUDE_GIT_HASH_OVERRIDE=latest`: `create` takes the newest cached image for this
+- `WMF_SBX_GIT_HASH_OVERRIDE=latest`: `create` takes the newest cached image for this
   arch and uid (`image.newest_image`, also used by `login`); it builds, keyed on HEAD,
   only when there is none.
-- Golden image key: `WMF_CLAUDE_GIT_HASH_OVERRIDE` replaces the HEAD commit (the engineer's
+- Golden image key: `WMF_SBX_GIT_HASH_OVERRIDE` replaces the HEAD commit (the engineer's
   choice over keying on tree hashes); the manifest's `commit` is the HEAD that was built.
   After a build, `create` prunes unused images older than one hour (`PRUNE_MIN_AGE`: a
   concurrent `create` records its sandbox only after its build).

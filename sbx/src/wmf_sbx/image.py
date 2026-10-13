@@ -92,9 +92,13 @@ CLAUDE_CHANNEL = "stable"
 # into the cache key, so another release gives another image.
 CLAUDE_VERSION_VAR = "WMF_SBX_CLAUDE_VERSION"
 # Replaces the HEAD commit in the cache key (tree_revision).
-TREE_OVERRIDE_VAR = "WMF_CLAUDE_GIT_HASH_OVERRIDE"
+TREE_OVERRIDE_VAR = "WMF_SBX_GIT_HASH_OVERRIDE"
+# Its first name. Still read, with a note once, when the new one is not
+# set (wmf-sbx's own variables are WMF_SBX_*; WMF_CLAUDE_* are upstream's).
+OLD_TREE_OVERRIDE_VAR = "WMF_CLAUDE_GIT_HASH_OVERRIDE"
+_OLD_TREE_OVERRIDE_NOTED = []
 TREE_OVERRIDE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
-# WMF_CLAUDE_GIT_HASH_OVERRIDE=latest: `create` uses the newest cached image
+# WMF_SBX_GIT_HASH_OVERRIDE=latest: `create` uses the newest cached image
 # (for this architecture and host uid) instead of the one for the current
 # inputs, and builds only when there is none (newest_image).
 LATEST = "latest"
@@ -263,12 +267,26 @@ def head_commit(root=REPO_ROOT, run=subprocess.run):
     return result.stdout.strip()
 
 
+def tree_override(env=None):
+    """$WMF_SBX_GIT_HASH_OVERRIDE, stripped, or else its old name's value
+    (with a note, once per run)."""
+    env = os.environ if env is None else env
+    if TREE_OVERRIDE_VAR in env:
+        return (env.get(TREE_OVERRIDE_VAR) or "").strip()
+    old = (env.get(OLD_TREE_OVERRIDE_VAR) or "").strip()
+    if old and not _OLD_TREE_OVERRIDE_NOTED:
+        _OLD_TREE_OVERRIDE_NOTED.append(True)
+        print(f"note: {OLD_TREE_OVERRIDE_VAR} is now {TREE_OVERRIDE_VAR}; the old name "
+              f"still works for now", file=sys.stderr)
+    return old
+
+
 def tree_revision(root=REPO_ROOT, run=subprocess.run, env=None):
     """The wmf-claude part of the cache key: the HEAD commit, or the value
-    of $WMF_CLAUDE_GIT_HASH_OVERRIDE. With the override, new commits do not
+    of $WMF_SBX_GIT_HASH_OVERRIDE. With the override, new commits do not
     give a new image; change its value to rebuild. The image still gets
     the tree of HEAD at the time it is built."""
-    override = ((os.environ if env is None else env).get(TREE_OVERRIDE_VAR) or "").strip()
+    override = tree_override(env)
     if not override or override == LATEST:
         return head_commit(root, run=run)
     if not TREE_OVERRIDE_RE.match(override):
@@ -304,8 +322,8 @@ def agent_ids(uid=None, gid=None):
 
 
 def wants_latest(env=None):
-    """Whether WMF_CLAUDE_GIT_HASH_OVERRIDE asks for the newest cached image."""
-    return ((os.environ if env is None else env).get(TREE_OVERRIDE_VAR) or "").strip() == LATEST
+    """Whether WMF_SBX_GIT_HASH_OVERRIDE asks for the newest cached image."""
+    return tree_override(env) == LATEST
 
 
 def image_packages(extra=()):

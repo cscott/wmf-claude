@@ -601,7 +601,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
 
         # The golden image: the cache entry for the current inputs, built
         # when it is missing (phase 2), or the one --image names, or with
-        # WMF_CLAUDE_GIT_HASH_OVERRIDE=latest the newest cached one.
+        # WMF_SBX_GIT_HASH_OVERRIDE=latest the newest cached one.
         latest = (image_mod.newest_image(env) if not args.image
                   and image_mod.wants_latest(env) else None)
         if args.image or latest:

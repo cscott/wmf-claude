@@ -211,16 +211,17 @@ The images are in `${XDG_CACHE_HOME:-~/.cache}/wmf-sbx/images/KEY/`,
 about 2.5 GB each.
 
 When you work on wmf-claude, every commit changes the key. To keep the
-image while you commit, set `WMF_CLAUDE_GIT_HASH_OVERRIDE`: its value
+image while you commit, set `WMF_SBX_GIT_HASH_OVERRIDE`: its value
 replaces the commit in the key. Change the value to build a new image
 from the current HEAD:
 
 ```bash
-export WMF_CLAUDE_GIT_HASH_OVERRIDE=v1   # commits no longer rebuild the image
-export WMF_CLAUDE_GIT_HASH_OVERRIDE=v2   # rebuild once, from HEAD
+export WMF_SBX_GIT_HASH_OVERRIDE=v1   # commits no longer rebuild the image
+export WMF_SBX_GIT_HASH_OVERRIDE=v2   # rebuild once, from HEAD
 ```
 
-`WMF_CLAUDE_GIT_HASH_OVERRIDE=latest` uses the newest cached image (for
+(Its first name, `WMF_CLAUDE_GIT_HASH_OVERRIDE`, still works for now,
+with a note.) `WMF_SBX_GIT_HASH_OVERRIDE=latest` uses the newest cached image (for
 your machine's architecture and uid) whatever its inputs, as `wmf-sbx
 login` does, and builds one only when the cache has none. It ignores
 other changes too (a new Claude Code release, `packages:`).
@@ -308,7 +309,7 @@ wmf-sbx create PRIMARY[:ro] [EXTRA[:ro] ...] [options]
   without it the inner VMs run, slowly, without KVM. For example:
   `wmf-sbx create --nested --no-deps ~/src/wmf-claude`.
 - `--image KEY`: use a cached golden image (`wmf-sbx image ls`), not the
-  one for the current inputs (see also `WMF_CLAUDE_GIT_HASH_OVERRIDE`,
+  one for the current inputs (see also `WMF_SBX_GIT_HASH_OVERRIDE`,
   "The golden image cache").
 - `--dry-run`: print the plan, the image key and the Lima config.
 

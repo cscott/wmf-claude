@@ -7,8 +7,10 @@ records the calls; a fake `run` stands in for git, tar and qemu-img. The
 real build was run once in a VM (lima-port/HANDOFF-LIMA.md §11, phase 2).
 """
 
+import contextlib
 import copy
 import datetime
+import io
 import json
 import os
 import re
@@ -254,6 +256,21 @@ class InputTests(unittest.TestCase):
         self.assertFalse(image.wants_latest({image.TREE_OVERRIDE_VAR: "v1"}))
         self.assertEqual(image.tree_revision(run=lambda a, **k: Done(stdout="abc123\n"),
                                              env=env), "abc123")
+
+    def test_the_old_override_name_still_works_with_a_note(self):
+        image._OLD_TREE_OVERRIDE_NOTED.clear()
+        self.addCleanup(image._OLD_TREE_OVERRIDE_NOTED.clear)
+        old = {image.OLD_TREE_OVERRIDE_VAR: "v7"}
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(image.tree_override(old), "v7")
+            self.assertEqual(image.tree_override(old), "v7")
+            self.assertTrue(image.wants_latest({image.OLD_TREE_OVERRIDE_VAR: "latest"}))
+        self.assertEqual(err.getvalue().count("is now WMF_SBX_GIT_HASH_OVERRIDE"), 1)
+        # The new name wins, even when it is empty.
+        both = {image.TREE_OVERRIDE_VAR: "", image.OLD_TREE_OVERRIDE_VAR: "v7"}
+        self.assertEqual(image.tree_override(both), "")
+        self.assertEqual(image.TREE_OVERRIDE_VAR, "WMF_SBX_GIT_HASH_OVERRIDE")
 
     def test_extra_packages_extend_the_list_and_the_key(self):
         self.assertEqual(image.image_packages(), list(image.IMAGE_PACKAGES))

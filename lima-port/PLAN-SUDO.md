@@ -33,7 +33,7 @@ nono 0.78 runs its proxy standalone: `nono proxy --profile FILE`,
 ## The proxy's lifetime: owned by the QEMU wrapper
 
 D11 has `start`/`stop`/`rm` manage a proxy daemon, with a port in state.
-Proposed instead: `helpers/wmf-sbx-qemu` (the `QEMU_SYSTEM_<ARCH>`
+Proposed instead: `bin/wmf-sbx-qemu` (the `QEMU_SYSTEM_<ARCH>`
 wrapper) **starts the proxy, runs QEMU as its child, and stops the proxy
 when QEMU exits**.
 
@@ -130,14 +130,21 @@ for 192.168.5.100:3128; `cmd:` needs `sh -c`; `/etc/gitconfig`
 `http.proxyAuthMethod=basic` and `NODE_USE_ENV_PROXY=1` in the guest.
 Go on `nono proxy`; 5, 6, 7 and 9 remain.
 
-## A2.1 The wrapper: `sbx/helpers/wmf-sbx-qemu` (Python)
+## A2.1 The wrapper: `sbx/bin/wmf-sbx-qemu` (Python)
+
+Landed (2026-10-13) as `bin/wmf-sbx-qemu` + `src/wmf_sbx/qemu_wrapper.py`
+(it runs on the host, so `bin/`, not `helpers/`). The shim is a thread
+in the wrapper; SIGUSR1 starts a new proxy (for `wmf-sbx allow`); the
+proxy and QEMU get `PR_SET_PDEATHSIG` on Linux. Items 5 and 6 RAN
+(NOTES); the guest-clock skew they found goes to A2.3.
+
 
 - Probe calls (no `-pidfile`/`-qmp`): exec the real QEMU unchanged.
 - The boot call: exactly one `-netdev user,…`, no other `-netdev` or
   network `-device`, else refuse (exit non-zero, a message on stderr
   that Lima shows). Append `restrict=on,guestfwd=…`.
 - Starts the proxy (its argv from a file wmf-sbx wrote, see A2.2), and
-  `egress.AuthShim` in its own process when the upstream needs
+  `egress.AuthShim` (a thread of the wrapper) when the upstream needs
   credentials (one process tree: the engineer's decision, 2026-10-13),
   waits for it to listen, runs QEMU, forwards signals, stops the proxy.
   The proxy's stdout goes to /dev/null: without `--silent` (which also
@@ -177,7 +184,11 @@ against the session proxy (wiki GET 200, POST 403, off-list 403).
   not needed (nothing in the guest reaches 192.168.5.2) but stays,
   harmless.
 - `vm.ensure_running`: for a `sudo` sandbox, write `proxy.json` and give
-  `limactl start` `QEMU_SYSTEM_<ARCH>=…/wmf-sbx-qemu`.
+  `limactl start` `QEMU_SYSTEM_<ARCH>=…/wmf-sbx-qemu`,
+  `WMF_SBX_QEMU_REAL` and `WMF_SBX_EGRESS_CONFIG`.
+- The guest's clock: no NTP behind `restrict=on`, and nono's leaf
+  certificates start at "now" (NOTES). Try `ptp_kvm` + chrony unnested;
+  else set the clock at each `start`.
 - The `sudo` invariants (replace "the agent is not in sudo"): an
   allowlisted host through the proxy answers; a host off the list, a
   POST to a read-only wiki, `host.lima.internal:22` and a direct

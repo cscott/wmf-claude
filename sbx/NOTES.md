@@ -247,9 +247,14 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   - In the m7 script's runs (golden image, nested), the first sync came about 5 s after
     "guest agent is alive" ("was -1530ms off", then "-1529ms"), and both times before
     `limactl start` returned: right after it, guest - host was 0.042 s and the first
-    requests to three hosts all got 200. So (a) closes before READY when the guest agent
-    comes up early; A2.3 still waits for the first "Time sync:" line, so as not to depend
-    on that.
+    requests to three hosts all got 200.
+  - On the engineer's Linux host (unnested, Lima 2.3.0-beta.1, QEMU 8.2.2, Debian's cloud
+    image): the guest was -534 and -229 ms off at the first sync. At the restarts the sync
+    landed 1 s before `limactl start` returned; at the first boot (the provisioning) READY
+    came in the same second as "guest agent is alive", so the sync came about 5 s after
+    `limactl start` returned. So (a) is a race, both ways: A2.3's start must wait for the
+    first "Time sync:" line. `ptp_kvm` loads there (`/dev/ptp0`), so chrony with a PHC
+    refclock is possible unnested on Linux (not nested, not on macOS).
   - No guest agent, no sync: Lima runs none in `plain: true` mode
     (`hostagent.go`: "Guest agent will not be running"). wmf-sbx's template is not plain;
     `lima/wmf-claude.yaml` is.
@@ -288,7 +293,13 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   proxy or QEMU, and the VM starts again. In the swap, the session's own proxy refuses
   example.org upstream of the egress proxy, so the script checks the egress proxy's
   reason ("not in the allowlist" before, not after), not the HTTP status.
-- Not yet: 7 on the engineer's Linux host (unnested) and on macOS (TESTING-MACOS step 9).
+- **Item 7 on the engineer's Linux host** (unnested; nono 0.79.0, Lima 2.3.0-beta.1, QEMU
+  8.2.2, Ubuntu 24.04, kernel 7.0): every check passed, the four stops included. One
+  thing open: after the swap, the new proxy let example.org through its allowlist, but the
+  request failed: "DNS resolution returned no addresses" (the host's own lookup, by nono
+  proxy), so the guest got 000. The script now asks for a 200 after the swap when no
+  proxy is upstream. Cause not known yet: the host's resolver, or nono's address filter.
+- Not yet: 7 on macOS (TESTING-MACOS step 9).
 
 ### Testing in the sandbox
 

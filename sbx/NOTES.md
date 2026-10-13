@@ -88,9 +88,6 @@ Development scaffolding:
   the VM borrows while gc is suspended.
 - [ ] **A full `wmf-sbx ls`**: sandboxes, their clones, and unfetched-commit
   counts per clone; `wmf-sbx-ls-remotes` lists only the host-side remotes.
-- [ ] **Sandbox-to-sandbox `wmf-sbx cp`**. `cp.py` still refuses it ("write
-  exactly one of SRC and DST as NAME:PATH"). Copy through a host temp file (clean up
-  on failure) and say so in the `+ resolved ...` trace.
 - [ ] **Ambiguous path shortcut on a TTY: prompt**. When `.` matches more than
   one sandbox's `primaryDir`, prompt to choose instead of failing.
 

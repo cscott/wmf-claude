@@ -573,11 +573,61 @@ class CpTests(Env):
         self.assertEqual(copies, [("copy", "wmf-sbx-sbx-demo:/tmp/wmf-sbx-cp.AbC123/README",
                                    dst, False)])
 
-    def test_exactly_one_side_is_in_the_sandbox(self):
+    def test_r_is_accepted_and_a_directory_is_copied_whole(self):
+        lima = self.sandbox()
+        src = os.path.join(self.tmp, "dir")
+        os.makedirs(src)
+        for flag in ("-r", "-R", "--recursive", None):
+            with self.subTest(flag=flag):
+                argv = ([flag] if flag else []) + [src, "sbx-demo:notes"]
+                self.assertEqual(self.quiet(cp.main, argv, lima=lima, env=self.env), 0, self.err)
+                copy = [c for c in lima.calls if c[0] == "copy"][-1]
+                self.assertEqual((copy[1], copy[3]), (src, True))
+
+    def test_at_least_one_side_is_in_a_sandbox(self):
         lima = self.sandbox()
         self.assertEqual(self.quiet(cp.main, ["/a", "/b"], lima=lima, env=self.env), 1)
-        self.assertEqual(self.quiet(cp.main, ["sbx-demo:/a", "sbx-demo:/b"], lima=lima,
-                                    env=self.env), 1)
+        self.assertIn("NAME:PATH", self.err)
+
+    def test_sandbox_to_sandbox_goes_through_a_host_temp_dir(self):
+        lima = self.sandbox()
+        self.sandbox("other", primary="/home/me/src/other", lima=lima)
+        steps = []
+
+        def copy_out(name, src, dest, lima):
+            steps.append(("out", name, src, dest))
+            with open(dest, "w") as f:
+                f.write("x")
+
+        def copy_in(name, src, dest, lima):
+            steps.append(("in", name, src, dest))
+            self.assertTrue(os.path.exists(src))
+        with mock.patch.object(cp, "copy_out", copy_out), mock.patch.object(cp, "copy_in", copy_in):
+            rc = self.quiet(cp.main, ["sbx-demo:notes.txt", "other:/tmp/x/notes.txt"],
+                            lima=lima, env=self.env)
+        self.assertEqual(rc, 0, self.err)
+        (out, into) = steps
+        self.assertEqual(out[1:3], ("sbx-demo", "/home/me/src/demo/notes.txt"))
+        self.assertEqual(into[1], "other")
+        self.assertEqual((into[2], into[3]), (out[3], "/tmp/x/notes.txt"))
+        self.assertFalse(os.path.exists(os.path.dirname(out[3])))   # removed
+        self.assertIn("->", self.err)
+
+    def test_the_host_temp_dir_goes_on_failure_too(self):
+        lima = self.sandbox()
+        self.sandbox("other", primary="/home/me/src/other", lima=lima)
+        staged = []
+
+        def copy_out(name, src, dest, lima):
+            staged.append(dest)
+            open(dest, "w").close()
+
+        def copy_in(name, src, dest, lima):
+            raise vm.VmError("boom")
+        with mock.patch.object(cp, "copy_out", copy_out), mock.patch.object(cp, "copy_in", copy_in):
+            rc = self.quiet(cp.main, ["sbx-demo:/a", "other:/b"], lima=lima, env=self.env)
+        self.assertEqual(rc, 1)
+        self.assertFalse(os.path.exists(os.path.dirname(staged[0])))
 
     def test_a_relative_path_without_a_workspace_is_in_the_agents_home(self):
         lima = self.sandbox(primary=None)

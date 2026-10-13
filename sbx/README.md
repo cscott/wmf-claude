@@ -36,7 +36,7 @@ Every command is `wmf-sbx VERB ...`, or `wmf-sbx-VERB ...`:
 | `create` | make a sandbox (builds the golden image first, if needed) |
 | `resume NAME`, `run --name NAME` | start Claude Code in the sandbox |
 | `exec NAME -- CMD` | run a command in the VM as the agent, outside nono |
-| `cp SRC DST` | copy between the host and a sandbox (`NAME:PATH`) |
+| `cp [-r] SRC DST` | copy a file or a directory between the host and a sandbox, or between two sandboxes (`NAME:PATH`); `-r` is optional |
 | `ls`, `status NAME` | list sandboxes; check one (VM, image, security invariants) |
 | `start NAME`, `stop NAME` | boot or stop the VM; nothing is lost |
 | `rm NAME` | remove the VM, its state and its host remotes |

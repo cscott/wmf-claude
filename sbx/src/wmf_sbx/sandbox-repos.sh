@@ -133,6 +133,12 @@ init_submodules() {
       fi
       git -C "$path" config --unset "submodule.$name.url"
     fi
+    # From its upstream. A try from the host's copy above may have cloned
+    # the submodule already, with that copy as its origin, which lacks the
+    # commit (RAN: VisualEditor's lib/ve, "did not contain"): point it at
+    # the URL in .gitmodules first.
+    git -C "$path" submodule init -q -- "$sub"
+    git -C "$path" submodule sync -q -- "$sub"
     echo "+ git submodule update --init $sub (from its upstream; $path)" >&2
     git -C "$path" -c core.hooksPath=/dev/null submodule update --init -q -- "$sub" \
       || warn "$path: submodule $sub could not be checked out"

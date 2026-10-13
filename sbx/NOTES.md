@@ -80,7 +80,6 @@ Development scaffolding:
 - [ ] **Generate the testing section of `~/.claude/CLAUDE.md` per sandbox**: name each repo's real entry points (composer/npm scripts,
   Jest wiring, `tests/` dirs, `QUnitTestModule`, `tests/parser/*.txt`) and say which runners do
   not apply.
-- [ ] **VisualEditor's git submodule is not cloned or initialised** in the sandbox clone. `sandbox-repos.sh` has no submodule step.
 - [ ] **Watch for the TCG segfaults on real hardware**: Claude Code (Bun),
   jsdoc, a Jest worker, and QEMU itself once at boot; each passed on retry. Maybe the same as
   an unexplained `limactl start` exit 1 after 24 s, seen once.
@@ -296,6 +295,13 @@ Development scaffolding:
 
 ### Clones, remotes, gc (host ↔ VM)
 
+- Submodules (VisualEditor's `lib/ve`, wmf-claude's MCP servers): `init_submodules` in
+  `sandbox-repos.sh` takes each from the host's copy in the mounted git dir
+  (`modules/NAME`), and else from the URL in `.gitmodules`. When the host's copy lacks the
+  commit (a host that pulled without `git submodule update`, or a repo reset to upstream),
+  the first try has cloned the submodule with the host's copy as its origin: `submodule
+  init` + `sync` point it at upstream before the retry, or the retry fails with "did not
+  contain" and `lib/ve` stays empty (RAN, tests in `CloneRepoTests`).
 - `git-review-check` (host and sandbox alike) treats `local` as the sandbox's mirror (a
   local-only "is HEAD there" check, not Gerrit) only when `$SANDBOX_NAME` is set. The
   sandbox sets it, not the tool: `session.SANDBOX_NAME_VAR` in the session's settings `env`

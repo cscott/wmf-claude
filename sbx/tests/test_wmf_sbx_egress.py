@@ -22,7 +22,9 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import wmf_sbx.egress as egress  # noqa: E402
+import wmf_sbx.nested as nested  # noqa: E402
 import wmf_sbx.session as session  # noqa: E402
+import wmf_sbx.state as state_mod  # noqa: E402
 
 HAVE_OPENSSL = shutil.which("openssl") is not None
 
@@ -131,6 +133,17 @@ class ConfigTests(unittest.TestCase):
                          egress.ca_cert("demo", self.env))
         self.assertNotIn("--port", argv)
         self.assertNotIn("--upstream-proxy", argv)
+
+    def test_a_nested_sandbox_allows_what_its_inner_vms_need(self):
+        def allowed():
+            argv = egress.proxy_argv("demo", self.env)
+            return [argv[i + 1] for i, a in enumerate(argv) if a == "--allow-domain"]
+        self.assertNotIn("cloud.debian.org", allowed())
+        state_mod.save({"name": "demo", "nested": True}, self.env)
+        domains = allowed()
+        for domain in nested.DOMAINS:
+            self.assertIn(domain, domains)
+        self.assertEqual(len(domains), len(set(domains)))
 
     def test_the_guest_needs_no_password(self):
         config = egress.proxy_config("demo", self.env)

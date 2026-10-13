@@ -245,10 +245,16 @@ class LifetimeTests(unittest.TestCase):
         self.assertTrue(wait_for(lambda: open(self.port_file).read() != first))
         old, new = self.proxies()
         self.assertIn("second.example", new["argv"])
+        # The new proxy stays up (a thread that started it and ended
+        # took it down with PR_SET_PDEATHSIG), and so does the old one.
+        self.assertFalse(wait_for(lambda: not alive(new["pid"]), timeout=1))
         self.assertTrue(alive(old["pid"]))
+        p.send_signal(signal.SIGUSR1)
+        self.assertTrue(wait_for(lambda: len(self.proxies()) == 3), p.stderr)
+        self.assertFalse(wait_for(lambda: not alive(self.proxies()[2]["pid"]), timeout=1))
         p.send_signal(signal.SIGTERM)
         self.assertEqual(p.wait(timeout=20), 0)
-        self.assertFalse(alive(old["pid"]) or alive(new["pid"]))
+        self.assertFalse(any(alive(x["pid"]) for x in self.proxies()))
 
     def test_an_upstream_with_credentials_goes_through_the_shim(self):
         self.write_config(upstream={"host": "127.0.0.1", "port": 9, "user": "nono",

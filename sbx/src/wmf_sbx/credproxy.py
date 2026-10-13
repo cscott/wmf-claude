@@ -39,6 +39,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 import urllib.parse
 
 UPSTREAM = "api.anthropic.com"
@@ -228,8 +229,19 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
-    def _serve(self):
+    def _guarded(self):
+        """_serve, but a client that goes away is no error: Claude Code
+        closes a streamed response when the engineer interrupts it (RAN:
+        a BrokenPipeError traceback written over the session's screen)."""
         start = time.monotonic()
+        try:
+            self._serve(start)
+        except (BrokenPipeError, ConnectionResetError):
+            self.close_connection = True
+            self.proxy.log(self.command, self.path.split("?")[0], "-", 0, start,
+                           note="the client closed the connection")
+
+    def _serve(self, start):
         # Read the body first: a refusal must not leave it on a kept-alive
         # connection, where it would be read as the next request.
         length = int(self.headers.get("content-length") or 0)
@@ -296,11 +308,18 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         self.proxy.log(self.command, self.path.split("?")[0], status, len(msg), start,
                        note=why)
 
-    do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = do_HEAD = _serve
+    do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = do_HEAD = _guarded
 
 
 class _Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
     daemon_threads = True
+    proxy = None
+
+    def handle_error(self, request, client_address):
+        """To the proxy's log, never to stderr: stderr is the terminal
+        that Claude Code draws its screen on."""
+        if self.proxy is not None:
+            self.proxy.log_error(traceback.format_exc())
 
 
 class CredentialProxy:
@@ -341,6 +360,17 @@ class CredentialProxy:
             except OSError:
                 pass
 
+    def log_error(self, text):
+        if not self.log_path:
+            return
+        stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with self._lock:
+            try:
+                with open(self.log_path, "a", encoding="utf-8") as f:
+                    f.write(f"{stamp} error in the proxy:\n{text}")
+            except OSError:
+                pass
+
     @property
     def port(self):
         return self._server.server_address[1]
@@ -348,6 +378,7 @@ class CredentialProxy:
     def start(self):
         handler = type("Handler", (_Handler,), {"proxy": self})
         self._server = _Server(("127.0.0.1", 0), handler)
+        self._server.proxy = self
         threading.Thread(target=self._server.serve_forever, args=(0.1,), daemon=True,
                          name="wmf-sbx-credproxy").start()
         return self.port

@@ -44,12 +44,8 @@ class FilesTests(unittest.TestCase):
         with self.assertRaises(Exception):
             egress.egress_dir("../x", self.env)
 
-    def test_the_password_is_made_once_and_private(self):
-        first = egress.password("demo", self.env)
-        self.assertEqual(len(first), 64)
-        self.assertEqual(egress.password("demo", self.env), first)
-        self.assertEqual(self.mode(os.path.join(egress.egress_dir("demo", self.env),
-                                                "password")), 0o600)
+    def test_the_directory_is_private(self):
+        egress.write_config("demo", self.env)
         self.assertEqual(self.mode(egress.egress_dir("demo", self.env)), 0o700)
 
     def test_allow_entries_skip_blanks_and_comments(self):
@@ -63,12 +59,12 @@ class FilesTests(unittest.TestCase):
         self.assertEqual(egress.extra_domains("demo", self.env), [])
 
     def test_remove_deletes_the_directory(self):
-        egress.password("demo", self.env)
+        egress.write_config("demo", self.env)
         egress.remove("demo", self.env)
         self.assertFalse(os.path.exists(egress.egress_dir("demo", self.env)))
 
     def test_set_port_writes_the_port_file(self):
-        egress.password("demo", self.env)
+        egress.write_config("demo", self.env)
         egress.set_port("demo", 4321, self.env)
         with open(egress.port_file("demo", self.env)) as f:
             self.assertEqual(f.read(), "4321\n")
@@ -124,9 +120,9 @@ class ConfigTests(unittest.TestCase):
         with open(os.path.join(egress.egress_dir("demo", self.env), "allow"), "w") as f:
             f.write("example.org\n")
         argv = egress.proxy_argv("demo", self.env)
-        self.assertEqual(argv[:6], ["nono", "proxy", "-v", "--listen", "127.0.0.1",
-                                    "--profile"])
-        self.assertTrue(argv[6].endswith("/profiles/wmf-engineer.json"))
+        self.assertEqual(argv[:7], ["nono", "proxy", "-v", "--no-auth", "--listen",
+                                    "127.0.0.1", "--profile"])
+        self.assertTrue(argv[7].endswith("/profiles/wmf-engineer.json"))
         allowed = [argv[i + 1] for i, a in enumerate(argv) if a == "--allow-domain"]
         self.assertEqual(allowed, list(session.REGISTRY_DOMAINS)
                          + ["deb.debian.org", "example.org"])
@@ -135,11 +131,11 @@ class ConfigTests(unittest.TestCase):
         self.assertNotIn("--port", argv)
         self.assertNotIn("--upstream-proxy", argv)
 
-    def test_the_password_is_not_in_the_argv(self):
+    def test_the_guest_needs_no_password(self):
         config = egress.proxy_config("demo", self.env)
-        pw = egress.password("demo", self.env)
-        self.assertEqual(config["env"]["NONO_PROXY_PASS"], pw)
-        self.assertNotIn(pw, " ".join(config["argv"]))
+        self.assertIn("--no-auth", config["argv"])
+        # nono proxy exits 2 on --no-auth with a password.
+        self.assertNotIn("NONO_PROXY_PASS", config["env"])
 
     def test_the_upstream_comes_from_the_hosts_proxy(self):
         self.env["https_proxy"] = "http://nono:s%40cret@127.0.0.1:50077"
@@ -165,8 +161,8 @@ class ConfigTests(unittest.TestCase):
     def test_the_proxy_env_drops_inherited_nono_variables(self):
         env = egress.proxy_env({"PATH": "/bin", "NONO_ALLOW_DOMAIN": "evil.example",
                                 "NONO_UPSTREAM_PROXY": "x:1"},
-                               {"env": {"NONO_PROXY_PASS": "pw"}})
-        self.assertEqual(env, {"PATH": "/bin", "NONO_PROXY_PASS": "pw"})
+                               {"env": {"XDG_STATE_HOME": "/s"}})
+        self.assertEqual(env, {"PATH": "/bin", "XDG_STATE_HOME": "/s"})
 
 
 class GuestTests(unittest.TestCase):
@@ -177,16 +173,15 @@ class GuestTests(unittest.TestCase):
         self.env = {"XDG_STATE_HOME": self.tmp.name}
 
     def test_the_guest_variables_point_at_the_guestfwd(self):
-        pw = egress.password("demo", self.env)
         variables = egress.guest_environment("demo", self.env)
-        self.assertEqual(variables["https_proxy"], f"http://nono:{pw}@192.168.5.100:3128")
+        self.assertEqual(variables["https_proxy"], "http://192.168.5.100:3128")
         self.assertEqual(variables["NO_PROXY"], "localhost,127.0.0.1")
         self.assertEqual(variables["NODE_USE_ENV_PROXY"], "1")
 
-    def test_git_sends_basic_auth(self):
+    def test_apt_and_git_use_the_proxy(self):
         files = egress.guest_files("demo", self.env)
-        self.assertIn("proxyAuthMethod = basic", files["/etc/gitconfig"])
-        self.assertIn('Acquire::https::Proxy "http://nono:',
+        self.assertIn("proxy = http://192.168.5.100:3128", files["/etc/gitconfig"])
+        self.assertIn('Acquire::https::Proxy "http://192.168.5.100:3128";',
                       files["/etc/apt/apt.conf.d/90wmf-sbx-proxy"])
 
     def test_the_guestfwd_reads_the_port_at_each_connection(self):

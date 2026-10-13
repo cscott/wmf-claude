@@ -151,7 +151,7 @@ def remove_one(name, args, run=subprocess.run, env=None, lima=None, confirm=inpu
         )
         return 1
 
-    # The VM is gone, so its egress CA and proxy password serve nothing.
+    # The VM is gone, so its egress CA and proxy config serve nothing.
     egress_mod.remove(name, env=env)
     if args.keep_remotes:
         return 0

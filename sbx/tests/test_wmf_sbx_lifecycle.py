@@ -166,7 +166,11 @@ class FakeLima:
         argv = list(args)
         if argv[0] == "shell" and "bash" in argv and any("echo 0:" in a or "0:ok" in a
                                                        or "WMF_SBX_HOST_UID" in a for a in argv):
-            out = "\n".join(f"{i}:{'ok' if ok else 'FAIL'}" for i, ok in enumerate(self.invariants))
+            # Checks past `invariants` (the egress ones) pass.
+            n = max(len(self.invariants), " ".join(argv).count("then echo"))
+            verdicts = list(self.invariants) + [True] * (n - len(self.invariants))
+            self.invariant_scripts = getattr(self, "invariant_scripts", []) + [argv[-1]]
+            out = "\n".join(f"{i}:{'ok' if ok else 'FAIL'}" for i, ok in enumerate(verdicts))
             return Done(stdout=out)
         if argv[0] == "shell" and any("mktemp /dev/shm/wmf-sbx-cred." in a for a in argv):
             return Done(stdout="/dev/shm/wmf-sbx-cred.Xy12Ab\n")
@@ -255,6 +259,32 @@ class VmTests(Env):
         self.assertEqual([ok for _d, ok in results][:2], [True, False])
         script = lima.shells()[-1][-1]
         self.assertIn(f"WMF_SBX_HOST_UID={HOST_UID}", script)
+
+    def test_a_sandbox_behind_the_egress_proxy_has_more_invariants(self):
+        lima = self.sandbox(lima=FakeLima())
+        plain = vm.check_invariants("sbx-demo", host_uid=HOST_UID, lima=lima)
+        results = vm.check_invariants("sbx-demo", host_uid=HOST_UID, lima=lima, egress=True,
+                                      loopback_port=40123)
+        self.assertEqual(len(results), len(plain) + len(vm.EGRESS_INVARIANTS))
+        self.assertIn("no route out but the egress proxy", [d for d, _ok in results])
+        script = lima.invariant_scripts[-1]
+        self.assertIn("WMF_SBX_LOOPBACK_PORT=40123", script)
+        self.assertNotIn("POST", script)
+        self.assertNotIn("no route out", " ".join(d for d, _ok in plain))
+        res = subprocess.run(["bash", "-n"], input=script, text=True, capture_output=True)
+        self.assertEqual(res.returncode, 0, res.stderr)
+
+    def test_start_checks_the_egress_invariants_of_an_egress_sandbox(self):
+        lima = self.sandbox(lima=FakeLima())
+        st = state_mod.load("sbx-demo", self.env)
+        st["egress"] = "proxy"
+        state_mod.save(st, self.env)
+        egress.make_dir("sbx-demo", self.env)
+        egress.set_port("sbx-demo", 40999, self.env)
+        out = io.StringIO()
+        self.assertTrue(start.check("sbx-demo", lima=lima, out=out, env=self.env))
+        self.assertIn("names resolve only to the fake block", out.getvalue())
+        self.assertIn("WMF_SBX_LOOPBACK_PORT=40999", lima.invariant_scripts[-1])
 
     def test_a_missing_verdict_counts_as_failed(self):
         class Silent(FakeLima):
@@ -833,6 +863,19 @@ class StartStopStatusTests(Env):
         self.assertEqual(self.quiet(status_mod.main, ["sbx-demo"], lima=lima, env=self.env), 0,
                          self.out + self.err)
         self.assertIn("checksum matches", self.out)
+
+    def test_status_shows_the_egress_proxy_of_a_sandbox_behind_it(self):
+        lima = self.sandbox(status="Stopped")
+        st = state_mod.load("sbx-demo", self.env)
+        st["egress"] = "proxy"
+        state_mod.save(st, self.env)
+        with mock.patch.object(egress, "status_lines",
+                               return_value=[("proxy: x", True), ("CA expired", False)]) as sl:
+            rc = self.quiet(status_mod.main, ["sbx-demo"], lima=lima, env=self.env)
+        self.assertEqual(rc, 1)
+        self.assertEqual(sl.call_args.kwargs["running"], False)
+        self.assertIn("egress    proxy: x\n", self.out)
+        self.assertRegex(self.out, r"egress    .*PROBLEM.* CA expired")
 
     def test_status_reports_a_changed_image_and_a_missing_vm(self):
         lima = self.sandbox(status=None)

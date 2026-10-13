@@ -291,6 +291,60 @@ class StartTests(unittest.TestCase):
         self.assertFalse(ok)
 
 
+class StatusTests(unittest.TestCase):
+
+    NOW = datetime.datetime(2026, 10, 13, tzinfo=datetime.timezone.utc)
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.env = {"XDG_STATE_HOME": self.tmp.name}
+        egress.make_dir("demo", self.env)
+
+    def openssl(self, end):
+        def run(argv, **kw):
+            self.assertEqual(argv[:2], ["openssl", "x509"])
+            return subprocess.CompletedProcess(argv, 0 if end else 1,
+                                               stdout=f"notAfter={end}\n" if end else "")
+        return run
+
+    def lines(self, end="Oct 13 00:00:00 2027 GMT", running=True):
+        return egress.status_lines("demo", self.env, running=running, run=self.openssl(end),
+                               now=self.NOW)
+
+    def test_a_listening_proxy_and_a_good_ca(self):
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            s.listen(1)
+            egress.set_port("demo", s.getsockname()[1], self.env)
+            (proxy, ok1), (ca, ok2), (allow, ok3) = self.lines()
+        self.assertTrue(ok1 and ok2 and ok3)
+        self.assertIn("listening on 127.0.0.1:", proxy)
+        self.assertEqual(ca, "CA expires 2027-10-13")
+        self.assertEqual(allow, "allowed by `wmf-sbx allow`: none")
+
+    def test_a_dead_proxy_and_an_expired_ca_are_problems(self):
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]   # bound, not listening
+            egress.set_port("demo", port, self.env)
+            (proxy, ok1), (ca, ok2), _ = self.lines("Oct  1 00:00:00 2026 GMT")
+        self.assertFalse(ok1)
+        self.assertIn("not listening", proxy)
+        self.assertFalse(ok2)
+        self.assertIn("expired on 2026-10-01", ca)
+
+    def test_a_ca_near_its_end_is_a_warning_and_a_missing_one_a_problem(self):
+        (_p, _), (ca, ok), _ = self.lines("Oct 30 00:00:00 2026 GMT", running=False)
+        self.assertTrue(ok)
+        self.assertIn("warning: in 17 days", ca)
+        (proxy, ok), (ca, ok2), _ = self.lines(None, running=False)
+        self.assertTrue(ok)
+        self.assertIn("the VM is stopped", proxy)
+        self.assertFalse(ok2)
+        self.assertIn("missing", ca)
+
+
 class FakeProc:
     def __init__(self, returncode=None):
         self.returncode = returncode

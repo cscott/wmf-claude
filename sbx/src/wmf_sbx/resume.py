@@ -107,7 +107,7 @@ def main(argv=None, lima=None, env=None):
         name, state = vm_mod.resolve(target, env=env)
         vm_mod.ensure_running(name, lima=lima, env=env,
                               log=lambda m: print(color_mod.dim(m), file=sys.stderr))
-        if not start_mod.check(name, lima=lima):
+        if not start_mod.check(name, lima=lima, env=env):
             print(color_mod.error(f"error: {name} breaks a security invariant; no session "
                                   f"is started. `wmf-sbx rm {name}` and create it again."),
                   file=sys.stderr)

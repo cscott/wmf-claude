@@ -3,7 +3,8 @@
 
 `limactl start` on the sandbox's instance, then the security invariants
 (vm.INVARIANTS: the agent has no sudo and the host uid, the host block is
-loaded, the mounts are read-only, TIOCSTI is off). A failed invariant
+loaded, the mounts are read-only, TIOCSTI is off; behind the egress proxy,
+vm.EGRESS_INVARIANTS too). A failed invariant
 is an error: the sandbox is running, but not as wmf-sbx made it.
 
 Usage:
@@ -14,17 +15,22 @@ import argparse
 import sys
 
 from . import color as color_mod
+from . import egress as egress_mod
 from . import lima as lima_mod
 from . import state as state_mod
 from . import vm as vm_mod
 
 
-def check(name, lima=None, out=None):
+def check(name, lima=None, out=None, env=None):
     """Print the invariants (to stderr unless `out`); return True if all
-    hold."""
+    hold. A sandbox behind the egress proxy has more
+    (vm.EGRESS_INVARIANTS)."""
     out = out or sys.stderr
     ok = True
-    for desc, good in vm_mod.check_invariants(name, lima=lima):
+    egress = egress_mod.enabled(state_mod.load(name, env))
+    port = egress_mod.read_port(name, env) if egress else None
+    for desc, good in vm_mod.check_invariants(name, lima=lima, egress=egress,
+                                              loopback_port=port or 22):
         mark = color_mod.highlight("ok") if good else color_mod.error("FAIL")
         print(f"  {mark}  {desc}", file=out)
         ok = ok and good
@@ -43,7 +49,7 @@ def main(argv=None, lima=None, env=None):
         print(color_mod.error(f"error: {e}"), file=sys.stderr)
         return 1
     print(f"{name}: running; checking it", file=sys.stderr)
-    if not check(name, lima=lima):
+    if not check(name, lima=lima, env=env):
         print(color_mod.error(f"error: {name} breaks a security invariant; do not "
                               f"use it. `wmf-sbx rm {name}` and create it again."),
               file=sys.stderr)

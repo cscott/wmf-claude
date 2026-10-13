@@ -65,6 +65,8 @@ the VM does not notice:
   proxy with it, and rewrites `port`. New connections go to the new
   proxy; the old one keeps its open tunnels and stops when the VM does
   (or when idle). `wmf-sbx allow --rm`, `allow --list` the same way.
+  (A2.0 item 8 RAN: a host went 000 → 200 under a running VM, and a
+  download through the old proxy finished.)
 - It runs on the host, as the engineer. Nothing in the guest can call
   it, so root in the guest still cannot widen its own egress.
 - Contained mode (nono inside too) gets the same only if the inner nono
@@ -121,7 +123,12 @@ section), and a go/no-go on `nono proxy`.
 (endpoint rules through `nono proxy`); `--upstream-proxy` cannot send
 credentials, so a host behind an authenticated proxy, and every nested
 sandbox, needs an auth-adding shim between `nono proxy` and the upstream
-(a small Python CONNECT forwarder; it can live in `egress.py`).
+(a small Python CONNECT forwarder; it can live in `egress.py`;
+`checks/upstream-auth-shim.py` is the throwaway). Items 2, 3, 4 and 8
+pass, with these for A2.1–A2.3: the guest's nft host block needs a rule
+for 192.168.5.100:3128; `cmd:` needs `sh -c`; `/etc/gitconfig`
+`http.proxyAuthMethod=basic` and `NODE_USE_ENV_PROXY=1` in the guest.
+Go on `nono proxy`; 5, 6, 7 and 9 remain.
 
 ## A2.1 The wrapper: `sbx/helpers/wmf-sbx-qemu` (Python)
 

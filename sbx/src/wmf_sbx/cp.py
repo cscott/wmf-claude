@@ -14,13 +14,20 @@ tree, through a staging directory that the engineer makes in /tmp:
 Root never writes a path the agent controls: the agent could have made
 it a symlink (lima/guest-install.sh follows the same rule).
 
+With both sides NAME:PATH, the copy goes out of the first sandbox into a
+temporary directory on the host, and from there into the second; the
+temporary directory is removed afterwards, also on failure.
+
 Usage:
-  wmf-sbx cp SRC DST      # one of them NAME:PATH
+  wmf-sbx cp [-r] SRC DST   # one or both of them NAME:PATH; a directory
+                            # is copied whole, -r or not
 """
 
 import argparse
 import os
+import shutil
 import sys
+import tempfile
 
 from . import color as color_mod
 from . import lima as lima_mod
@@ -119,8 +126,21 @@ def copy_out(name, src, dest, lima):
                      lima=lima, check=False)
 
 
+def _guest_path(resolved_arg):
+    """The PATH half of a resolved NAME:PATH, absolute: with no primary
+    workspace recorded, a relative PATH is anchored at the agent's home."""
+    guest = resolved_arg.partition(":")[2]
+    if not guest.startswith("/"):
+        guest = os.path.join(vm_mod.AGENT_HOME, guest)
+    return guest
+
+
 def main(argv=None, lima=None, env=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    # A directory is copied whole either way; -r is accepted for the
+    # hands that type `cp -r` for a directory.
+    parser.add_argument("-r", "-R", "--recursive", action="store_true",
+                        help="accepted and ignored: directories are always copied whole")
     parser.add_argument("src")
     parser.add_argument("dst")
     args = parser.parse_args(argv)
@@ -129,20 +149,27 @@ def main(argv=None, lima=None, env=None):
         src = resolve_cp_arg(args.src, env=env)
         dst = resolve_cp_arg(args.dst, env=env)
         names = [_sandbox_name_in(a) for a in (src, dst)]
-        if (names[0] is None) == (names[1] is None):
-            raise vm_mod.VmError("write exactly one of SRC and DST as NAME:PATH")
-        name = names[0] or names[1]
-        vm_mod.resolve(name, env=env)
-        vm_mod.ensure_running(name, lima=lima,
-                              log=lambda m: print(color_mod.dim(m), file=sys.stderr))
-        guest = (dst if names[1] else src).partition(":")[2]
-        if not guest.startswith("/"):
-            # No primary workspace recorded: anchor at the agent's home.
-            guest = os.path.join(vm_mod.AGENT_HOME, guest)
-        if names[1]:
-            copy_in(name, os.path.expanduser(src), guest, lima)
+        if names == [None, None]:
+            raise vm_mod.VmError("write SRC or DST (or both) as NAME:PATH")
+        for name in dict.fromkeys(n for n in names if n):
+            vm_mod.resolve(name, env=env)
+            vm_mod.ensure_running(name, lima=lima,
+                                  log=lambda m: print(color_mod.dim(m), file=sys.stderr))
+        if names[0] and names[1]:
+            src_guest, dst_guest = _guest_path(src), _guest_path(dst)
+            tmp = tempfile.mkdtemp(prefix="wmf-sbx-cp.")
+            print(color_mod.dim(f"+ {names[0]}:{src_guest} -> {tmp} -> {names[1]}:{dst_guest}"),
+                  file=sys.stderr)
+            try:
+                staged = os.path.join(tmp, os.path.basename(os.path.normpath(src_guest)))
+                copy_out(names[0], src_guest, staged, lima)
+                copy_in(names[1], staged, dst_guest, lima)
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
+        elif names[1]:
+            copy_in(names[1], os.path.expanduser(src), _guest_path(dst), lima)
         else:
-            copy_out(name, guest, os.path.expanduser(dst), lima)
+            copy_out(names[0], _guest_path(src), os.path.expanduser(dst), lima)
     except (state_mod.StateError, vm_mod.VmError, lima_mod.LimaError) as e:
         print(color_mod.error(f"error: {e}"), file=sys.stderr)
         return 1

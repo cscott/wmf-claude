@@ -156,7 +156,9 @@ packages:             # extra Debian packages in the golden image
 ```
 
 `environment:` cannot set `ANTHROPIC_*` or `NO_PROXY` (the credential
-proxy's). `packages:` are part of the golden image's cache key, so a
+proxy's). With `GERRITUA` set, the session-start hook tells Claude to send
+it as the User-Agent to gerrit.wikimedia.org, for the higher rate limit,
+and to treat it as a secret; the hook never shows the value. `packages:` are part of the golden image's cache key, so a
 change builds a new image at the next `create`.
 
 `ste: false` sets `WMF_CLAUDE_STE=0` for the sessions, which takes the

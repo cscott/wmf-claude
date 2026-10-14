@@ -51,7 +51,7 @@ def main(argv=None, lima=None, env=None):
     try:
         name, state = vm_mod.resolve(args.name, env=env)
         # The proxy, and the sandbox's name, as a session has them.
-        agent_env = dict(vm_mod.guest_proxy_env(name, env))
+        agent_env = dict(vm_mod.guest_proxy_env(name, env, forward=True))
         agent_env[session_mod.SANDBOX_NAME_VAR] = name
         if args.engineer:
             workdir = args.workdir or vm_mod.ENGINEER_HOME

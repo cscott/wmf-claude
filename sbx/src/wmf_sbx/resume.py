@@ -121,7 +121,10 @@ def main(argv=None, lima=None, env=None):
                                   f"is started. `wmf-sbx rm {name}` and create it again."),
                   file=sys.stderr)
             return 1
-        if state.get("nested"):
+        # Not in a sudo sandbox: its sessions have no nono, so a later one
+        # can stop an inner VM itself, and stop_inner cannot tell that a
+        # session runs (it looks for the agent's nono).
+        if state.get("nested") and not state.get("sudo"):
             nested_mod.stop_inner(name, lima=lima,
                                   log=lambda m: print(color_mod.dim(m), file=sys.stderr))
         source = credproxy_mod.host_source(env)

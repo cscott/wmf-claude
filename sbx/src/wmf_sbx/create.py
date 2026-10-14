@@ -43,6 +43,10 @@ from . import vm as vm_mod
 # `create --nested` says this first (SECURITY.md, section 6a).
 NESTED_WARNING = ("warning: a nested sandbox is less secure: nono gives the agent /dev/kvm, "
                   "Lima's sockets and more hosts. Use it only to work on wmf-claude itself.")
+# The same, for `--sudo --nested`: the agent has root in the VM already, so
+# only the hosts are new.
+NESTED_SUDO_WARNING = ("warning: a nested sandbox is less secure: its egress proxy allows "
+                       "more hosts, for image builds. Use it only to work on wmf-claude itself.")
 
 # A default create on vz (macOS) or a host without what the egress proxy
 # needs: the sandbox it makes has the guest's own route (the engineer,
@@ -663,11 +667,6 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         print(color_mod.error("error: --sudo needs the host egress proxy; it cannot be "
                               "--no-egress-proxy"), file=sys.stderr)
         return 1
-    if sudo and args.nested:
-        print(color_mod.error("error: --sudo --nested is not ported yet (lima-port/"
-                              "PLAN-SUDO.md, A3 step 6); --no-sudo makes a nested "
-                              "sandbox"), file=sys.stderr)
-        return 1
 
     for (spec, is_ro), (canonical, path, needs_clone) in zip(split, resolved):
         ro_note = " (read-only)" if is_ro else ""
@@ -732,8 +731,8 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         if warning:
             print(color_mod.warning(warning), file=sys.stderr)
         if sudo:
-            say("+ sudo: the agent has passwordless sudo and runs Claude Code without "
-                "nono; the VM and the host egress proxy are its boundary")
+            say("+ sudo: the agent has passwordless sudo; the VM and the host egress "
+                "proxy are its boundary")
         overlay = disk_mod.uses_overlay(vm_type) and not args.full_disk
         # Not behind the egress proxy yet: its disk holds the sandbox's
         # own egress CA and guest network setup, which the snapshot key
@@ -879,7 +878,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         return 1
 
     if args.nested:
-        print(color_mod.error(NESTED_WARNING), file=sys.stderr)
+        print(color_mod.error(NESTED_SUDO_WARNING if sudo else NESTED_WARNING), file=sys.stderr)
         say("+ nested: QEMU and Lima in the sandbox, the agent in the kvm group")
         base = image_mod.base_image(arch)
         staged = None
@@ -895,7 +894,11 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
                 print(f"  `wmf-sbx rm {name}` removes what was made.", file=sys.stderr)
                 return 1
             staged = nested_mod.STAGED_BASE
-        script = nested_mod.install_script(arch, base, nested_src, staged=staged)
+        # Behind the egress proxy, a forwarder to it on the loopback, for
+        # inner VMs when no session nono listens there (egress.FORWARD_PORT).
+        forward = (f"{egress_mod.EGRESS_ADDR}:{egress_mod.EGRESS_PORT}" if egress else None)
+        script = nested_mod.install_script(arch, base, nested_src, staged=staged,
+                                           forward=forward)
         # Behind the egress proxy, its variables: curl has no other way out.
         argv = (["sudo", "env"] + [f"{k}={v}" for k, v in
                                    sorted(vm_mod.guest_proxy_env(name, env).items())]
@@ -906,6 +909,9 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
                                   f"(exit {res.returncode})"), file=sys.stderr)
             print(f"  `wmf-sbx rm {name}` removes what was made.", file=sys.stderr)
             return 1
+        if forward:
+            state[egress_mod.FORWARD_KEY] = True
+            state_mod.save(state, env)
 
     # The clones in the VM, then the host remotes. Requested repos keep
     # the host's branch; dependencies go to upstream master, and

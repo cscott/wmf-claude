@@ -149,13 +149,17 @@ def create(name, tmpl, lima=None, log=print, backing=None, env=None):
     return inst
 
 
-def guest_proxy_env(name, env=None):
+def guest_proxy_env(name, env=None, forward=False):
     """The proxy variables for a command in the guest: the host egress
     proxy's for a sandbox behind it, else the host's own (image.
-    guest_proxy_env)."""
+    guest_proxy_env). With `forward`, a nested sandbox's loopback
+    forwarder to the egress proxy if it has one, so that its inner VMs
+    reach the proxy too (egress.FORWARD_PORT)."""
     from . import state as state_mod
-    if egress_mod.enabled(state_mod.load(name, env)):
-        return egress_mod.guest_environment(name, env)
+    state = state_mod.load(name, env)
+    if egress_mod.enabled(state):
+        return egress_mod.guest_environment(
+            name, env, forward=forward and bool((state or {}).get(egress_mod.FORWARD_KEY)))
     return image_mod.guest_proxy_env(env)
 
 

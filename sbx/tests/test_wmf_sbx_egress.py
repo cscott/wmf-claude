@@ -192,6 +192,11 @@ class GuestTests(unittest.TestCase):
         self.assertEqual(variables["NO_PROXY"], "localhost,127.0.0.1")
         self.assertEqual(variables["NODE_USE_ENV_PROXY"], "1")
 
+    def test_with_the_forwarder_the_variables_point_at_the_loopback(self):
+        variables = egress.guest_environment("demo", self.env, forward=True)
+        self.assertEqual(variables["https_proxy"], "http://127.0.0.1:3128")
+        self.assertEqual(variables["HTTP_PROXY"], "http://127.0.0.1:3128")
+
     def test_apt_and_git_use_the_proxy(self):
         files = egress.guest_files("demo", self.env)
         self.assertIn('Acquire::https::Proxy "http://192.168.5.100:3128";',

@@ -15,6 +15,7 @@ import os
 import shlex
 import urllib.request
 
+from . import egress as egress_mod
 from . import image as image_mod
 from . import lima as lima_mod
 from . import vm as vm_mod
@@ -177,6 +178,44 @@ def session_grants(src):
     return grants
 
 
+# The loopback forwarder to the egress proxy (egress.FORWARD_PORT), a
+# root unit. systemd-socket-proxyd is in Debian's systemd package.
+FORWARD_UNIT = "wmf-sbx-egress-forward"
+
+
+def forward_script(target):
+    """Bash, as root: the units of the loopback forwarder to `target`
+    (host:port, the egress proxy), enabled and started. Root's, so a
+    contained agent cannot change it; nono gives a contained session no
+    connect to its port, and `exec` reaches the proxy itself anyway."""
+    unit = f"/etc/systemd/system/{FORWARD_UNIT}"
+    desc = "wmf-sbx: the egress proxy on the loopback, for inner VMs"
+    return f"""cat > {unit}.socket <<'WMF_SBX_UNIT'
+[Unit]
+Description={desc}
+
+[Socket]
+ListenStream=127.0.0.1:{egress_mod.FORWARD_PORT}
+
+[Install]
+WantedBy=sockets.target
+WMF_SBX_UNIT
+cat > {unit}.service <<'WMF_SBX_UNIT'
+[Unit]
+Description={desc}
+Requires={FORWARD_UNIT}.socket
+After={FORWARD_UNIT}.socket
+
+[Service]
+ExecStart=/usr/lib/systemd/systemd-socket-proxyd {target}
+DynamicUser=yes
+WMF_SBX_UNIT
+systemctl daemon-reload
+systemctl enable --now {FORWARD_UNIT}.socket >/dev/null
+echo "+ forwarder 127.0.0.1:{egress_mod.FORWARD_PORT} -> {target}, for inner VMs" >&2
+"""
+
+
 # stop_inner_script's exit status while a session runs in the sandbox.
 SESSION_RUNNING = 3
 
@@ -237,14 +276,16 @@ def stop_inner(name, lima=None, log=print):
     return stopped
 
 
-def install_script(arch, base, src, staged=None):
+def install_script(arch, base, src, staged=None, forward=None):
     """A bash script, run as root in the sandbox: QEMU, firmware, Lima
     LIMA_VERSION (checked against its release's SHA256SUMS), the base
     image `base` (image.base_image(), checked against its digest) in
     image.LOCAL_BASE_DIR, `src` for the inner sandboxes' repos, settings
     for the inner wmf-sbx if it has none,
     the agent in the kvm group, and the marker. With `staged`, the base
-    image is that file in the guest (STAGED_BASE), not a download."""
+    image is that file in the guest (STAGED_BASE), not a download. With
+    `forward` (host:port, the egress proxy), its loopback forwarder
+    (forward_script)."""
     if arch not in PACKAGES:
         raise ValueError(f"no nested support for {arch}")
     tarball = f"lima-{LIMA_VERSION}-Linux-{LIMA_ARCH[arch]}.tar.gz"
@@ -289,7 +330,7 @@ install -d -m 0700 -o {q(vm_mod.AGENT)} -g "$(id -g {q(vm_mod.AGENT)})" {q(src)}
 runuser -u {q(vm_mod.AGENT)} -- mkdir -p -m 0700 {' '.join(q(d) for d in (LIMA_HOME,) + WMF_SBX_DIRS)}
 runuser -u {q(vm_mod.AGENT)} -- sh -c {q('test -e "$1" || cat > "$1"')} sh {q(settings_file)} <<'WMF_SBX_SETTINGS'
 {settings(src)}WMF_SBX_SETTINGS
-usermod -aG kvm {q(vm_mod.AGENT)}
+{forward_script(forward) if forward else ""}usermod -aG kvm {q(vm_mod.AGENT)}
 install -d -m 0755 /etc/wmf-sbx
 touch {q(MARKER)}
 if [ ! -c /dev/kvm ]; then

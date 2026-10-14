@@ -247,6 +247,11 @@ pins. What changes:
   points them at it), and the outer VM's nftables still bound it. The
   inner VMs trust the session's nono CA (it re-signs TLS for hosts with
   endpoint rules); an image build removes it before it seals.
+- Behind the egress proxy, root also installs a forwarder from the outer
+  VM's loopback (127.0.0.1:3128) to the host proxy, as a systemd
+  `DynamicUser`, for `exec` and `--sudo` sessions (§6b). It adds no
+  route: the host proxy's rules apply as they do to the outer VM, and
+  nono gives a contained session no connect to its port.
 - Before a session in a nested sandbox (never in an ordinary one),
   `resume` runs `limactl list` and `limactl stop` as the agent, outside
   nono (an earlier session's inner VMs are out of the new session's
@@ -298,6 +303,12 @@ What changes:
 - **Attack surface on the host**: the same as §6 (QEMU, the 9p server,
   `limactl shell`, the proxy, the resolver and the credential proxy),
   now with a root guest kernel on the other side.
+- **`--sudo --nested`**: the inner VMs reach the host proxy through the
+  loopback forwarder (§6a) and trust the CAs Lima put in the outer VM
+  (the egress CA and the host's extra ones). The host proxy allows the
+  image build's download hosts, as for any nested sandbox. `resume`
+  does not stop an earlier session's inner VMs: root owns them all
+  anyway.
 
 ## 7. What the agent can do, plainly
 

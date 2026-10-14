@@ -282,7 +282,10 @@ def sudo_launcher_argv(state, cred_path=None, claude_args=()):
     claude = ([SUDO_LAUNCHER, "--plugin-dir", WMF_CLAUDE_DIR, "--settings", SUDO_SETTINGS]
               + list(claude_args))
     wrapper = ["bash", "-c", CREDENTIAL_WRAPPER, "_", cred_path or ""] + claude
-    env = dict(egress_mod.guest_environment(name))
+    # A nested one's inner VMs reach the proxy through its loopback
+    # forwarder (egress.FORWARD_PORT).
+    env = dict(egress_mod.guest_environment(
+        name, forward=bool(state.get(egress_mod.FORWARD_KEY))))
     env.update({"no_proxy": SESSION_NO_PROXY, "NO_PROXY": SESSION_NO_PROXY,
                 "NODE_EXTRA_CA_CERTS": image_mod.SYSTEM_CA_BUNDLE,
                 "WMF_CLAUDE_SANDBOX_BACKEND": SUDO_SANDBOX_BACKEND,

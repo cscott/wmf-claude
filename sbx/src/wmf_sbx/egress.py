@@ -59,6 +59,13 @@ EGRESS_ADDR = "192.168.5.100"
 EGRESS_PORT = 3128
 DNS_PORT = 53
 CRED_PORT = 3129
+# A nested sandbox's forwarder to the proxy, on the guest's loopback
+# (nested.forward_script). An inner VM's only way out is 192.168.5.2, the
+# outer guest's loopback, where Lima and image.guest_proxy_env point it.
+# A contained session's nono proxy listens there; for a `sudo` session and
+# `exec`, which have no nono, the forwarder does (state FORWARD_KEY).
+FORWARD_PORT = 3128
+FORWARD_KEY = "egressForward"
 PROFILE = os.path.join(kit.REPO_ROOT, "profiles", "wmf-engineer.json")
 # The guest's apt sources (/etc/apt/mirrors/debian*.list in the image's
 # Debian 13 cloud base) are all on this host.
@@ -368,10 +375,11 @@ def proxy_url(host=EGRESS_ADDR, port=EGRESS_PORT):
     return f"http://{host}:{port}"
 
 
-def guest_environment(name, env=None):
+def guest_environment(name, env=None, forward=False):
     """Variables for the guest's /etc/environment. NODE_USE_ENV_PROXY:
-    Node's fetch ignores the proxy variables without it (RAN)."""
-    url = proxy_url()
+    Node's fetch ignores the proxy variables without it (RAN). With
+    `forward`, the proxy is the loopback forwarder (FORWARD_PORT)."""
+    url = proxy_url("127.0.0.1", FORWARD_PORT) if forward else proxy_url()
     no_proxy = "localhost,127.0.0.1"
     return {"http_proxy": url, "https_proxy": url, "HTTP_PROXY": url, "HTTPS_PROXY": url,
             "no_proxy": no_proxy, "NO_PROXY": no_proxy, "NODE_USE_ENV_PROXY": "1"}

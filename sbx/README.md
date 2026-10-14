@@ -11,8 +11,7 @@ gets a git remote to fetch the agent's work.
 - `NOTES.md`: open to-do items, and the decisions and findings that the
   code depends on.
 - `../lima-port/HANDOFF-LIMA.md`: the port's decisions (D1 to D12) and
-  the work that remains (track A, `--sudo --nested`; track B,
-  copy-on-write disks). `../lima-port/PLAN-SUDO.md`: the `--sudo` steps.
+  the work that remains (track B, copy-on-write disks). `../lima-port/PLAN-SUDO.md`: the `--sudo` steps.
 
 ## Install
 
@@ -393,10 +392,9 @@ wmf-sbx create PRIMARY[:ro] [EXTRA[:ro] ...] [options]
 - `--no-egress-proxy`: the VM is not behind the host's egress proxy
   ("The egress proxy"). `--egress-proxy` makes `create` fail, not warn,
   when the proxy cannot be used.
-- `--sudo`: the agent has passwordless sudo, and Claude Code runs with no
-  nono ("Two modes"). It needs the egress proxy, so QEMU, and cannot be
-  combined with `--no-egress-proxy` or (for now) `--nested`. `--no-sudo`
-  overrides `session: sudo: true` in `settings.yaml`.
+- `--sudo`: the agent has passwordless sudo ("Two modes"). It needs the
+  egress proxy, so QEMU, and cannot be combined with `--no-egress-proxy`.
+  `--no-sudo` overrides `session: sudo: true` in `settings.yaml`.
 - `--nested`: **lower security; only for work on wmf-claude or wmf-sbx
   itself.** Do not use it for other work. nono gives the agent more in a
   nested sandbox: `/dev/kvm`, the `kvm` group, Lima's sockets, more

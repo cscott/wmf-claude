@@ -164,6 +164,17 @@ class LauncherTests(unittest.TestCase):
         self.assertIn("192.168.5.100", env["no_proxy"].split(","))
         self.assertNotIn("--landlock-only", a)
 
+    def test_a_nested_sudo_sandbox_uses_the_forwarder(self):
+        st = dict(STATE, egress="proxy", sudo=True, nested=True, name="box")
+        for forward, url in ((False, "http://192.168.5.100:3128"),
+                             (True, "http://127.0.0.1:3128")):
+            with self.subTest(forward=forward):
+                if forward:
+                    st[egress.FORWARD_KEY] = True
+                a = session.launcher_argv(st, cred_path="/dev/shm/c")
+                env = dict(x.split("=", 1) for x in a[:a.index("bash")] if "=" in x)
+                self.assertEqual(env["https_proxy"], url)
+
     def test_a_sudo_sandbox_takes_no_launcher_flags(self):
         with self.assertRaises(session.SessionError):
             session.launcher_argv(dict(STATE, egress="proxy", sudo=True, name="box"),
@@ -186,6 +197,23 @@ class LauncherTests(unittest.TestCase):
             script = nested.install_script(arch, image.base_image(arch), "/home/eng/wmf-sbx-src")
             res = subprocess.run(["bash", "-n"], input=script, text=True, capture_output=True)
             self.assertEqual(res.returncode, 0, res.stderr)
+
+    def test_the_forwarder_is_installed_only_when_asked(self):
+        import wmf_sbx.nested as nested
+        base = image.base_image("x86_64")
+        script = nested.install_script("x86_64", base, "/home/eng/wmf-sbx-src",
+                                       forward="192.168.5.100:3128")
+        res = subprocess.run(["bash", "-n"], input=script, text=True, capture_output=True)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("ListenStream=127.0.0.1:3128\n", script)
+        self.assertIn("ExecStart=/usr/lib/systemd/systemd-socket-proxyd 192.168.5.100:3128\n",
+                      script)
+        # Not the agent's uid: the nft block lets it reach the proxy.
+        self.assertIn("DynamicUser=yes\n", script)
+        self.assertIn(f"systemctl enable --now {nested.FORWARD_UNIT}.socket", script)
+        self.assertLess(script.index(nested.FORWARD_UNIT), script.index("usermod -aG kvm"))
+        plain = nested.install_script("x86_64", base, "/home/eng/wmf-sbx-src")
+        self.assertNotIn(nested.FORWARD_UNIT, plain)
 
     def test_a_staged_base_image_is_used_instead_of_a_download(self):
         import wmf_sbx.nested as nested
@@ -754,6 +782,14 @@ class ResumeMainTests(Env):
         self.assertEqual(self.nested_resume(rc=nested.SESSION_RUNNING), 0, self.err)
         self.assertIn("a session runs in demo", self.err)
         self.assertEqual(len(self.launches()), 1)
+
+    def test_a_sudo_nested_resume_stops_no_inner_vms(self):
+        # pgrep cannot see a sudo session, and nothing scopes its signals.
+        st = state_mod.load("demo", self.env)
+        st["sudo"] = True
+        state_mod.save(st, self.env)
+        self.assertEqual(self.nested_resume(stdout="stopped wmf-sbx-inner\n"), 0, self.err)
+        self.assertEqual(self.stop_inner_shells(), [])
 
     def test_an_ordinary_resume_stops_no_inner_vms(self):
         self.assertEqual(self.resume(), 0, self.err)

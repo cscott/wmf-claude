@@ -23,6 +23,7 @@ from Kosta's pinned Debian image). In short:
 import argparse
 import base64
 import datetime
+import glob
 import hashlib
 import json
 import os
@@ -173,6 +174,11 @@ NESTED_MARKER = "/etc/wmf-sbx/nested"
 # $SSL_CERT_FILE is the system's bundle plus nono's CA (RAN N3: 151
 # certificates). The inner VMs get only what the system bundle lacks.
 SYSTEM_CA_BUNDLE = "/etc/ssl/certs/ca-certificates.crt"
+# With no session nono (a `sudo` session, `exec`), the inner VMs get the
+# certificates that the sandbox got from Lima's caCerts: its egress CA,
+# which re-signs TLS for the hosts with endpoint rules, and the host's
+# $WMF_SBX_CA_CERTS. These are cloud-init's names on Debian.
+GUEST_CA_GLOB = "/usr/local/share/ca-certificates/cloud-init-ca-cert-*.crt"
 PEM_CERT_RE = re.compile(r"-----BEGIN CERTIFICATE-----[A-Za-z0-9+/=\s]+?-----END CERTIFICATE-----")
 
 
@@ -650,12 +656,15 @@ def builder_name(key):
 
 def extra_ca_files(env=None):
     """The absolute paths in $WMF_SBX_CA_CERTS. Each must be a file. In a
-    nested sandbox, with no $WMF_SBX_CA_CERTS: $SSL_CERT_FILE (nono's CA)."""
+    nested sandbox, with no $WMF_SBX_CA_CERTS: $SSL_CERT_FILE (nono's CA),
+    or with no session nono, the sandbox's own (GUEST_CA_GLOB)."""
     env = os.environ if env is None else env
     value = env.get(CA_CERTS_VAR)
     if value is None and os.path.exists(NESTED_MARKER):
         cert = env.get("SSL_CERT_FILE")
-        path = session_ca_file(cert, env) if cert and os.path.isfile(cert) else None
+        if not (cert and os.path.isfile(cert)):
+            return sorted(glob.glob(GUEST_CA_GLOB))
+        path = session_ca_file(cert, env)
         return [path] if path else []
     files = [os.path.abspath(os.path.expanduser(p))
              for p in (value or "").split(":") if p]

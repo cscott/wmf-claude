@@ -895,12 +895,35 @@ class CreateTests(Env):
         self.assertIn("--sudo needs nono on the host's PATH", self.err)
         self.assertIsNone(state_mod.load("demo", self.env))
 
-    def test_sudo_refuses_no_egress_proxy_and_nested(self):
+    def test_sudo_refuses_no_egress_proxy(self):
         self.assertEqual(self.egress_create("--sudo", flag="--no-egress-proxy"), 1)
         self.assertIn("--sudo needs the host egress proxy", self.err)
-        self.assertEqual(self.egress_create("--sudo", "--nested", flag=None), 1)
-        self.assertIn("--sudo --nested is not ported yet", self.err)
         self.assertEqual(self.lima.calls, [])
+
+    def test_sudo_nested_installs_the_loopback_forwarder(self):
+        with mock.patch.object(nested, "host_base", return_value="/cache/base/b.qcow2"), \
+                mock.patch.object(nested, "install_script", wraps=nested.install_script) as made:
+            self.assertEqual(self.egress_create("--sudo", "--nested", flag=None), 0, self.err)
+        self.assertEqual(made.call_args.kwargs["forward"],
+                         f"{egress.EGRESS_ADDR}:{egress.EGRESS_PORT}")
+        st = state_mod.load("demo", self.env)
+        self.assertTrue(st["sudo"] and st["nested"] and st[egress.FORWARD_KEY])
+        self.assertIn(create.NESTED_SUDO_WARNING, self.err)
+        (install,) = [c for c in self.lima.shells() if c[4:6] == ("sudo", "env")]
+        # The install runs before the forwarder exists: the proxy itself.
+        self.assertIn(f"https_proxy={egress.proxy_url()}", install)
+
+    def test_a_contained_nested_create_gets_the_forwarder_too(self):
+        with mock.patch.object(nested, "host_base", return_value="/cache/base/b.qcow2"):
+            self.assertEqual(self.egress_create("--nested"), 0, self.err)
+        self.assertTrue(state_mod.load("demo", self.env)[egress.FORWARD_KEY])
+        self.assertIn(create.NESTED_WARNING, self.err)
+
+    def test_a_nested_create_with_no_egress_proxy_has_no_forwarder(self):
+        with mock.patch.object(nested, "install_script", wraps=nested.install_script) as made:
+            self.assertEqual(self.create("--name", "demo", "--nested"), 0, self.err)
+        self.assertIsNone(made.call_args.kwargs["forward"])
+        self.assertNotIn(egress.FORWARD_KEY, state_mod.load("demo", self.env))
 
     def test_a_taken_name_is_refused(self):
         self.assertEqual(self.create("--name", "demo", lima=FakeLima({"wmf-sbx-demo": "Stopped"})), 1)
@@ -1084,6 +1107,19 @@ class ExecTests(Env):
                 self.quiet(exec_mod.main, args, lima=lima, env=env)
                 self.assertIn("HTTPS_PROXY=http://nono:pw@192.168.5.2:50723",
                               lima.shells()[-1])
+
+    def test_exec_in_a_nested_sandbox_uses_the_forwarder(self):
+        # sudo has no nono proxy on the guest's loopback for the inner VMs.
+        lima = self.sandbox()
+        st = state_mod.load("sbx-demo", self.env)
+        st.update(egress="proxy", nested=True)
+        state_mod.save(st, self.env)
+        self.quiet(exec_mod.main, ["sbx-demo", "--", "ls"], lima=lima, env=self.env)
+        self.assertIn(f"HTTPS_PROXY={egress.proxy_url()}", lima.shells()[-1])
+        st[egress.FORWARD_KEY] = True
+        state_mod.save(st, self.env)
+        self.quiet(exec_mod.main, ["sbx-demo", "--", "ls"], lima=lima, env=self.env)
+        self.assertIn("HTTPS_PROXY=http://127.0.0.1:3128", lima.shells()[-1])
 
     def test_exec_names_the_sandbox_as_a_session_does(self):
         # bin/git-review-check reads $SANDBOX_NAME (`git safe-reset local`).

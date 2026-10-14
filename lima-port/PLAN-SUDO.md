@@ -400,7 +400,10 @@ In order, each a commit with its unit tests:
    - `exec --engineer` on a `sudo` sandbox says the agent has sudo too.
 6. **`--sudo --nested`** (as A3 above: the loopback forwarder for inner
    VMs, the egress CA for them, the warning's wording). Last, as its own
-   step; step 1 refuses it until then.
+   step; step 1 refuses it until then. Written 2026-10-14 (NOTES): a root
+   socket unit on 127.0.0.1:3128 with `systemd-socket-proxyd` to the host
+   proxy, state `egressForward`, Lima's `cloud-init-ca-cert-*.crt` for the
+   inner VMs, and no inner-VM stop at a `sudo` resume.
 
 RAN on the engineer's host, after step 4:
 - `create --sudo Cite`, its invariants, `status`;
@@ -413,6 +416,19 @@ RAN on the engineer's host, after step 4:
     the list and a wiki POST all fail;
   - `mount -o remount,rw` on a mount, then a write: the host is unchanged.
 - The HANDOFF §11 blind run.
+
+To RUN on the engineer's host, after step 6:
+- `create --sudo --nested wmf-claude`: the warning, the forwarder line,
+  `status`;
+- in the session: `systemctl status wmf-sbx-egress-forward.socket`, then
+  an inner `wmf-sbx create` (an image build and an inner VM, through the
+  forwarder; TLS with the egress CA);
+- `wmf-sbx exec` with an inner `wmf-sbx create` or `limactl start`;
+- `resume` after the session ends, with the inner VM still up.
+- **The acceptance test.** In a `--sudo --nested` sandbox of wmf-claude,
+  the agent changes its own clone of wmf-claude, then uses that clone's
+  `sbx/bin/wmf-sbx` to create an inner sandbox and runs the acceptance
+  test in it, against the changed copy. Step 6 is done when this passes.
 
 ## Later, not in this track
 

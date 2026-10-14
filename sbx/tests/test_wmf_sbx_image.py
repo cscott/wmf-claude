@@ -400,6 +400,22 @@ class BuilderTests(unittest.TestCase):
             self.assertGreater(script.index(needle), seal, needle)
         self.assertGreater(seal, script.index('step "helpers"'))
 
+    def test_a_sudo_nested_sandbox_gives_the_inner_vms_its_own_cas(self):
+        # No session nono, so no SSL_CERT_FILE: the CAs Lima put in the
+        # guest (the egress CA, and the host's extra ones) are the ones.
+        with tempfile.TemporaryDirectory() as d:
+            marker = os.path.join(d, "nested")
+            open(marker, "w").close()
+            cas = [os.path.join(d, f"cloud-init-ca-cert-{i}.crt") for i in (2, 1)]
+            for ca in cas:
+                open(ca, "w").close()
+            glob_ = os.path.join(d, "cloud-init-ca-cert-*.crt")
+            with mock.patch.multiple(image, NESTED_MARKER=marker, GUEST_CA_GLOB=glob_):
+                self.assertEqual(image.extra_ca_files({}), sorted(cas))
+                self.assertEqual(image.extra_ca_files(
+                    {"SSL_CERT_FILE": os.path.join(d, "missing")}), sorted(cas))
+                self.assertEqual(image.extra_ca_files({image.CA_CERTS_VAR: ""}), [])
+
     def test_no_extra_ca_means_no_cacerts_key(self):
         self.assertEqual(image.extra_ca_files({}), [])
         self.assertNotIn("caCerts", image.builder_template(sample_inputs()))
@@ -431,7 +447,6 @@ class BuilderTests(unittest.TestCase):
                 self.assertEqual(image.extra_ca_files(env), files)
                 with open(files[0]) as f:
                     self.assertEqual(f.read(), self.pem("TkVX"))
-                self.assertEqual(image.extra_ca_files({}), [])
                 self.assertEqual(image.extra_ca_files(dict(env, **{image.CA_CERTS_VAR: ""})), [])
                 # Nothing that the system lacks: nothing to add.
                 with open(bundle, "w") as f:

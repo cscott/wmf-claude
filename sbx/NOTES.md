@@ -453,8 +453,7 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   snapshot). The restart in `snapshot.freeze` already goes through `vm.start_instance`,
   which starts in egress mode.
 - **`--sudo` (A3 steps 1 to 5, written and RAN 2026-10-14).** `create --sudo` (or
-  `settings.yaml` `session: sudo: true`) needs the egress proxy, and refuses `--nested`
-  until step 6. The provisioning writes `/etc/sudoers.d/90-wmf-sbx-agent` (visudo-checked;
+  `settings.yaml` `session: sudo: true`) needs the egress proxy. The provisioning writes `/etc/sudoers.d/90-wmf-sbx-agent` (visudo-checked;
   `env_keep` for the proxy variables) and `/etc/wmf-sbx/sudo`, and a contained sandbox
   removes both at each boot. A session runs `bin/launch-claude.sh` with no nono, with the
   egress proxy's variables (`sudo -u agent` drops `/etc/environment`'s) and
@@ -472,8 +471,23 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   status line; `sudo nft flush ruleset`, then curl `--noproxy '*'` to an IP failed at once
   and the proxy still refused a host off its list; a wiki POST got 403 (`endpoint rules
   denied POST`); `sudo mount -o remount,rw` of a `.git` share, then a write got
-  `Read-only file system` from the host side. Not explained: some 30 denied CONNECTs to
-  `metadata.ftp-master.debian.org` (backoff 1, 2, 4 s) just before the session started.
+  `Read-only file system` from the host side. Some 30 denied CONNECTs to
+  `metadata.ftp-master.debian.org` (backoff 1, 2, 4 s) were `apt-listchanges.timer`
+  ("Try hourly to initialize apt-listchanges database": `apt-get changelog`, on the first
+  hour mark after boot); the image now masks it and apt's daily timers.
+- **`--sudo --nested` (A3 step 6, written 2026-10-14, not yet RAN).** An inner VM's only
+  way out is 192.168.5.2, the outer guest's loopback. A contained session's nono proxy
+  listens there; a `sudo` session and `exec` have none. So every nested egress sandbox
+  gets a root forwarder at create (`nested.forward_script`): a systemd socket on
+  127.0.0.1:3128 and `systemd-socket-proxyd` to 192.168.5.100:3128, as a `DynamicUser`
+  (not the agent's uid, so the nft block lets it through). The state key `egressForward`
+  says it is there; `exec` and the `sudo` session point the proxy variables at it only
+  then, so older nested sandboxes keep the direct URL for `exec`. The create-time install
+  itself uses the direct URL (the forwarder is not up yet). The inner VMs' CAs: with no
+  session nono there is no `SSL_CERT_FILE`, so `image.extra_ca_files` gives them Lima's
+  `/usr/local/share/ca-certificates/cloud-init-ca-cert-*.crt` (the egress CA and the
+  host's extra ones). `resume` does not stop the inner VMs of a `sudo` sandbox: its
+  `pgrep nono` cannot see a session there, and no Landlock scope separates sessions.
 
 ### Testing in the sandbox
 

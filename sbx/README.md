@@ -325,7 +325,8 @@ On QEMU, each `create` ends by freezing the sandbox's disk as a
 **snapshot** of its set of repos, before any session runs in it: the
 clones, composer's `vendor/`, `node_modules` and the installed wiki. The
 next `create` of the same set of repos (the same host paths, the same
-`:ro`s, the same golden image, `--nested` or not) starts from that
+`:ro`s, the same golden image, `--nested` or not, behind the egress
+proxy or not) starts from that
 snapshot: it fetches, checks out and updates only what changed (`git
 fetch`, `composer update`, `npm ci` only where `package-lock.json`
 changed, `update.php`). If the snapshot it started from is older than a
@@ -334,9 +335,10 @@ the result as the newest snapshot; within the day it does not, and the
 next create fetches and updates a little more instead.
 How a repo got in (named, or as a dependency) does not matter, so the
 dependency flags change the snapshot only by changing the set.
-A sandbox behind the egress proxy (the default on QEMU) neither uses nor
-makes a snapshot yet: its create is always cold. `--no-egress-proxy`
-keeps the snapshots.
+A sandbox behind the egress proxy (the default on QEMU) and one that is
+not have separate snapshots: the guest's side of the proxy (its resolver
+and proxy settings) is on the disk. Each sandbox gets its own egress CA;
+the freeze removes the one that made the snapshot.
 
 - The freeze stops and starts the sandbox once, at the end of `create`,
   and writes a new snapshot of a few GiB; `create` says how long it
@@ -513,8 +515,7 @@ nftables in the VM, as before), when:
 - the host lacks `qemu-system-ARCH`, `nono` or `openssl` on its `PATH`.
 
 `--no-egress-proxy` asks for that on purpose, with no warning; an
-explicit `--egress-proxy` turns the warning into an error. A sandbox
-behind the proxy has no warm snapshot yet ("Warm snapshots").
+explicit `--egress-proxy` turns the warning into an error.
 
 ## Two modes
 

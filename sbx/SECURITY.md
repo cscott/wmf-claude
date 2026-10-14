@@ -229,7 +229,10 @@ control comes with `--sudo` mode.)
   until the golden image is 14 days old (`imageCache.maxAge`) and every
   snapshot on it goes cold. `--cold` starts over at once. The freeze
   removes the sandbox's identity (machine-id, SSH host keys, cloud-init
-  state) and its setup logs. The guest writes its filesystem, not the
+  state, the CAs from Lima's `caCerts`: its egress CA, removed from the
+  trust store too) and its setup logs; the sandbox that froze gets its
+  logs back. Sandboxes behind the egress proxy and plain ones never
+  share a snapshot (the key says which). The guest writes its filesystem, not the
   qcow2 headers, and `create` checks the backing chain of every disk.
   A snapshot keeps host gc off in the repos it borrows from, as a
   sandbox does (above), for as long as the snapshot exists.

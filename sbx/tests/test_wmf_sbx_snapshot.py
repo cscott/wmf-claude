@@ -48,10 +48,27 @@ class KeyTests(unittest.TestCase):
                          snapshot.snapshot_key(GOLDEN, list(reversed(self.REPOS))))
         self.assertRegex(snapshot.snapshot_key(GOLDEN, self.REPOS), r"^[0-9a-f]{16}$")
 
+    def test_a_plain_key_is_as_before_egress_had_snapshots(self):
+        # The snapshots made before the egress proxy had any stay usable.
+        import hashlib, json
+        blob = json.dumps({"golden": GOLDEN, "nested": False,
+                           "repos": sorted([c, p, ro] for c, p, ro in self.REPOS)},
+                          sort_keys=True, separators=(",", ":"))
+        self.assertEqual(snapshot.snapshot_key(GOLDEN, self.REPOS),
+                         hashlib.sha256(blob.encode()).hexdigest()[:16])
+
+    def test_the_seal_drops_the_sandboxs_cas_from_the_trust_store(self):
+        script = snapshot.seal_script()
+        self.assertLess(script.index("rm -f /usr/local/share/ca-certificates/cloud-init-ca-cert-"),
+                        script.index("update-ca-certificates --fresh"))
+        self.assertLess(script.index("update-ca-certificates --fresh"),
+                        script.index("cloud-init clean"))
+
     def test_golden_nested_path_and_ro_change_the_key(self):
         k = snapshot.snapshot_key(GOLDEN, self.REPOS)
         for other in (snapshot.snapshot_key("fedcba9876543210", self.REPOS),
                       snapshot.snapshot_key(GOLDEN, self.REPOS, nested=True),
+                      snapshot.snapshot_key(GOLDEN, self.REPOS, egress=True),
                       snapshot.snapshot_key(GOLDEN, self.REPOS[:1] + [
                           ("gerrit:mediawiki/extensions/Cite", "/h/Cite", True)]),
                       snapshot.snapshot_key(GOLDEN, self.REPOS[:1] + [

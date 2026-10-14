@@ -840,7 +840,7 @@ class CreateTests(Env):
         self.assertEqual(self.create("--name", "demo", "--nested"), 1)
         self.assertIn("--nested: /home/agent/wmf-sbx-src is under /home/agent", self.err)
 
-    def egress_create(self, *extra, lima=None, flag="--egress-proxy", missing=()):
+    def egress_create(self, *extra, lima=None, flag="--egress-proxy", missing=(), name="demo"):
         def make_ca(name, env=None):
             egress.make_dir(name, env)
             with open(egress.ca_cert(name, env), "w") as f:
@@ -853,7 +853,7 @@ class CreateTests(Env):
                                   or {"WMF_SBX_EGRESS_CONFIG": "x"}), \
                 mock.patch.object(egress, "wait_time_sync", return_value=True), \
                 mock.patch.object(egress, "missing_tools", return_value=list(missing)):
-            rc = self.create("--name", "demo", *([flag] if flag else []), *extra, lima=lima)
+            rc = self.create("--name", name, *([flag] if flag else []), *extra, lima=lima)
         self.made_ca = made.call_count
         return rc
 
@@ -868,9 +868,10 @@ class CreateTests(Env):
         self.assertIn(egress.ca_cert("demo", self.env), tmpl["caCerts"]["files"])
         self.assertEqual(tmpl["hostResolver"], {"enabled": False})
         self.assertIn("192.168.5.100", tmpl["provision"][0]["script"])
-        self.assertEqual(self.wrapper_env, ["demo"])
+        # its first start, and the start on its snapshot after the freeze
+        self.assertEqual(self.wrapper_env, ["demo", "demo"])
         self.assertEqual(self.lima.start_env, {"WMF_SBX_EGRESS_CONFIG": "x"})
-        self.assertNotIn("snapshot", st)
+        self.assertIn("snapshot", st)
         self.assertIn("(the first boot runs the provisioning, behind the host egress proxy)",
                       self.err)
 
@@ -905,7 +906,25 @@ class CreateTests(Env):
         self.assertEqual((st["egress"], st["vmType"]), ("proxy", "qemu"))
         self.assertEqual(self.lima.start_env, {"WMF_SBX_EGRESS_CONFIG": "x"})
         self.assertNotIn("not behind the host egress proxy", self.err)
-        self.assertIn("+ no warm snapshot: not yet behind the egress proxy", self.err)
+        self.assertIn("this create makes snapshot", self.err)
+
+    def test_warm_snapshots_behind_the_egress_proxy_are_their_own(self):
+        import wmf_sbx.snapshot as snapshot
+        self.assertEqual(self.egress_create(name="one"), 0, self.err)
+        (_k, _g, _p, meta), = self.snapshots()
+        self.assertTrue(meta["egress"])
+        # A second egress sandbox of the same repos starts from it ...
+        self.assertEqual(self.egress_create(name="two"), 0, self.err)
+        self.assertIn("+ warm: from snapshot", self.err)
+        self.assertIn("(made by one)", self.err)
+        # ... a plain one does not: its disk would have the guest side of
+        # the proxy (resolv.conf, the proxy variables).
+        self.assertEqual(self.egress_create(name="three", flag="--no-egress-proxy"), 0,
+                         self.err)
+        self.assertIn("+ cold: no snapshot of these repos yet", self.err)
+        self.assertEqual(sorted(m["egress"] for _k, _g, _p, m in self.snapshots()),
+                         [False, True])
+        self.assertEqual(len(snapshot.list_keys(self.env)), 2)
 
     def test_no_egress_proxy_is_the_guests_own_route(self):
         self.assertEqual(self.egress_create(flag="--no-egress-proxy"), 0, self.err)

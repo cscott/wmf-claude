@@ -786,19 +786,14 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
             say("+ sudo: the agent has passwordless sudo; the VM and the host egress "
                 "proxy are its boundary")
         overlay = disk_mod.uses_overlay(vm_type) and not args.full_disk
-        # Not behind the egress proxy yet: its disk holds the sandbox's
-        # own egress CA and guest network setup, which the snapshot key
-        # does not cover.
-        use_snapshots = overlay and args.snapshot and not egress
-        if egress and overlay and args.snapshot:
-            say("+ no warm snapshot: not yet behind the egress proxy "
-                "(--no-egress-proxy uses them)")
+        use_snapshots = overlay and args.snapshot
         readonly = {path for (_spec, is_ro), (_c, path, _n) in zip(split, resolved) if is_ro}
         snap_repos = [(c, path, path in readonly) for c, path, _n in resolved]
 
         def snapshot_for(golden_key):
             """(key, the newest usable generation or None)."""
-            skey = snapshot_mod.snapshot_key(golden_key, snap_repos, nested=args.nested)
+            skey = snapshot_mod.snapshot_key(golden_key, snap_repos, nested=args.nested,
+                                             egress=bool(egress))
             return skey, (None if args.cold else usable_snapshot(skey, env, run=run))
 
         # The golden image: the cache entry for the current inputs, built
@@ -1033,7 +1028,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
             f"(settings.yaml imageCache.snapshotInterval: "
             f"{image_mod.duration(image_mod.snapshot_interval(config))}); the sandbox stays on it")
     elif use_snapshots:
-        meta = {"golden": key, "nested": bool(args.nested),
+        meta = {"golden": key, "nested": bool(args.nested), "egress": bool(egress),
                 "repos": [{"canonical": c, "path": p, "readOnly": ro} for c, p, ro in snap_repos]}
         try:
             state["snapshot"] = snapshot_mod.freeze(

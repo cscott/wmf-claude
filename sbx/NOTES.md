@@ -447,16 +447,6 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   way, through AuthShim (item 7 ran exactly that chain). So a nested sandbox's egress
   list adds `nested.DOMAINS` (cloud.debian.org, nodejs.org, downloads.claude.ai, ...).
   On macOS `--nested` means vz, so it falls back.
-- **Warm snapshots behind the egress proxy** (after the rebase on B3): an egress `create`
-  neither uses nor makes a snapshot yet (`create.py`, `use_snapshots`). Its disk holds its
-  own egress CA (in the guest's trust store) and the egress network setup (nft rules,
-  `resolv.conf`, resolved masked), and the snapshot key covers neither; a plain sandbox
-  warm-started from it would get both, and an egress one would trust another sandbox's CA.
-  Since the flip, a default `create` on QEMU is therefore always cold (`create` says so;
-  `--no-egress-proxy` keeps the snapshots). To do (track B): put `egress` in the snapshot
-  key and its meta, and replace the CA at the warm start (or keep the CA out of the
-  snapshot). The restart in `snapshot.freeze` already goes through `vm.start_instance`,
-  which starts in egress mode.
 - **`--sudo` (A3 steps 1 to 5, written and RAN 2026-10-14).** `create --sudo` (or
   `settings.yaml` `create: sudo: true`) needs the egress proxy. The provisioning writes `/etc/sudoers.d/90-wmf-sbx-agent` (visudo-checked;
   `env_keep` for the proxy variables) and `/etc/wmf-sbx/sudo`, and a contained sandbox
@@ -806,8 +796,13 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   and 33 MiB each. The outer sandbox for the run
   was made with Lima 2.3.0-beta.1 on the host: the overlay worked there too (`create`
   warned).
-- Warm snapshots (track B3, `snapshot.py`): the key is the golden image, `--nested` and the
-  set of (canonical, host path, read-only); the freeze runs at the end of every QEMU
+- Warm snapshots (track B3, `snapshot.py`): the key is the golden image, `--nested`, the
+  egress proxy (only when on, so the plain keys did not change) and the set of (canonical,
+  host path, read-only). Behind the egress proxy (2026-10-14, after the merge that made it
+  the default): the guest side of the proxy is the same in every egress sandbox and is
+  written again at each boot; only the CA differs, so the seal also runs
+  `update-ca-certificates --fresh` (as image-build.sh does), and cloud-init adds the next
+  sandbox's CA. Not yet RAN on hardware. The freeze runs at the end of every QEMU
   `create`: the seal (identity, setup logs) in the guest, stop, the disk moved into
   `snapshots/KEY/GEN.qcow2`, `qemu-img rebase` onto the golden image (depth 2), read-only,
   a new overlay for the sandbox, start. A warm create refreshes the clones

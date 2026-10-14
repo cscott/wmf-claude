@@ -58,12 +58,18 @@ class SnapshotError(Exception):
     pass
 
 
-def snapshot_key(golden_key, repos, nested=False):
+def snapshot_key(golden_key, repos, nested=False, egress=False):
     """The key of a set of repos: `repos` is [(canonical, host path,
-    read_only)]. 16 hex digits, like an image key."""
-    blob = json.dumps({"golden": golden_key, "nested": bool(nested),
-                       "repos": sorted([c or "", p, bool(ro)] for c, p, ro in repos)},
-                      sort_keys=True, separators=(",", ":"))
+    read_only)]. 16 hex digits, like an image key. A sandbox behind the
+    egress proxy has its own keys: its disk has the guest side of the
+    proxy (resolv.conf, the masked resolver, the proxy variables), which
+    a plain sandbox must not get. (Without `egress` the key is as it was
+    before the egress proxy had snapshots.)"""
+    fields = {"golden": golden_key, "nested": bool(nested),
+              "repos": sorted([c or "", p, bool(ro)] for c, p, ro in repos)}
+    if egress:
+        fields["egress"] = True
+    blob = json.dumps(fields, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
 
@@ -278,6 +284,11 @@ rm -rf {home}/.wmf-sbx/timings
 rm -f /etc/ssh/ssh_host_*
 rm -f /etc/sudoers.d/90-cloud-init-users
 rm -f /usr/local/share/ca-certificates/cloud-init-ca-cert-*.crt
+# The CAs from Lima's caCerts (a sandbox's own egress CA among them) are
+# in the merged bundle and /etc/ssl/certs too: --fresh rebuilds both
+# without them, as image-build.sh does. The next boot's cloud-init adds
+# the new sandbox's. (Its `rehash` warning about the bundle is noise.)
+update-ca-certificates --fresh >/dev/null 2>&1
 cloud-init clean --logs --seed --machine-id
 sync
 """

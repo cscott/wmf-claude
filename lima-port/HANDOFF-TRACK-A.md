@@ -55,20 +55,16 @@ So step 6 is done by its own definition. What is left is below.
    `--memory 8GiB`. The 10/4 GiB defaults predate the balloon (NOTES "Host
    memory"); with free-page reporting a larger outer VM costs the host
    little while idle.
-2. **An intermittent ERROR in the sbx unit suite**, seen in egsn in about
-   one full run in five, before and after its rebase. Cause unknown; the
-   egsn agent did not name the test. Run the suite several times in the new
-   sandbox (`cd sbx && python3 -m unittest discover -s tests -q`), name the
-   test, fix it.
-3. **Tests must never read the machine's real credentials.** A failing
-   assertion in egsn printed the session's phantom into the transcript (the
-   tests that read `/etc/wmf-sbx/nested`; now patched per module). Look for
-   other tests that can reach real state (`~/.config/wmf-sbx`, the env's
-   `CLAUDE_CODE_OAUTH_TOKEN`/`ANTHROPIC_API_KEY`, `/etc/wmf-sbx/*`) and
-   isolate them the same way.
-4. **Record the RAN above** in `PLAN-SUDO.md` (replace "To RUN on the
-   engineer's host, after step 6" with the RAN list) and in `sbx/NOTES.md`,
-   and update `lima-port/README.md` ("step 6 … waits for its host run").
+2. Done: **the intermittent ERROR in the sbx unit suite.** Two causes, both
+   in tests: `limactl validate` refused a tempfile name ending in `_` or
+   holding `__` (the two "valid for limactl" tests), and the QEMU wrapper
+   tests' `alive()` raised ESRCH when a process was reaped while it read
+   `/proc/PID/stat`.
+3. Done: **tests never read the machine's real state.** Every test module
+   calls `isolation.isolate()` (empty HOME, no credential variables, no
+   nested marker, `claude`/`security` stubs); a test checks it. NOTES
+   "Project rules".
+4. Done: **the RAN is recorded** in `PLAN-SUDO.md` and `sbx/NOTES.md`.
 5. Then `PLAN-SUDO.md` "Later, not in this track", or what the engineer
    asks for.
 

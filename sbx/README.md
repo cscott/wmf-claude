@@ -268,6 +268,13 @@ any of them builds a new image (about 10 minutes) at the next `create`.
 The images are in `${XDG_CACHE_HOME:-~/.cache}/wmf-sbx/images/KEY/`,
 about 2.5 GB each.
 
+One image is built at a time per key. When a second `create` (or `image
+build`) needs an image that another one is building now, it asks: wait
+for that build and use its image (the default), delete the other
+builder and build here, or abort. When stdin is not a terminal, it
+aborts, with exit status 1. A builder that a crashed build left behind
+is deleted without a question.
+
 When you work on wmf-claude, every commit changes the key. To keep the
 image while you commit, set `WMF_SBX_GIT_HASH_OVERRIDE`: its value
 replaces the commit in the key. Change the value to build a new image

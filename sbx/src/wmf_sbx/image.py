@@ -23,6 +23,7 @@ from Kosta's pinned Debian image). In short:
 import argparse
 import base64
 import datetime
+import fcntl
 import glob
 import hashlib
 import json
@@ -865,11 +866,46 @@ def check_exported(info):
         raise ImageError(f"exported image has an external data file: {data}")
 
 
+# What to do when another process is building the same image (its lock
+# is held): "wait" for it, "delete" its builder and build here once it has
+# given up, or "abort". build()'s `busy` chooses; without one, abort.
+BUSY_CHOICES = ("wait", "delete", "abort")
+
+
+def build_lock_path(key, env=None):
+    return os.path.join(cache_root(env), f".build-{key}.lock")
+
+
+def busy_prompt(interactive, prompt=input, err=sys.stderr):
+    """A `busy` for build(): ask on a terminal, abort otherwise."""
+    def choose(key, name):
+        if not interactive:
+            return "abort"
+        print(f"Another wmf-sbx is building golden image {key} (its builder is {name}).\n"
+              f"  [w] wait for it, and use the image it builds (the default)\n"
+              f"  [d] delete its builder (that build fails) and build here\n"
+              f"  [a] abort", file=err)
+        while True:
+            answer = (prompt("Wait, delete or abort? [W/d/a] ") or "w").strip().lower()
+            for choice in BUSY_CHOICES:
+                if answer in (choice, choice[0]):
+                    return choice
+    return choose
+
+
 def build(inputs=None, lima=None, run=subprocess.run, env=None, log=print,
-          now=None, keep_builder=False):
+          now=None, keep_builder=False, busy=None):
     """Build the image for `inputs` unless the cache has it. Returns the
     key. The entry appears all at once (a rename), so a failed build
-    leaves nothing that `list_images` shows."""
+    leaves nothing that `list_images` shows.
+
+    One build of a key at a time: a build holds an flock on
+    build_lock_path while it runs. A builder that is there with the lock
+    free was left by a build that crashed, and is deleted. With the lock
+    held, another process is building now: `busy(key, builder)` (default:
+    abort) says whether to wait for it, delete its builder and build here,
+    or raise ImageError (RAN 2026-10-14: a second create deleted the first
+    one's running builder)."""
     env = os.environ if env is None else env
     inputs = inputs or image_inputs(run=run, env=env)
     lima = lima or lima_mod.Limactl(run=run)
@@ -879,7 +915,33 @@ def build(inputs=None, lima=None, run=subprocess.run, env=None, log=print,
         verify_entry(key, env)
         log(f"image {key} is in the cache: {golden_path(key, env)}")
         return key
+    os.makedirs(cache_root(env), exist_ok=True)
+    with open(build_lock_path(key, env), "a", encoding="utf-8") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            name = builder_name(key)
+            choice = (busy or (lambda _k, _n: "abort"))(key, name)
+            if choice == "abort":
+                raise ImageError(
+                    f"another wmf-sbx is building golden image {key} (builder {name}). "
+                    f"Run this again when it is done, or on a terminal to wait for it."
+                ) from None
+            if choice == "delete" and lima.exists(name):
+                log(f"deleting {name}, the builder of the other build")
+                lima.delete(name)
+            log(f"waiting for the other build of {key} to end")
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            if os.path.isdir(final):
+                verify_entry(key, env)
+                log(f"image {key} is in the cache: {golden_path(key, env)}")
+                return key
+        return _build(inputs, key, lima, run, env, log, now, keep_builder)
 
+
+def _build(inputs, key, lima, run, env, log, now, keep_builder):
+    """build(), with the key's build lock held."""
+    final = entry_dir(key, env)
     name = builder_name(key)
     ca_files = extra_ca_files(env)
     root = cache_root(env)
@@ -1035,7 +1097,7 @@ def main(argv=None, env=None, lima=None, run=subprocess.run, out=sys.stdout):
                                indent=2, sort_keys=True))
                 return 0
             build(inputs, lima=lima, run=run, env=env, log=say,
-                  keep_builder=args.keep_builder)
+                  keep_builder=args.keep_builder, busy=busy_prompt(sys.stdin.isatty()))
         elif args.cmd == "ls":
             from . import snapshot as snapshot_mod
             used = images_in_use(env)

@@ -836,7 +836,11 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
             cached = os.path.isdir(image_mod.entry_dir(key, env))
             say(f"+ golden image {key} ({'in the cache' if cached else 'to build'})")
             if not args.dry_run:
-                (build or image_mod.build)(inputs, lima=lima, run=run, env=env, log=say)
+                if build:
+                    build(inputs, lima=lima, run=run, env=env, log=say)
+                else:
+                    image_mod.build(inputs, lima=lima, run=run, env=env, log=say,
+                                    busy=image_mod.busy_prompt(interactive, prompt=prompt))
         golden = image_mod.golden_path(key, env)
         skey, snap = snapshot_for(key) if use_snapshots else (None, None)
         backing = snap[1] if snap else golden

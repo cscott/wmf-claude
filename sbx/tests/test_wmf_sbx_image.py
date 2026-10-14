@@ -778,6 +778,69 @@ class BuildTests(TempEnv):
         self.assertEqual(self.build(again), self.key)
         self.assertEqual(again.calls, [])
 
+    def hold_lock(self):
+        """Another process's build of the key: its lock, held."""
+        import fcntl
+        os.makedirs(image.cache_root(self.env), exist_ok=True)
+        f = open(image.build_lock_path(self.key, self.env), "a")
+        fcntl.flock(f, fcntl.LOCK_EX)
+        self.addCleanup(f.close)
+        return f
+
+    def test_a_builder_left_by_a_crashed_build_is_deleted(self):
+        # Its lock is free: no build is running.
+        name = image.builder_name(self.key)
+        fake = FakeLima(self.env, existing=[name])
+        self.assertEqual(self.build(fake), self.key)
+        self.assertLess(fake.calls.index(("delete", name)), fake.calls.index(("create", name)))
+
+    def test_a_running_build_is_not_touched_by_default(self):
+        self.hold_lock()
+        name = image.builder_name(self.key)
+        fake = FakeLima(self.env, existing=[name])
+        with self.assertRaisesRegex(image.ImageError, "another wmf-sbx is building"):
+            self.build(fake)
+        self.assertEqual(fake.calls, [])
+
+    def test_wait_uses_the_image_the_other_build_made(self):
+        holder = self.hold_lock()
+        seen = []
+
+        def busy(key, name):
+            seen.append((key, name))
+            holder.close()                      # the other build ends ...
+            self.build(FakeLima(self.env))      # ... with the image made
+            return "wait"
+        fake = FakeLima(self.env, existing=[image.builder_name(self.key)])
+        self.assertEqual(self.build(fake, busy=busy), self.key)
+        self.assertEqual(seen, [(self.key, image.builder_name(self.key))])
+        self.assertEqual(fake.calls, [])        # no builder of its own
+
+    def test_delete_removes_the_other_builder_then_builds_here(self):
+        holder = self.hold_lock()
+        name = image.builder_name(self.key)
+        fake = FakeLima(self.env, existing=[name])
+
+        def busy(key, n):
+            # The other build fails once its builder is gone; its lock goes.
+            fake_delete = fake.delete
+
+            def delete(n2):
+                fake_delete(n2)
+                holder.close()
+            fake.delete = delete
+            return "delete"
+        self.assertEqual(self.build(fake, busy=busy), self.key)
+        self.assertEqual(fake.calls[:2], [("exists", name), ("delete", name)])
+        self.assertIn(("create", name), fake.calls)
+
+    def test_the_busy_prompt(self):
+        self.assertEqual(image.busy_prompt(False)("k", "b"), "abort")
+        for answers, want in ((["", ], "wait"), (["d"], "delete"), (["x", "abort"], "abort")):
+            it = iter(answers)
+            choose = image.busy_prompt(True, prompt=lambda q: next(it), err=io.StringIO())
+            self.assertEqual(choose("k", "b"), want, answers)
+
     def test_a_builder_that_does_not_start_is_deleted(self):
         fake = FakeLima(self.env)
 
@@ -795,7 +858,8 @@ class BuildTests(TempEnv):
             self.build(fake)
         self.assertNotIn(("delete", image.builder_name(self.key)), fake.calls)
         self.assertEqual(image.list_images(self.env), [])
-        self.assertEqual([n for n in os.listdir(image.cache_root(self.env))], [])
+        self.assertEqual([n for n in os.listdir(image.cache_root(self.env))
+                          if not n.endswith(".lock")], [])
 
     def test_an_export_with_a_backing_file_is_not_cached(self):
         def run(argv, **kw):

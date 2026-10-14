@@ -108,6 +108,11 @@ def config_file(name, env=None):
     return _path(name, "proxy.json", env)
 
 
+def log_file(name, env=None):
+    """The proxy's log: its allow and deny decisions (`wmf-sbx logs`)."""
+    return _path(name, "proxy.log", env)
+
+
 def dns_socket(name, env=None):
     return _path(name, "dns.sock", env)
 
@@ -305,7 +310,7 @@ def proxy_argv(name, env=None, nono="nono"):
     for domain in dict.fromkeys(domains + extra_domains(name, env)):
         argv += ["--allow-domain", domain]
     argv += ["--proxy-ca-cert", ca_cert(name, env), "--proxy-ca-key", ca_key(name, env),
-             "--log-file", _path(name, "proxy.log", env)]
+             "--log-file", log_file(name, env)]
     return argv
 
 

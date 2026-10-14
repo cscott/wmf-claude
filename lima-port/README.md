@@ -21,6 +21,10 @@ sandbox. Delete it, or move its content into `sbx/`, when the port lands.
   (`--sudo --nested`) and its acceptance test included.
 - [`HANDOFF-TRACK-A.md`](HANDOFF-TRACK-A.md) — where track A stands, what
   is open, and how to work on it. Start there for track A.
+- [`PLAN-SETTINGS-DEFAULTS.md`](PLAN-SETTINGS-DEFAULTS.md) — defaults
+  for command-line options from settings.yaml (`create.cloneMissing` and
+  every other option of every command): one helper, every flag a
+  `--X/--no-X` pair, `--no-settings`. Not started.
 - [`HANDOFF-LIMA-QCOW2-OVERLAYS.md`](HANDOFF-LIMA-QCOW2-OVERLAYS.md) —
   the evidence and test procedure behind D12 (qcow2 overlays on an
   immutable golden image). Read it before track B.

@@ -198,5 +198,21 @@ class ProvisionTests(unittest.TestCase):
         self.assertNotIn("flush ruleset", s)
 
 
+
+
+class MountLimitTests(unittest.TestCase):
+
+    def test_qemu_takes_at_most_max_qemu_mounts(self):
+        dirs = [f"/h/r{i}/.git" for i in range(template.MAX_QEMU_MOUNTS)]
+        self.assertEqual(len(make(vm_type="qemu", gitdirs=dirs)["mounts"]),
+                         template.MAX_QEMU_MOUNTS)
+        with self.assertRaisesRegex(template.TemplateError, "at most 24.*--no-phan-deps"):
+            make(vm_type="qemu", gitdirs=dirs + ["/h/one-more/.git"])
+
+    def test_vz_has_no_such_limit(self):
+        dirs = [f"/h/r{i}/.git" for i in range(template.MAX_QEMU_MOUNTS + 1)]
+        self.assertEqual(len(make(vm_type="vz", gitdirs=dirs)["mounts"]), len(dirs))
+
+
 if __name__ == "__main__":
     unittest.main()

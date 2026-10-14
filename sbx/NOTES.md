@@ -98,6 +98,16 @@ Development scaffolding:
   `mr_default_target_self` (anonymous callers see `None`).
 - [ ] **Full GitLab project listing with an on-disk cache, plus recorded-response fixtures**.
 
+### Lima, QEMU and the disks (track B)
+
+- [ ] **More than 24 repos on QEMU: a PCI bridge.** Each git-dir mount is a `-virtfs`
+  (virtio-9p-pci) on q35's root bus, which takes 31 devices; Lima's 6 and the balloon
+  leave 24 (`template.MAX_QEMU_MOUNTS`; RAN 2026-10-14: Translate, Cite and Parsoid with
+  their dependencies are 25, and QEMU refused the balloon). The QEMU wrapper could rewrite
+  each `-virtfs` into `-fsdev` plus `-device virtio-9p-pci,bus=BRIDGE` on one or more
+  `pcie-pci-bridge`s (31 devices each), and raise the limit to match. Plain `limactl
+  start` (no wrapper) would then not boot such a sandbox.
+
 ### Nested Lima (track C)
 
 - N1 (engineer's host, KVM, a sandbox from `lima-port/checks/n1-spike.sh`): the agent runs

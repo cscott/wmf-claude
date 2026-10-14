@@ -371,6 +371,11 @@ wmf-sbx create PRIMARY[:ro] [EXTRA[:ro] ...] [options]
   image on QEMU too, and no snapshot.
 - `--vm-type qemu|vz`, `--cpus N` (4), `--memory SIZE` (8GiB),
   `--disk SIZE` (60GiB).
+- On QEMU a sandbox takes at most 24 repos (git dirs mounted, the
+  dependencies counted): each mount is a PCI device, and the VM's bus has
+  room for 31, Lima's own and the memory balloon included. `create`
+  refuses more; `--no-phan-deps`, `--no-ci-deps` or `--no-dev` leave
+  dependencies out.
 - `--nested`: **lower security; only for work on wmf-claude or wmf-sbx
   itself.** Do not use it for other work. nono gives the agent more in a
   nested sandbox: `/dev/kvm`, the `kvm` group, Lima's sockets, more

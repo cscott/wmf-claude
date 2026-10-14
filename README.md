@@ -33,7 +33,7 @@ Note: either restart all open terminals, or run the appropriate `source` command
 `setup.sh` is interactive, safe to re-run, and prompts for your Phabricator username.
 
 
-**Prerequisites:** nono 0.78+, Claude Code, Node + npm, Python 3,
+**Prerequisites:** nono 0.80+, Claude Code, Node + npm, Python 3,
 [uv](https://docs.astral.sh/uv/) (optional), jq, git. `setup.sh` checks for each
 and tells you what's missing — on macOS it offers to `brew install` packages; on
 Debian or Ubuntu `setup.sh` offers to download and install the

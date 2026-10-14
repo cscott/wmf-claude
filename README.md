@@ -129,29 +129,29 @@ throwaway dev-wiki accounts only**.
 
 ## Lima VM mode (for SRE/security work)
 
-When the threat model says a rogue agent must have no path to the host at
-all, run the whole thing — nono, Claude Code, the MCP servers, the Docker
-broker — inside one persistent Lima VM. No host mounts, no port forwards;
-code moves in and out as git bundles, and Claude runs as an unprivileged
-`agent` user with no route to the Docker socket. Opt-in; plain `claude` is
-unchanged.
+When an escape from the sandbox must not reach your machine, run everything
+(nono, Claude Code, the MCP servers, the Docker broker) inside one persistent
+Lima VM, with no host mounts or port forwards; code moves in and out as git
+bundles. Opt-in; plain `claude` is unchanged.
 
 ```bash
 bin/wmf-claude-vm create                    # once; asks for your Phabricator username
 bin/wmf-claude-vm login                     # once: open the URL on the host, paste the code
 bin/wmf-claude-vm push ~/src/mediawiki/core
 bin/wmf-claude-vm claude core
-bin/wmf-claude-vm pull core                 # the agent's branches land in vm/* of the pushed repo
+bin/wmf-claude-vm pull core                 # the agent's branches land in vm/* of your checkout
 bin/wmf-claude-vm review core <branch>      # then checkout or discard it
 ```
 
-`./setup.sh` offers a `claude-vm` alias for `bin/wmf-claude-vm`. Threat
-model, Docker inside the VM, and the smoke test:
-[`docs/lima-vm.md`](docs/lima-vm.md).
+When the agent must reach nothing but the model API and never see the
+credential (Anthropic CVP work, for example), use a **contained VM**
+(`create --contained`): a proxy on the host holds the token, and the VM's
+network is locked during sessions. It needs a token from
+`claude setup-token`, an open/locked cycle for setup, and a firewall rule on
+the host.
 
-When the agent must have no egress but the model API (for Anthropic CVP work,
-for example), `bin/wmf-claude-vm create --contained` makes a VM whose sessions
-reach only the model API, through a proxy on the host that holds the token: [`docs/lima-vm.md#contained-mode`](docs/lima-vm.md#contained-mode).
+Which mode to use, and how: [`docs/lima-vm.md`](docs/lima-vm.md). `./setup.sh`
+offers a `claude-vm` alias for `bin/wmf-claude-vm`.
 
 ## Bugs and questions
 

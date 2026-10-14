@@ -576,3 +576,118 @@ mounts — a `$HOME` dotfile/dotdir (`~/.ssh`, `~/.aws`, `~/.composer`, ...) or
 mounted by name, a non-dot sibling dir it can't distinguish from a code mount,
 or a `user: root` container still slip through. Keep secrets out of dev checkouts
 and mounts limited to the checkout.
+
+## Lima VM mode
+
+How `bin/wmf-claude-vm` builds its boundary. The user guide is
+[`lima-vm.md`](lima-vm.md).
+
+### The VM
+
+- **Closed by construction.** The template (`lima/wmf-claude.yaml`) sets
+  `plain: true`, `mounts: []` (Lima's default would mount `~` read-only), an
+  ignore-all `portForwards` rule, no SSH agent or X11 forwarding, and no
+  Rosetta (it adds a host share). It boots a versioned Debian 13 image with
+  sha512 digests. On the host, the instance's hostagent (`limactl list
+  --format '{{.HostAgentPID}}' <vm>`) listens on two localhost ports only: its
+  SSH port and the DNS server Lima runs for the guest.
+- **The host and the LAN are blocked.** A root-owned nftables table,
+  `wmf_claude_hostblock`, refuses new connections to private and link-local
+  addresses: the host (`host.lima.internal`, and its LAN address), the LAN and
+  a VPN's ranges. DNS and DHCP to Lima's subnet pass. It applies to the guest
+  and its containers. It also limits the `agent` user to TCP 80 and 443, a
+  second layer under nono's allowlist. User-mode networking is NAT through the
+  host, so a host service on a public address stays reachable.
+- **Two users.** `engineer` (the Lima default user) has sudo and is in
+  `docker`; Claude runs as `agent`, which has neither. nono does not mediate
+  `connect()` to pathname AF_UNIX sockets on Linux, so the socket's
+  permissions are what keep the Docker socket (VM root) away from Claude. The
+  engineer never runs git in, or code from, a path the agent can write; `pull`
+  runs `git bundle create` as `agent` with `core.hooksPath=/dev/null` and
+  `core.fsmonitor=false`. Agent sessions start without a login shell and with
+  a fixed `PATH`, so the agent's dotfiles never run outside nono.
+- **Docker is rootful,** and only `engineer` is in `docker`. The containers
+  write into the agent-owned checkout (`composer install`, PHPUnit,
+  `maintenance/run.php`), and MediaWiki-Docker does that by running as the
+  checkout owner's UID. Under rootless Docker the container UIDs map to the
+  engineer's subordinate range, so those writes fail or leave files the agent
+  cannot touch. Mapping the agent's UID into another user's subuid range works
+  but is fragile.
+- **`--docker`.** `lima/guest-claude.sh` starts `bin/launch-docker-broker` as
+  `engineer` for the workspace's `docker-compose.yml`, publishes the
+  `{port, token}` handshake in `/run/wmf-claude/` (mode 0640, group
+  `wmfbroker`: engineer and agent), and runs `bin/claude --docker` as `agent`
+  with `WMF_DOCKER_HANDSHAKE` pointing at it: the launcher's attach mode.
+- **Login.** `/login` cannot run inside nono on Linux: Claude Code binds an
+  ephemeral callback port, and nono grants no bind without a port. `login`
+  runs `claude auth login` as `agent` outside nono; it has no model and no
+  tools. It also marks the first-run onboarding as done, or the onboarding
+  would start the OAuth flow again inside the sandbox.
+- **Updates.** `update` installs into a new `/opt/wmf-claude.<rev>` (owned by
+  `engineer`, readable by `agent`) and swaps the symlink after a successful
+  build. nono is pinned by `.nono-version` and checked against the release's
+  `SHA256SUMS.txt`. Claude Code comes from the official installer, unpinned.
+- **Lima's own SSH key** (`~/.lima/_config/user`) opens both guest users.
+- **Debian's `nftables.service`** flushes the whole ruleset when it stops,
+  Docker's chains included. `lima/guest-install.sh` adds a drop-in so that a
+  stop no longer flushes (each rules file replaces its own table), and
+  restarts Docker if its chains are missing.
+
+### Contained mode
+
+- **The token never enters the VM.** `login` on a contained VM stores a
+  `claude setup-token` token in the host's login keychain (a 0600 file under
+  `~/.config/wmf-claude/` on a Linux host) and never runs `claude auth login`.
+  The session holds a placeholder OAuth token.
+- **The model proxy.** `bin/wmf-claude-vm claude` starts
+  `bin/wmf-claude-model-proxy` on the host for each session, on a 0600 Unix
+  socket in the instance directory, and forwards it into the guest with
+  `ssh -n -R 127.0.0.1:0:SOCK` (sshd picks a free port), off Lima's shared
+  SSH connection (`ControlMaster=no`). The proxy is the boundary for model
+  access:
+  - exact paths: `POST /v1/messages` and `POST /v1/messages/count_tokens`;
+  - one request per connection, with `Content-Length` and no
+    `Transfer-Encoding`, so a pipelined second request never reaches the API;
+  - the client's `Authorization`, `x-api-key`, `Cookie` and `Proxy-*` headers
+    dropped, the token injected: a key from inside the VM never reaches the
+    API;
+  - the body a JSON object without duplicate keys, without `mcp_servers` or
+    `container`, every tool a client tool, and every content `source`
+    inline: server tools, the MCP connector and URL sources would make the
+    API reach the internet for the agent;
+  - TLS to `api.anthropic.com` verified; every request logged, allowed or
+    refused, to `~/.local/state/wmf-claude/model-proxy-<vm>.log`.
+
+  `tests/test-model-proxy.py` checks this policy.
+- **The session** runs in `bin/claude`'s contained mode
+  (`WMF_CLAUDE_MODEL_PROXY_PORT`, set by `lima/guest-claude.sh`):
+  `profiles/wmf-contained.json`, which copies `wmf-engineer`'s filesystem and
+  environment rules and has no egress (`allow_domain: ["deny-all.invalid"]`:
+  an empty allowlist means allow-all in nono), the one forwarded port open,
+  and `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`. Flags that add egress are
+  refused, and of nono's flags only path grants pass. `--docker` (attach
+  mode), `--local-web` and `--local-db` are allowed: the session runs only in
+  a locked VM, where nothing has egress.
+- **Which VMs are contained.** The host keeps a record
+  (`~/.config/wmf-claude/vm-<vm>-contained`), the authority; the guest has a
+  root-owned marker (`/etc/wmf-claude/contained`). They must agree, or
+  `claude` and `login` refuse.
+- **The lock.** `lima/guest-contained-net.sh`, installed root-owned as
+  `/usr/local/sbin/wmf-claude-contained-net`, loads `wmf_claude_contained_lock`:
+  `output` and `forward` chains at priority -10 with policy drop, accepting
+  only loopback, established and related traffic, the Docker bridges and
+  DHCP. It names no interface, so it works before the network is up. A
+  systemd unit loads the recorded phase (`/etc/wmf-claude/net-phase`) at boot,
+  before `network-pre.target`, and again with `nftables.service`. A missing or
+  unknown phase loads as locked; a locked phase without the table is
+  `broken`, and sessions are refused. `lima/guest-claude.sh` checks the lock
+  again just before the session.
+- **The host firewall.** All of the VM's traffic leaves the host from
+  `limactl` (Lima's gVisor user-mode network, which cannot be turned off for
+  a `vz` VM). The model path does not: it leaves from the proxy, a separate
+  host process, so blocking `limactl` stops the VM without stopping Claude.
+  `check-host-block` removes the lock for one request, as root, by IP (so DNS
+  cannot decide it), restores it (also from an EXIT trap), and records the
+  result with the real path of `limactl`, which a Lima upgrade changes. Lima
+  answers guest DNS with the host's resolver, so whether DNS meets the block
+  depends on the process that resolves; `check-host-block` reports it.

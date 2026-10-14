@@ -154,22 +154,18 @@ Docker socket out of Claude's reach, since nono does not mediate AF_UNIX
 `connect()` on Linux. Code crosses the boundary only as git bundles, pulled
 back into remote-tracking `vm/*` branches for review. What it does not cover — the token lives in
 the VM, containers are not nono-sandboxed, NAT still reaches the host's LAN
-address, Docker is rootful — is in [`docs/lima-vm.md`](docs/lima-vm.md).
+address, Docker is rootful — is in [`docs/lima-vm.md`](docs/lima-vm.md#known-limitations).
 `tests/test-lima.sh` asserts the template's shape; `tests/smoke-lima.sh`
 checks a running VM.
 
-A **contained VM** (`bin/wmf-claude-vm create --contained`) keeps the Claude token on the
-host. `bin/wmf-claude-vm` runs `bin/wmf-claude-model-proxy` on the host for
-each session and forwards it into the guest over SSH; the proxy is the only
-path to the model API. It allows two endpoints, replaces the client's
-credentials with the token, refuses the MCP connector, server tools and URL
-content sources (anything that makes the API fetch for the agent), and logs
-every request on the host. The session runs with `profiles/wmf-contained.json`,
-which has no egress. The VM's network is locked during sessions: a
-root-owned nftables table lets nothing leave the VM but replies to the
-host's SSH session, and a per-application firewall on the host (LuLu,
-blocking `limactl`) can enforce the same outside the VM's reach. See
-[`docs/lima-vm.md#contained-mode`](docs/lima-vm.md#contained-mode).
+A **contained VM** (`bin/wmf-claude-vm create --contained`) also keeps the
+agent from reaching anything but the model API. The Claude token stays on the
+host, in a model proxy that allows only Messages API requests, refuses those
+that would make the API fetch from the internet, and logs each one; the
+session's sandbox has no egress; and a root-owned firewall locks the VM's
+network during sessions, which a firewall rule on the host can back up
+(`check-host-block` proves it). Details:
+[`docs/security-rationale.md#lima-vm-mode`](docs/security-rationale.md#lima-vm-mode).
 
 ## Residual risks
 

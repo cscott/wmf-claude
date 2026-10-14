@@ -341,8 +341,10 @@ first, if you agree: `create` lists those repos and asks before it clones
 them. With no terminal to ask on, it stops with an error.
 `--clone-missing` (or `create: {cloneMissing: true}` in settings.yaml)
 clones them without asking; `--no-clone-missing` overrides that setting.
-(Before `settings.yaml`, the file was `repos.yaml` and `repos:` was
-`rules:`; the old names still work, with a note.)
+After a Gerrit clone, `create` runs `git review -s` in it, for the
+`gerrit` remote and the commit-msg hook (if git-review is not installed,
+it warns). (Before `settings.yaml`, the file was `repos.yaml` and
+`repos:` was `rules:`; the old names still work, with a note.)
 
 ## Dependencies
 

@@ -252,13 +252,28 @@ def resolve_repo(spec, config_path):
     return canonical, os.path.realpath(os.path.expanduser(path)), needs_clone
 
 
-def do_clone(canonical, path, run=subprocess.run):
+def do_clone(canonical, path, run=subprocess.run, which=shutil.which):
+    """Clone `canonical` at `path` on the host. A Gerrit clone then gets
+    `git review -s` (the `gerrit` remote and the commit-msg hook), as the
+    engineer's own checkouts have; if that fails the clone is still good,
+    so it is a warning."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     url = clone_url(canonical)
     print(color_mod.dim(f"+ git clone {url} {path}"), file=sys.stderr)
     result = run(["git", "clone", url, path])
     if result.returncode != 0:
         raise LaunchError(f"git clone {url} {path} failed (exit {result.returncode}).")
+    if resolve_mod.split_scheme(canonical)[0] != "gerrit":
+        return
+    if which("git-review") is None:
+        _warn(f"{path}: git-review is not installed, so the clone has no `gerrit` "
+              f"remote or commit-msg hook; install it and run `git review -s` there.")
+        return
+    print(color_mod.dim(f"+ git -C {path} review -s"), file=sys.stderr)
+    result = run(["git", "-C", path, "review", "-s"])
+    if result.returncode != 0:
+        _warn(f"{path}: `git review -s` failed (exit {result.returncode}); run it "
+              f"there before you send a patch.")
 
 
 def confirm_clones(missing, clone_missing, interactive, prompt=input):

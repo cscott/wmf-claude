@@ -592,12 +592,51 @@ class DoCloneTests(unittest.TestCase):
                 calls.append(argv)
                 return FakeCompletedProcess(0)
 
-            c.do_clone("gerrit:mediawiki/extensions/Cite", target, run=fake_run)
+            c.do_clone("gerrit:mediawiki/extensions/Cite", target, run=fake_run,
+                       which=lambda n: "/usr/bin/" + n)
             self.assertTrue(os.path.isdir(os.path.dirname(target)))
             self.assertEqual(
                 calls,
-                [["git", "clone", "https://gerrit.wikimedia.org/r/mediawiki/extensions/Cite", target]],
+                [["git", "clone", "https://gerrit.wikimedia.org/r/mediawiki/extensions/Cite", target],
+                 ["git", "-C", target, "review", "-s"]],
             )
+
+    def test_a_gitlab_clone_gets_no_git_review(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = os.path.join(tmp, "Thing")
+            calls = []
+
+            def fake_run(argv):
+                calls.append(argv)
+                return FakeCompletedProcess(0)
+
+            c.do_clone("gitlab:repos/x/thing", target, run=fake_run,
+                       which=lambda n: "/usr/bin/" + n)
+            self.assertEqual([argv[1] for argv in calls], ["clone"])
+
+    def test_without_git_review_or_when_it_fails_the_clone_is_kept_with_a_warning(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = os.path.join(tmp, "Cite")
+            calls = []
+            with mock.patch("sys.stderr") as err:
+                c.do_clone("gerrit:mediawiki/extensions/Cite", target,
+                           run=lambda argv: calls.append(argv) or FakeCompletedProcess(0),
+                           which=lambda n: None)
+                self.assertEqual(len(calls), 1)
+                self.assertIn("git-review is not installed",
+                              "".join(str(a) for call in err.write.call_args_list
+                                      for a in call.args))
+
+                def fails_review(argv):
+                    calls.append(argv)
+                    return FakeCompletedProcess(1 if "review" in argv else 0)
+
+                c.do_clone("gerrit:mediawiki/extensions/Cite", target, run=fails_review,
+                           which=lambda n: "/usr/bin/" + n)
+                self.assertIn("`git review -s` failed",
+                              "".join(str(a) for call in err.write.call_args_list
+                                      for a in call.args))
+
 
     def test_failure_raises_launch_error(self):
         with tempfile.TemporaryDirectory() as tmp:

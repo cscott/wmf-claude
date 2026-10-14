@@ -27,23 +27,19 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 import wmf_sbx.image as image  # noqa: E402
 import wmf_sbx.kit as kit  # noqa: E402
 import wmf_sbx.lima as lima  # noqa: E402
-import settings_isolation  # noqa: E402
+import isolation  # noqa: E402
 
 
-
-# A nested sandbox has a local base image (image.LOCAL_BASE_DIR) and a
-# marker (image.NESTED_MARKER); the tests must not see them.
-_NOT_NESTED = mock.patch.multiple(image, LOCAL_BASE_DIR="/nonexistent/wmf-sbx-base",
-                                  NESTED_MARKER="/nonexistent/wmf-sbx-nested")
+# A nested sandbox has a local base image (image.LOCAL_BASE_DIR); the
+# tests must not see it.
+_NO_LOCAL_BASE = mock.patch.object(image, "LOCAL_BASE_DIR", "/nonexistent/wmf-sbx-base")
 
 
 def setUpModule():
-    settings_isolation.isolate()
-    _NOT_NESTED.start()
+    isolation.isolate()
+    _NO_LOCAL_BASE.start()
+    unittest.addModuleCleanup(_NO_LOCAL_BASE.stop)
 
-
-def tearDownModule():
-    _NOT_NESTED.stop()
 
 class Done:
     def __init__(self, returncode=0, stdout="", stderr=""):

@@ -14,6 +14,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 import wmf_sbx.egress as egress  # noqa: E402
 import wmf_sbx.logs as logs  # noqa: E402
 import wmf_sbx.state as state_mod  # noqa: E402
+import isolation  # noqa: E402
+
+
+def setUpModule():
+    isolation.isolate()
 
 
 class LogsTests(unittest.TestCase):

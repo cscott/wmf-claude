@@ -14,6 +14,11 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import wmf_sbx.fakedns as fakedns  # noqa: E402
+import isolation  # noqa: E402
+
+
+def setUpModule():
+    isolation.isolate()
 
 
 def query(name, qtype=fakedns.TYPE_A, qid=0x1234, flags=0x0100):

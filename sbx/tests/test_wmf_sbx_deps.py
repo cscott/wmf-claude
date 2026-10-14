@@ -20,6 +20,12 @@ from unittest import mock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import wmf_sbx.deps as d  # noqa: E402
+import isolation  # noqa: E402
+
+
+def setUpModule():
+    isolation.isolate()
+
 
 CORE = d.CORE
 VECTOR = d.DEFAULT_SKIN

@@ -16,6 +16,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import wmf_sbx.image as image  # noqa: E402
 import wmf_sbx.template as template  # noqa: E402
+import isolation  # noqa: E402
+
+
+def setUpModule():
+    isolation.isolate()
+
 
 GOLDEN = "/cache/wmf-sbx/images/0123456789abcdef/golden.qcow2"
 HOST_UID = 30033

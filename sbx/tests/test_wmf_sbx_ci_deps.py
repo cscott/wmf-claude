@@ -15,6 +15,12 @@ SRC = os.path.join(os.path.dirname(__file__), "..", "src")
 sys.path.insert(0, SRC)
 
 import wmf_sbx.ci_deps as ci  # noqa: E402
+import isolation  # noqa: E402
+
+
+def setUpModule():
+    isolation.isolate()
+
 
 EXT = "gerrit:mediawiki/extensions/"
 PARSOID = "gerrit:mediawiki/services/parsoid"

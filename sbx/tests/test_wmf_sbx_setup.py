@@ -16,6 +16,7 @@ import unittest.mock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import wmf_sbx.setup as s  # noqa: E402
+import isolation  # noqa: E402
 
 # The tests expect the host's view, where the setup runs as root and
 # sudo's to the agent. As the agent (a nested sandbox, RAN N3), the real
@@ -24,6 +25,7 @@ _AS_ROOT = unittest.mock.patch.object(s, "running_as_agent", return_value=False)
 
 
 def setUpModule():
+    isolation.isolate()
     _AS_ROOT.start()
 
 

@@ -25,6 +25,12 @@ import wmf_sbx.egress as egress  # noqa: E402
 import wmf_sbx.nested as nested  # noqa: E402
 import wmf_sbx.session as session  # noqa: E402
 import wmf_sbx.state as state_mod  # noqa: E402
+import isolation  # noqa: E402
+
+
+def setUpModule():
+    isolation.isolate()
+
 
 HAVE_OPENSSL = shutil.which("openssl") is not None
 

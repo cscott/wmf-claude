@@ -615,6 +615,14 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   assumption that is only true on the sandbox or behavior that only
   makes sense inside the sandbox unless guarded by a check that
   $SANDBOX_NAME exists.
+- Tests never see the machine's own state: every test module calls `isolation.isolate()`
+  from its setUpModule (a test checks), which gives it an empty HOME and XDG directories,
+  no credential or `WMF_SBX_*` variables, no nested marker, and failing `claude` and
+  `security` stubs on PATH. A failing assertion must not print a real credential (one in
+  egsn printed the session's phantom), and a test must not start the real Claude Code
+  (create's `claude mcp get phabricator` did, 70 times a run, two thirds of its time).
+  Code that reads a path the tests patch reads the module attribute at call time, not a
+  copy made at import (`nested.inside()`).
 - `setup.py` must stay import-free: it runs in the VM as `python3 - --lima PLAN` from stdin, so
   a change to it needs no new image.
 

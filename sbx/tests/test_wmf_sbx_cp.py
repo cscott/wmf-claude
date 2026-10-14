@@ -12,11 +12,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import wmf_sbx.cp as cp  # noqa: E402
 import wmf_sbx.state as state_mod  # noqa: E402
-import settings_isolation  # noqa: E402
+import isolation  # noqa: E402
 
 
 def setUpModule():
-    settings_isolation.isolate()
+    isolation.isolate()
 
 
 class FakeCompletedProcess:

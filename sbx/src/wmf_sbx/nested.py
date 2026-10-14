@@ -157,7 +157,7 @@ INNER_MEMORY = "4GiB"
 
 def inside():
     """Whether this runs in a nested sandbox (the install's marker)."""
-    return os.path.exists(MARKER)
+    return os.path.exists(image_mod.NESTED_MARKER)
 DISK = "120GiB"
 
 

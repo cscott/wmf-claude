@@ -17,11 +17,11 @@ import wmf_sbx.allow as allow  # noqa: E402
 import wmf_sbx.egress as egress  # noqa: E402
 import wmf_sbx.lima as lima_mod  # noqa: E402
 import wmf_sbx.state as state_mod  # noqa: E402
-import settings_isolation  # noqa: E402
+import isolation  # noqa: E402
 
 
 def setUpModule():
-    settings_isolation.isolate()
+    isolation.isolate()
 
 
 class AllowTests(unittest.TestCase):

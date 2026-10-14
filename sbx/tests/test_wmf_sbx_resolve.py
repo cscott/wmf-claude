@@ -16,6 +16,12 @@ from unittest import mock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import wmf_sbx.resolve as r  # noqa: E402
+import isolation  # noqa: E402
+
+
+def setUpModule():
+    isolation.isolate()
+
 
 EXAMPLE_CONFIG = os.path.join(
     os.path.dirname(__file__), "..", "reference", "example-settings.yaml"

@@ -19,6 +19,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 import wmf_sbx.cli as cli  # noqa: E402
 import wmf_sbx.resolve as resolve  # noqa: E402
 from wmf_sbx.__main__ import COMMANDS  # noqa: E402
+import isolation  # noqa: E402
+
+
+def setUpModule():
+    isolation.isolate()
 
 
 def demo_parser():

@@ -20,11 +20,11 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import wmf_sbx.rm as rm  # noqa: E402
-import settings_isolation  # noqa: E402
+import isolation  # noqa: E402
 
 
 def setUpModule():
-    settings_isolation.isolate()
+    isolation.isolate()
 
 
 HAVE_GIT = shutil.which("git") is not None

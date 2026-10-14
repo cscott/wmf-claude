@@ -39,11 +39,11 @@ import wmf_sbx.status as status_mod  # noqa: E402
 import wmf_sbx.stop as stop  # noqa: E402
 import wmf_sbx.template as template  # noqa: E402
 import wmf_sbx.vm as vm  # noqa: E402
-import settings_isolation  # noqa: E402
+import isolation  # noqa: E402
 
 
 def setUpModule():
-    settings_isolation.isolate()
+    isolation.isolate()
 
 
 HOST_UID = os.getuid() or 30033

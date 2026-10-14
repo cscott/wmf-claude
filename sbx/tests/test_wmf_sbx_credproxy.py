@@ -25,19 +25,11 @@ from unittest import mock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import wmf_sbx.credproxy as cp  # noqa: E402
-
-
-# A nested sandbox has a marker (image.NESTED_MARKER) holding the
-# enclosing session's phantom and base URL; the tests must not see it.
-_NOT_NESTED = mock.patch.object(cp.image_mod, "NESTED_MARKER", "/nonexistent/wmf-sbx-nested")
+import isolation  # noqa: E402
 
 
 def setUpModule():
-    _NOT_NESTED.start()
-
-
-def tearDownModule():
-    _NOT_NESTED.stop()
+    isolation.isolate()
 
 
 REAL_KEY = "sk-test-real-key"

@@ -30,27 +30,15 @@ import wmf_sbx.session as session  # noqa: E402
 import wmf_sbx.setup as setup  # noqa: E402
 import wmf_sbx.state as state_mod  # noqa: E402
 import wmf_sbx.vm as vm  # noqa: E402
-import settings_isolation  # noqa: E402
+import isolation  # noqa: E402
 
 
 def setUpModule():
-    settings_isolation.isolate()
+    isolation.isolate()
 
 
 from test_wmf_sbx_lifecycle import Done, Env, FakeLima, allow_tmp, git_repo  # noqa: E402
 
-
-# A nested sandbox has a marker (image.NESTED_MARKER) holding the
-# enclosing session's phantom and base URL; the tests must not see it.
-_NOT_NESTED = mock.patch.object(image, "NESTED_MARKER", "/nonexistent/wmf-sbx-nested")
-
-
-def setUpModule():
-    _NOT_NESTED.start()
-
-
-def tearDownModule():
-    _NOT_NESTED.stop()
 
 
 REPO_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")

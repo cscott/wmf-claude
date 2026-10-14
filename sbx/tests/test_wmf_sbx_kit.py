@@ -16,6 +16,11 @@ import wmf_sbx.kit as k
 import wmf_sbx.session as session  # noqa: E402
 import wmf_sbx.resolve as r  # noqa: E402
 import wmf_sbx.setup as setup_mod  # noqa: E402
+import isolation  # noqa: E402
+
+
+def setUpModule():
+    isolation.isolate()
 
 
 def setup_install_command(spec):

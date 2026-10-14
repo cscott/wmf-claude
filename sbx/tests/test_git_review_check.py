@@ -25,6 +25,12 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import isolation
+
+
+def setUpModule():
+    isolation.isolate()
+
 
 BIN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "bin")
 SCRIPT = os.path.join(BIN, "git-review-check")

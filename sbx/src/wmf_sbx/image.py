@@ -741,6 +741,11 @@ def guest_proxy_env(env=None):
             # nono's proxy URL has credentials: //nono:PASSWORD@127.0.0.1:PORT
             out[var] = re.sub(r"//([^/@]*@)?(localhost|127\.0\.0\.1)([:/]|$)",
                               rf"//\g<1>{SLIRP_GATEWAY}\3", value)
+    # git's default (anyauth) sends CONNECT with no credentials first, and
+    # nono's proxy aborts it, where curl sends them at once (RAN, nested:
+    # the builder's php-ast clone, "Proxy CONNECT aborted").
+    if any("@" in out.get(var, "") for var in PROXY_VARS):
+        out["GIT_HTTP_PROXY_AUTHMETHOD"] = "basic"
     return out
 
 

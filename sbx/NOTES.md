@@ -410,6 +410,14 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   (`create.egress_choice`). The session gets `WMF_SBX_EGRESS=NAME`, and
   `bin/session-start.sh` then tells Claude to ask the engineer for `wmf-sbx allow NAME
   HOST` when a host is denied.
+  RAN on the engineer's host (2026-10-14, after c31fa1b): the dry runs of the default,
+  `--vm-type vz` (the warning), `--vm-type vz --egress-proxy` (error, exit 1) and
+  `--no-egress-proxy` (warm snapshots again) as designed. A real default `create --no-deps
+  Cite` (a new golden image, then cold): every invariant passed, and setup
+  (`wmf-claude-setup`, the plugin, the MCP registration) went through the proxy with no
+  denial but the two `wmf-sbx-check.invalid` checks. Not yet: a session in it (the
+  session-start bullet, `allow` while it runs), and a create with core (composer, npm,
+  the wiki install) on the default path.
 - **`--nested` behind the egress proxy** (RAN on the engineer's host, 2026-10-13: `create
   --egress-proxy --nested` passes every invariant and finishes, after 388cbb3 and d6b8628;
   an inner `create .` of wmf-claude in it ran too, after 24c67e9 and 3ab7488 (the clone

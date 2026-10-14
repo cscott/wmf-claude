@@ -169,6 +169,18 @@ class StoreTests(unittest.TestCase):
         image.main(["ls"], env=self.env, out=out)
         self.assertIn(f"snapshot {self.key}/", out.getvalue())
         self.assertIn("used by: demo", out.getvalue())
+        # the totals: the golden image, the snapshot, the sandbox's disk;
+        # nothing is unused (the snapshot keeps the image)
+        self.assertRegex(out.getvalue(), r"total: 1 golden image \(.*\), 1 snapshot \(.*\), "
+                                         r"1 sandbox disk \(.*\): .* on disk")
+        self.assertNotIn("would free", out.getvalue())
+
+    def test_image_ls_says_what_prune_would_free(self):
+        self.generation(datetime.timedelta(hours=1))
+        out = io.StringIO()
+        image.main(["ls"], env=self.env, out=out)
+        self.assertIn("`wmf-sbx image prune` would free", out.getvalue())
+        self.assertIn("(0 images and 1 snapshot that no sandbox uses)", out.getvalue())
 
     def test_rm_scan_keeps_a_snapshots_borrower_entry(self):
         self.generation(datetime.timedelta(hours=1))

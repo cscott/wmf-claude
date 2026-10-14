@@ -242,7 +242,9 @@ that must not wait for a build.
 At its end, `create` runs `wmf-sbx image gc`: it deletes the images that
 no sandbox uses and that are older than 7 days (settings.yaml `images:
 {gcAge: 7d}`). `wmf-sbx image prune` deletes every unused image, to free
-disk space.
+disk space. `wmf-sbx image ls` lists the images and snapshots, and ends
+with what they and the sandboxes' own disks take on disk, and what
+`image prune` would free.
 
 On QEMU (the default on Linux), a sandbox's disk is a copy-on-write
 overlay on the golden image: a new sandbox takes megabytes, not the

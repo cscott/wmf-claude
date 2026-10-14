@@ -6,7 +6,8 @@
 # (host TCP ports of a loopback proxy, separated by spaces, or empty) and
 # EPHEMERAL_PORTS (template.EPHEMERAL_PORTS, "LO HI") and EGRESS (the
 # guest's address of the host egress proxy, or empty; template.py also
-# puts the guest's proxy files in the egress block at the end).
+# puts the guest's proxy files in the egress block at the end) and
+# AGENT_SUDO (1 for `create --sudo`, else empty).
 #
 # The security rules are Kosta's (lima/wmf-claude.yaml): two users, a
 # host and LAN block, the agent limited to TCP 80 and 443, and no TIOCSTI.
@@ -18,10 +19,11 @@ AGENT=agent
 PROXY_PORTS="@PROXY_PORTS@"
 EPHEMERAL_PORTS="@EPHEMERAL_PORTS@"
 EGRESS="@EGRESS@"
+AGENT_SUDO="@AGENT_SUDO@"
 
 id -u "$AGENT" >/dev/null 2>&1 || { echo "wmf-sbx: no user $AGENT in the image" >&2; exit 1; }
 
-# The agent has no sudo and no docker. The engineer can read the agent's
+# The agent is in neither the sudo nor the docker group. The engineer can read the agent's
 # tree (cp and the git helper read it); the agent cannot read the
 # engineer's.
 for g in sudo docker; do
@@ -29,6 +31,26 @@ for g in sudo docker; do
     gpasswd -d "$AGENT" "$g" >/dev/null
   fi
 done
+# `create --sudo` (D9): passwordless sudo from a sudoers file, never the
+# sudo group, so the group check above holds in both modes. sudo keeps the
+# egress proxy's variables, which it drops by default. The marker tells the
+# invariants (vm.py) which mode they check; a contained sandbox has
+# neither file.
+SUDOERS=/etc/sudoers.d/90-wmf-sbx-agent
+if [[ "$AGENT_SUDO" == 1 ]]; then
+  tmp=$(mktemp)
+  cat > "$tmp" <<SUDO
+Defaults:$AGENT env_keep += "http_proxy https_proxy no_proxy HTTP_PROXY HTTPS_PROXY NO_PROXY NODE_USE_ENV_PROXY"
+$AGENT ALL=(ALL:ALL) NOPASSWD: ALL
+SUDO
+  visudo -cqf "$tmp"
+  install -m 0440 "$tmp" "$SUDOERS"
+  rm -f "$tmp"
+  install -d -m 0755 /etc/wmf-sbx
+  touch /etc/wmf-sbx/sudo
+else
+  rm -f "$SUDOERS" /etc/wmf-sbx/sudo
+fi
 usermod -aG "$(id -gn "$AGENT")" "$ENGINEER"
 chmod 0750 "/home/$AGENT" "$(getent passwd "$ENGINEER" | cut -d: -f6)"
 

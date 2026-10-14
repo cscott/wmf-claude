@@ -164,7 +164,7 @@ class ProvisionTests(unittest.TestCase):
         subprocess.run(["bash", "-n", f.name], check=True)
 
     def test_every_placeholder_is_filled(self):
-        for token in ("@ENGINEER@", "@PROXY_PORTS@", "@EPHEMERAL_PORTS@"):
+        for token in ("@ENGINEER@", "@PROXY_PORTS@", "@EPHEMERAL_PORTS@", "@AGENT_SUDO@"):
             self.assertNotIn(token, self.script())
         self.assertIn('ENGINEER="engineer"', self.script())
 
@@ -186,6 +186,55 @@ class ProvisionTests(unittest.TestCase):
     def test_no_go_template_syntax(self):
         # Lima runs provision scripts through Go's text/template.
         self.assertNotIn("{{", self.script())
+
+    def sudo_block(self, sudo):
+        """The script's sudo block, run with its file paths under a temp
+        dir: the files it leaves there."""
+        s = make(egress_ca="/x/ca.pem", sudo=sudo)["provision"][0]["script"] if sudo \
+            else self.script()
+        start = s.index("SUDOERS=/etc/sudoers.d/")
+        block = s[start:s.index("\nfi\n", start) + 4]
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        os.makedirs(os.path.join(d, "etc", "sudoers.d"))
+        block = block.replace("/etc/", f"{d}/etc/").replace("visudo -cqf", "true")
+        head = s[s.index("AGENT=agent"):s.index("\n", s.index('AGENT_SUDO="'))]
+        subprocess.run(["bash", "-euc", head + "\n" + block], check=True)
+        found = {}
+        for root, _dirs, files in os.walk(d):
+            for f in files:
+                with open(os.path.join(root, f)) as fh:
+                    found[os.path.relpath(os.path.join(root, f), d)] = fh.read()
+        return found
+
+    def test_a_sudo_sandbox_gets_a_sudoers_file_and_the_marker(self):
+        files = self.sudo_block(True)
+        self.assertEqual(sorted(files), ["etc/sudoers.d/90-wmf-sbx-agent", "etc/wmf-sbx/sudo"])
+        sudoers = files["etc/sudoers.d/90-wmf-sbx-agent"]
+        self.assertIn("agent ALL=(ALL:ALL) NOPASSWD: ALL", sudoers)
+        self.assertIn("env_keep", sudoers)
+        self.assertIn("https_proxy", sudoers)
+
+    @unittest.skipUnless(shutil.which("visudo") or os.path.exists("/usr/sbin/visudo"),
+                         "no visudo")
+    def test_the_sudoers_file_parses(self):
+        sudoers = self.sudo_block(True)["etc/sudoers.d/90-wmf-sbx-agent"]
+        with tempfile.NamedTemporaryFile("w", delete=False) as f:
+            f.write(sudoers)
+        self.addCleanup(os.unlink, f.name)
+        visudo = shutil.which("visudo") or "/usr/sbin/visudo"
+        res = subprocess.run([visudo, "-cqf", f.name], capture_output=True, text=True)
+        if res.returncode == 127:   # visudo there, but cannot run (a missing library)
+            self.skipTest(res.stderr.strip())
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+
+    def test_a_contained_sandbox_removes_both(self):
+        self.assertEqual(self.sudo_block(False), {})
+        self.assertIn('AGENT_SUDO=""', self.script())
+
+    def test_sudo_needs_the_egress_proxy(self):
+        with self.assertRaisesRegex(template.TemplateError, "egress proxy"):
+            make(sudo=True)
 
     def test_kostas_rules_are_there(self):
         s = self.script()

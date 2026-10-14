@@ -4,7 +4,8 @@
 `limactl start` on the sandbox's instance, then the security invariants
 (vm.INVARIANTS: the agent has no sudo and the host uid, the host block is
 loaded, the mounts are read-only, TIOCSTI is off; behind the egress proxy,
-vm.EGRESS_INVARIANTS too). A failed invariant
+vm.EGRESS_INVARIANTS too; a `--sudo` sandbox has vm.SUDO_INVARIANTS
+instead of "the agent cannot sudo"). A failed invariant
 is an error: the sandbox is running, but not as wmf-sbx made it.
 
 Usage:
@@ -27,10 +28,12 @@ def check(name, lima=None, out=None, env=None):
     (vm.EGRESS_INVARIANTS)."""
     out = out or sys.stderr
     ok = True
-    egress = egress_mod.enabled(state_mod.load(name, env))
+    state = state_mod.load(name, env) or {}
+    egress = egress_mod.enabled(state)
     port = egress_mod.read_port(name, env) if egress else None
     for desc, good in vm_mod.check_invariants(name, lima=lima, egress=egress,
-                                              loopback_port=port or 22):
+                                              loopback_port=port or 22,
+                                              sudo=bool(state.get("sudo"))):
         mark = color_mod.highlight("ok") if good else color_mod.error("FAIL")
         print(f"  {mark}  {desc}", file=out)
         ok = ok and good

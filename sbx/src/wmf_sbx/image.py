@@ -957,7 +957,7 @@ def ls_totals(totals, unused):
     if unused[0] or unused[1]:
         line += (f"\n       `wmf-sbx image prune` would free {_human(unused[2])} "
                  f"({unused[0]} image{'' if unused[0] == 1 else 's'} and {unused[1]} "
-                 f"snapshot{'' if unused[1] == 1 else 's'} that no sandbox uses)")
+                 f"snapshot{'' if unused[1] == 1 else 's'} that no sandbox needs)")
     return line
 
 
@@ -1010,14 +1010,36 @@ def main(argv=None, env=None, lima=None, run=subprocess.run, out=sys.stdout):
             build(inputs, lima=lima, run=run, env=env, log=say,
                   keep_builder=args.keep_builder)
         elif args.cmd == "ls":
+            from . import snapshot as snapshot_mod
             used = images_in_use(env)
             totals = {"golden": [0, 0], "snapshot": [0, 0], "disk": [0, 0]}
             unused = [0, 0, 0]   # images, snapshots, bytes
+            # The snapshots first: a golden image that only unused
+            # snapshots keep goes too, after them, at `image prune`.
+            snap_used = snapshot_mod.in_use(env)
+            snap_rows, kept_keys = [], set()
+            for skey in snapshot_mod.list_keys(env):
+                for gen, path, meta in snapshot_mod.list_generations(skey, env):
+                    users = ", ".join(snap_used.get(os.path.realpath(path), [])) or "-"
+                    size = _allocated(path)
+                    totals["snapshot"][0] += 1
+                    totals["snapshot"][1] += size
+                    if users == "-":
+                        unused[1] += 1
+                        unused[2] += size
+                    else:
+                        kept_keys.add(snapshot_mod.borrower_name(skey))
+                    snap_rows.append(
+                        f"snapshot {skey}/{gen}  {_human(size):>9}  "
+                        f"on {meta.get('golden', '?')}  {len(meta.get('repos') or [])} "
+                        f"repos (made by {meta.get('sandbox', '?')})  used by: {users}")
+            snap_names = {snapshot_mod.borrower_name(k) for k in snapshot_mod.list_keys(env)}
             for key, m in list_images(env):
                 size = _allocated(golden_path(key, env))
                 totals["golden"][0] += 1
                 totals["golden"][1] += size
-                if not used.get(key):
+                left = [u for u in used.get(key, []) if u not in snap_names or u in kept_keys]
+                if not left:
                     unused[0] += 1
                     unused[2] += size
                 inp = m.get("inputs", {})
@@ -1028,20 +1050,8 @@ def main(argv=None, env=None, lima=None, run=subprocess.run, out=sys.stdout):
                 say(f"{key}  {m.get('created', '?')}  {_human(size):>9}  "
                     f"wmf-claude {tree}  claude {inp.get('claude', {}).get('version', '?')}  "
                     f"nono {inp.get('nono', '?')}  used by: {users}")
-            from . import snapshot as snapshot_mod
-            snap_used = snapshot_mod.in_use(env)
-            for skey in snapshot_mod.list_keys(env):
-                for gen, path, meta in snapshot_mod.list_generations(skey, env):
-                    users = ", ".join(snap_used.get(os.path.realpath(path), [])) or "-"
-                    size = _allocated(path)
-                    totals["snapshot"][0] += 1
-                    totals["snapshot"][1] += size
-                    if users == "-":
-                        unused[1] += 1
-                        unused[2] += size
-                    say(f"snapshot {skey}/{gen}  {_human(size):>9}  "
-                        f"on {meta.get('golden', '?')}  {len(meta.get('repos') or [])} "
-                        f"repos (made by {meta.get('sandbox', '?')})  used by: {users}")
+            for row in snap_rows:
+                say(row)
             for disk in sandbox_disks(env):
                 totals["disk"][0] += 1
                 totals["disk"][1] += _allocated(disk)

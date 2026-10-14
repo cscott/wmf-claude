@@ -340,7 +340,9 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   `--no-egress-proxy` gives the present kind (the guest's own route, the per-port
   credential proxy). `--vm-type vz` falls back to the present kind with a warning that
   the guest, not the host, enforces the network policy (the engineer, 2026-10-13).
-- **`--nested` behind the egress proxy** (create no longer refuses it; not yet run) needs
+- **`--nested` behind the egress proxy** (RAN on the engineer's host, 2026-10-13: `create
+  --egress-proxy --nested` passes every invariant and finishes, after c1a1497 and f876c3c;
+  an inner `create` not yet run) needs
   no proxy of its own: Lima points the inner VMs at the session's nono proxy, as now, and that
   proxy's upstream becomes the egress proxy; the inner wrapper's own proxy chains the same
   way, through AuthShim (item 7 ran exactly that chain). So a nested sandbox's egress

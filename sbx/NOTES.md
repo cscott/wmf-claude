@@ -342,6 +342,14 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   way, through AuthShim (item 7 ran exactly that chain). So a nested sandbox's egress
   list adds `nested.DOMAINS` (cloud.debian.org, nodejs.org, downloads.claude.ai, ...).
   To run: an image build and an inner `create` in it. On macOS `--nested` means vz, so it falls back.
+- **Warm snapshots behind the egress proxy** (after the rebase on B3): an egress `create`
+  neither uses nor makes a snapshot yet (`create.py`, `use_snapshots`). Its disk holds its
+  own egress CA (in the guest's trust store) and the egress network setup (nft rules,
+  `resolv.conf`, resolved masked), and the snapshot key covers neither; a plain sandbox
+  warm-started from it would get both, and an egress one would trust another sandbox's CA.
+  To do, before the flip of the default: put `egress` in the snapshot key and its meta,
+  and replace the CA at the warm start (or keep the CA out of the snapshot). The restart
+  in `snapshot.freeze` already goes through `vm.start_instance`, which starts in egress mode.
 
 ### Testing in the sandbox
 

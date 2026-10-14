@@ -55,14 +55,17 @@ class Limactl:
     # -- the call itself -------------------------------------------------
 
     def call(self, *args, check=True, input=None, text=True, capture=True,
-             interactive=False):
+             interactive=False, extra_env=None):
         """Run limactl. Its stdin is /dev/null unless `input` is given or
         the command is `interactive` (the engineer's terminal): `limactl
         shell` passes stdin to SSH, which reads it even when the command
         does not, so a pipe into `wmf-sbx resume` was eaten by the checks
         before the session (RAN), and a prompt would hang invisibly."""
         argv = [self.exe] + [str(a) for a in args]
-        kwargs = {"env": self.env, "input": input}
+        env = self.env
+        if extra_env:
+            env = dict(os.environ if env is None else env, **extra_env)
+        kwargs = {"env": env, "input": input}
         if input is None and not interactive:
             kwargs["stdin"] = subprocess.DEVNULL
         if capture:
@@ -108,11 +111,13 @@ class Limactl:
     def create(self, name, yaml_path, extra_args=()):
         self.call("create", "--tty=false", f"--name={name}", *extra_args, yaml_path)
 
-    def start(self, name, timeout=None):
+    def start(self, name, timeout=None, extra_env=None):
+        """`extra_env`: variables for limactl and its host agent, which
+        starts QEMU (vm.qemu_env)."""
         args = ["start", "--tty=false"]
         if timeout:
             args.append(f"--timeout={timeout}")
-        self.call(*args, name)
+        self.call(*args, name, extra_env=extra_env)
 
     def stop(self, name):
         self.call("stop", name)

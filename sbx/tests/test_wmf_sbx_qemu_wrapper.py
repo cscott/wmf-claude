@@ -90,6 +90,24 @@ class RunTests(unittest.TestCase):
         with self.assertRaisesRegex(qw.WrapperError, qw.CONFIG_VAR):
             qw.run(boot_args(), env={qw.REAL_VAR: "/usr/bin/true"}, self_path=WRAPPER,
                    popen=None)
+        with self.assertRaisesRegex(qw.WrapperError, qw.PLAIN_VAR):
+            qw.run(boot_args(), env={qw.REAL_VAR: "/usr/bin/true", qw.PLAIN_VAR: "yes"},
+                   self_path=WRAPPER, popen=None)
+
+    def test_a_plain_boot_gets_only_the_balloon(self):
+        calls = []
+        qw.run(boot_args(), env={qw.REAL_VAR: "/usr/bin/qemu-system-x86_64", qw.PLAIN_VAR: "1"},
+               execv=lambda p, a: calls.append((p, a)), self_path=WRAPPER)
+        (path, argv), = calls
+        self.assertEqual(argv, ["/usr/bin/qemu-system-x86_64"] + boot_args()
+                         + ["-device", qw.BALLOON])
+
+    def test_the_balloon_goes_on_limas_own_device(self):
+        args = boot_args() + ["-device", "virtio-balloon-pci,id=b0"]
+        self.assertEqual(qw.with_balloon(args)[-1],
+                         "virtio-balloon-pci,id=b0,free-page-reporting=on")
+        self.assertEqual(qw.with_balloon(qw.with_balloon(args)), qw.with_balloon(args))
+        self.assertEqual(qw.with_balloon(boot_args())[-2:], ["-device", qw.BALLOON])
 
 
 FAKE_PROXY = textwrap.dedent("""\
@@ -221,6 +239,7 @@ class LifetimeTests(unittest.TestCase):
         netdev = argv[argv.index("-netdev") + 1]
         self.assertIn(",restrict=on,guestfwd=tcp:192.168.5.100:3128-cmd:sh -c", netdev)
         self.assertIn(f"$(cat {self.port_file})", netdev)
+        self.assertEqual(argv[-2:], ["-device", qw.BALLOON])
         self.assertFalse(os.path.exists(self.pid_file))
 
     def test_sigterm_reaches_qemu_and_stops_the_proxy(self):

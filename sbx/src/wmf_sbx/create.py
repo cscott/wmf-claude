@@ -541,7 +541,8 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
     parser.add_argument("--cpus", type=int, default=template_mod.DEFAULT_CPUS)
     parser.add_argument("--memory",
                         help=f"default {template_mod.DEFAULT_MEMORY} "
-                        f"({nested_mod.MEMORY} with --nested)")
+                        f"({nested_mod.MEMORY} with --nested, {nested_mod.INNER_MEMORY} "
+                        f"inside a nested sandbox)")
     parser.add_argument("--disk",
                         help=f"default {template_mod.DEFAULT_DISK} "
                         f"({nested_mod.DISK} with --nested)")
@@ -748,6 +749,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
             disk_image, arch, gitdirs=repos_mod.git_dirs(repos), vm_type=vm_type,
             cpus=args.cpus,
             memory=args.memory or (nested_mod.MEMORY if args.nested
+                                   else nested_mod.INNER_MEMORY if nested_mod.inside()
                                    else template_mod.DEFAULT_MEMORY),
             disk=args.disk or (nested_mod.DISK if args.nested else template_mod.DEFAULT_DISK),
             nested=args.nested,

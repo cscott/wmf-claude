@@ -21,9 +21,9 @@
 #
 # WMF_SBX: the wmf-sbx to test (default: sbx/bin/wmf-sbx of this checkout).
 # B3_REPO: what to create (default gerrit:mediawiki/extensions/Cite).
-# B3_MEMORY: each inner sandbox's memory (default 4GiB). A nested
-# sandbox has 16 GiB, and two inner sandboxes at the default 8 GiB do not
-# fit (the first run was cut off). Each sandbox stops after its checks.
+# B3_MEMORY: each inner sandbox's memory (default 4GiB; also wmf-sbx's
+# own default in a nested sandbox now). Each sandbox stops after its
+# checks: one inner VM at a time.
 #
 # Every phase ends with `== RESULT ...` lines. Send all the output.
 set -uo pipefail

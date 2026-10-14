@@ -323,9 +323,9 @@ def freeze(name, key, golden, meta, lima=None, env=None, run=subprocess.run, log
             with contextlib.suppress(OSError):
                 os.unlink(moved[:-len(".qcow2")] + ".json")
         log(f"+ limactl start {inst} (on its own disk: the snapshot failed)")
-        lima.start(inst, timeout=vm_mod.START_TIMEOUT)
+        vm_mod.start_instance(name, lima, env=env, vm_type="qemu")
         raise SnapshotError(f"snapshot of {name} failed: {e}") from None
     log(f"+ limactl start {inst} (on a new overlay on the snapshot)")
-    lima.start(inst, timeout=vm_mod.START_TIMEOUT)
+    vm_mod.start_instance(name, lima, env=env, vm_type="qemu")
     vm_mod.check_disk(name, lima=lima, env=env, running=True)
     return dest

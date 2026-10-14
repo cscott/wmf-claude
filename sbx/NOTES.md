@@ -61,6 +61,27 @@ Development scaffolding:
 - [ ] **`sbx/upstream/`**: drop what upstream took (!130 and !133, the STE switch, are
   merged), file the rest, and remove the directory when it is empty.
 
+### Quality of life (after the B4 acceptance run)
+
+cananian, 2026-10-14: small changes, to do once the blind run in a warm sandbox passes.
+
+- [ ] **`time` and `bc` in the golden image**: add them to `image.IMAGE_PACKAGES`. They
+  are small, and the agent reached for both in the 2026-10-14 blind run (`/usr/bin/time`
+  and `bc` were missing; it worked around them). A new image, so the next create is cold.
+- [ ] **`create` starts the session**: after a create, go into Claude Code in the new
+  sandbox as `wmf-sbx resume NAME` does, unless `--no-start` is given. The checks and
+  scripts that create sandboxes (`lima-port/checks/*.sh`, the acceptance README, the test
+  harnesses) then pass `--no-start`; so does a create that is not on a terminal. Update the
+  "ready" message and the README.
+- [ ] **The sandbox name first in the status line**: in a sandbox session the status line
+  starts with `WMF nono sandbox`, and a narrow terminal cuts off what comes later. Show the
+  sandbox name as the leftmost item (`bin/statusline.sh` today puts `WMF_CLAUDE_SESSION`
+  after that label), so it is always visible.
+- [ ] **`wmf-sbx cp` with more than one source and with wildcards**: take `SRC... DST`
+  as `cp` does (DST must then be a directory), and expand wildcards in a source on the side
+  it names: the host shell expands host paths, so expand `NAME:PATH` patterns in the guest
+  (quoted on the command line). Refuse sources on both sides in one command.
+
 ### Testing and the MediaWiki setup
 
 - [ ] **A cheap class of clone for CI-only dependencies** (shallow, no host remote, no

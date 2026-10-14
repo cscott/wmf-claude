@@ -18,6 +18,7 @@ import os
 import pwd
 import re
 import shlex
+import shutil
 import tempfile
 
 from . import disk as disk_mod
@@ -57,6 +58,42 @@ def write_template(tmpl, directory):
     return path
 
 
+# Lima runs this in place of QEMU (QEMU_SYSTEM_<ARCH>): it adds free-page
+# reporting to every QEMU sandbox (qemu_wrapper.py).
+QEMU_WRAPPER = os.path.join(image_mod.REPO_ROOT, "sbx", "bin", "wmf-sbx-qemu")
+VMTYPE_RE = re.compile(r"^vmType:\s*['\"]?(\w+)", re.M)
+
+
+def qemu_env(vm_type, env=None, arch=None):
+    """The variables for `limactl start` of a QEMU instance in contained
+    mode: the QEMU wrapper, the real QEMU, plain mode (no egress proxy).
+    {} for another vmType, or without QEMU or the wrapper."""
+    if vm_type != "qemu":
+        return {}
+    from . import qemu_wrapper as qw
+    env = os.environ if env is None else env
+    arch = arch or image_mod.host_arch()
+    var = f"QEMU_SYSTEM_{arch.upper()}"
+    real = env.get(var) or shutil.which(f"qemu-system-{arch}")
+    if not real or os.path.realpath(real) == os.path.realpath(QEMU_WRAPPER) \
+            or not os.access(QEMU_WRAPPER, os.X_OK):
+        return {}
+    return {var: QEMU_WRAPPER, qw.REAL_VAR: real, qw.PLAIN_VAR: "1"}
+
+
+def vm_type_of(name, lima, env=None):
+    """The instance's vmType, from its lima.yaml, or None."""
+    m = VMTYPE_RE.search(lima.config_text(instance_name(name), env) or "")
+    return m.group(1) if m else None
+
+
+def start_instance(name, lima, env=None, vm_type=None):
+    """`limactl start`, through the QEMU wrapper on QEMU."""
+    vm_type = vm_type or vm_type_of(name, lima, env)
+    lima.start(instance_name(name), timeout=START_TIMEOUT,
+               extra_env=qemu_env(vm_type, env) or None)
+
+
 def create(name, tmpl, lima=None, log=print, backing=None, env=None):
     """Create the instance from `tmpl` (a template.py dict) and boot it.
     Without `backing`, `limactl create` copies the golden image (D2).
@@ -79,7 +116,7 @@ def create(name, tmpl, lima=None, log=print, backing=None, env=None):
         lima.overlay_disk(inst, backing, env=env)
         check_disk(name, lima=lima, env=env)
     log(f"+ limactl start {inst} (the first boot runs the provisioning)")
-    lima.start(inst, timeout=START_TIMEOUT)
+    start_instance(name, lima, env=env, vm_type=tmpl.get("vmType"))
     if backing:
         check_disk(name, lima=lima, env=env, running=True)
     return inst
@@ -154,7 +191,7 @@ def ensure_running(name, lima=None, log=print, env=None):
         except (image_mod.ImageError, OSError) as e:
             log(f"warning: could not refresh the extra CA certificates ({e})")
         log(f"+ limactl start {instance_name(name)}")
-        lima.start(instance_name(name), timeout=START_TIMEOUT)
+        start_instance(name, lima, env=env)
 
 
 def unsignalled_hostagent(name, env=None, kill=None):

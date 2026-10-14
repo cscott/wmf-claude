@@ -80,6 +80,7 @@ class FakeLima:
         self.templates = {}
         self.configs = {}
         self.backings = {}
+        self.start_envs = {}
 
     def instances(self):
         return dict(self.vms)
@@ -99,8 +100,9 @@ class FakeLima:
         self.calls.append(("create", name))
         self.vms[name] = "Stopped"
 
-    def start(self, name, timeout=None):
+    def start(self, name, timeout=None, extra_env=None):
         self.calls.append(("start", name))
+        self.start_envs[name] = extra_env
         self.vms[name] = "Running"
 
     def stop(self, name):
@@ -332,6 +334,33 @@ class CreateTests(Env):
         self.assertEqual(tmpl["images"][0]["location"],
                          os.path.join(image.cache_root(self.env), "placeholder.qcow2"))
         self.assertIn("ready", self.err)
+
+    def test_inside_a_nested_sandbox_a_sandbox_gets_4_gib(self):
+        with mock.patch.object(nested, "inside", lambda: True):
+            self.assertEqual(self.create("--name", "inner", "--no-snapshot"), 0, self.err)
+        self.assertEqual(self.lima.templates["wmf-sbx-inner"]["memory"], "4GiB")
+
+    def test_a_qemu_sandbox_starts_through_the_wrapper(self):
+        import wmf_sbx.qemu_wrapper as qw
+        with mock.patch.object(vm.shutil, "which", lambda n: "/usr/bin/" + n):
+            self.assertEqual(self.create("--name", "demo", "--vm-type", "qemu",
+                                         "--no-snapshot"), 0, self.err)
+            env = self.lima.start_envs["wmf-sbx-demo"]
+            var = f"QEMU_SYSTEM_{image.host_arch().upper()}"
+            self.assertEqual(env[var], vm.QEMU_WRAPPER)
+            self.assertEqual(env[qw.REAL_VAR], f"/usr/bin/qemu-system-{image.host_arch()}")
+            self.assertEqual(env[qw.PLAIN_VAR], "1")
+            self.assertEqual(self.create("--name", "other", "--vm-type", "vz"), 0, self.err)
+            self.assertIsNone(self.lima.start_envs["wmf-sbx-other"])
+
+    def test_qemu_env_needs_qemu_and_respects_a_set_qemu(self):
+        with mock.patch.object(vm.shutil, "which", lambda n: None):
+            self.assertEqual(vm.qemu_env("qemu", env={}), {})
+        env = vm.qemu_env("qemu", env={"QEMU_SYSTEM_X86_64": "/opt/q"}, arch="x86_64")
+        self.assertEqual(env["WMF_SBX_QEMU_REAL"], "/opt/q")
+        # never the wrapper as its own QEMU
+        self.assertEqual(vm.qemu_env("qemu", env={"QEMU_SYSTEM_X86_64": vm.QEMU_WRAPPER},
+                                     arch="x86_64"), {})
 
     def test_full_disk_and_vz_copy_the_golden_image(self):
         for flags in (["--full-disk", "--vm-type", "qemu"], ["--vm-type", "vz"]):
@@ -607,7 +636,7 @@ class CreateTests(Env):
         src = os.path.join(os.path.normpath(self.env["HOME"]), "wmf-sbx-src")
         self.assertEqual(st["nestedSrc"], src)
         tmpl = lima.templates["wmf-sbx-demo"]
-        self.assertEqual((tmpl["memory"], tmpl["disk"]), ("16GiB", "120GiB"))
+        self.assertEqual((tmpl["memory"], tmpl["disk"]), ("10GiB", "120GiB"))
         (script,) = [i for i in inputs if "usermod -aG kvm agent" in i]
         self.assertIn(f"lima-{nested.LIMA_VERSION}-Linux-", script)
         self.assertIn("sha256sum -c", script)
@@ -648,7 +677,7 @@ class CreateTests(Env):
 
     def test_a_failed_vm_create_keeps_the_state_for_rm(self):
         class Broken(FakeLima):
-            def start(self, name, timeout=None):
+            def start(self, name, timeout=None, extra_env=None):
                 raise lima_mod.LimaError("boom")
         self.assertEqual(self.create("--name", "demo", lima=Broken()), 1)
         self.assertIsNotNone(state_mod.load("demo", self.env))
@@ -684,6 +713,17 @@ class StartStopStatusTests(Env):
         lima = self.sandbox()
         self.assertEqual(self.quiet(stop.main, ["sbx-demo"], lima=lima, env=self.env), 0)
         self.assertEqual(lima.vms["wmf-sbx-sbx-demo"], "Stopped")
+
+    def test_a_start_of_a_qemu_sandbox_goes_through_the_wrapper(self):
+        lima = FakeLima({"wmf-sbx-sbx-demo": "Stopped"})
+        lima.configs["wmf-sbx-sbx-demo"] = "vmType: qemu\nmemory: 8GiB\n"
+        with mock.patch.object(vm.shutil, "which", lambda n: "/usr/bin/" + n):
+            vm.ensure_running("sbx-demo", lima=lima, log=lambda m: None, env=self.env)
+        self.assertEqual(lima.start_envs["wmf-sbx-sbx-demo"]["WMF_SBX_QEMU_PLAIN"], "1")
+        lima.vms["wmf-sbx-sbx-demo"] = "Stopped"
+        lima.configs["wmf-sbx-sbx-demo"] = "vmType: vz\n"
+        vm.ensure_running("sbx-demo", lima=lima, log=lambda m: None, env=self.env)
+        self.assertIsNone(lima.start_envs["wmf-sbx-sbx-demo"])
 
     def hostagent(self, pid="4242"):
         """A Lima home with the instance's host agent pidfile."""

@@ -564,6 +564,15 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   rebase onto the golden image copies the snapshot's data: 5 GiB per create); a superseded
   one goes at the next `image gc` after an hour. The golden image is keyed on the
   wmf-claude HEAD, so in development every new commit makes the next create cold.
+- Host memory (RAN 2026-10-13): QEMU keeps every page a guest touched (Lima's QEMU has no
+  balloon), so a 16 GiB nested sandbox that built an image held 15 GB of the host, and the
+  host's OOM killer took it, twice, on a 60 GiB laptop with other sandboxes up. Now every
+  QEMU start goes through the QEMU wrapper in plain mode (`WMF_SBX_QEMU_PLAIN=1`, set by
+  `vm.start_instance`), which adds `virtio-balloon-pci,free-page-reporting=on`; the nested
+  default is 10 GiB and a sandbox inside one defaults to 4 GiB. Not RAN:
+  `lima-port/checks/balloon.sh` (the host's RSS of a sandbox's QEMU after the guest frees
+  3 GiB). Page cache is not free memory: a guest that read a lot keeps it until it needs
+  the memory.
 - Default VM memory is 8 GiB: phan on Translate was OOM-killed at 4 GiB.
 - Timings under TCG are 5–35× slower than a 16-core host (image build 26–41 min, create
   ~250–310 s, setup for Translate ~40 min); only compare them with each other.

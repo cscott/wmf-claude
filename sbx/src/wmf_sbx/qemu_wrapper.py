@@ -1,10 +1,22 @@
 #!/usr/bin/env python3
 """The QEMU wrapper for a sandbox behind the host egress proxy
-(lima-port/PLAN-SUDO.md, A2.1). Lima runs it in place of QEMU
+(lima-port/PLAN-SUDO.md, A2.1), and for every other QEMU sandbox, for
+free-page reporting. Lima runs it in place of QEMU
 (QEMU_SYSTEM_<ARCH>=bin/wmf-sbx-qemu); wmf-sbx sets:
 
   WMF_SBX_QEMU_REAL      the real qemu-system-<arch>
   WMF_SBX_EGRESS_CONFIG  the sandbox's proxy.json (egress.write_config)
+  WMF_SBX_QEMU_PLAIN     1 for a sandbox with no egress proxy (contained
+                         mode): the boot call gets only the balloon.
+                         Without it, a boot with no egress config is
+                         refused, so that a --sudo sandbox never boots
+                         without its proxy by mistake.
+
+Every boot call gets a virtio balloon with free-page reporting
+(BALLOON): the guest gives the pages it frees back to the host. Without
+it QEMU keeps all the memory that the guest ever touched, and a few
+sandboxes that once ran an image build use up the host's memory (RAN:
+the host's OOM killer took a 16 GiB nested sandbox, holding 15 GB).
 
 Lima also calls QEMU to probe it (`--version`, `-netdev help`, ...). A
 call without -pidfile or -qmp is a probe, and runs the real QEMU
@@ -34,6 +46,8 @@ from . import egress as egress_mod
 
 REAL_VAR = "WMF_SBX_QEMU_REAL"
 CONFIG_VAR = "WMF_SBX_EGRESS_CONFIG"
+PLAIN_VAR = "WMF_SBX_QEMU_PLAIN"
+BALLOON = "virtio-balloon-pci,free-page-reporting=on"
 FORWARDED = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
 # netdev backends that are not the user network; -nic and -net make a
 # backend without -netdev.
@@ -83,6 +97,18 @@ def boot_argv(args, guestfwd):
     if users != 1:
         raise WrapperError(f"want exactly one -netdev user, found {users}")
     return out
+
+
+def with_balloon(args):
+    """`args` with free-page reporting: on Lima's own balloon device if
+    it has one (QEMU allows one), else on a new one."""
+    out = list(args)
+    for i, a in enumerate(out[:-1]):
+        if a in ("-device", "--device") and out[i + 1].split(",")[0].startswith("virtio-balloon"):
+            if "free-page-reporting=" not in out[i + 1]:
+                out[i + 1] += ",free-page-reporting=on"
+            return out
+    return out + ["-device", BALLOON]
 
 
 def _die_with_parent():
@@ -186,9 +212,13 @@ def run(args, env=None, popen=subprocess.Popen, execv=os.execv, self_path=None):
         return 0
     config_path = env.get(CONFIG_VAR)
     if not config_path:
-        raise WrapperError(f"{CONFIG_VAR} is not set: no egress proxy for this VM")
+        if env.get(PLAIN_VAR) != "1":
+            raise WrapperError(f"{CONFIG_VAR} is not set: no egress proxy for this VM "
+                               f"(and {PLAIN_VAR} is not 1)")
+        execv(real, [real] + with_balloon(args))
+        return 0
     config = egress_mod.read_config(config_path)
-    argv = [real] + boot_argv(list(args), egress_mod.guestfwd(config["portFile"]))
+    argv = [real] + with_balloon(boot_argv(list(args), egress_mod.guestfwd(config["portFile"])))
 
     egress = Egress(config_path, dict(env), popen=popen)
     qemu = None

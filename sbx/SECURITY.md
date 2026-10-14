@@ -177,6 +177,12 @@ control comes with `--sudo` mode.)
 - **Host gc** is suspended in each repo while a sandbox borrows its
   objects, and restored by `rm`. `rm` refuses to remove a sandbox with
   commits that the host has not fetched, unless `--force`.
+- **QEMU runs through `bin/wmf-sbx-qemu`** (on QEMU): Lima starts the
+  wrapper in place of QEMU. It runs QEMU's probes unchanged, and adds a
+  virtio balloon with free-page reporting to the boot, so that a guest
+  gives the memory it frees back to the host. For a `--sudo` sandbox it
+  also starts the egress proxy (track A); it refuses a boot that has
+  neither that proxy's config nor the plain mode that `wmf-sbx` sets.
 - **Attack surface on the host:** the hypervisor; the 9p or virtiofs
   server, which parses guest requests; `limactl shell` (SSH to the guest
   with Lima's key in `~/.lima/_config/user`).

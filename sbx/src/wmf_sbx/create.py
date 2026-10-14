@@ -265,6 +265,24 @@ def do_clone(canonical, path, run=subprocess.run):
         raise LaunchError(f"git clone {url} {path} failed (exit {result.returncode}).")
 
 
+def confirm_clones(missing, clone_missing, interactive, prompt=input):
+    """True if the repos in `missing` ([(canonical, path), ...]) may be
+    cloned on the host. `clone_missing` (--clone-missing, or settings.yaml
+    create.cloneMissing) says yes without asking; otherwise the engineer
+    is asked, and with no terminal to ask on the answer is no."""
+    if not missing or clone_missing:
+        return True
+    if not interactive:
+        return False
+    listed = "\n".join(f"  {canonical} -> {path}" for canonical, path in missing)
+    print(f"{len(missing)} repo(s) are not on this machine yet:\n{listed}", file=sys.stderr)
+    try:
+        answer = prompt("Clone them there now? [y/N] ")
+    except EOFError:
+        return False
+    return answer.strip().lower() in ("y", "yes")
+
+
 def find_nested_mount_conflict(dirs):
     """sbx refuses to put the primary workspace inside another bind mount
     (cananian hit this trying to mount ~/Wikimedia read-only as an extra
@@ -520,12 +538,13 @@ def gc_old_images(key, env, config, say):
 
 
 def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
-         inputs_fn=None, prompt=input, now=None):
+         inputs_fn=None, prompt=input, now=None, isatty=None):
     """`wmf-sbx create` on Lima (lima-port/HANDOFF-LIMA.md §4, phase 3).
 
     1. resolve the repos and walk the dependencies (unchanged);
     2. find the golden image in the cache, or build it (image.py);
-    3. clone the missing repos on the host, and find each repo's git dir;
+    3. clone the missing repos on the host (asked for before step 2:
+       confirm_clones), and find each repo's git dir;
     4. generate the sandbox's Lima config (template.py), which mounts the
        git dirs read-only (D10);
     5. save the state, then create and boot the VM, whose disk is a
@@ -565,6 +584,11 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
                         help="Skip 'dev-requires' when walking dependencies")
     parser.add_argument("--no-suggests", action="store_true",
                         help="Skip 'suggests' when walking dependencies")
+    parser.add_argument("--clone-missing", action=argparse.BooleanOptionalAction,
+                        default=None,
+                        help="clone the repos that are not on this machine yet, at the "
+                        "settings.yaml path, without asking. Default: settings.yaml "
+                        "create.cloneMissing; else ask, and with no terminal fail")
     parser.add_argument("--reset-all", action="store_true",
                         help="Reset every clone to upstream master, the repos "
                         "named on the command line too")
@@ -690,6 +714,25 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
                 "error: refusing to create a sandbox from an incomplete dependency "
                 "closure. Wait a minute and re-run, or pass --no-deps."), file=sys.stderr)
             return 1
+
+    # A clone writes to the engineer's disk, outside the sandbox: ask
+    # first, before the slow work (the golden image) starts.
+    missing = [(canonical, path) for canonical, path, needs_clone in resolved if needs_clone]
+    clone_missing = (args.clone_missing if args.clone_missing is not None
+                     else config["create"].get("cloneMissing", False))
+    if not isinstance(clone_missing, bool):
+        print(color_mod.error(f"error: {args.config}: create.cloneMissing must be true "
+                              f"or false"), file=sys.stderr)
+        return 1
+    interactive = (isatty or sys.stdin.isatty)()
+    if not args.dry_run and not confirm_clones(missing, clone_missing, interactive,
+                                               prompt=prompt):
+        print(color_mod.error(
+            f"error: {len(missing)} repo(s) are not on this machine, and were not "
+            f"cloned{'' if interactive else ' (no terminal to ask on)'}. Clone them "
+            f"yourself, or re-run with --clone-missing (settings.yaml: "
+            f"create.cloneMissing: true)."), file=sys.stderr)
+        return 1
 
     _primary_canonical, primary_dir, _ = resolved[0]
     nested_src = None

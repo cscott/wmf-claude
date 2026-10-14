@@ -4,7 +4,8 @@
 
 # Where each repo lives on your machine. wmf-sbx names repos by their
 # Gerrit or GitLab project ("gerrit:mediawiki/extensions/Cite"); a rule maps
-# a project to a directory. A repo that is not there yet is cloned there.
+# a project to a directory. A repo that is not there yet is cloned there,
+# after `create` asks you (see `create:` below).
 # An exact rule (no {name} or **) wins over a wildcard; among wildcards,
 # the most specific one wins.
 repos:
@@ -37,6 +38,11 @@ session:
   theme: dark
   # ste: false                   # leave out the ASD-STE100 writing rule
   # sudo: true                   # `create --sudo` by default (--no-sudo overrides)
+
+# Defaults for `create` options. The command-line flag overrides each.
+create: {}
+  # cloneMissing: true           # clone missing repos without asking
+                                 # (--clone-missing; --no-clone-missing overrides)
 
 # Environment variables for every new sandbox's sessions (in the agent's
 # ~/.claude/settings.json `env`). Not ANTHROPIC_* or NO_PROXY: wmf-sbx sets

@@ -380,6 +380,78 @@ class CreateTests(Env):
         return self.quiet(create.main, argv, lima=lima, env=self.env, build=self.fake_build,
                           inputs_fn=self.fake_inputs, prompt=lambda q: "")
 
+    # -- a repo that is not on the host: asked for before it is cloned --
+
+    MISSING = "gerrit:mediawiki/extensions/Missing"
+
+    def create_missing(self, *extra, settings="", answer=None, tty=False):
+        """create with an extra repo that a rule maps to a directory that
+        does not exist. Returns (rc, the prompts, the clones)."""
+        with open(self.config, "w") as f:
+            f.write("repos:\n  - match: \"gerrit:mediawiki/extensions/{name}\"\n"
+                    f"    path: \"{self.tmp}/ext/{{name}}\"\n" + settings)
+        asked, cloned = [], []
+
+        def prompt(q):
+            asked.append(q)
+            return answer if answer is not None else ""
+
+        def fake_clone(canonical, path, **kw):
+            cloned.append((canonical, path))
+            git_repo(path)
+
+        argv = (["--no-deps", "--config", self.config, "--image", self.KEY, "--name", "demo",
+                 self.repo, self.MISSING] + list(extra))
+        with mock.patch.object(create, "do_clone", fake_clone):
+            self.lima = FakeLima()
+            rc = self.quiet(create.main, argv, lima=self.lima, env=self.env,
+                            build=self.fake_build, inputs_fn=self.fake_inputs,
+                            prompt=prompt, isatty=lambda: tty)
+        return rc, [q for q in asked if "Clone" in q], cloned
+
+    def test_with_no_terminal_a_missing_repo_is_an_error(self):
+        rc, asked, cloned = self.create_missing()
+        self.assertEqual(rc, 1)
+        self.assertEqual((asked, cloned), ([], []))
+        self.assertIn("no terminal to ask on", self.err)
+        self.assertIn("--clone-missing", self.err)
+        self.assertEqual(self.lima.calls, [])     # before anything is made
+
+    def test_on_a_terminal_a_missing_repo_is_cloned_only_on_yes(self):
+        rc, asked, cloned = self.create_missing(answer="n", tty=True)
+        self.assertEqual((rc, len(asked), cloned), (1, 1, []))
+        self.assertIn(f"{self.MISSING} -> {self.tmp}/ext/Missing", self.err)
+        rc, asked, cloned = self.create_missing(answer="y", tty=True)
+        self.assertEqual(rc, 0, self.err)
+        self.assertEqual(len(asked), 1)
+        self.assertEqual(cloned, [(self.MISSING, os.path.join(self.tmp, "ext", "Missing"))])
+
+    def test_clone_missing_clones_without_asking(self):
+        rc, asked, cloned = self.create_missing("--clone-missing")
+        self.assertEqual(rc, 0, self.err)
+        self.assertEqual((asked, len(cloned)), ([], 1))
+
+    def test_settings_create_clone_missing_is_the_default_and_the_flag_overrides_it(self):
+        rc, asked, cloned = self.create_missing(settings="create:\n  cloneMissing: true\n")
+        self.assertEqual(rc, 0, self.err)
+        self.assertEqual((asked, len(cloned)), ([], 1))
+        shutil.rmtree(os.path.join(self.tmp, "ext"))
+        rc, _asked, cloned = self.create_missing(
+            "--no-clone-missing", "--name", "demo2",
+            settings="create:\n  cloneMissing: true\n")
+        self.assertEqual((rc, cloned), (1, []))
+
+    def test_create_clone_missing_must_be_a_boolean(self):
+        rc, _asked, cloned = self.create_missing(settings="create:\n  cloneMissing: yes please\n")
+        self.assertEqual((rc, cloned), (1, []))
+        self.assertIn("create.cloneMissing must be true or false", self.err)
+
+    def test_a_dry_run_neither_asks_nor_clones(self):
+        rc, asked, cloned = self.create_missing("--dry-run", answer="n", tty=True)
+        self.assertEqual(rc, 0, self.err)
+        self.assertEqual((asked, cloned), ([], []))
+        self.assertIn("(needs clone)", self.err)
+
     def test_a_create_saves_the_state_first_then_makes_and_checks_the_vm(self):
         self.assertEqual(self.create("--name", "demo"), 0, self.err)
         st = state_mod.load("demo", self.env)
@@ -612,7 +684,8 @@ class CreateTests(Env):
         with mock.patch.object(create.ci_mod, "fetch_maps", fetch_maps), \
                 mock.patch.object(create.deps_mod, "fetch_manifest",
                                   lambda canonical, warn=None, **kw: None):
-            rc = self.quiet(create.main, argv, lima=FakeLima(), env=self.env,
+            self.lima = FakeLima()
+            rc = self.quiet(create.main, argv, lima=self.lima, env=self.env,
                             build=self.fake_build, inputs_fn=self.fake_inputs,
                             prompt=lambda q: "")
         return rc, len(fetched)

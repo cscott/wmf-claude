@@ -118,10 +118,25 @@ class LauncherTests(unittest.TestCase):
         self.assertNotIn(("--allow-domain", "registry.npmjs.org"), pairs)
         self.assertIn(("--upstream-proxy", "192.168.5.100:3128"), pairs)
         # The session-start hook names the sandbox in `wmf-sbx allow`.
-        self.assertIn("WMF_SBX_EGRESS=box", a)
+        self.assertIn("WMF_CLAUDE_SBX_EGRESS=box", a)
 
     def test_off_the_egress_proxy_the_hook_says_nothing_of_it(self):
-        self.assertFalse([x for x in self.argv() if x.startswith("WMF_SBX_EGRESS=")])
+        self.assertFalse([x for x in self.argv() if x.startswith("WMF_CLAUDE_SBX_EGRESS=")])
+
+    def test_nono_lets_through_every_variable_that_the_session_gets(self):
+        # nono passes Claude only the profile's allow_vars; a variable
+        # off that list is dropped silently (RAN: WMF_SBX_EGRESS was).
+        import fnmatch
+        profile = os.path.join(image.REPO_ROOT, "profiles", "wmf-engineer.json")
+        with open(profile, encoding="utf-8") as f:
+            allowed = json.load(f)["environment"]["allow_vars"]
+        a = session.launcher_argv(dict(STATE, egress="proxy", name="box"),
+                                  proxy="192.168.5.100:3128")
+        names = [x.split("=", 1)[0] for x in a[:a.index("bash")]
+                 if re.match(r"^[A-Z_][A-Z0-9_]*=", x)]
+        self.assertIn("WMF_CLAUDE_SBX_EGRESS", names)
+        for name in names:
+            self.assertTrue(any(fnmatch.fnmatchcase(name, p) for p in allowed), name)
 
     def test_a_nested_sandbox_gets_the_lima_grants(self):
         argv = session.launcher_argv(dict(STATE, nested=True, nestedSrc="/home/eng/wmf-sbx-src"))

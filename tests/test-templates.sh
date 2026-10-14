@@ -935,14 +935,14 @@ HOOK="$REPO_ROOT/bin/session-start.sh"
 # environment of the engineer who runs the test.
 FIXTURES="$REPO_ROOT/tests/fixtures/session-start"
 if diff -u "$FIXTURES/nono.txt" \
-     <(env -u WMF_CLAUDE_SANDBOX_BACKEND -u GERRITUA -u WMF_DOCKER_BROKER_URL -u WMF_SBX_EGRESS \
+     <(env -u WMF_CLAUDE_SANDBOX_BACKEND -u GERRITUA -u WMF_DOCKER_BROKER_URL -u WMF_CLAUDE_SBX_EGRESS \
          -u WMF_CLAUDE_STE -u WMF_CLAUDE_IN_VM -u WMF_CLAUDE_CHROME_IN_VM \
          -u WMF_CLAUDE_MODEL_PROXY_PORT bash "$HOOK" 2>/dev/null) >/dev/null; then
   pass "session-start default output is byte-identical to the nono fixture"
 else
   fail "session-start default output differs from tests/fixtures/session-start/nono.txt"
 fi
-out="$(WMF_CLAUDE_STE=0 env -u WMF_CLAUDE_SANDBOX_BACKEND -u GERRITUA -u WMF_DOCKER_BROKER_URL -u WMF_SBX_EGRESS bash "$HOOK" 2>/dev/null)"
+out="$(WMF_CLAUDE_STE=0 env -u WMF_CLAUDE_SANDBOX_BACKEND -u GERRITUA -u WMF_DOCKER_BROKER_URL -u WMF_CLAUDE_SBX_EGRESS bash "$HOOK" 2>/dev/null)"
 if ! grep -q 'ASD-STE100' <<<"$out" \
    && [[ "$(diff <(grep -v 'ASD-STE100' "$FIXTURES/nono.txt") <(echo "$out"))" == "" ]]; then
   pass "session-start with WMF_CLAUDE_STE=0 drops only the STE bullet"
@@ -950,7 +950,7 @@ else
   fail "session-start with WMF_CLAUDE_STE=0 did not drop exactly the STE bullet"
 fi
 if diff -u "$FIXTURES/nono-broker.txt" \
-     <(env -u WMF_CLAUDE_SANDBOX_BACKEND -u GERRITUA -u WMF_SBX_EGRESS \
+     <(env -u WMF_CLAUDE_SANDBOX_BACKEND -u GERRITUA -u WMF_CLAUDE_SBX_EGRESS \
          -u WMF_CLAUDE_STE -u WMF_CLAUDE_IN_VM -u WMF_CLAUDE_CHROME_IN_VM \
          -u WMF_CLAUDE_MODEL_PROXY_PORT \
          WMF_DOCKER_BROKER_URL=http://127.0.0.1:5000 bash "$HOOK" 2>/dev/null) >/dev/null; then
@@ -1012,15 +1012,15 @@ fi
 
 echo "--- session-start hook: wmf-sbx egress proxy ---"
 # Only a session behind wmf-sbx's egress proxy hears of it, with its name.
-if [[ "$(env -u WMF_SBX_EGRESS bash "$HOOK" 2>/dev/null | grep -c 'wmf-sbx allow')" == "0" ]]; then
-  pass "session-start says nothing about the egress proxy without WMF_SBX_EGRESS"
+if [[ "$(env -u WMF_CLAUDE_SBX_EGRESS bash "$HOOK" 2>/dev/null | grep -c 'wmf-sbx allow')" == "0" ]]; then
+  pass "session-start says nothing about the egress proxy without WMF_CLAUDE_SBX_EGRESS"
 else
-  fail "session-start mentions the egress proxy although WMF_SBX_EGRESS is unset"
+  fail "session-start mentions the egress proxy although WMF_CLAUDE_SBX_EGRESS is unset"
 fi
-if WMF_SBX_EGRESS=demo bash "$HOOK" 2>/dev/null | grep -qF '`wmf-sbx allow demo HOST`'; then
+if WMF_CLAUDE_SBX_EGRESS=demo bash "$HOOK" 2>/dev/null | grep -qF '`wmf-sbx allow demo HOST`'; then
   pass "session-start tells Claude to ask for \`wmf-sbx allow NAME HOST\` behind the egress proxy"
 else
-  fail "session-start does not explain the egress proxy when WMF_SBX_EGRESS is set"
+  fail "session-start does not explain the egress proxy when WMF_CLAUDE_SBX_EGRESS is set"
 fi
 
 echo "--- session-start hook: Docker broker routing ---"

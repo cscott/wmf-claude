@@ -16,6 +16,16 @@ tested as the task says.
 When a task is filed, add its T-number to the table. When upstream takes
 a fix, delete the pair.
 
+Handoffs: bugs for an agent to fix in a sandbox of its own, which then
+files the task and the change. When cananian gives the Gerrit and
+Phabricator numbers, record them in `sbx/NOTES.md`, and delete the
+handoff when the fix merges.
+
+| Handoff | Repo of the fix | Bug | Gerrit / task |
+|---|---|---|---|
+| `HANDOFF-ABUSEFILTER.md` | mediawiki/core | `SchemaGenerator::normalizePath()` leaves the path absolute for a symlinked extension: 11 AbuseFilter schema tests fail | — |
+| `HANDOFF-CORE.md` | mediawiki/core | api-testing `ReparseDependentPages.js` expects the `?title=` red-link URL; Parsoid read views write `/index.php/X?action=edit` | — |
+
 A wmf-claude fix that is ready goes upstream as a GitLab merge request,
 not as a task here. Those already sent or merged:
 

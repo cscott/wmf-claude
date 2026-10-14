@@ -1509,7 +1509,7 @@ clonefile option stays open for later. Decided with cananian,
     bounded by the freeze before any session and by the golden image's
     age. The guest writes its filesystem, not the qcow2 headers (QEMU
     does), and the chain check runs before a snapshot is used.
-- **B4. Acceptance:** a cold, then a warm create of Cite and its
+- **B4. Acceptance (done; closed by cananian, 2026-10-14):** a cold, then a warm create of Cite and its
   dependencies (time, bytes fetched, disk); a warm create after an
   upstream change brings it in; a blind run in a sandbox from a
   snapshot; a golden rebuild (old sandboxes boot, gc keeps their
@@ -1523,7 +1523,8 @@ clonefile option stays open for later. Decided with cananian,
   refresh was not in it; a first attempt in a warm sandbox ran 9 minutes
   the same way before `-p` ended it. Found: the freeze removed the setup
   log from the sandbox that froze (fixed); the rest is the MediaWiki
-  setup and its guide (sbx/NOTES.md).
+  setup and its guide (sbx/NOTES.md), and two upstream bugs
+  (`sbx/upstream/HANDOFF-ABUSEFILTER.md`, `HANDOFF-CORE.md`).
   Built after B3 (cananian, 2026-10-14): a warm create freezes only
   when its snapshot is older than `images.snapshotInterval` (1 day),
   which saves the stop, the start and a 5 GiB generation per create;

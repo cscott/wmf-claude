@@ -27,6 +27,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 import wmf_sbx.image as image  # noqa: E402
 import wmf_sbx.kit as kit  # noqa: E402
 import wmf_sbx.lima as lima  # noqa: E402
+import settings_isolation  # noqa: E402
 
 
 
@@ -37,6 +38,7 @@ _NOT_NESTED = mock.patch.multiple(image, LOCAL_BASE_DIR="/nonexistent/wmf-sbx-ba
 
 
 def setUpModule():
+    settings_isolation.isolate()
     _NOT_NESTED.start()
 
 

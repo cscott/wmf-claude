@@ -29,6 +29,7 @@ import subprocess
 import sys
 import time
 
+from . import cli as cli_mod
 from . import color as color_mod
 from . import egress as egress_mod
 from . import lima as lima_mod
@@ -101,9 +102,11 @@ def main(argv=None, env=None, kill=os.kill, ps=subprocess.run):
     parser.add_argument("name", help="the sandbox (or a path shortcut such as .)")
     parser.add_argument("hosts", nargs="*", metavar="HOST")
     group = parser.add_mutually_exclusive_group()
-    group.add_argument("--rm", action="store_true", help="remove the HOSTs")
-    group.add_argument("--list", action="store_true", help="show the list")
-    args = parser.parse_args(argv)
+    group.add_argument("--rm", action=argparse.BooleanOptionalAction, default=False,
+                       help="remove the HOSTs")
+    group.add_argument("--list", action=argparse.BooleanOptionalAction, default=False,
+                       help="show the list")
+    args, _config = cli_mod.parse_args(parser, argv, "allow")
     env = os.environ if env is None else env
     if args.list == bool(args.hosts):
         parser.error("give HOSTs, or --list")

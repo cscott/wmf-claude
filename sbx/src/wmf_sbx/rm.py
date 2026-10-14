@@ -23,6 +23,7 @@ import os
 import subprocess
 import sys
 
+from . import cli as cli_mod
 from . import egress as egress_mod
 from . import lima as lima_mod
 from . import remotes as remotes_mod
@@ -168,19 +169,19 @@ def main(argv=None, run=subprocess.run, env=None, lima=None, confirm=input):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("name", nargs="*", help="Sandbox(es) to remove")
     parser.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run", action=argparse.BooleanOptionalAction, default=False,
         help="Print what would be removed; change nothing",
     )
     parser.add_argument(
-        "--keep-remotes", action="store_true",
+        "--keep-remotes", action=argparse.BooleanOptionalAction, default=False,
         help="Remove the sandbox but leave its host remotes and state in place",
     )
     parser.add_argument(
-        "-f", "--force", action="store_true",
+        "-f", "--force", action=argparse.BooleanOptionalAction, default=False,
         help="Skip both the unfetched-commit guard and the confirmation",
     )
     parser.add_argument(
-        "--prune", action="store_true",
+        "--prune", action=argparse.BooleanOptionalAction, default=False,
         help="Clean up state and remotes for sandboxes that no longer exist",
     )
     parser.add_argument(
@@ -188,7 +189,7 @@ def main(argv=None, run=subprocess.run, env=None, lima=None, confirm=input):
         help="In every git repo under DIR, remove the host remotes and gc "
         "entries of sandboxes that have no state file (a lost state file)",
     )
-    args = parser.parse_args(argv)
+    args, _config = cli_mod.parse_args(parser, argv, "rm")
 
     if not args.name and not args.prune and not args.scan:
         parser.error("give a sandbox name, --prune or --scan DIR")

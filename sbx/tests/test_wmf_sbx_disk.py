@@ -20,6 +20,13 @@ import wmf_sbx.image as image  # noqa: E402
 import wmf_sbx.lima as lima_mod  # noqa: E402
 import wmf_sbx.state as state_mod  # noqa: E402
 import wmf_sbx.status as status_mod  # noqa: E402
+import settings_isolation  # noqa: E402
+
+
+def setUpModule():
+    settings_isolation.isolate()
+
+
 from test_wmf_sbx_lifecycle import FakeLima  # noqa: E402
 
 HAVE_QEMU_IMG = shutil.which("qemu-img") is not None

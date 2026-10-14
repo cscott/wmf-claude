@@ -20,6 +20,13 @@ import wmf_sbx.image as image  # noqa: E402
 import wmf_sbx.remotes as remotes  # noqa: E402
 import wmf_sbx.rm as rm  # noqa: E402
 import wmf_sbx.snapshot as snapshot  # noqa: E402
+import settings_isolation  # noqa: E402
+
+
+def setUpModule():
+    settings_isolation.isolate()
+
+
 from test_wmf_sbx_lifecycle import git_repo  # noqa: E402
 
 HAVE_TOOLS = shutil.which("qemu-img") is not None and shutil.which("git") is not None

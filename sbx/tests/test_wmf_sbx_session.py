@@ -30,6 +30,13 @@ import wmf_sbx.session as session  # noqa: E402
 import wmf_sbx.setup as setup  # noqa: E402
 import wmf_sbx.state as state_mod  # noqa: E402
 import wmf_sbx.vm as vm  # noqa: E402
+import settings_isolation  # noqa: E402
+
+
+def setUpModule():
+    settings_isolation.isolate()
+
+
 from test_wmf_sbx_lifecycle import Done, Env, FakeLima, allow_tmp, git_repo  # noqa: E402
 
 

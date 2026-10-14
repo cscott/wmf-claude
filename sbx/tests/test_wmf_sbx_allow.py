@@ -17,6 +17,11 @@ import wmf_sbx.allow as allow  # noqa: E402
 import wmf_sbx.egress as egress  # noqa: E402
 import wmf_sbx.lima as lima_mod  # noqa: E402
 import wmf_sbx.state as state_mod  # noqa: E402
+import settings_isolation  # noqa: E402
+
+
+def setUpModule():
+    settings_isolation.isolate()
 
 
 class AllowTests(unittest.TestCase):
@@ -77,6 +82,18 @@ class AllowTests(unittest.TestCase):
         self.assertEqual(egress.extra_domains("demo", self.env), ["b.example.org"])
         self.assertEqual(self.run_allow("demo", "--rm", "c.example.org"), 1)
         self.assertIn("not in demo's list: c.example.org", self.err)
+
+    def test_settings_allow_list_and_the_command_line_rm(self):
+        settings = os.path.join(self.tmp.name, "settings.yaml")
+        with open(settings, "w", encoding="utf-8") as f:
+            f.write("allow:\n  list: true\n")
+        egress.set_extra_domains("demo", ["a.example.org", "b.example.org"], self.env)
+        self.assertEqual(self.run_allow("--config", settings, "demo"), 0, self.err)
+        self.assertEqual(self.out, "a.example.org\nb.example.org\n")
+        # --rm on the command line drops the settings' list: true
+        self.assertEqual(self.run_allow("--config", settings, "demo", "--rm", "a.example.org"),
+                         0, self.err)
+        self.assertEqual(egress.extra_domains("demo", self.env), ["b.example.org"])
 
     def test_a_stopped_vm_gets_it_at_the_next_start(self):
         self.assertEqual(self.run_allow("demo", "example.org"), 0, self.err)

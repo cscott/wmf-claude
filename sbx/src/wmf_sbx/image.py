@@ -927,12 +927,48 @@ def build(inputs=None, lima=None, run=subprocess.run, env=None, log=print,
 
 # -- the command line -----------------------------------------------------
 
+def _allocated(path):
+    """The bytes a file takes on disk (a qcow2 file is sparse)."""
+    try:
+        return os.stat(path).st_blocks * 512
+    except OSError:
+        return 0
+
+
+def sandbox_disks(env=None):
+    """The wmf-sbx sandboxes' own disks in the Lima home (an overlay's
+    own blocks only; not the image builder's)."""
+    home = lima_mod.lima_home(env)
+    if not os.path.isdir(home):
+        return []
+    return [os.path.join(home, d, "disk") for d in sorted(os.listdir(home))
+            if d.startswith("wmf-sbx-") and not d.startswith(BUILDER_PREFIX)
+            and os.path.isfile(os.path.join(home, d, "disk"))]
+
+
+def ls_totals(totals, unused):
+    """The two summary lines of `image ls`."""
+    def part(label, kind):
+        n, size = totals[kind]
+        return f"{n} {label}{'' if n == 1 else 's'} ({_human(size)})"
+    all_bytes = sum(size for _n, size in totals.values())
+    line = (f"total: {part('golden image', 'golden')}, {part('snapshot', 'snapshot')}, "
+            f"{part('sandbox disk', 'disk')}: {_human(all_bytes)} on disk")
+    if unused[0] or unused[1]:
+        line += (f"\n       `wmf-sbx image prune` would free {_human(unused[2])} "
+                 f"({unused[0]} image{'' if unused[0] == 1 else 's'} and {unused[1]} "
+                 f"snapshot{'' if unused[1] == 1 else 's'} that no sandbox uses)")
+    return line
+
+
 def _human(n):
-    for unit in ("B", "KiB", "MiB", "GiB"):
+    for unit in ("B", "KiB", "MiB"):
         if n < 1024:
             return f"{n:.0f} {unit}"
         n /= 1024
-    return f"{n:.1f} TiB"
+    if n < 1024:
+        return f"{n:.1f} GiB"
+    return f"{n / 1024:.1f} TiB"
 
 
 def main(argv=None, env=None, lima=None, run=subprocess.run, out=sys.stdout):
@@ -975,8 +1011,15 @@ def main(argv=None, env=None, lima=None, run=subprocess.run, out=sys.stdout):
                   keep_builder=args.keep_builder)
         elif args.cmd == "ls":
             used = images_in_use(env)
+            totals = {"golden": [0, 0], "snapshot": [0, 0], "disk": [0, 0]}
+            unused = [0, 0, 0]   # images, snapshots, bytes
             for key, m in list_images(env):
-                size = os.path.getsize(golden_path(key, env))
+                size = _allocated(golden_path(key, env))
+                totals["golden"][0] += 1
+                totals["golden"][1] += size
+                if not used.get(key):
+                    unused[0] += 1
+                    unused[2] += size
                 inp = m.get("inputs", {})
                 users = ", ".join(used.get(key, [])) or "-"
                 tree = inp.get("tree", "?")
@@ -990,9 +1033,19 @@ def main(argv=None, env=None, lima=None, run=subprocess.run, out=sys.stdout):
             for skey in snapshot_mod.list_keys(env):
                 for gen, path, meta in snapshot_mod.list_generations(skey, env):
                     users = ", ".join(snap_used.get(os.path.realpath(path), [])) or "-"
-                    say(f"snapshot {skey}/{gen}  {_human(os.path.getsize(path)):>9}  "
+                    size = _allocated(path)
+                    totals["snapshot"][0] += 1
+                    totals["snapshot"][1] += size
+                    if users == "-":
+                        unused[1] += 1
+                        unused[2] += size
+                    say(f"snapshot {skey}/{gen}  {_human(size):>9}  "
                         f"on {meta.get('golden', '?')}  {len(meta.get('repos') or [])} "
                         f"repos (made by {meta.get('sandbox', '?')})  used by: {users}")
+            for disk in sandbox_disks(env):
+                totals["disk"][0] += 1
+                totals["disk"][1] += _allocated(disk)
+            say(ls_totals(totals, unused))
         elif args.cmd == "rm":
             remove_image(args.key, env)
             say(f"removed {args.key}")

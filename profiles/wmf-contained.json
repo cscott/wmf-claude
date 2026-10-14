@@ -26,6 +26,7 @@
       "CLAUDECODE",
       "ANTHROPIC_*",
       "NONO_*",
+      "WMF_DOCKER_*",
       "WMF_CLAUDE_*"
     ]
   },

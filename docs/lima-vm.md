@@ -137,6 +137,12 @@ bin/wmf-claude-vm pull NAME [DEST]       # agent's branches -> vm/* in the repo 
 
 ## Docker inside the VM
 
+On an Apple Silicon Mac the VM is arm64, and the WMF dev images
+(`docker-registry.wikimedia.org/dev/...`) are amd64 only, so their
+containers do not run in the VM yet. QEMU user-mode emulation crashes their
+`php-fpm`; Rosetta would run them, but needs a host share, which this VM
+does not allow. Use multi-arch images, or a VM on an amd64 Linux host.
+
 You drive Docker from an engineer shell; Claude reaches it only through the
 broker, as on the host. The checkout belongs to `agent`, so write into it as
 `agent`, and run the containers as the agent's UID so their writes are the
@@ -203,7 +209,8 @@ What each way of running wmf-claude guarantees:
 | The VM's network, outside nono | — | the internet; not the host, the LAN or private ranges | none (locked) during sessions |
 | The model credential | on the host (keychain), in reach of the sandbox | in the VM, in reach of the sandbox | on the host only, out of the VM's reach |
 | Host files | nono denies credentials and dotfiles; the working directory is writable | none: code moves as git bundles | none |
-| MCP servers, Docker broker | yes | yes | no |
+| MCP servers | yes | yes | no |
+| Docker broker | yes | yes | yes; images and dependencies prepared while open |
 | Model requests logged | no | no | each one, on the host |
 
 A normal Lima VM protects the host: an escape from nono lands in a VM
@@ -245,9 +252,10 @@ How the model is reached:
   set by `lima/guest-claude.sh`): `profiles/wmf-contained.json`, which is
   `wmf-engineer` without any egress, the one port open, a placeholder
   OAuth token, and non-essential traffic off. `--allow-post`, `--minimax`,
-  `--docker`, `--chrome`, `--ide`, `--local-web` and `--local-db` are
-  refused, and so is every nono flag except path grants: a local service,
-  such as a container with egress, could reach the internet for the agent. The VM registers no MCP servers.
+  `--chrome` and `--ide` are refused, and so is every nono flag except path
+  grants. `--docker=SERVICE`, `--local-web` and `--local-db` work: sessions
+  run only in a locked VM, where nothing, containers included, has egress
+  (below). The VM registers no MCP servers.
 
 The host keeps a record of which VMs are contained VMs
 (`~/.config/wmf-claude/vm-<vm>-contained`); the guest has a root-owned marker,
@@ -318,12 +326,44 @@ guest reaches at `192.168.5.2`, since LuLu does not filter loopback. The in-VM l
 the host needs a VM with no network at all (a vsock-only `vz` VM), which
 Lima does not offer yet.
 
-What is still not covered, and planned: `--docker` (containers would have
-egress in the open phase, and need images pulled while open), transcript
-and log retention, and a per-engagement scope prompt.
+### Docker in a contained VM: prepare open, test locked
+
+`--docker=SERVICE` works as in any Lima VM (the broker runs as `engineer`,
+the agent reaches it through `mwdocker`), and the lock covers the
+containers: in the locked phase no container reaches the internet, and the
+broker runs as `engineer`, whom the lock blocks too. The catch is that
+anything that needs the network must happen in the open phase:
+
+```bash
+bin/wmf-claude-vm unlock                  # (turn a host firewall rule on limactl off too)
+bin/wmf-claude-vm shell --agent -- git clone --depth 1 \
+  https://gerrit.wikimedia.org/r/mediawiki/core /home/agent/work/core   # or: push
+bin/wmf-claude-vm shell
+cd /home/agent/work/core
+printf 'MW_DOCKER_UID=%s\nMW_DOCKER_GID=%s\n' "$(id -u agent)" "$(id -g agent)" | sudo -u agent tee .env
+docker compose up -d                      # pulls the images
+docker compose exec mediawiki composer install
+exit
+bin/wmf-claude-vm lock                    # (host firewall rule back on)
+bin/wmf-claude-vm claude core --docker=mediawiki --local-web
+```
+
+While locked, `composer update`, `npm install` and image pulls fail; unlock
+for them, with no session running. A shallow clone made in the VM is much
+quicker than pushing core's history; `pull core ~/src/mediawiki/core` then
+sends only the commits after the clone's first commit, which the host
+checkout must have (`git fetch` it first). The compose file in the agent's
+workspace is the agent's to edit, as in any Lima VM: read it before
+`docker compose up`. A privileged container would be VM root, which could
+remove the lock; the broker refuses to serve one, and the host firewall
+(`check-host-block`) and the token's absence from the VM limit the rest.
+
+What is still not covered, and planned: transcript and log retention, and a
+per-engagement scope prompt.
 
 `tests/smoke-contained.sh` checks a running contained VM: the token location, the
-locked network, the launcher, the proxy's refusals, and the sandbox's lack
+locked network, the launcher, the proxy's refusals (and with `--docker`,
+a container prepared while open and locked afterwards), and the sandbox's lack
 of egress.
 
 ## Verifying the boundary

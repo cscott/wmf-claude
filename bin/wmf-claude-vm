@@ -347,11 +347,20 @@ cmd_pull() {
   # copies it out. Git never runs in the agent's repository as the engineer.
   flat="${name//\//_}"
   remote="$AGENT_HOME/work/.pull/$flat.bundle"
+  # A shallow workspace (a --depth clone made in the VM) cannot bundle its
+  # history: bundle only what follows the shallow boundary. The host
+  # repository must have the boundary commits.
   guest_agent bash -c '
     set -e
     mkdir -p "$HOME/work/.pull"
-    git -c core.hooksPath=/dev/null -c core.fsmonitor=false -c core.pager=cat \
-      -C "$HOME/work/$1" bundle create -q "$2" --branches --tags HEAD
+    g() { git -c core.hooksPath=/dev/null -c core.fsmonitor=false -c core.pager=cat -C "$HOME/work/$1" "${@:2}"; }
+    shallow=$(g "$1" rev-parse --git-path shallow)
+    case "$shallow" in /*) ;; *) shallow="$HOME/work/$1/$shallow" ;; esac
+    if [ -s "$shallow" ]; then
+      g "$1" bundle create -q "$2" --branches HEAD --not $(cat "$shallow")
+    else
+      g "$1" bundle create -q "$2" --branches --tags HEAD
+    fi
     chmod 0644 "$2"
   ' _ "$name" "$remote"
   bundle=$(mktemp)
@@ -359,7 +368,7 @@ cmd_pull() {
   guest_agent rm -f "$remote"
   step "Fetching into vm/* of $dest"
   git -C "$dest" bundle verify "$bundle" >/dev/null 2>&1 \
-    || { rm -f "$bundle"; die "the bundle does not verify against $dest"; }
+    || { rm -f "$bundle"; die "the bundle does not verify against $dest (from a shallow workspace, $dest needs the commit the clone starts at: git -C $dest fetch)"; }
   # Remote-tracking refs, as if from a remote named `vm`, so git branch -r,
   # log and switch work on them as usual. --prune drops the vm/* branches
   # that no longer exist in the VM. No remote goes into .git/config.

@@ -99,6 +99,21 @@ if [[ "$CURRENT" != "$NEW" ]]; then
   ok "$INSTALL -> $NEW"
 fi
 
+# Debian's nftables.service flushes the whole ruleset when it stops, Docker's
+# chains included, and Docker recreates them only when it restarts. The
+# rules files here replace their own tables, so a stop needs no flush: keep
+# the other tables. Then repair Docker if an earlier flush removed its chains.
+step "Firewall: keep Docker's rules across nftables restarts"
+sudo install -d -m 0755 /etc/systemd/system/nftables.service.d
+printf '[Service]\nExecStop=\n' | sudo tee /etc/systemd/system/nftables.service.d/wmf-claude.conf >/dev/null
+sudo systemctl daemon-reload
+if systemctl is-active --quiet docker && ! sudo iptables -t filter -nL DOCKER-FORWARD >/dev/null 2>&1; then
+  sudo systemctl restart docker
+  ok "Docker restarted: its firewall chains were missing"
+else
+  ok "nftables.service no longer flushes the ruleset on stop"
+fi
+
 # Contained VM: the network phase script, root-owned, and the unit that loads the
 # recorded phase at boot, before the network starts. A copy outside
 # /opt/wmf-claude, which the engineer owns: root runs it.

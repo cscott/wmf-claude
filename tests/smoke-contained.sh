@@ -13,6 +13,10 @@
 #
 #   ./tests/smoke-contained.sh --reboot       # first stop and start the VM: the
 #     lock must load at boot, before the network
+#   ./tests/smoke-contained.sh --docker       # also the Docker broker: prepare a
+#     php:8.3-cli container while open (the host firewall rule must be off
+#     for the image pull), lock, then check the container has no egress and
+#     a session reaches it with mwdocker
 #   ./tests/smoke-contained.sh --host-block   # also prove the host-side block
 #     (LuLu blocking limactl, docs/lima-vm.md#contained-mode): remove the VM's own
 #     lock for a moment, as root, and check that egress still fails
@@ -26,11 +30,13 @@ VM="${WMF_CLAUDE_VM:-wmf-claude-contained}"
 PORT="${WMF_CLAUDE_MODEL_PROXY_PORT:-7319}"
 HOST_BLOCK=false
 REBOOT=false
+WITH_DOCKER=false
 for a in "$@"; do
   case "$a" in
     --host-block) HOST_BLOCK=true ;;
     --reboot) REBOOT=true ;;
-    *) echo "usage: $0 [--reboot] [--host-block]" >&2; exit 2 ;;
+    --docker) WITH_DOCKER=true ;;
+    *) echo "usage: $0 [--reboot] [--host-block] [--docker]" >&2; exit 2 ;;
   esac
 done
 VMCMD="$REPO_ROOT/bin/wmf-claude-vm"
@@ -165,9 +171,6 @@ else fail "no allowed /v1/messages in the host log"; fi
 if ! pgrep -f "wmf-claude-model-proxy.*$VM" >/dev/null && ! ls "$VMDIR"/sock/model-*.sock >/dev/null 2>&1; then
   pass "the session's proxy stopped and removed its socket"
 else fail "a model proxy or socket outlived the session"; fi
-out=$("$VMCMD" claude smoke-contained --docker=mediawiki 2>&1 | tr -d '\r')
-if grep -qE 'not available in a contained VM|contained mode allows no egress' <<<"$out"; then pass "--docker is refused in a contained VM"
-else fail "--docker in a contained VM: $(tail -n3 <<<"$out")"; fi
 before=$(wc -l < "$LOG")
 out=$("$VMCMD" claude smoke-contained -- -p 'Use your WebSearch tool to search for "wikimedia foundation" and report the first result title.' 2>&1 | tr -d '\r')
 if tail -n +"$((before + 1))" "$LOG" | grep -q "server tool 'web_search"; then pass "a web search request is refused by the host proxy"
@@ -176,8 +179,17 @@ else info "no web_search request reached the proxy (Claude may not have tried): 
 echo ""
 echo "--- this script's own proxy and bridge, for the checks below ---"
 PROXY_PID=""; SSH_PID=""
+DNAME=smoke-contained-docker
+DSRC=""
 cleanup() {
   if $RELOCK; then g sudo -n "$NETCMD" lock >/dev/null; fi
+  if [[ -n "$DSRC" ]]; then
+    g bash -c 'cd "$1" 2>/dev/null && docker compose down -t 1 >/dev/null 2>&1' _ "/home/agent/work/$DNAME"
+    ga rm -rf "/home/agent/work/$DNAME" 2>/dev/null
+    rm -rf "$DSRC"
+    WSF="${XDG_CONFIG_HOME:-$HOME/.config}/wmf-claude/vm-$VM-workspaces"
+    [[ -f "$WSF" ]] && awk -F'\t' -v d="$DNAME" '$1 != d' "$WSF" > "$WSF.new" && mv "$WSF.new" "$WSF"
+  fi
   [[ -n "$SSH_PID" ]] && kill "$SSH_PID" 2>/dev/null
   [[ -n "$PROXY_PID" ]] && kill "$PROXY_PID" 2>/dev/null
   wait 2>/dev/null
@@ -217,6 +229,83 @@ else fail "direct curl to api.anthropic.com from nono got $code"; fi
 code=$(sandboxed curl -s -o /dev/null -w '%{http_code}' https://www.wikipedia.org/ 2>/dev/null | tr -d '\r')
 if [[ "$code" != 200 ]]; then pass "curl to an unlisted host from nono is refused (${code:-no response})"
 else fail "curl to www.wikipedia.org from nono got 200"; fi
+
+if $WITH_DOCKER; then
+  echo ""
+  echo "--- --docker: prepare while open, test while locked ---"
+  DSRC=$(mktemp -d)
+  git -C "$DSRC" init -q -b main
+  cat > "$DSRC/docker-compose.yml" <<'COMPOSE'
+services:
+  mediawiki:
+    image: php:8.3-cli
+    command: sleep infinity
+    user: "${MW_DOCKER_UID}:${MW_DOCKER_GID}"
+    working_dir: /var/www/html/w
+    volumes:
+      - ./:/var/www/html/w
+COMPOSE
+  git -C "$DSRC" add docker-compose.yml
+  git -C "$DSRC" -c user.name=smoke -c user.email=smoke@invalid commit -q -m "smoke: compose"
+  DW="/home/agent/work/$DNAME"
+  "$VMCMD" push "$DSRC" "$DNAME" >/dev/null 2>&1 || fail "push the compose project"
+  ga bash -c 'printf "MW_DOCKER_UID=%s\nMW_DOCKER_GID=%s\n" "$(id -u)" "$(id -g)" > "$1/.env"' _ "$DW"
+  # This script's own proxy counts as a running session, and unlock and lock
+  # refuse during one. Stop it; the launcher checks below start their own.
+  [[ -n "$SSH_PID" ]] && kill "$SSH_PID" 2>/dev/null
+  [[ -n "$PROXY_PID" ]] && kill "$PROXY_PID" 2>/dev/null
+  wait 2>/dev/null; SSH_PID=""; PROXY_PID=""
+  # Prepare: the image pull needs egress. The EXIT trap locks again if this
+  # stops here.
+  RELOCK=true
+  if ! out=$("$VMCMD" unlock 2>&1); then fail "unlock: $(tail -n2 <<<"$out")"; fi
+  if out=$(g bash -c 'cd "$1" && docker compose up -d --quiet-pull 2>&1' _ "$DW" | tr -d '\r'); then
+    pass "prepare: the container started while the VM was open"
+  else
+    fail "prepare: docker compose up failed while open (is a host firewall rule on limactl still on?): $(tail -n3 <<<"$out")"
+  fi
+  if ! out=$("$VMCMD" lock 2>&1); then fail "lock: $(tail -n2 <<<"$out")"; fi
+  RELOCK=false
+  if [[ "$(g sudo -n "$NETCMD" status | tr -d '\r')" == locked ]]; then pass "locked again after the prepare step"
+  else fail "the VM did not lock again"; exit 1; fi
+  # Locked: a raw TCP connect by IP from inside the container, so DNS cannot
+  # decide it.
+  cid=$(g bash -c 'cd "$1" && docker compose ps -q mediawiki' _ "$DW" | tr -d '\r')
+  r=$(g docker exec "$cid" php -r '$f = @fsockopen($argv[1], 443, $e, $s, 5); echo $f ? "OPEN" : "BLOCKED";' -- "$EGRESS_IP" 2>&1 | tr -d '\r')
+  if [[ "$r" == BLOCKED ]]; then pass "locked: the container cannot reach the internet (TCP to $EGRESS_IP:443)"
+  else fail "locked: the container reached the internet: $r"; fi
+  # The session's path, without the model: a broker as the engineer, and
+  # mwdocker as the agent inside nono with the wmf-contained profile.
+  BROKER_CHECKS='
+    W=$1; ip=$2; HS=/run/wmf-claude/smoke.$$.json; LOG=/run/wmf-claude/smoke.$$.log
+    (umask 077; exec python3 /opt/wmf-claude/bin/launch-docker-broker --service mediawiki \
+      --compose-file "$W/docker-compose.yml" --handshake "$HS" >"$LOG" 2>&1) &
+    bp=$!
+    for _ in $(seq 100); do [ -f "$HS" ] && break; sleep 0.1; done
+    if [ ! -f "$HS" ]; then echo "BROKER=failed: $(tr "\n" " " < "$LOG")"; kill "$bp" 2>/dev/null; rm -f "$LOG"; exit 0; fi
+    port=$(jq -r .port "$HS"); tok=$(jq -r .token "$HS")
+    sudo -H -u agent env -C "$W" PATH=/usr/local/bin:/usr/bin:/bin \
+      WMF_DOCKER_BROKER_URL="http://127.0.0.1:$port" WMF_DOCKER_BROKER_TOKEN="$tok" \
+      nono run --silent --profile /opt/wmf-claude/profiles/wmf-contained.json --workdir "$W" \
+      --read /opt/wmf-claude --open-port "$port" -- sh -c '\''
+        echo "PHP=$(/opt/wmf-claude/bin/mwdocker php -r "echo PHP_VERSION;" 2>&1 | tail -n1)"
+        echo "EGRESS=$(/opt/wmf-claude/bin/mwdocker php -r "\$f = @fsockopen(\$argv[1], 443, \$e, \$s, 5); echo \$f ? \"OPEN\" : \"BLOCKED\";" -- "$1" 2>&1 | tail -n1)"
+      '\'' _ "$ip"
+    kill "$bp" 2>/dev/null; wait "$bp" 2>/dev/null; rm -f "$HS" "$LOG"
+  '
+  out=$(g bash -c "$BROKER_CHECKS" _ "$DW" "$EGRESS_IP" | tr -d '\r')
+  if [[ "$(sed -n 's/^PHP=//p' <<<"$out")" =~ ^8\.3\. ]]; then pass "mwdocker in the contained sandbox reaches the container"
+  else fail "mwdocker in the contained sandbox: $out"; fi
+  if [[ "$(sed -n 's/^EGRESS=//p' <<<"$out")" == BLOCKED ]]; then pass "code run through mwdocker cannot reach the internet"
+  else fail "code run through mwdocker: $(sed -n 's/^EGRESS=//p' <<<"$out")"; fi
+  # The full path: lima/guest-claude.sh starts the broker, bin/claude runs in
+  # contained mode, and Claude calls mwdocker.
+  out=$("$VMCMD" claude "$DNAME" --docker=mediawiki -- -p \
+    "Run this exact shell command and reply with only its output: mwdocker php -r 'echo \"SMOKE-\", PHP_VERSION;'" \
+    --allowedTools 'Bash(mwdocker:*)' 2>&1 | tr -d '\r')
+  if grep -qE 'SMOKE-8\.3\.' <<<"$out"; then pass "a contained session with --docker runs mwdocker"
+  else fail "contained session with --docker: $(tail -n4 <<<"$out")"; fi
+fi
 
 echo ""
 echo "--- host proxy log (this run) ---"

@@ -21,6 +21,9 @@ _BLUE = "\x1b[38;2;122;162;247m"
 # it verbatim). Revisit if a real failing-command transcript shows
 # otherwise.
 _RED = "\x1b[38;2;247;118;142m"
+# Tokyo Night's orange, for warnings: they stand out from the plan lines
+# above them, and are not the red of a failure.
+_ORANGE = "\x1b[38;2;255;158;100m"
 _RESET = "\x1b[m"
 
 
@@ -49,6 +52,12 @@ def highlight(text, *, stream=None):
     """The "here's the command to run" styling -- sbx's own blue for its
     final `sbx run --name NAME` suggestion."""
     return f"{_BLUE}{text}{_RESET}" if _enabled(stream) else text
+
+
+def warning(text, *, stream=None):
+    """Warning styling: a line that does not stop this invocation but
+    needs the engineer's attention (a fallback, a degraded setup)."""
+    return f"{_ORANGE}{text}{_RESET}" if _enabled(stream) else text
 
 
 def error(text, *, stream=None):

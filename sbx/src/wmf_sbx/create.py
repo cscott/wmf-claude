@@ -220,7 +220,7 @@ def split_ro_suffix(spec):
 
 
 def _warn(msg):
-    print(f"warning: {msg}", file=sys.stderr)
+    print(color_mod.warning(f"warning: {msg}"), file=sys.stderr)
 
 
 def is_raw_path(spec):
@@ -487,8 +487,9 @@ def usable_snapshot(skey, env, run=subprocess.run):
         return None
     missing = snapshot_mod.borrowers_intact(skey, snapshot_mod.host_dirs(found[2]), run=run)
     if missing:
-        print(f"warning: snapshot {skey}: {missing[0]} was replaced or removed since it was "
-              f"made; this create is cold.", file=sys.stderr)
+        print(color_mod.warning(f"warning: snapshot {skey}: {missing[0]} was replaced or "
+                                f"removed since it was made; this create is cold."),
+              file=sys.stderr)
         return None
     return found
 
@@ -513,7 +514,7 @@ def gc_old_images(key, env, config, say):
     try:
         gone = image_mod.gc_images(env=env, config=config, keep={key})
     except (OSError, image_mod.ImageError) as e:
-        print(f"warning: could not remove old golden images ({e})", file=sys.stderr)
+        print(color_mod.warning(f"warning: could not remove old golden images ({e})"), file=sys.stderr)
         return
     if gone:
         freed = sum(n for _k, n in gone)
@@ -683,8 +684,9 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
               f"by the dependency walk; --no-deps skips it)", file=sys.stderr)
     if unreachable:
         listed = "\n".join(f"    {c}" for c in sorted(unreachable))
-        print(f"warning: {len(unreachable)} manifest(s) could not be fetched, so the "
-              f"plan above may be missing repos:\n{listed}", file=sys.stderr)
+        print(color_mod.warning(f"warning: {len(unreachable)} manifest(s) could not be fetched, "
+                                f"so the plan above may be missing repos:\n{listed}"),
+              file=sys.stderr)
         if not args.dry_run:
             print(color_mod.error(
                 "error: refusing to create a sandbox from an incomplete dependency "
@@ -728,7 +730,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
                                    else template_mod.default_vm_type())
         egress, warning = egress_choice(args.egress_proxy, vm_type, name, env)
         if warning:
-            print(warning, file=sys.stderr)
+            print(color_mod.warning(warning), file=sys.stderr)
         overlay = disk_mod.uses_overlay(vm_type) and not args.full_disk
         # Not behind the egress proxy yet: its disk holds the sandbox's
         # own egress CA and guest network setup, which the snapshot key
@@ -776,7 +778,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
                     base_inputs, env=env, config=config, expire=expire, renew=args.cold,
                     now=now, min_left=SNAPSHOT_GRACE)
             if note and note.startswith("warning"):
-                print(note, file=sys.stderr)
+                print(color_mod.warning(note), file=sys.stderr)
             elif note:
                 say(note)
             key = image_mod.cache_key(inputs)
@@ -802,7 +804,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
                 lima.placeholder(image_mod.cache_root(env))
                 warning = disk_mod.lima_version_warning(lima.version())
                 if warning:
-                    print(warning, file=sys.stderr)
+                    print(color_mod.warning(warning), file=sys.stderr)
 
         if not args.dry_run:
             for canonical, path, needs_clone in resolved:
@@ -917,20 +919,22 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         print(f"  `wmf-sbx rm {name}` removes what was made.", file=sys.stderr)
         return 1
     if args.no_remotes:
-        print("warning: --no-remotes: the host cannot fetch from this sandbox, and "
-              "gc stays on in the host repos, so a host `git gc --prune=now` can "
-              "break the clones in the VM.", file=sys.stderr)
+        print(color_mod.warning("warning: --no-remotes: the host cannot fetch from this "
+                                "sandbox, and gc stays on in the host repos, so a host "
+                                "`git gc --prune=now` can break the clones in the VM."),
+              file=sys.stderr)
     else:
         added, skipped = remotes_mod.sync_remotes(
             name, repos_mod.remote_candidates(name, repos), run=run,
-            warn=lambda m: print(f"warning: {m}", file=sys.stderr))
+            warn=lambda m: print(color_mod.warning(f"warning: {m}"), file=sys.stderr))
         state["remotes"], state["skipped"] = added, skipped
         state_mod.save(state, env)
         if added and not shutil.which("git-remote-wmfsbx"):
-            print(f"warning: git-remote-wmfsbx is not on PATH, so `git fetch {name}` "
-                  f"will fail (\"git: 'remote-wmfsbx' is not a git command\"): add "
-                  f"wmf-claude's sbx/bin to PATH (in ~/.profile or your shell's rc "
-                  f"file).", file=sys.stderr)
+            print(color_mod.warning(
+                f"warning: git-remote-wmfsbx is not on PATH, so `git fetch {name}` "
+                f"will fail (\"git: 'remote-wmfsbx' is not a git command\"): add "
+                f"wmf-claude's sbx/bin to PATH (in ~/.profile or your shell's rc "
+                f"file)."), file=sys.stderr)
 
     plan = mediawiki_mod.build_plan(
         resolved_for_kit,
@@ -971,11 +975,11 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         try:
             state["snapshot"] = snapshot_mod.freeze(
                 name, skey, golden, meta, lima=lima, env=env, run=run, log=say,
-                warn=lambda m: print(f"warning: {m}", file=sys.stderr))
+                warn=lambda m: print(color_mod.warning(f"warning: {m}"), file=sys.stderr))
             state_mod.save(state, env)
         except (snapshot_mod.SnapshotError, vm_mod.VmError, lima_mod.LimaError) as e:
-            print(color_mod.error(f"warning: {e}. The sandbox is fine; the next create of "
-                                  f"these repos is cold."), file=sys.stderr)
+            print(color_mod.warning(f"warning: {e}. The sandbox is fine; the next create of "
+                                    f"these repos is cold."), file=sys.stderr)
 
     gc_old_images(key, env, config, say)
     print(f"\nSandbox {name} is ready (Lima instance {vm_mod.instance_name(name)}).\n"

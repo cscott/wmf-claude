@@ -27,6 +27,7 @@ class ColorTests(unittest.TestCase):
         self.assertEqual(color.highlight("wmf-sbx-resume x", stream=stream),
                           "wmf-sbx-resume x")
         self.assertEqual(color.error("error: boom", stream=stream), "error: boom")
+        self.assertEqual(color.warning("warning: x", stream=stream), "warning: x")
 
     def test_plain_text_when_no_color_is_set_even_on_a_tty(self):
         stream = FakeTty()
@@ -34,6 +35,7 @@ class ColorTests(unittest.TestCase):
             self.assertEqual(color.dim("x", stream=stream), "x")
             self.assertEqual(color.highlight("x", stream=stream), "x")
             self.assertEqual(color.error("x", stream=stream), "x")
+            self.assertEqual(color.warning("x", stream=stream), "x")
 
     def test_escape_codes_on_a_real_tty(self):
         stream = FakeTty()
@@ -45,6 +47,8 @@ class ColorTests(unittest.TestCase):
                               "\x1b[38;2;122;162;247mx\x1b[m")
             self.assertEqual(color.error("x", stream=stream),
                               "\x1b[38;2;247;118;142mx\x1b[m")
+            self.assertEqual(color.warning("x", stream=stream),
+                              "\x1b[38;2;255;158;100mx\x1b[m")
 
     def test_a_stream_with_no_isatty_is_treated_as_not_a_tty(self):
         class NoIsatty:

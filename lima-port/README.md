@@ -19,6 +19,10 @@ sandbox. Delete it, or move its content into `sbx/`, when the port lands.
   The egress proxy is done, and the default on QEMU (`--no-egress-proxy`
   opts out). `--sudo` (the "A3 steps") is written to step 5 and waits for
   its host run; step 6, `--sudo --nested`, is not done.
+- [`PLAN-SETTINGS-DEFAULTS.md`](PLAN-SETTINGS-DEFAULTS.md) — defaults
+  for command-line options from settings.yaml (`create.cloneMissing` and
+  every other option of every command): one helper, every flag a
+  `--X/--no-X` pair, `--no-settings`. Not started.
 - [`HANDOFF-LIMA-QCOW2-OVERLAYS.md`](HANDOFF-LIMA-QCOW2-OVERLAYS.md) —
   the evidence and test procedure behind D12 (qcow2 overlays on an
   immutable golden image). Read it before track B.

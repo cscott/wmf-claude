@@ -59,9 +59,12 @@ highest first:
 `null` in settings is the same as no key. A key that the command does
 not have is an error, which lists the keys it does have: a typo must
 not be silently ignored.
-The same goes for the top level: `load_config` refuses a section it
-does not know (today a stale `images:` is silently ignored). Step 1
-does this, with the list of command sections from step 6's walk.
+At the top level, a section that `load_config` does not know gets a
+warning, not an error (today a stale `images:` is silently ignored). A
+warning still catches a typo, and one settings.yaml can serve a stable
+wmf-sbx and a development one that adds a section: the stable one
+warns and carries on. Step 1 does this, with the list of command
+sections from step 6's walk.
 
 Only `--config` and `--settings/--no-settings` cannot come from
 settings. They say which file to read and whether to read it. (`-h`

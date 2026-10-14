@@ -399,7 +399,7 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   credential proxy). `--vm-type vz` falls back to the present kind with a warning that
   the guest, not the host, enforces the network policy (the engineer, 2026-10-13).
 - **`--nested` behind the egress proxy** (RAN on the engineer's host, 2026-10-13: `create
-  --egress-proxy --nested` passes every invariant and finishes, after c1a1497 and f876c3c;
+  --egress-proxy --nested` passes every invariant and finishes, after 388cbb3 and d6b8628;
   an inner `create` not yet run) needs
   no proxy of its own: Lima points the inner VMs at the session's nono proxy, as now, and that
   proxy's upstream becomes the egress proxy; the inner wrapper's own proxy chains the same

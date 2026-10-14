@@ -215,6 +215,8 @@ check  "vm: create --contained writes the host record"         "$VM" 'date -u \+
 check  "vm: the host record decides contained mode"            "$VM" '^is_contained\(\) \{ \[\[ -f "\$CONTAINED_RECORD" \]\]; \}'
 check  "vm: model proxy bridge off Lima's shared connection"     "$VM" 'ssh -n -F "\$dir/ssh.config" -o ControlMaster=no -o ControlPath=none -o ExitOnForwardFailure=yes'
 check  "vm: model proxy bridge binds guest loopback, free port"  "$VM" '-R "127.0.0.1:0:\$sock"'
+check  "vm: pull from a shallow workspace bundles past the boundary" "$VM" 'bundle create -q "\$2" --branches HEAD --not \$\(cat "\$shallow"\)'
+check  "install: nftables.service stop no longer flushes Docker's rules" "$GI" 'ExecStop=.*/etc/systemd/system/nftables.service.d/wmf-claude.conf'
 check  "vm: reset keeps a contained VM a contained VM"               "$VM" 'if is_contained; then set -- --contained "\$@"; fi'
 # cmd_login_contained must never run claude auth login (that puts the token in the VM).
 login_contained=$(awk '/^cmd_login_contained\(\) \{/,/^\}/' "$VM")
@@ -312,7 +314,7 @@ gc() { WMF_CLAUDE_GUEST_AGENT_HOME="$GT/home" WMF_CLAUDE_GUEST_CONTAINED_MARKER=
 out=$(touch "$GT/contained"; gc ws)
 if grep -q 'this is a contained VM' <<<"$out"; then pass "guest-claude: contained VM without --model-proxy-port refused"; else fail "guest-claude: contained VM without --model-proxy-port: $out"; fi
 out=$(gc --model-proxy-port 7319 ws --docker=mediawiki)
-if grep -q 'not available in a contained VM' <<<"$out"; then pass "guest-claude: --docker refused in a contained VM"; else fail "guest-claude: --docker in a contained VM: $out"; fi
+if grep -q "network is not locked" <<<"$out"; then pass "guest-claude: --docker in a contained VM gets to the lock check"; else fail "guest-claude: --docker in a contained VM: $out"; fi
 out=$(gc --model-proxy-port 7319 ws)
 if grep -q "network is not locked" <<<"$out"; then pass "guest-claude: a contained session needs the lock"; else fail "guest-claude: contained session without the lock: $out"; fi
 out=$(rm -f "$GT/contained"; gc --model-proxy-port 7319 ws)

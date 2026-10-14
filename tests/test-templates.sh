@@ -405,12 +405,25 @@ if grep -qx "NONO_ARG: $FAKE_REPO/profiles/wmf-contained.json" <<<"$out" && grep
   pass "contained: loads wmf-contained and opens the proxy port"
 else fail "contained: wrong profile or no --open-port 7319"; fi
 if grep -q 'contained (model API via host proxy only)' <<<"$out"; then pass "contained: shows in WMF_CLAUDE_SESSION"; else fail "contained: missing from WMF_CLAUDE_SESSION"; fi
-for args in "--docker=mediawiki" "--minimax" "--allow-post=en.wikipedia.org" "--chrome" "--ide" "--allow-domain example.org --" "--network-profile minimal --" "--sandbox-policy landlock --" "--credential anthropic --" "--allow-endpoint anthropic:GET:/x --" "--local-web" "--local-db" "--open-port 9000 --"; do
+for args in "--docker=mediawiki" "--minimax" "--allow-post=en.wikipedia.org" "--chrome" "--ide" "--allow-domain example.org --" "--network-profile minimal --" "--sandbox-policy landlock --" "--credential anthropic --" "--allow-endpoint anthropic:GET:/x --" "--open-port 9000 --"; do
   # shellcheck disable=SC2086
   out="$(run_contained $args)"
   if grep -q 'contained mode allows no egress' <<<"$out" && ! grep -q '^NONO_ARG:' <<<"$out"; then pass "contained: refuses $args"
   else fail "contained: accepted $args"; fi
 done
+# In a locked VM nothing has egress, so local services are fine to reach.
+out="$(run_contained --local-web)"
+if grep -A1 -x 'NONO_ARG: --open-port' <<<"$out" | grep -qx 'NONO_ARG: 8080' && ! grep -q 'contained mode allows no egress' <<<"$out"; then
+  pass "contained: --local-web opens the local wiki ports"
+else fail "contained: --local-web was refused"; fi
+out="$(run_contained --local-db)"
+if grep -qx 'NONO_ARG: 3306' <<<"$out" && ! grep -q 'contained mode allows no egress' <<<"$out"; then pass "contained: --local-db opens 3306"
+else fail "contained: --local-db was refused"; fi
+# Bare --docker (attach mode, the VM's broker) passes the contained check and
+# stops only at the missing handshake here.
+out="$(run_contained --docker)"
+if grep -q 'no broker handshake' <<<"$out" && ! grep -q 'contained mode allows no egress' <<<"$out"; then pass "contained: bare --docker (attach mode) is allowed"
+else fail "contained: bare --docker: $(head -n2 <<<"$out")"; fi
 out="$(run_contained --read /tmp --allow-file /tmp/x --)"
 if grep -A1 -x 'NONO_ARG: --read' <<<"$out" | grep -qx 'NONO_ARG: /tmp' && ! grep -q 'contained mode allows no egress' <<<"$out"; then
   pass "contained: path grants pass through"
@@ -442,6 +455,8 @@ for key in security filesystem unsafe_macos_seatbelt_rules workdir extends; do
   if [[ "$(jq -cS ".$key" "$E")" == "$(jq -cS ".$key" "$C")" ]]; then pass "wmf-contained.$key matches wmf-engineer"
   else fail "wmf-contained.$key differs from wmf-engineer (keep them in sync)"; fi
 done
+if jq -e '.environment.allow_vars | index("WMF_DOCKER_*")' "$C" >/dev/null; then pass "wmf-contained passes WMF_DOCKER_* (mwdocker finds the broker)"
+else fail "wmf-contained drops WMF_DOCKER_*: mwdocker cannot find the broker"; fi
 if jq -e --slurpfile e "$E" '(.environment.allow_vars - $e[0].environment.allow_vars) == []' "$C" >/dev/null; then
   pass "wmf-contained env allowlist is a subset of wmf-engineer's"
 else fail "wmf-contained allows env vars that wmf-engineer does not"; fi

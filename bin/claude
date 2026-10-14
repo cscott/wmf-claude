@@ -247,20 +247,20 @@ for arg in "${NONO_ARGS[@]}"; do
   esac
 done
 
-# Contained mode: refuse every flag that adds egress or needs the host. --docker
-# waits for containers without a network (their egress is not limited yet).
+# Contained mode: refuse every flag that adds egress or needs the host. The
+# session runs only in a locked VM (lima/guest-claude.sh checks it), and the
+# lock drops all traffic out of the VM, containers and local services
+# included. So --docker (attach mode: the broker runs as the engineer),
+# --local-web and --local-db reach only what is inside the VM.
 CONTAINED_NONO_ARGS=()
 if [[ -n "$PROXY_PORT" ]]; then
   contained_refused=""
   $WANT_MINIMAX && contained_refused+=" --minimax"
   [[ -n "$ALLOW_POST_HOSTS" ]] && contained_refused+=" --allow-post"
-  $WANT_DOCKER && contained_refused+=" --docker"
+  # Managed mode would start the broker as the agent, which cannot reach the
+  # Docker socket in the VM.
+  [[ -n "$DOCKER_SERVICE" ]] && contained_refused+=" --docker=$DOCKER_SERVICE (use bin/wmf-claude-vm claude NAME --docker=SERVICE)"
   $WANT_CHROME && contained_refused+=" --chrome"
-  # A local service may itself reach the internet (a container with egress,
-  # a wiki that fetches URLs), so the session gets no localhost port but the
-  # proxy's.
-  $WANT_LOCAL_WEB && contained_refused+=" --local-web"
-  $WANT_LOCAL_DB && contained_refused+=" --local-db"
   { $WANT_IDE || [[ -n "${CLAUDE_CODE_SSE_PORT:-}" ]]; } && contained_refused+=" --ide"
   # nono flags: an allowlist of path grants. Anything else (a localhost
   # port, a credential route, a new nono flag) could add egress.
@@ -783,7 +783,9 @@ if $WANT_DOCKER; then
   # verified posture instead. The TUI clears the screen right after launch, so
   # on the first unrestricted use (no acknowledgment marker) wait for Enter —
   # only on an interactive terminal, so scripts and tests never hang.
-  if [[ "$DOCKER_EGRESS" == "none" ]]; then
+  if [[ -n "$PROXY_PORT" ]]; then
+    info "--docker in a contained VM: the VM's lock blocks the container's egress."
+  elif [[ "$DOCKER_EGRESS" == "none" ]]; then
     info "--egress=none verified: the container has no network route out."
   elif [[ "$DOCKER_EGRESS" == "allowlist" ]]; then
     info "--egress=allowlist verified: the container reaches only the"
@@ -1248,7 +1250,9 @@ $WANT_CHROME && session+=(--chrome)
 $WANT_MINIMAX && session+=(--minimax)
 [[ -n "$ALLOW_POST_HOSTS" ]] && session+=("--allow-post=$ALLOW_POST_HOSTS")
 if $WANT_DOCKER; then
-  session+=("--docker${DOCKER_SERVICE:+=$DOCKER_SERVICE} (egress ${DOCKER_EGRESS:-unrestricted})")
+  docker_egress=${DOCKER_EGRESS:-unrestricted}
+  [[ -n "$PROXY_PORT" ]] && docker_egress="blocked by the VM lock"
+  session+=("--docker${DOCKER_SERVICE:+=$DOCKER_SERVICE} (egress $docker_egress)")
 fi
 [[ -n "$IDE_PORT" ]] && session+=("--ide=$IDE_PORT (signal_mode allow_all)")
 grant_flag='' last_flag='' tilde='~'

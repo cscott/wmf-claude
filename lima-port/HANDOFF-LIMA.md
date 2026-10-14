@@ -1455,7 +1455,7 @@ clonefile option stays open for later. Decided with cananian,
     its time and disk use against a full copy (D2), and the seven
     checks again through `wmf-sbx`.
 - **B3. Warm snapshots** (after B2 and the sync with track A). Status:
-  **built, not RAN** (`lima-port/checks/warm-b3.sh`). Decided
+  **done** (RAN 2026-10-13: cold 721 s, warm 92 s; sbx/NOTES.md). Decided
   (cananian, 2026-10-13): a snapshot's clones borrow the host repos'
   objects, and the key is a gc borrower in each (`snapshot-KEY`); a host
   repo without the entry makes the create cold.

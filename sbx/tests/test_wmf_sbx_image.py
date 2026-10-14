@@ -351,10 +351,15 @@ class BuilderTests(unittest.TestCase):
     def test_the_template_is_valid_for_limactl(self):
         if not shutil.which("limactl") or os.geteuid() == 0:
             self.skipTest("needs limactl and a non-root user")
-        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+        # limactl takes an instance name from the file name, and a
+        # tempfile name ending in "_" or holding "__" is not a valid one.
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        path = os.path.join(d, "lima.yaml")
+        with open(path, "w", encoding="utf-8") as f:
             image.yaml.safe_dump(image.builder_template(sample_inputs()), f)
-        self.addCleanup(os.unlink, f.name)
-        subprocess.run(["limactl", "validate", f.name], check=True, capture_output=True)
+        res = subprocess.run(["limactl", "validate", path], capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0, res.stderr)
 
     def test_build_env_names_every_variable_the_script_requires(self):
         with open(image.BUILD_SCRIPT, encoding="utf-8") as f:

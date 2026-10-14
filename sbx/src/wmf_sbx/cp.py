@@ -29,6 +29,7 @@ import shutil
 import sys
 import tempfile
 
+from . import cli as cli_mod
 from . import color as color_mod
 from . import lima as lima_mod
 from . import state as state_mod
@@ -139,11 +140,12 @@ def main(argv=None, lima=None, env=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     # A directory is copied whole either way; -r is accepted for the
     # hands that type `cp -r` for a directory.
-    parser.add_argument("-r", "-R", "--recursive", action="store_true",
+    parser.add_argument("-r", "-R", "--recursive", action=argparse.BooleanOptionalAction,
+                        default=False,
                         help="accepted and ignored: directories are always copied whole")
     parser.add_argument("src")
     parser.add_argument("dst")
-    args = parser.parse_args(argv)
+    args, _config = cli_mod.parse_args(parser, argv, "cp")
     lima = lima or lima_mod.Limactl()
     try:
         src = resolve_cp_arg(args.src, env=env)

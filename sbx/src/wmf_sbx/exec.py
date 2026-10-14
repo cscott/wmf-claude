@@ -23,6 +23,7 @@ Usage:
 import argparse
 import sys
 
+from . import cli as cli_mod
 from . import color as color_mod
 from . import lima as lima_mod
 from . import session as session_mod
@@ -39,12 +40,12 @@ def agent_writable(path):
 
 def main(argv=None, lima=None, env=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--engineer", action="store_true",
+    parser.add_argument("--engineer", action=argparse.BooleanOptionalAction, default=False,
                         help="run as Lima's user (has sudo) instead of the agent")
     parser.add_argument("-w", "--workdir", help="working directory in the VM")
     parser.add_argument("name", help="the sandbox (or a path shortcut such as .)")
     parser.add_argument("cmd", nargs=argparse.REMAINDER, help="-- CMD [ARGS...]")
-    args = parser.parse_args(argv)
+    args, _config = cli_mod.parse_args(parser, argv, "exec")
     cmd = args.cmd[1:] if args.cmd[:1] == ["--"] else args.cmd
     if not cmd:
         parser.error("give a command after the sandbox name: NAME -- CMD [ARGS...]")

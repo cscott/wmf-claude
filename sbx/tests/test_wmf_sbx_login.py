@@ -12,6 +12,13 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import wmf_sbx.credproxy as credproxy  # noqa: E402
 import wmf_sbx.login as login  # noqa: E402
+import settings_isolation  # noqa: E402
+
+
+def setUpModule():
+    settings_isolation.isolate()
+
+
 from test_wmf_sbx_lifecycle import Done, Env, FakeLima  # noqa: E402
 
 TOKEN = "sk-ant-oat01-" + "A1b2_C3-" * 12

@@ -12,6 +12,11 @@ SRC = os.path.join(os.path.dirname(__file__), "..", "src")
 sys.path.insert(0, SRC)
 
 import wmf_sbx.__main__ as m  # noqa: E402
+import settings_isolation  # noqa: E402
+
+
+def setUpModule():
+    settings_isolation.isolate()
 
 
 class MainDispatchTests(unittest.TestCase):

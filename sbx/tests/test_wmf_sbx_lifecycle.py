@@ -38,6 +38,12 @@ import wmf_sbx.status as status_mod  # noqa: E402
 import wmf_sbx.stop as stop  # noqa: E402
 import wmf_sbx.template as template  # noqa: E402
 import wmf_sbx.vm as vm  # noqa: E402
+import settings_isolation  # noqa: E402
+
+
+def setUpModule():
+    settings_isolation.isolate()
+
 
 HOST_UID = os.getuid() or 30033
 
@@ -1204,6 +1210,19 @@ class ExecTests(Env):
         with self.assertRaises(SystemExit):
             self.quiet(exec_mod.main, ["sbx-demo"], lima=lima, env=self.env)
 
+    def test_settings_exec_engineer(self):
+        settings = os.path.join(self.tmp, "settings.yaml")
+        with open(settings, "w", encoding="utf-8") as f:
+            f.write("exec:\n  engineer: true\n")
+        lima = self.sandbox()
+        for argv, agent in ((["sbx-demo"], False), (["--no-engineer", "sbx-demo"], True)):
+            with self.subTest(argv=argv):
+                self.assertEqual(self.quiet(exec_mod.main, ["--config", settings] + argv
+                                            + ["--", "id"], lima=lima, env=self.env), 0,
+                                 self.err)
+                argv = lima.shells()[-1]
+                self.assertEqual("agent" in argv[argv.index("--") + 1:], agent)
+
 
 # -- cp -------------------------------------------------------------------
 
@@ -1236,7 +1255,7 @@ class CpTests(Env):
         lima = self.sandbox()
         src = os.path.join(self.tmp, "dir")
         os.makedirs(src)
-        for flag in ("-r", "-R", "--recursive", None):
+        for flag in ("-r", "-R", "--recursive", "--no-recursive", None):
             with self.subTest(flag=flag):
                 argv = ([flag] if flag else []) + [src, "sbx-demo:notes"]
                 self.assertEqual(self.quiet(cp.main, argv, lima=lima, env=self.env), 0, self.err)
@@ -1389,6 +1408,20 @@ class RmTests(Env):
         self.assertEqual(self.quiet(rm.main, ["--prune"], lima=lima, env=self.env), 0, self.err)
         self.assertIsNone(state_mod.load("sbx-demo", self.env))
         self.assertIsNotNone(state_mod.load("alive", self.env))
+
+    def test_settings_rm_force_and_no_force(self):
+        settings = os.path.join(self.tmp, "settings.yaml")
+        with open(settings, "w", encoding="utf-8") as f:
+            f.write("rm:\n  force: true\n")
+        lima = self.sandbox()
+        self.quiet(rm.main, ["--config", settings, "--no-force", "sbx-demo"], lima=lima,
+                   env=self.env, confirm=lambda q: "n")
+        self.assertIn("wmf-sbx-sbx-demo", lima.vms)
+        def never(q):
+            raise AssertionError("asked")
+        self.assertEqual(self.quiet(rm.main, ["--config", settings, "sbx-demo"], lima=lima,
+                                    env=self.env, confirm=never), 0, self.err)
+        self.assertNotIn("wmf-sbx-sbx-demo", lima.vms)
 
 
 if __name__ == "__main__":

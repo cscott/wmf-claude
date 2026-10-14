@@ -519,11 +519,12 @@ def resolve_directory(canonical, rules, exists=os.path.isdir, gitreview_project=
 # --------------------------------------------------------------------------
 
 def load_config(path=DEFAULT_CONFIG, warn=lambda msg: print(msg, file=sys.stderr),
-                legacy=LEGACY_CONFIG):
+                legacy=None):
     """The settings file as a dict with every key of CONFIG_DEFAULTS (and
     `session` if set). The old name (repos.yaml) and old keys (`rules`,
     `extra_environment`, `extra_packages`) are still read, with a note.
     An unknown top-level section gets a warning, once per run."""
+    legacy = legacy or LEGACY_CONFIG
     if not os.path.exists(path) and path == DEFAULT_CONFIG and os.path.exists(legacy):
         if legacy not in _LEGACY_NOTED:
             _LEGACY_NOTED.add(legacy)

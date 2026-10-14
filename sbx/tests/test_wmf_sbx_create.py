@@ -15,6 +15,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import wmf_sbx.create as c  # noqa: E402
 import wmf_sbx.resolve as r  # noqa: E402
+import settings_isolation  # noqa: E402
+
+
+def setUpModule():
+    settings_isolation.isolate()
 
 
 def patch_offline(testcase):

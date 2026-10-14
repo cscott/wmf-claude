@@ -157,6 +157,15 @@ control comes with `--sudo` mode.)
   one-year `setup-token` token for model requests only, in a throwaway
   VM with no repo, no mount and no session, and deletes the VM. A login made in the VM (no host credential) stays in
   the VM until `rm`.
+- **A nested sandbox's credential** is its enclosing session's phantom.
+  In a `--nested` sandbox (root's marker `/etc/wmf-sbx/nested`), the
+  credential proxy forwards to `$ANTHROPIC_BASE_URL`, the enclosing
+  session's proxy, and not to api.anthropic.com. Anywhere else the
+  variable is ignored: a host's real credential goes only to
+  api.anthropic.com, over TLS. The inner proxy puts the outer phantom
+  in place of the inner one, and the outer proxy the real credential.
+  The real credential stays on the outermost host, and the inner
+  agent's phantom is worthless once either session ends.
 - **The proxy's port.** For the session, `resume` adds an nftables rule
   that lets the agent reach 192.168.5.2 on that one port, tagged with
   the port, and removes it when the session ends. A rule left by a

@@ -413,7 +413,13 @@ wmf-sbx create PRIMARY[:ro] [EXTRA[:ro] ...] [options]
   stop an inner VM that an earlier session started, so `resume` first
   stops the inner VMs that still run (not while another session runs in
   the sandbox); start them again in the session. For example:
-  `wmf-sbx create --nested --no-deps ~/src/wmf-claude`.
+  `wmf-sbx create --nested --no-deps ~/src/wmf-claude`. An inner
+  sandbox's session spends the enclosing session's credential: `resume`
+  in the sandbox takes `$CLAUDE_CODE_OAUTH_TOKEN` and
+  `$ANTHROPIC_BASE_URL` (the enclosing session's phantom and proxy) as
+  its host's credential, and chains to that proxy (SECURITY.md, §4).
+  Claude Code does not pass its token to the commands it runs, so set it
+  for `resume`.
 - `--image KEY`: use a cached golden image (`wmf-sbx image ls`), not the
   one for the current inputs (see also `WMF_SBX_GIT_HASH_OVERRIDE`,
   "The golden image cache").

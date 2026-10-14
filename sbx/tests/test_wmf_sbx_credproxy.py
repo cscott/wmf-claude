@@ -20,6 +20,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
@@ -127,6 +128,45 @@ class SourceTests(unittest.TestCase):
 
 
 # -- the proxy, against a fake upstream ------------------------------------
+
+def in_a_nested_sandbox(test):
+    """Patch the nested marker to a file that exists, for `test`."""
+    tmp = tempfile.TemporaryDirectory()
+    test.addCleanup(tmp.cleanup)
+    marker = os.path.join(tmp.name, "nested")
+    open(marker, "w").close()
+    patch = mock.patch.object(cp.image_mod, "NESTED_MARKER", marker)
+    patch.start()
+    test.addCleanup(patch.stop)
+
+
+class UpstreamUrlTests(unittest.TestCase):
+
+    def setUp(self):
+        in_a_nested_sandbox(self)
+
+    def test_api_anthropic_com_by_default(self):
+        self.assertEqual(cp.upstream_url({}), ("https", cp.UPSTREAM, 443))
+
+    def test_the_base_url_is_ignored_outside_a_nested_sandbox(self):
+        # The host's real credential goes only to api.anthropic.com, over
+        # TLS, whatever the engineer's $ANTHROPIC_BASE_URL says.
+        with mock.patch.object(cp.image_mod, "NESTED_MARKER", "/nonexistent/nested"):
+            for url in ("http://192.168.5.100:3129", "https://gw.example/", "ftp://h"):
+                self.assertEqual(cp.upstream_url({"ANTHROPIC_BASE_URL": url}),
+                                 ("https", cp.UPSTREAM, 443))
+
+    def test_the_base_url_when_set(self):
+        self.assertEqual(cp.upstream_url({"ANTHROPIC_BASE_URL": "http://192.168.5.100:3129"}),
+                         ("http", "192.168.5.100", 3129))
+        self.assertEqual(cp.upstream_url({"ANTHROPIC_BASE_URL": "https://gw.example/"}),
+                         ("https", "gw.example", 443))
+
+    def test_a_base_url_with_a_path_or_another_scheme_is_refused(self):
+        for bad in ("http://h:1/api", "ftp://h", "h:1"):
+            with self.assertRaises(cp.CredentialError):
+                cp.upstream_url({"ANTHROPIC_BASE_URL": bad})
+
 
 class FakeUpstream(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
@@ -331,6 +371,26 @@ class ProxyTests(unittest.TestCase):
         env = self.proxy.session_env()
         self.assertEqual(env, {"ANTHROPIC_API_KEY": self.proxy.phantom,
                                "ANTHROPIC_BASE_URL": f"http://192.168.5.2:{self.proxy.port}"})
+
+    def test_a_nested_proxy_chains_to_the_base_url(self):
+        # In a nested sandbox: $ANTHROPIC_BASE_URL is the enclosing
+        # session's proxy and the credential its phantom. No connect()
+        # override: the proxy itself goes there, over plain HTTP.
+        in_a_nested_sandbox(self)
+        port = self.upstream.server_address[1]
+        proxy = cp.CredentialProxy(cp.Source("oauth", "t", lambda: "outer-phantom"),
+                                   env={"ANTHROPIC_BASE_URL": f"http://127.0.0.1:{port}",
+                                        "HTTPS_PROXY": "http://127.0.0.1:9"},
+                                   log_path=self.log)
+        proxy.start()
+        self.addCleanup(proxy.stop)
+        status, _ = self.request("POST", "/v1/messages", body=b"{}", proxy=proxy,
+                                 headers={"Authorization": f"Bearer {proxy.phantom}"})
+        self.assertEqual(status, 200)
+        (_m, path, headers, _b), = FakeUpstream.seen
+        self.assertEqual(path, "/v1/messages")
+        self.assertEqual(headers["authorization"], "Bearer outer-phantom")
+        self.assertEqual(headers["host"], f"127.0.0.1:{port}")
 
     def test_each_proxy_has_its_own_phantom(self):
         other = self.make_proxy(cp.Source("api-key", "t", lambda: REAL_KEY))

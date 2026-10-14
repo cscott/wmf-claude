@@ -19,6 +19,13 @@ The real credential (host_source), in this order:
       "Claude Code-credentials"), so the host's refreshes are used;
       WMF_SBX_HOST_LOGIN=0 leaves it out.
 
+In a nested sandbox, the proxy forwards to $ANTHROPIC_BASE_URL, not to
+api.anthropic.com (upstream_url): it is the enclosing session's credential
+proxy, and the credential is that session's phantom. The inner sandbox
+chains to the outer one, and the real credential stays on the outermost
+host. Anywhere else the variable is ignored, so a host's real credential
+goes only to api.anthropic.com.
+
 The proxy forwards only the paths Claude Code uses (L1: /v1/..., and the
 credential-free /api/hello probe). It logs one line per request (method,
 path, status, bytes, seconds) to a file, never a credential or a body.
@@ -42,7 +49,10 @@ import time
 import traceback
 import urllib.parse
 
+from . import image as image_mod
+
 UPSTREAM = "api.anthropic.com"
+BASE_URL_VAR = "ANTHROPIC_BASE_URL"
 GUEST_HOST = "192.168.5.2"
 # Paths that get the real credential; anything else is refused (403) and
 # logged. OPEN_PATHS are forwarded without a credential.
@@ -202,15 +212,35 @@ def check_source(source):
 
 # -- the proxy ------------------------------------------------------------
 
-def upstream_connection(env=None, ca_files=()):
-    """An HTTPS connection to UPSTREAM, through $HTTPS_PROXY if set."""
+def upstream_url(env=None):
+    """(scheme, host, port) the proxy forwards to: $ANTHROPIC_BASE_URL in a
+    nested sandbox (root's marker), else UPSTREAM over HTTPS. A base URL
+    with a path is refused: the proxy forwards the request's path as it
+    is."""
     env = os.environ if env is None else env
+    base = (env.get(BASE_URL_VAR) or "").strip()
+    if not base or not os.path.exists(image_mod.NESTED_MARKER):
+        return ("https", UPSTREAM, 443)
+    u = urllib.parse.urlsplit(base)
+    if u.scheme not in ("http", "https") or not u.hostname or u.path.strip("/"):
+        raise CredentialError(f"${BASE_URL_VAR} is not http(s)://HOST[:PORT]: {base}")
+    return (u.scheme, u.hostname, u.port or (443 if u.scheme == "https" else 80))
+
+
+def upstream_connection(env=None, ca_files=()):
+    """A connection to upstream_url: plain HTTP directly (an enclosing
+    sandbox's credential proxy, which its guest reaches without a proxy),
+    HTTPS through $HTTPS_PROXY if set."""
+    env = os.environ if env is None else env
+    scheme, host, port = upstream_url(env)
+    if scheme == "http":
+        return http.client.HTTPConnection(host, port, timeout=600)
     context = ssl.create_default_context()
     for path in ca_files:
         context.load_verify_locations(cafile=path)
     proxy = env.get("HTTPS_PROXY") or env.get("https_proxy")
     if not proxy:
-        return http.client.HTTPSConnection(UPSTREAM, 443, timeout=600, context=context)
+        return http.client.HTTPSConnection(host, port, timeout=600, context=context)
     # set_tunnel: a plain-HTTP CONNECT to the proxy, then TLS to UPSTREAM.
     p = urllib.parse.urlsplit(proxy)
     headers = {}
@@ -218,7 +248,7 @@ def upstream_connection(env=None, ca_files=()):
         cred = f"{urllib.parse.unquote(p.username)}:{urllib.parse.unquote(p.password or '')}"
         headers["Proxy-Authorization"] = "Basic " + base64.b64encode(cred.encode()).decode()
     conn = http.client.HTTPSConnection(p.hostname, p.port or 80, timeout=600, context=context)
-    conn.set_tunnel(UPSTREAM, 443, headers=headers)
+    conn.set_tunnel(host, port, headers=headers)
     return conn
 
 
@@ -262,13 +292,14 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             except CredentialError as e:
                 self._refuse(401, f"wmf-sbx credential proxy: {e}", start)
                 return
-        headers["host"] = UPSTREAM
+        headers["host"] = self.proxy.upstream_host
         try:
             conn = self.proxy.connect()
             conn.request(self.command, self.path, body=body, headers=headers)
             resp = conn.getresponse()
         except OSError as e:
-            self._refuse(502, f"wmf-sbx credential proxy: {UPSTREAM}: {e}", start)
+            self._refuse(502, f"wmf-sbx credential proxy: {self.proxy.upstream_host}: {e}",
+                         start)
             return
         try:
             self.send_response(resp.status, resp.reason)
@@ -341,6 +372,8 @@ class CredentialProxy:
         self.ca_files = tuple(ca_files)
         self.log_path = log_path
         self.phantom = phantom or "wmfsbx-" + secrets.token_urlsafe(32)
+        _, host, port = upstream_url(self.env)
+        self.upstream_host = host if port in (80, 443) else f"{host}:{port}"
         self._server = None
         self._unix_path = None
         self._lock = threading.Lock()

@@ -128,6 +128,7 @@ def main(argv=None, lima=None, env=None):
             nested_mod.stop_inner(name, lima=lima,
                                   log=lambda m: print(color_mod.dim(m), file=sys.stderr))
         source = credproxy_mod.host_source(env)
+        credproxy_mod.upstream_url(env)
     except (state_mod.StateError, vm_mod.VmError, lima_mod.LimaError,
             credproxy_mod.CredentialError) as e:
         print(color_mod.error(f"error: {e}"), file=sys.stderr)

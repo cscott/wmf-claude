@@ -991,6 +991,26 @@ class LimaChainTests(unittest.TestCase):
         self.assertIn(f"composer update: not in {gadgets}, a dependency; run `composer "
                       f"update` there before its own composer scripts", err)
 
+    def test_a_dependency_gets_no_npm_ci(self):
+        core = self.repo("Wikimedia", "core", files=[("package.json", "{}")])
+        self.repo("Wikimedia", "core", "extensions")
+        cite = self.repo("Wikimedia", "Extensions", "Cite", files=[("package.json", "{}")])
+        gadgets = self.repo("Wikimedia", "Extensions", "Gadgets",
+                            files=[("package.json", "{}")])
+        path = self.write_plan([
+            dict(self.entry(cite, "gerrit:mediawiki/extensions/Cite",
+                            link=("extensions", "Cite")), requested=True),
+            dict(self.entry(gadgets, "gerrit:mediawiki/extensions/Gadgets",
+                            link=("extensions", "Gadgets")), requested=False),
+            dict(self.entry(core, s.CORE_CANONICAL), requested=False),
+        ])
+        _code, err = self.run_main(path)
+        npm_dirs = {c for a, c in self.commands() if "npm" in a[:3]}
+        self.assertIn(cite, npm_dirs)
+        self.assertIn(core, npm_dirs)
+        self.assertNotIn(gadgets, npm_dirs)
+        self.assertIn(f"npm ci: not in {gadgets}, a dependency; run `npm ci` there", err)
+
     def test_a_plan_without_requested_updates_every_clone(self):
         path, core, cite = self.core_and_cite(core_files=[("composer.json", "{}")],
                                               cite_files=[("composer.json", "{}")])

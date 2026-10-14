@@ -573,9 +573,9 @@ wmf-sbx create --sudo ~/src/Cite
 ## Tests in the sandbox
 
 The agent's guide is `~/MEDIAWIKI-TESTING.md` (from
-`templates/MEDIAWIKI-TESTING.md`). Every repo has `node_modules/`;
-core and the repos you named have `vendor/` (a dependency has none of its
-own, as in CI: the agent runs `composer update` in one it changes); core has a SQLite wiki with every extension loaded;
+`templates/MEDIAWIKI-TESTING.md`). Core and the repos you named have
+`vendor/` and `node_modules/` (a dependency has neither of its own, as in
+CI: the agent runs `composer update` and `npm ci` in one it changes); core has a SQLite wiki with every extension loaded;
 `composer serve` serves it on port 4000. `mw-install-browser` installs
 Chrome for Testing for karma and wdio (not on an aarch64 VM: there is
 no Linux arm64 build), and `mw-install-cypress REPO` installs a repo's
@@ -679,7 +679,7 @@ builds a plan (repos, canonical names, links, `:ro` flags) and sends it
 with `setup.py`, which runs in the VM as the agent: links into core,
 `composer.local.json` (extension libraries merged into core's
 `vendor/`, as CI does), `composer update` in core and in each named repo
-(not in a dependency), `npm ci` per repo, the
+(not in a dependency), `npm ci` the same way, the
 SQLite install with every extension, `phpunit.xml` and the api-testing
 config. Per-repo steps warn; core steps are fatal. `setup.py` is sent on
 stdin, so a change to it needs no new image.

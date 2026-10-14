@@ -1063,16 +1063,17 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   `images/.build-KEY.lock`; a builder with the lock free is a crashed build's, and goes.
   With the lock held, `busy_prompt` asks: wait (default), delete the other builder, or
   abort; not on a terminal, abort. The lock files stay (removing one races a waiter).
-- Dependency repos get no `composer update` (2026-10-14, decided by cananian after the B4
-  blind run): setup runs it only in core and in the repos named on the command line (the
-  plan's `requested`), and removes an untracked `vendor/` that a warm snapshot brought into
+- Dependency repos get no `composer update` and no `npm ci` (2026-10-14, decided by cananian
+  after the B4 blind run): setup runs them only in core and in the repos named on the
+  command line (the plan's `requested`). No extension or skin of the test sandboxes loads a
+  ResourceLoader file from `node_modules/`, so the wiki needs none. Setup removes an untracked `vendor/` that a warm snapshot brought into
   a dependency. With every repo updated, each dependency had a `vendor/` beside core's
   merged one, which CI does not: phan reported `PhanRedefined*` (Translate: all 243 of its
   issues, from `AbuseFilter/vendor/psr/log` and `Elastica/vendor/ruflin/elastica`; 383
   across 24 repos), and EventLogging's `load_composer_autoloader` loaded its json-schema
   6.13.1 over core's 5.3.4 (2 `ArrayDefTest` failures in `core:unit`). The session's
-  CLAUDE.md and MEDIAWIKI-TESTING.md §0 tell the agent to run `composer update` in a
-  dependency it changes, before that repo's own composer scripts. Not yet RAN.
+  CLAUDE.md and MEDIAWIKI-TESTING.md §0 tell the agent to run `composer update` and `npm
+  ci` in a dependency it changes, before that repo's own scripts. Not yet RAN.
 - Setup timings on real hardware (Linux, KVM; Cite, Popups, TextExtracts, PageImages, core,
   Vector, cold caches): every `composer update` together 27 s (core 20 s: resolve 2,
   install 12, autoload 6), every `npm ci` together 19 s. So no composer cache in the golden

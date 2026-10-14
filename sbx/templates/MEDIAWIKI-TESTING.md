@@ -43,7 +43,10 @@ At `sbx create` time:
   change a dependency, run `composer update` in it before you run its own
   `composer test`, `composer phan` or anything from its `vendor/bin`.** Its
   PHPUnit tests run from core and do not need it.
-- `npm ci` ran in every checked-out repo that has a `package.json`.
+- `npm ci` ran in core and in each repo you were named that has a
+  `package.json`. A dependency has no `node_modules/` of its own: **if you
+  change one, run `npm ci` in it before its `npm test`, Jest or selenium.**
+  QUnit runs from core and does not need it.
 - Every extension and skin in the closure is symlinked into
   `$MW_INSTALL_PATH/extensions/` or `$MW_INSTALL_PATH/skins/`, and
   `LocalSettings.php` loads it.
@@ -70,7 +73,8 @@ At `sbx create` time:
   to start (§6).
 
 If a `vendor/` or `node_modules/` is missing, the setup log
-(`~/.wmf-sbx/wmf-sbx-setup.log`) says why. You do not need to install,
+(`~/.wmf-sbx/wmf-sbx-setup.log`) says why: a dependency, or a step that
+failed. You do not need to install,
 configure, or symlink anything else before you run a PHP test.
 
 ## 1. First: find out what you were given
@@ -283,7 +287,8 @@ Those are not yours: compare with the run before your change, or move that
 
 ### JS dependencies
 
-`npm ci` already ran here at create time. If you must run it again (after a
+`npm ci` already ran at create time in core and in the repos you were named,
+not in a dependency (§0). To run it in a dependency, or again (after a
 `package.json` change, say), use:
 
 ```bash

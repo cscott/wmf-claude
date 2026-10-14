@@ -520,8 +520,9 @@ def composer_update(repo_path, run=subprocess.run, profile_path=None):
 
 def dependency_paths(plan, core_path):
     """The clones that the engineer did not name (`requested` false in the
-    plan): the dependency walk's. They get no `composer update` (only
-    core, which every sandbox needs, does), so no `vendor/` of their own:
+    plan): the dependency walk's. They get no `npm ci` and no `composer
+    update` (only core, which every sandbox needs, does), so no
+    `node_modules/` or `vendor/` of their own:
     CI installs one only in the repo under test. A sibling's own
     `vendor/` makes phan report `PhanRedefined*` for the classes it shares
     with core's, and an extension that loads its own autoloader
@@ -775,9 +776,12 @@ def write_api_testing_config(core_path, params, run=subprocess.run):
 def npm_install(repo_path, run=subprocess.run):
     """True/False, or None if the repo has no package.json.
 
-    Runs in every clone that has a package.json, not in core alone: an
-    extension's own JS tests, linters and selenium harness all come from
-    its own node_modules. Measured cost for the four repos of the test
+    Runs in core (a core step) and in each named clone that has a
+    package.json: an extension's own JS tests, linters and selenium
+    harness all come from its own node_modules. Not in a dependency
+    (dependency_paths), as CI does not: no extension or skin in the test
+    sandboxes loads a ResourceLoader file from node_modules/ (checked
+    2026-10-14), so the wiki does not need them. Measured cost for the four repos of the test
     sandbox: 29 s.
 
     `npm ci` rather than `npm install`: core's package-lock.json is
@@ -1081,10 +1085,11 @@ def mediawiki_setup(plan, core_path, core_readonly, links, clones, warnings,
     for work in clones:
         if work in dependencies:
             dropped = drop_own_vendor(work, run=run)
-            print(f"composer update: not in {work}, a dependency"
-                  + (" (removed the vendor/ an earlier create left)" if dropped else "")
-                  + "; run `composer update` there before its own composer scripts",
-                  file=sys.stderr)
+            if os.path.exists(os.path.join(work, "composer.json")) or dropped:
+                print(f"composer update: not in {work}, a dependency"
+                      + (" (removed the vendor/ an earlier create left)" if dropped else "")
+                      + "; run `composer update` there before its own composer scripts",
+                      file=sys.stderr)
             continue
         profile = os.path.join(TIMING_DIR, "composer-" + work.strip("/").replace("/", "_") + ".log")
         start = time.monotonic()
@@ -1105,6 +1110,11 @@ def mediawiki_setup(plan, core_path, core_readonly, links, clones, warnings,
     # fail should cost that extension's JS tests, not the whole sandbox.
     for work in clones:
         if work == core_path:
+            continue
+        if work in dependencies:
+            if os.path.exists(os.path.join(work, "package.json")):
+                print(f"npm ci: not in {work}, a dependency; run `npm ci` there before "
+                      f"its own npm scripts", file=sys.stderr)
             continue
         start = time.monotonic()
         installed = npm_install(work, run=run)

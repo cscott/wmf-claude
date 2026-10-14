@@ -10,6 +10,8 @@
 #   bin/wmf-claude-vm update                         # refresh the in-VM wmf-claude from this checkout's HEAD
 #   bin/wmf-claude-vm login                          # sign Claude Code in, as the agent (once per VM);
 #                                                    # contained VM: store a setup-token token on the host
+#   bin/wmf-claude-vm lock | unlock                  # contained VM: no egress (sessions run) | egress (setup)
+#   bin/wmf-claude-vm check-host-block               # contained VM: prove the host blocks it without its lock
 #   bin/wmf-claude-vm push DIR [NAME]                # copy a git repo into the agent's workspace (git bundle)
 #   bin/wmf-claude-vm claude NAME [bin/claude args]  # run sandboxed Claude Code in workspace NAME
 #   bin/wmf-claude-vm pull NAME [DEST]               # fetch the agent's branches into vm/* of the repo NAME was pushed from (or DEST)
@@ -76,7 +78,7 @@ host_rev() { git -C "$ROOT" rev-parse --short=12 HEAD; }
 # and discard need only the workspace name. One "NAME<TAB>PATH" line each, per VM.
 WS_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/wmf-claude/vm-$VM-workspaces"
 
-# contained mode (docs/lima-vm.md#contained-mode). The host record says which VMs are contained
+# Contained mode (docs/lima-vm.md#contained-mode). The host record says which VMs are contained
 # VMs; it is the authority, as the guest's marker is in reach of VM root. The
 # token stays on the host: in the login keychain on macOS, else in a 0600 file.
 CONTAINED_RECORD="${XDG_CONFIG_HOME:-$HOME/.config}/wmf-claude/vm-$VM-contained"
@@ -89,6 +91,49 @@ contained_check_guest() {
   guest test -f "$CONTAINED_GUEST_MARKER" \
     || die "the host records '$VM' as a contained VM, but $CONTAINED_GUEST_MARKER is missing in the guest. Recreate it: bin/wmf-claude-vm reset"
 }
+# The contained VM's network phase, from the root-owned script in the guest:
+# locked, open, broken, or none before lima/guest-install.sh installed it.
+contained_net() { guest sudo -n /usr/local/sbin/wmf-claude-contained-net "$@" 2>/dev/null | tr -d '\r'; }
+contained_phase() {
+  if guest test -x /usr/local/sbin/wmf-claude-contained-net; then contained_net status; else echo none; fi
+}
+# A contained session for this VM runs while its host proxy does.
+# The host-side block (a firewall on the host that blocks limactl, so that VM
+# root cannot undo the lock) is outside this script's control. check-host-block
+# proves it and records the result, with the limactl binary it held for: a
+# Lima upgrade moves the binary, and the rule may no longer match.
+HOST_BLOCK_RECORD="${XDG_CONFIG_HOME:-$HOME/.config}/wmf-claude/vm-$VM-host-block"
+limactl_binary() { python3 -c 'import os, shutil; print(os.path.realpath(shutil.which("limactl") or ""))'; }
+# Prints verified, stale (limactl changed since), failed or unchecked.
+host_block_state() {
+  [[ -f "$HOST_BLOCK_RECORD" ]] || { echo unchecked; return; }
+  local result _when binary
+  read -r result _when binary < "$HOST_BLOCK_RECORD"
+  if [[ "$result" != ok ]]; then echo failed
+  elif [[ "$binary" != "$(limactl_binary)" ]]; then echo stale
+  else echo verified; fi
+}
+# A loud warning for a host firewall that is not verified: what it means and
+# what to do. $1: unchecked, stale or failed.
+host_block_warning() {
+  local why
+  case "$1" in
+    failed)    why="FAILED: with the VM's lock off, the VM reached the internet." ;;
+    stale)     why="NOT VERIFIED: limactl changed since the last check (a Lima upgrade?)." ;;
+    *)         why="NOT VERIFIED: bin/wmf-claude-vm check-host-block has not run." ;;
+  esac
+  {
+    echo ""
+    echo "  $(red "$(bold "WARNING: host firewall $why")")"
+    echo "  $(red "Only the in-VM lock stops egress now. If something gets root in the VM, it")"
+    echo "  $(red "can remove that lock and reach the internet.")"
+    echo "  Fix: block the real limactl binary in your host firewall (LuLu: docs/lima-vm.md):"
+    echo "         $(limactl_binary)"
+    echo "       then run: bin/wmf-claude-vm check-host-block"
+    echo ""
+  } >&2
+}
+contained_session_running() { pgrep -f "wmf-claude-model-proxy.*--keychain-account $VM\$|wmf-claude-model-proxy.*vm-$VM-model-token" >/dev/null 2>&1; }
 model_have_token() {
   if use_keychain; then
     security find-generic-password -s "$MODEL_KEYCHAIN_SERVICE" -a "$VM" >/dev/null 2>&1
@@ -191,20 +236,29 @@ cmd_create() {
   limactl start --tty=false "$VM"
   ok "VM is up"
   if $contained; then
-    # Before cmd_update: lima/guest-install.sh reads the marker.
+    # Before cmd_update: lima/guest-install.sh reads the marker. The setup
+    # needs egress, so start open; lock when it is done.
     guest sudo install -d -m 0755 /etc/wmf-claude
     guest sudo sh -c "date -u +%FT%TZ > $CONTAINED_GUEST_MARKER && chmod 0644 $CONTAINED_GUEST_MARKER"
+    guest sudo sh -c "echo open > /etc/wmf-claude/net-phase && chmod 0644 /etc/wmf-claude/net-phase"
     mkdir -p "$(dirname "$CONTAINED_RECORD")"
     date -u +%FT%TZ > "$CONTAINED_RECORD"
     ok "contained VM: the model API is reachable only through the host proxy"
   fi
   cmd_update
+  if $contained; then
+    [[ "$(contained_net lock)" == locked ]] || die "could not lock the VM's network; see bin/wmf-claude-vm status"
+    ok "network locked: no egress from the VM (bin/wmf-claude-vm unlock for setup)"
+  fi
   print_next_steps
 }
 
 cmd_update() {
   need limactl git tar
   require_running
+  if is_contained && [[ "$(contained_phase)" == locked ]]; then
+    die "the VM's network is locked, and the update needs egress. Run: bin/wmf-claude-vm unlock, then update, then lock"
+  fi
   if ! git -C "$ROOT" diff --quiet --ignore-submodules=dirty HEAD -- 2>/dev/null; then
     printf 'note: uncommitted changes in %s are not part of the update; HEAD is\n' "$ROOT" >&2
   fi
@@ -375,6 +429,23 @@ contained_session() {
   need ssh python3
   contained_check_guest
   model_have_token || die "no model token for '$VM'; store one: bin/wmf-claude-vm login"
+  local net
+  net=$(contained_phase)
+  [[ "$net" == locked ]] || die "the VM's network is not locked ($net); sessions run only without egress. Run: bin/wmf-claude-vm lock"
+  local hb
+  hb=$(host_block_state)
+  if [[ "$hb" != verified ]]; then
+    host_block_warning "$hb"
+    [[ -z "${WMF_CLAUDE_REQUIRE_HOST_BLOCK:-}" ]] \
+      || die "WMF_CLAUDE_REQUIRE_HOST_BLOCK is set: no session until the host firewall is verified"
+    # Claude Code redraws the terminal as it starts, so an interactive
+    # session would hide the warning. Wait for a key; not with -p.
+    local a interactive=true
+    for a in "$@"; do [[ "$a" == -p || "$a" == --print ]] && interactive=false; done
+    if $interactive && [[ -t 0 && -t 2 ]]; then
+      read -rp "  Press Enter to start the session anyway, or Ctrl-C to stop: " _ </dev/tty
+    fi
+  fi
   local dir sock log errf sshlog port i src
   dir=$(limactl list --format '{{.Dir}}' "$VM")
   sock="$dir/sock/model-$$.sock"
@@ -451,7 +522,78 @@ cmd_login() {
   ok "signed in; sandboxed sessions skip the first-run screens"
 }
 
-# contained VM: the token never enters the VM. Store a long-lived token from
+# Contained VM network phases (lima/guest-contained-net.sh). Locked: no egress, and
+# sessions may run. Open: egress for setup (update, packages, images), and
+# sessions are refused. Lock when no session runs: connections opened
+# before the lock stay up.
+cmd_lock() {
+  need limactl
+  require_running
+  is_contained || die "'$VM' is not a contained VM"
+  contained_check_guest
+  guest test -x /usr/local/sbin/wmf-claude-contained-net || die "the network phase script is missing; run bin/wmf-claude-vm update"
+  ! contained_session_running || die "a contained session for '$VM' is running; lock after it ends"
+  [[ "$(contained_net lock)" == locked ]] || die "could not lock the VM's network"
+  ok "network locked: no egress from the VM"
+}
+cmd_unlock() {
+  need limactl
+  require_running
+  is_contained || die "'$VM' is not a contained VM"
+  contained_check_guest
+  ! contained_session_running || die "a contained session for '$VM' is running; unlock after it ends"
+  [[ "$(contained_net open)" == open ]] || die "could not open the VM's network"
+  ok "network open: the VM has egress, and contained sessions are refused until: bin/wmf-claude-vm lock"
+  echo "  If a host firewall blocks limactl (docs/lima-vm.md#contained-mode), allow it for the setup."
+}
+
+# Remove the VM's own lock for one request, as root, and check that the
+# request still fails: then the host blocks the VM by itself. The lock comes
+# back at once, and from the EXIT trap if this stops in between. Any host
+# firewall that blocks limactl will do (LuLu on macOS, OpenSnitch or nftables
+# on Linux).
+cmd_check_host_block() {
+  need limactl python3
+  require_running
+  is_contained || die "'$VM' is not a contained VM"
+  contained_check_guest
+  [[ "$(contained_phase)" == locked ]] || die "lock the VM first: bin/wmf-claude-vm lock"
+  ! contained_session_running || die "a contained session for '$VM' is running; check after it ends"
+  local ip binary result dns
+  ip=$(python3 -c 'import socket; print(socket.gethostbyname("deb.debian.org"))') \
+    || die "cannot resolve deb.debian.org on the host"
+  binary=$(limactl_binary)
+  step "Checking that the host blocks $VM without its lock"
+  RELOCK=true
+  trap 'if ${RELOCK:-false}; then contained_net lock >/dev/null; fi' EXIT
+  guest sudo -n nft delete table inet wmf_claude_contained_lock
+  if guest sudo -n curl -sS -m 8 -o /dev/null --resolve "deb.debian.org:443:$ip" https://deb.debian.org/ >/dev/null 2>&1; then
+    result=fail
+  else
+    result=ok
+  fi
+  guest sudo -n resolvectl flush-caches >/dev/null 2>&1 || true
+  if guest getent hosts example.org >/dev/null 2>&1; then dns=resolves; else dns=blocked; fi
+  [[ "$(contained_net lock)" == locked ]] || die "could not restore the VM's lock; run: bin/wmf-claude-vm lock"
+  RELOCK=false
+  mkdir -p "$(dirname "$HOST_BLOCK_RECORD")"
+  printf '%s %s %s\n' "$result" "$(date -u +%FT%TZ)" "$binary" > "$HOST_BLOCK_RECORD"
+  if [[ "$result" == ok ]]; then
+    ok "the host blocks the VM's egress without its lock (limactl: $binary)"
+  else
+    fail "with its lock off, the VM reached the internet: no host-side block for $binary"
+    host_block_warning failed
+  fi
+  if [[ "$dns" == resolves ]]; then
+    echo "  DNS from the VM still resolves through the host's resolver (docs/lima-vm.md)."
+  else
+    echo "  DNS from the VM is blocked as well."
+  fi
+  echo "  The VM's lock is back."
+  [[ "$result" == ok ]]
+}
+
+# Contained VM: the token never enters the VM. Store a long-lived token from
 # `claude setup-token` (run on the host, outside the sandbox) where the host
 # proxy reads it, and mark the first-run onboarding as done in the VM: its
 # connectivity check would need platform.claude.com, which the VM cannot
@@ -509,6 +651,16 @@ cmd_status() {
   limactl list "$VM"
   if is_contained; then
     printf '  mode:             contained (token on the host: %s)\n' "$(model_have_token && echo stored || echo MISSING, run login)"
+    if [[ "$(vm_status)" == Running ]]; then printf '  network:          %s\n' "$(contained_phase)"; fi
+    local hb when=""
+    hb=$(host_block_state)
+    [[ -f "$HOST_BLOCK_RECORD" ]] && when=$(awk '{print " (" $2 ")"}' "$HOST_BLOCK_RECORD")
+    case "$hb" in
+      verified) printf '  host firewall:    verified%s\n' "$when" ;;
+      stale)    printf '  host firewall:    check again: limactl changed%s\n' "$when" ;;
+      failed)   printf '  host firewall:    FAILED%s\n' "$when" ;;
+      *)        printf '  host firewall:    not checked (bin/wmf-claude-vm check-host-block)\n' ;;
+    esac
   fi
   [[ "$(vm_status)" == Running ]] || return 0
   echo ""
@@ -564,6 +716,9 @@ case "$cmd" in
   start)  need limactl; vm_exists || die "VM '$VM' does not exist; create it: bin/wmf-claude-vm create"; limactl start --tty=false "$VM" ;;
   stop)   need limactl; limactl stop "$VM" ;;
   delete) cmd_delete ;;
+  lock)   cmd_lock ;;
+  check-host-block) cmd_check_host_block ;;
+  unlock) cmd_unlock ;;
   reset)
     if is_contained; then set -- --contained "$@"; fi
     cmd_delete; cmd_create "$@" ;;

@@ -165,7 +165,10 @@ path to the model API. It allows two endpoints, replaces the client's
 credentials with the token, refuses the MCP connector, server tools and URL
 content sources (anything that makes the API fetch for the agent), and logs
 every request on the host. The session runs with `profiles/wmf-contained.json`,
-which has no egress. The VM's own network is not locked yet. See
+which has no egress. The VM's network is locked during sessions: a
+root-owned nftables table lets nothing leave the VM but replies to the
+host's SSH session, and a per-application firewall on the host (LuLu,
+blocking `limactl`) can enforce the same outside the VM's reach. See
 [`docs/lima-vm.md#contained-mode`](docs/lima-vm.md#contained-mode).
 
 ## Residual risks

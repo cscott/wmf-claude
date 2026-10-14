@@ -26,7 +26,7 @@ export TMPPREFIX="$TMPDIR/zsh"
 # a variable that exists. An empty value thus disables a token in .env.
 export PHABRICATOR_API_TOKEN=
 
-# contained mode (bin/claude, WMF_CLAUDE_MODEL_PROXY_PORT): the model API is reachable only
+# Contained mode (bin/claude, WMF_CLAUDE_MODEL_PROXY_PORT): the model API is reachable only
 # through the host-side proxy, forwarded to this localhost port. The proxy
 # replaces the OAuth token, so the sandbox holds a placeholder, never the
 # real one. The connection to 127.0.0.1 must not go through nono's proxy.

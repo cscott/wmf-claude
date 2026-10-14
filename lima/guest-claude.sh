@@ -78,6 +78,9 @@ ENV_ARGS=()
 if [[ -n "$PROXY_PORT" ]]; then
   # Containers would still have egress; bin/claude refuses --docker too.
   [[ -z "$DOCKER_SERVICE" ]] || die "--docker is not available in a contained VM yet"
+  # The host checked this too; check again here, just before the session.
+  net=$(sudo -n /usr/local/sbin/wmf-claude-contained-net status 2>/dev/null || echo missing)
+  [[ "$net" == locked ]] || die "the VM's network is not locked ($net); run: bin/wmf-claude-vm lock"
   ENV_ARGS+=("WMF_CLAUDE_MODEL_PROXY_PORT=$PROXY_PORT")
 fi
 if [[ -n "$DOCKER_SERVICE" ]]; then

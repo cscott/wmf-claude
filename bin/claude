@@ -108,7 +108,7 @@ fi
 # Which profiles/<name>.json to load; defaults to wmf-engineer. Lets additional
 # profiles (e.g. wmf-data-scientist) be selected without changing this script.
 PROFILE="${WMF_CLAUDE_PROFILE:-wmf-engineer}"
-# contained mode: in a contained VM, lima/guest-claude.sh sets WMF_CLAUDE_MODEL_PROXY_PORT to the
+# Contained mode: in a contained VM, lima/guest-claude.sh sets WMF_CLAUDE_MODEL_PROXY_PORT to the
 # localhost port where the host-side model API proxy (bin/wmf-claude-model-proxy)
 # is forwarded. The session then runs with profiles/wmf-contained.json, which has no
 # egress of its own, and reaches the model only through that port.
@@ -247,7 +247,7 @@ for arg in "${NONO_ARGS[@]}"; do
   esac
 done
 
-# contained mode: refuse every flag that adds egress or needs the host. --docker
+# Contained mode: refuse every flag that adds egress or needs the host. --docker
 # waits for containers without a network (their egress is not limited yet).
 CONTAINED_NONO_ARGS=()
 if [[ -n "$PROXY_PORT" ]]; then

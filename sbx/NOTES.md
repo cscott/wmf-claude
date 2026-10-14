@@ -374,8 +374,14 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   as for example.org in item 7: the engineer's resolver has no example.com. Test `allow`
   with www.kernel.org. On the host, `curl -x` to the proxies: `allow egdef pypi.org`, then
   the old proxy's port still gave 403 (it keeps the old list, for open connections) and
-  the new port 200. Not yet: the bullet in a session (a new image), and a create with
-  core (composer, npm, the wiki install) on the default path.
+  the new port 200.
+  RAN (2026-10-14, a new golden image 161df08b for 1dfd453): a default `create Cite` with
+  its 11 dependencies (core, VisualEditor, Vector...) through the proxy: composer for all 12
+  repos, `npm ci`, the wiki install, all as without the proxy, and `Sandbox egcite is
+  ready`. Its log denies only `wmf-sbx-check.invalid` and, 3 times during `npm ci`,
+  `scarf.sh`: the `@scarf/scarf` postinstall's download analytics (npm does not run that
+  script, by its allow-scripts warning; nothing failed). Leave it denied. Not yet: the
+  session-start bullet in a session, and `allow` from it.
 - **`--nested` behind the egress proxy** (RAN on the engineer's host, 2026-10-13: `create
   --egress-proxy --nested` passes every invariant and finishes, after 388cbb3 and d6b8628;
   an inner `create .` of wmf-claude in it ran too, after 24c67e9 and 3ab7488 (the clone

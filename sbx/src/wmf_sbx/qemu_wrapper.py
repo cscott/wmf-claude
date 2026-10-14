@@ -139,7 +139,7 @@ def spread_virtfs(args):
     virtio-9p-pci at an explicit address: 8 to a root-bus slot (functions
     0-7, multifunction on function 0), from NINEP_TOP_SLOT down. Lima
     gives each mount a slot of its own, and the root bus holds 30 or 31
-    devices: a sandbox with 25 repos left no slot for the balloon (RAN).
+    devices: a sandbox with 24 repos left no slot for the balloon (RAN).
     The guest finds each mount by its mount_tag, as before."""
     out, n, i = [], 0, 0
     limit = template_mod.MAX_QEMU_MOUNTS

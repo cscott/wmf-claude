@@ -650,7 +650,9 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   image rebuilt with `maxAge: 0m` made the next create cold on it (636 s with the build),
   the sandbox on the old image still started and passed `status`, `image gc` kept its
   files, and `image prune` removed the old image and its 3 snapshots once nothing used
-  them. The golden image is keyed on the
+  them. RAN 2026-10-14 on the engineer's host, not nested (Translate, Cite and Parsoid,
+  24 repos): the cold create froze in 19 s (8.4 GiB); a warm create from it, with no
+  freeze, took 113 s. The golden image is keyed on the
   wmf-claude HEAD, so in development every new commit makes the next create cold.
 - Host memory (RAN 2026-10-13): QEMU keeps every page a guest touched (Lima's QEMU has no
   balloon), so a 16 GiB nested sandbox that built an image held 15 GB of the host, and the
@@ -663,14 +665,17 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   751 MiB 30 s after the guest freed it. Page cache is not free memory: a guest that read a lot keeps it until it needs
   the memory.
 - PCI slots (RAN 2026-10-14): Lima gives each git-dir mount a `-virtfs`, which takes a
-  slot of q35's root bus. With Lima's 6 devices the bus held 24 mounts and the balloon
-  locally (QEMU 8.2.2), and not 25: Translate, Cite and Parsoid with their dependencies
-  are 25, and the engineer's sandbox did not start ("no slot/function available for
-  virtio-balloon-pci"). A `pcie-pci-bridge` behind a root port took only 31 more. The QEMU
-  wrapper now makes each `-virtfs` an `-fsdev` plus a `virtio-9p-pci` at an explicit
-  `addr=SLOT.FN`, 8 functions to a slot from 0x1e down (`qemu_wrapper.spread_virtfs`);
-  `template.MAX_QEMU_MOUNTS` is 96 (12 slots). Local QEMU booted Lima's devices with 1,
-  25 and 96 such mounts and the balloon.
+  slot of q35's root bus. With Lima's 6 devices the bus held 24 mounts, or 23 and the
+  balloon (QEMU 8.2.2, locally). Translate, Cite and Parsoid with their dependencies are
+  24 repos, and the engineer's sandbox did not start ("no slot/function available for
+  virtio-balloon-pci"; a plain `limactl start`, without the balloon, booted it). A
+  `pcie-pci-bridge` behind a root port took only 31 more. The QEMU wrapper now makes each
+  `-virtfs` an `-fsdev` plus a `virtio-9p-pci` at an explicit `addr=SLOT.FN`, 8 functions
+  to a slot from 0x1e down (`qemu_wrapper.spread_virtfs`); `template.MAX_QEMU_MOUNTS` is
+  96 (12 slots). Local QEMU booted Lima's devices with 1, 25 and 96 such mounts and the
+  balloon. On the engineer's host (Lima 2.3.0-beta.1, `21382a1`) that 24-repo sandbox
+  started with the mounts at 00:1c.0-00:1e.7 and the balloon at 00:07.0; all 24 mounted,
+  and `lima-port/checks/balloon.sh` gave back 3060 MiB.
 - Default VM memory is 8 GiB: phan on Translate was OOM-killed at 4 GiB.
 - Timings under TCG are 5–35× slower than a 16-core host (image build 26–41 min, create
   ~250–310 s, setup for Translate ~40 min); only compare them with each other.

@@ -46,7 +46,7 @@ DEFAULT_DISK = "60GiB"
 MOUNT_TYPES = {"qemu": "9p", "vz": "virtiofs"}
 # On QEMU each mount is a virtio-9p PCI device. As Lima gives them
 # (-virtfs), each takes a slot of the machine's root bus, which holds 30
-# or 31 devices with Lima's 6 (RAN 2026-10-14: 25 mounts and the
+# or 31 devices with Lima's 6 (RAN 2026-10-14: 24 mounts and the
 # free-page-reporting balloon did not fit). The QEMU wrapper puts them 8
 # to a slot instead, as the functions of multifunction slots
 # (qemu_wrapper.spread_virtfs), in NINEP_SLOTS slots from the top: room

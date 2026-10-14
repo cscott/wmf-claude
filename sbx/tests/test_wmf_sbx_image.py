@@ -187,7 +187,7 @@ class InputTests(unittest.TestCase):
     def test_the_packages_extend_the_kit_and_add_no_docker(self):
         for p in kit.BASE_PACKAGES:
             self.assertIn(p, image.IMAGE_PACKAGES)
-        for p in ("git", "jq", "curl", "python3-venv", "nftables", "xz-utils"):
+        for p in ("git", "jq", "curl", "python3-venv", "nftables", "xz-utils", "time", "bc"):
             self.assertIn(p, image.IMAGE_PACKAGES)
         # Node comes from nodejs.org (NODE_VERSION), never from Debian.
         for p in ("nodejs", "npm"):

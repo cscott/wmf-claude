@@ -115,6 +115,8 @@ CLAUDE_CHANNELS = ("stable", "latest")
 # - xz-utils, to unpack the Node tarball;
 # - nftables, for the host block (§5.3);
 # - unzip and zstd, for the helpers;
+# - time and bc, which agents reach for to time and compare test runs
+#   (the B4 blind run, 2026-10-14, had to write a wrapper without them);
 # - rsync: Lima installs it at a sandbox's first boot when it is missing,
 #   which a sandbox behind the egress proxy cannot (Lima's step runs
 #   before the provisioning gives apt the proxy);
@@ -123,7 +125,7 @@ CLAUDE_CHANNELS = ("stable", "latest")
 #   mw-install-browser must find them already here (§5.2).
 IMAGE_PACKAGES = list(kit.BASE_PACKAGES) + [
     "ca-certificates", "curl", "git", "jq", "python3", "python3-venv",
-    "nftables", "rsync", "unzip", "xz-utils", "zstd",
+    "nftables", "rsync", "unzip", "xz-utils", "zstd", "time", "bc",
     "libnss3", "libnspr4", "libatk1.0-0t64", "libatk-bridge2.0-0t64",
     "libx11-6", "libxcomposite1", "libxdamage1", "libxext6", "libxfixes3",
     "libxrandr2", "libgbm1", "libxcb1", "libxkbcommon0", "libasound2t64",

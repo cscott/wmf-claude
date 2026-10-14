@@ -843,12 +843,6 @@ class ResumeMainTests(Env):
         self.assertIn("wmf-sbx allow demo HOST", self.err)
         self.assertFalse([s for s in self.lima.shells() if session.SUDO_LAUNCHER in s])
 
-    def test_run_is_an_alias(self):
-        rc = self.quiet(resume.run_main, ["--name", "demo", "--", "-p", "x"],
-                        lima=self.lima, env=self.env)
-        self.assertEqual(rc, 0, self.err)
-        self.assertEqual(len(self.launches()), 1)
-
 
 class CreateSessionTests(Env):
 

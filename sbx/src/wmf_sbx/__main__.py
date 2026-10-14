@@ -22,7 +22,6 @@ COMMANDS = {
     "resolve": "wmf_sbx.resolve",
     "resume": "wmf_sbx.resume",
     "rm": "wmf_sbx.rm",
-    "run": "wmf_sbx.run",
     "start": "wmf_sbx.start",
     "status": "wmf_sbx.status",
     "stop": "wmf_sbx.stop",

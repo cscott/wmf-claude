@@ -164,14 +164,11 @@ class DispatchTests(unittest.TestCase):
                 self.run_wmf_sbx(args)
         self.assertEqual(read_log(self.sbx_log), [])
 
-    def test_resume_and_run_reach_their_siblings(self):
-        for verb in ("resume", "run"):
-            with self.subTest(verb=verb):
-                self.add_sibling(verb)
-                r = self.run_wmf_sbx([verb, "x", "--", "-p", "hi"])
-                self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual([e["name"] for e in read_log(self.sibling_log)],
-                         ["wmf-sbx-resume", "wmf-sbx-run"])
+    def test_resume_reaches_its_sibling(self):
+        self.add_sibling("resume")
+        r = self.run_wmf_sbx(["resume", "x", "--", "-p", "hi"])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual([e["name"] for e in read_log(self.sibling_log)], ["wmf-sbx-resume"])
         self.assertEqual(read_log(self.sbx_log), [])
 
     def test_docker_only_verbs_are_retired(self):

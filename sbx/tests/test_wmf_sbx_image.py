@@ -361,6 +361,15 @@ class BuilderTests(unittest.TestCase):
         self.assertTrue(required)
         self.assertEqual(required, set(image.build_env(sample_inputs(), "/tmp/x")))
 
+    def test_the_build_script_masks_apts_timers(self):
+        # apt-listchanges's changelog fetches filled the egress log (RAN, egsudo).
+        with open(image.BUILD_SCRIPT, encoding="utf-8") as f:
+            script = f.read()
+        loop = next(l for l in script.splitlines() if l.startswith("for t in apt-"))
+        for timer in ("apt-listchanges.timer", "apt-daily.timer", "apt-daily-upgrade.timer"):
+            self.assertIn(timer, loop)
+        self.assertIn('  systemctl mask "$t"', script)
+
     def test_the_build_script_parses(self):
         subprocess.run(["bash", "-n", image.BUILD_SCRIPT], check=True)
 

@@ -90,6 +90,19 @@ apt-get "${APT_OPTS[@]}" purge -y -q --auto-remove "${BUILD_DEPS[@]}"
 echo "  ast $(php -r 'echo phpversion("ast");')"
 apt-get clean
 
+# apt's timers. A sandbox reaches the network only through the host egress
+# proxy, which logs every request it refuses. apt-listchanges.timer fetches
+# changelogs from metadata.ftp-master.debian.org, which is not on its list,
+# about 30 times on the first hour mark of each VM (RAN, egsudo). apt-daily
+# fetches the package lists once a day for no one: the sandbox is disposable
+# and the image pins its packages. apt-daily-upgrade goes with it.
+step "apt timers"
+for t in apt-listchanges.timer apt-daily.timer apt-daily-upgrade.timer; do
+  systemctl disable --now "$t" 2>/dev/null || true
+  systemctl mask "$t"
+  echo "  masked $t"
+done
+
 # Node, pinned, from nodejs.org, checked against the checksum in the image
 # inputs (image.py, NODE_VERSION). One copy for all users, owned by root;
 # /usr/local/bin is before /usr/bin on every PATH. The build of the

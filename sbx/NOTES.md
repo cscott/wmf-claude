@@ -555,9 +555,15 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   without the entry makes the create cold. Golden images age (`images.maxAge`, an `epoch`
   input); snapshots do not. RAN 2026-10-13, the freeze only: the host's `create --nested
   --no-deps` of wmf-claude (Lima 2.3.0-beta.1) froze its snapshot and restarted on an
-  overlay on it, and `status` showed the chain sandbox → snapshot → golden. The warm create
-  is not RAN yet: `lima-port/checks/warm-b3.sh` (its first run was cut off; it now gives
-  each inner sandbox 4 GiB and stops it after its checks).
+  overlay on it, and `status` showed the chain sandbox → snapshot → golden. RAN 2026-10-13
+  (`lima-port/checks/warm-b3.sh` in a nested sandbox, Cite and its 11 dependencies, inner
+  sandboxes at 4 GiB; every check passed): cold 721 s (with a 6-minute image build),
+  snapshot 4.8 GiB; warm 92 s and 94 s, with `composer update` about 15 s in all and every
+  `npm ci` skipped; the warm sandbox had the host's new commit, a working wiki
+  (`showSiteStats`) and its own machine-id. Each freeze writes a full generation (the
+  rebase onto the golden image copies the snapshot's data: 5 GiB per create); a superseded
+  one goes at the next `image gc` after an hour. The golden image is keyed on the
+  wmf-claude HEAD, so in development every new commit makes the next create cold.
 - Default VM memory is 8 GiB: phan on Translate was OOM-killed at 4 GiB.
 - Timings under TCG are 5–35× slower than a 16-core host (image build 26–41 min, create
   ~250–310 s, setup for Translate ~40 min); only compare them with each other.

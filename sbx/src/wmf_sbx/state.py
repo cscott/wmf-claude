@@ -19,6 +19,7 @@ can't leave a half-parsed file behind.
 """
 
 import contextlib
+import fcntl
 import json
 import os
 import sys
@@ -166,6 +167,50 @@ def delete(name, env=None):
         return True
     except FileNotFoundError:
         return False
+
+
+def _reservation_path(name, env=None):
+    return os.path.join(state_dir(env), f".{validate_name(name)}.creating")
+
+
+def reserve(name, env=None):
+    """Reserve `name` for the `create` that calls this: an flock on a file
+    beside the state files, held as long as the returned file is open (the
+    caller keeps it to the end of create; the OS lets go when the process
+    ends, crashed or not). Raises StateError when another process holds it
+    (RAN 2026-10-14: two creates of one name both ran, and the second would
+    have failed only at `limactl create`). The file stays: to remove it
+    races a process that opened it."""
+    os.makedirs(state_dir(env), exist_ok=True)
+    f = open(_reservation_path(name, env), "a", encoding="utf-8")
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        f.close()
+        raise StateError(f"another wmf-sbx create is making a sandbox named {name!r} "
+                         f"now") from None
+    return f
+
+
+def reserved_names(env=None):
+    """The names that a running `create` holds (reserve)."""
+    try:
+        entries = os.listdir(state_dir(env))
+    except FileNotFoundError:
+        return set()
+    names = set()
+    for entry in entries:
+        if not (entry.startswith(".") and entry.endswith(".creating")):
+            continue
+        try:
+            with open(os.path.join(state_dir(env), entry), "a", encoding="utf-8") as f:
+                try:
+                    fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    names.add(entry[1:-len(".creating")])
+        except OSError:
+            continue
+    return names
 
 
 def list_names(env=None):

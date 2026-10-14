@@ -440,7 +440,9 @@ wmf-sbx create PRIMARY[:ro] [EXTRA[:ro] ...] [options]
   reset to your host repo's `master` (or `main`) instead, which may be
   behind upstream; `create` warns for each.
 - `--name NAME`: the sandbox name (default `sbx-<primary>`). The host
-  remote has the same name.
+  remote has the same name. A `create` holds its name from the start, so
+  a second `create` of the same name, while the first runs, stops at once
+  (a default name gets a suffix instead).
 - `--no-remotes`: add no host remote, and leave host gc as it is.
 - `--clone-missing`: clone the repos that are not on the host yet without
   asking ("Naming a repo", above).

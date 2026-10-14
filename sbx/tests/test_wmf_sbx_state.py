@@ -242,5 +242,28 @@ class DeleteAndListTests(unittest.TestCase):
         self.assertEqual(s.list_names(env=self.env), ["mw-cite"])
 
 
+
+class ReserveTests(unittest.TestCase):
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.env = {"XDG_STATE_HOME": self.tmp.name}
+
+    def test_one_holder_at_a_time(self):
+        held = s.reserve("demo", self.env)
+        self.assertEqual(s.reserved_names(self.env), {"demo"})
+        with self.assertRaisesRegex(s.StateError, "another wmf-sbx create"):
+            s.reserve("demo", self.env)
+        s.reserve("other", self.env).close()
+        held.close()
+        self.assertEqual(s.reserved_names(self.env), set())
+        s.reserve("demo", self.env).close()
+
+    def test_a_reservation_is_not_a_sandbox(self):
+        s.reserve("demo", self.env).close()
+        self.assertEqual(s.list_names(self.env), [])
+
+
 if __name__ == "__main__":
     unittest.main()

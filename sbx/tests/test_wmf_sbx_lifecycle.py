@@ -1044,6 +1044,27 @@ class CreateTests(Env):
         self.assertEqual(self.create("--name", "demo", lima=FakeLima({"wmf-sbx-demo": "Stopped"})), 1)
         self.assertIn("exists already", self.err)
 
+    def test_a_name_another_create_is_making_is_refused_at_once(self):
+        # RAN 2026-10-14: two creates of one --name both went on, and the
+        # second would have failed only at `limactl create`.
+        held = state_mod.reserve("demo", self.env)
+        self.addCleanup(held.close)
+        lima = FakeLima()
+        self.assertEqual(self.create("--name", "demo", lima=lima), 1)
+        self.assertIn("another wmf-sbx create is making a sandbox named 'demo'", self.err)
+        self.assertFalse([c for c in lima.calls if c[0] in ("create", "start")])
+
+    def test_a_default_name_another_create_is_making_gets_a_suffix(self):
+        held = state_mod.reserve("sbx-demo", self.env)
+        self.addCleanup(held.close)
+        self.assertEqual(self.create(), 0, self.err)
+        self.assertIsNotNone(state_mod.load("sbx-demo-2", self.env))
+
+    def test_the_name_is_free_again_after_the_create(self):
+        self.assertEqual(self.create("--name", "demo"), 0, self.err)
+        self.assertNotIn("demo", state_mod.reserved_names(self.env))
+        state_mod.reserve("demo", self.env).close()
+
     def test_a_name_from_settings_is_used_and_not_made_unique(self):
         with open(self.config, "w") as f:
             f.write("create:\n  name: mine\n")

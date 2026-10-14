@@ -1057,6 +1057,10 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
 - php-ast is built from source at the commit WMF CI pins (`image.PHP_AST`; Debian 13's 1.1.2 is
   too old for phan 6). Change it when CI does.
 - WMF CI targets Node 24 (24.18.0); the image has one global Node from the nodejs.org tarball.
+- One create per sandbox name: `create` holds an flock on `sandboxes/.NAME.creating`
+  (`state.reserve`) from the moment it has the name to its end, before the golden image;
+  `reserved_names` counts as taken. Before, a second `create --name X` started while the
+  first one built the image went on, and would have failed only at `limactl create`.
 - One build per golden image key (RAN 2026-10-14: a second `create` of the same repos,
   started while the first built the image, deleted the first one's running builder as
   "left by an earlier build"). `image.build` holds an flock on

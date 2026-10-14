@@ -505,9 +505,10 @@ def phabricator_username(run=subprocess.run, config_path=None, env=None):
 
 
 def lima_sandbox_names(lima, env=None):
-    """Names that are taken: every wmf-sbx state file, and every Lima
-    instance named wmf-sbx-NAME."""
-    names = set(state_mod.list_names(env))
+    """Names that are taken: every wmf-sbx state file, every name that a
+    running create has reserved, and every Lima instance named
+    wmf-sbx-NAME."""
+    names = set(state_mod.list_names(env)) | state_mod.reserved_names(env)
     names |= {n[len(vm_mod.PREFIX):] for n in lima.instances() if n.startswith(vm_mod.PREFIX)}
     return names
 
@@ -762,6 +763,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
             "paths, or drop the redundant one."), file=sys.stderr)
         return 1
 
+    reservation = None
     try:
         taken = lima_sandbox_names(lima, env)
         name_source = (resolved[0][0] if resolved[0][0] is not None
@@ -770,8 +772,21 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
             default_sandbox_name(name_source), taken, prompt=prompt)
         state_mod.validate_name(name)
         vm_mod.instance_name(name)
+        if args.name and name in state_mod.reserved_names(env):
+            raise vm_mod.VmError(f"another wmf-sbx create is making a sandbox named "
+                                 f"{name!r} now; give this one another --name")
         if args.name and name in taken:
             raise vm_mod.VmError(f"a sandbox named {name!r} exists already")
+        # The name is this create's until it ends, before the slow part
+        # (the golden image), so a second create of it stops here.
+        while not args.dry_run and reservation is None:
+            try:
+                reservation = state_mod.reserve(name, env)
+            except state_mod.StateError:
+                if args.name:
+                    raise
+                taken.add(name)                 # another create took it just now
+                name = unique_sandbox_name(name, taken, prompt=prompt)
 
         # On QEMU the disk is an overlay on the golden image (D12), and
         # Lima gets the placeholder; `vz` copies the golden image (D2).

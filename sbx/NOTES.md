@@ -118,6 +118,10 @@ Development scaffolding:
   allowlist can list: the install downloads the base image (checked against its digest) to
   `/var/cache/wmf-sbx/base`, and the builder boots that copy (`image.local_base`; not in
   the cache key). `cloud.debian.org` is also the HEAD that refreshes a cached base image.
+  Behind the egress proxy (`--egress-proxy --nested`) the guest cannot follow that redirect
+  (RAN on the engineer's host: curl 403): the host downloads the base image once to
+  `~/.cache/wmf-sbx/base/` (`nested.host_base`, digest checked) and `create` copies it in;
+  the install checks the digest again.
 - Inner egress works through nono's proxy. Lima and `image.guest_proxy_env` rewrite the
   session's proxy URL (`http://nono:PASSWORD@127.0.0.1:PORT`) to 192.168.5.2; the rewrite
   must keep the credentials. nono re-signs TLS for hosts with endpoint rules (nodejs.org;

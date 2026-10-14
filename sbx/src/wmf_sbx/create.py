@@ -831,7 +831,21 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
     if args.nested:
         print(color_mod.error(NESTED_WARNING), file=sys.stderr)
         say("+ nested: QEMU and Lima in the sandbox, the agent in the kvm group")
-        script = nested_mod.install_script(arch, image_mod.base_image(arch), nested_src)
+        base = image_mod.base_image(arch)
+        staged = None
+        if args.egress_proxy:
+            # The host gives it the base image: behind the egress proxy
+            # its download's mirror redirect is refused.
+            try:
+                host_copy = nested_mod.host_base(base, env=env, log=say)
+                say(f"+ limactl copy {host_copy} {nested_mod.STAGED_BASE}")
+                lima.copy(host_copy, f"{vm_mod.instance_name(name)}:{nested_mod.STAGED_BASE}")
+            except (nested_mod.NestedError, lima_mod.LimaError) as e:
+                print(color_mod.error(f"error: {e}"), file=sys.stderr)
+                print(f"  `wmf-sbx rm {name}` removes what was made.", file=sys.stderr)
+                return 1
+            staged = nested_mod.STAGED_BASE
+        script = nested_mod.install_script(arch, base, nested_src, staged=staged)
         # Behind the egress proxy, its variables: curl has no other way out.
         argv = (["sudo", "env"] + [f"{k}={v}" for k, v in
                                    sorted(vm_mod.guest_proxy_env(name, env).items())]

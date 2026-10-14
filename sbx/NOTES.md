@@ -462,6 +462,10 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   between, the session-start bullet gives the proxy's own `403` at CONNECT, not the 502 of
   a contained session (RAN above, `nono proxy --profile`: a host off the list gets 403 at CONNECT). To check
   on the host: the RAN list at the end of PLAN-SUDO's A3 steps.
+  First host create (egsudo, 2026-10-14): every invariant passed but "the agent can sudo,
+  from its sudoers file". The invariants run as the engineer, and `/etc/sudoers.d` is
+  0750 root:root, so its `test -e` failed with the file there. The test now runs under
+  `sudo -n`, as a check of its own.
 
 ### Testing in the sandbox
 

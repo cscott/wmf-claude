@@ -279,12 +279,21 @@ class VmTests(Env):
     def test_a_sudo_sandbox_checks_that_the_agent_can_sudo(self):
         checks = [d for d, _t in vm.invariants(sudo=True)]
         self.assertNotIn("the agent cannot sudo", checks)
-        self.assertIn("the agent can sudo, from its sudoers file", checks)
+        self.assertIn("the agent can sudo", checks)
+        self.assertIn("the agent's sudoers file is there", checks)
         self.assertIn("the agent is not in sudo or docker", checks)
         # Root in the guest can undo its own rules: the host's are required.
         for desc, _t in vm.EGRESS_INVARIANTS:
             self.assertIn(desc, checks)
         self.assertIn("the agent cannot sudo", [d for d, _t in vm.invariants(egress=True)])
+
+    def test_the_checks_look_in_sudoers_d_as_root(self):
+        # The checks run as the engineer; /etc/sudoers.d is 0750 root:root
+        # (RAN: egsudo failed its invariants with the file there).
+        for desc, test in vm.invariants(egress=True, sudo=True):
+            for part in test.split("&&"):
+                if "/etc/sudoers.d/" in part:
+                    self.assertTrue(part.strip().startswith("sudo -n "), desc)
 
     def test_start_checks_a_sudo_sandbox_as_one(self):
         lima = self.sandbox(lima=FakeLima())

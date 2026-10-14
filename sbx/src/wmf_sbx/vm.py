@@ -353,8 +353,10 @@ EGRESS_INVARIANTS = [
 # create made it; what holds against the agent is on the host
 # (restrict=on, the egress proxy), and EGRESS_INVARIANTS are required.
 SUDO_INVARIANTS = [
-    ("the agent can sudo, from its sudoers file",
-     "sudo -u agent sudo -n true 2>/dev/null && test -e /etc/sudoers.d/90-wmf-sbx-agent"),
+    ("the agent can sudo", "sudo -u agent sudo -n true 2>/dev/null"),
+    # As root: /etc/sudoers.d is 0750 root:root, and the checks run as the
+    # engineer (RAN: a plain `test -e` failed with the file there).
+    ("the agent's sudoers file is there", "sudo -n test -e /etc/sudoers.d/90-wmf-sbx-agent"),
     ("the sudo marker is there", "test -e /etc/wmf-sbx/sudo"),
 ]
 

@@ -61,6 +61,16 @@ class TemplateTests(unittest.TestCase):
         for bad in ("/h/c", "/h/c/.git-not", "/h/modules/x"):
             self.assertFalse(template.is_git_dir_name(bad), bad)
 
+    def test_an_objects_dir_can_be_mounted(self):
+        # RAN (nested): a sandbox's clone borrows /run/wmf-sbx/host/<path>/.git/objects.
+        for ok in ("/h/c/.git", "/h/c/.git/objects", "/run/wmf-sbx/host/h/c/.git/objects/",
+                   "/h/c.git/objects", "/h/c/.git/modules/vendor/objects"):
+            self.assertTrue(template.is_mountable(ok), ok)
+        for bad in ("/h/c", "/h/c/objects", "/h/c/.git/objects/pack", "/h/objects"):
+            self.assertFalse(template.is_mountable(bad), bad)
+        t = make(gitdirs=["/h/c/.git", "/run/wmf-sbx/host/h/c/.git/objects"])
+        template.check_template(t, host_uid=HOST_UID)
+
     def test_the_engineer_does_not_get_the_host_uid(self):
         t = make()
         self.assertEqual(t["user"]["name"], "engineer")
@@ -129,6 +139,8 @@ class CheckTests(unittest.TestCase):
             "9p cache": lambda t: t["mounts"][0].pop("9p"),
             "mount point": lambda t: t["mounts"][0].update(mountPoint="/home/me/src/core/.git"),
             "not a git dir": lambda t: t["mounts"][0].update(location="/home/me/src/core"),
+            "not a git objects dir": lambda t: t["mounts"][0].update(
+                location="/home/me/src/core/objects"),
             "home": lambda t: t["mounts"].append({"location": os.path.expanduser("~"),
                                                   "mountPoint": "/run/wmf-sbx/host/h",
                                                   "writable": False}),

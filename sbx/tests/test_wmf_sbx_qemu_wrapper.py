@@ -21,6 +21,12 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import wmf_sbx.qemu_wrapper as qw  # noqa: E402
+import isolation  # noqa: E402
+
+
+def setUpModule():
+    isolation.isolate()
+
 
 WRAPPER = os.path.join(os.path.dirname(__file__), "..", "bin", "wmf-sbx-qemu")
 GUESTFWD = "guestfwd=tcp:192.168.5.100:3128-cmd:sh -c 'exec socat - TCP:127.0.0.1:$(cat /p)'"
@@ -214,11 +220,16 @@ def alive(pid):
     except ProcessLookupError:
         return False
     # A zombie still answers kill(0); its state says it is gone.
+    # It can also be reaped after kill(0): the open then finds no file,
+    # or the read gets ESRCH.
     try:
         with open(f"/proc/{pid}/stat") as f:
             return f.read().split(")")[-1].split()[0] != "Z"
+    except ProcessLookupError:
+        return False
     except FileNotFoundError:
-        return True
+        # No /proc at all (macOS): kill(0) is all there is.
+        return not os.path.exists("/proc/self")
 
 
 def wait_for(cond, timeout=10):

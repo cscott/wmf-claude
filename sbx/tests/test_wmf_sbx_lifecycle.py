@@ -1104,6 +1104,18 @@ class ExecTests(Env):
         argv = lima.shells()[-1]
         self.assertNotIn("agent", argv[argv.index("--") + 1:])
 
+    def test_engineer_in_a_sudo_sandbox_says_the_agent_has_root_too(self):
+        lima = self.sandbox()
+        self.assertEqual(self.quiet(exec_mod.main, ["--engineer", "sbx-demo", "--", "id"],
+                                    lima=lima, env=self.env), 0)
+        self.assertNotIn("sudo sandbox", self.err)
+        st = state_mod.load("sbx-demo", self.env)
+        st["sudo"] = True
+        state_mod.save(st, self.env)
+        self.assertEqual(self.quiet(exec_mod.main, ["--engineer", "sbx-demo", "--", "id"],
+                                    lima=lima, env=self.env), 0)
+        self.assertIn("sbx-demo is a sudo sandbox: the agent has root in the VM too", self.err)
+
     def test_a_command_is_required(self):
         lima = self.sandbox()
         with self.assertRaises(SystemExit):

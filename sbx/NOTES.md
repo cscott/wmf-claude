@@ -452,6 +452,16 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   key and its meta, and replace the CA at the warm start (or keep the CA out of the
   snapshot). The restart in `snapshot.freeze` already goes through `vm.start_instance`,
   which starts in egress mode.
+- **`--sudo` (A3 steps 1 to 5, written 2026-10-14; not yet RAN).** `create --sudo` (or
+  `settings.yaml` `session: sudo: true`) needs the egress proxy, and refuses `--nested`
+  until step 6. The provisioning writes `/etc/sudoers.d/90-wmf-sbx-agent` (visudo-checked;
+  `env_keep` for the proxy variables) and `/etc/wmf-sbx/sudo`, and a contained sandbox
+  removes both at each boot. A session runs `bin/launch-claude.sh` with no nono, with the
+  egress proxy's variables (`sudo -u agent` drops `/etc/environment`'s) and
+  `NODE_EXTRA_CA_CERTS` set to the system bundle, which holds the egress CA. Without nono in
+  between, the session-start bullet gives the proxy's own `403` at CONNECT, not the 502 of
+  a contained session (RAN above, `nono proxy --profile`: a host off the list gets 403 at CONNECT). To check
+  on the host: the RAN list at the end of PLAN-SUDO's A3 steps.
 
 ### Testing in the sandbox
 

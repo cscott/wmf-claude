@@ -4,22 +4,23 @@ What the agent in a wmf-sbx sandbox can and cannot reach. The root
 `SECURITY.md` covers wmf-claude under nono on the engineer's own
 machine; this file covers the sandbox VM that `wmf-sbx create` makes.
 
-Scope: **contained mode**, the only mode so far. The agent has no root,
-and Claude Code runs under nono inside the VM. `--sudo` mode (a root
-agent, with egress enforced outside the VM) is not ported yet; its
-design and threat model are D9 and D11 in
+Scope: two modes. In **contained mode** (the default) the agent has no
+root, and Claude Code runs under nono inside the VM; §1 to §6a are about
+it. In **`--sudo` mode** the agent has root in the VM, Claude Code runs
+with no nono, and the host's egress proxy is the network boundary; §6b
+says what changes. Their design and threat model are D9 and D11 in
 `../lima-port/HANDOFF-LIMA.md`.
 
 ## The short version
 
-| | nono on the host | wmf-sbx, contained |
-|---|---|---|
-| Kernel | the host's | a guest kernel, behind a hypervisor (Lima: `vz` or QEMU) |
-| Filesystem | the host's, minus a deny list | the VM's; host repos only as read-only mounts of their git dirs |
-| Root | none (`NO_NEW_PRIVS`) | none: `agent` has no sudo, and nono runs inside the VM too |
-| Network | nono's allowlist proxy | the same nono proxy; on QEMU behind a second one on the host, the VM's only way out (§3) |
-| Credentials | the engineer's files, minus a deny list | none: the Claude credential stays on the host, behind a proxy |
-| Work leaves by | the agent's own writes to the host | the engineer's `git fetch` of the agent's commits |
+| | nono on the host | wmf-sbx, contained | wmf-sbx, `--sudo` |
+|---|---|---|---|
+| Kernel | the host's | a guest kernel, behind a hypervisor (Lima: `vz` or QEMU) | the same; QEMU only |
+| Filesystem | the host's, minus a deny list | the VM's; host repos only as read-only mounts of their git dirs | the same; the host enforces read-only |
+| Root | none (`NO_NEW_PRIVS`) | none: `agent` has no sudo, and nono runs inside the VM too | root in the VM; no nono |
+| Network | nono's allowlist proxy | the same nono proxy; on QEMU behind a second one on the host, the VM's only way out (§3) | only the host's proxy, with the profile's endpoint rules (§6b) |
+| Credentials | the engineer's files, minus a deny list | none: the Claude credential stays on the host, behind a proxy | the same |
+| Work leaves by | the agent's own writes to the host | the engineer's `git fetch` of the agent's commits | the same |
 
 ## 1. The layers
 
@@ -256,6 +257,48 @@ pins. What changes:
   only in a nested sandbox (root writes `/etc/wmf-sbx/nested`, which the
   agent cannot).
 
+## 6b. `--sudo` sandboxes (`create --sudo`)
+
+The agent has passwordless sudo (`/etc/sudoers.d/90-wmf-sbx-agent`,
+written by the provisioning at every boot; it is in neither the `sudo`
+nor the `docker` group), and its sessions run Claude Code with no nono
+(`session.sudo_launcher_argv`). The tool layer of
+`wiring/settings-merge.json` still applies; its deny rules are not a
+boundary against a root agent. What holds:
+
+- **The VM** (§1, layer 1) is the same: a guest kernel behind QEMU, and
+  the only host files are the read-only mounts of the git dirs. The host
+  enforces read-only (RAN as root, §2).
+- **The network.** `--sudo` needs the host egress proxy (§3): `create`
+  refuses `--sudo` on `vz`, with `--no-egress-proxy`, or without the
+  proxy's host tools, and the template refuses it without the egress CA.
+  QEMU's `restrict=on` network has no route out and no DNS, and the
+  policy (the allowlist with the profile's endpoint rules, a wiki POST
+  gets `403`) is on the host. The nftables rules in the guest are
+  root's to change, and changing them reaches nothing more.
+- **The credential** stays on the host (§4); the session reaches the
+  credential proxy on the guestfwd. Root can read the phantom, as the
+  agent already could, and spend the credential while the session runs.
+
+What changes:
+
+- **The guest is the agent's.** The two users are not a boundary: root
+  can read and write the `engineer`'s files, a `:ro` clone, and Lima's
+  guest agent. Every channel from the guest is hostile on its guest
+  side: the fetch of `wmfsbx://` (git's own parsing on the host, §6),
+  `wmf-sbx cp` out, the output of `limactl shell` and `wmf-sbx exec`,
+  and what the guest agent reports to Lima (its port forwards are
+  ignored on the host side, `portForwards`).
+- **`wmf-sbx exec --engineer`** guards nothing: it says so.
+- **The invariants are diagnostics.** `start`, `resume` and `status`
+  check that the agent can sudo, the marker `/etc/wmf-sbx/sudo`, and
+  the egress ones, but root in the guest can make every guest check
+  pass. The checks that hold are on the host: the disk chain, the
+  proxy's config and the template.
+- **Attack surface on the host**: the same as §6 (QEMU, the 9p server,
+  `limactl shell`, the proxy, the resolver and the credential proxy),
+  now with a root guest kernel on the other side.
+
 ## 7. What the agent can do, plainly
 
 - Read and write its clones; commit; run the tests and the wiki.
@@ -264,8 +307,9 @@ pins. What changes:
 - Spend the Claude credential of the session it runs in, through the
   host's proxy; not read it.
 - Not: read your home directory or working trees, write anything on
-  the host, push, reach the host or the LAN, become root, or use your
-  Gerrit, Phabricator, GitLab or SSH identity.
+  the host, push, reach the host or the LAN, become root (except in the
+  VM of a `--sudo` sandbox, §6b), or use your Gerrit, Phabricator,
+  GitLab or SSH identity.
 
 ## 8. Reference
 

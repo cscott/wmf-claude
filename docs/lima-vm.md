@@ -186,6 +186,86 @@ after a successful build, so a failed update leaves the previous install in
 place. The in-VM copy has no `.git`, so `bin/claude`'s self-update prompt is
 off there; `update` is the only update path.
 
+## Contained mode
+
+For engagements where the agent must have no egress but the model API, and
+must never hold the model credential. The motivating case is Anthropic's
+Cyber Verification Program (CVP), whose agent-containment guidance asks for a
+VM whose only egress is the model API, reached through a local proxy, with
+the credential injected from outside.
+
+What each way of running wmf-claude guarantees:
+
+| | `bin/claude` on the host | Lima VM | Contained Lima VM |
+|---|---|---|---|
+| Around the agent | nono | nono, in a VM | nono, in a VM |
+| The agent's network | the profile's allowlist: Wikimedia sites (mostly read-only), Phabricator, Gerrit, GitLab, docs, the Anthropic API | the same | the model API only, through the host proxy |
+| The VM's network, outside nono | — | the internet; not the host, the LAN or private ranges | the same as a Lima VM: not locked yet (below) |
+| The model credential | on the host (keychain), in reach of the sandbox | in the VM, in reach of the sandbox | on the host only, out of the VM's reach |
+| Host files | nono denies credentials and dotfiles; the working directory is writable | none: code moves as git bundles | none |
+| MCP servers, Docker broker | yes | yes | no |
+| Model requests logged | no | no | each one, on the host |
+
+A normal Lima VM protects the host: an escape from nono lands in a VM
+without your files or keys. A contained VM also protects against
+exfiltration: the agent has no network but the model API, and never sees
+the credential. Locking the VM's own network, so that the same holds for
+anything that escapes nono, is planned (below).
+
+A contained VM is a separate VM, made contained at creation:
+
+```bash
+export WMF_CLAUDE_VM=wmf-claude-contained
+bin/wmf-claude-vm create --contained
+command claude setup-token          # on the host, outside the sandbox: a long-lived token
+bin/wmf-claude-vm login             # paste it; it goes into the host keychain, never the VM
+bin/wmf-claude-vm push ~/src/some-repo
+bin/wmf-claude-vm claude some-repo
+```
+
+How the model is reached:
+
+- **The token stays on the host**, in the login keychain (a 0600 file under
+  `~/.config/wmf-claude/` on a Linux host). Nothing in the VM holds it, VM
+  root included. `login` on a contained VM never runs `claude auth login`.
+- **`bin/wmf-claude-model-proxy` runs on the host** for each session, on a
+  0600 Unix socket in the instance directory. It forwards only
+  `POST /v1/messages` and `POST /v1/messages/count_tokens`, one request per
+  connection with a `Content-Length` body; it drops the client's
+  `Authorization`, `x-api-key`, `Cookie` and `Proxy-*` headers and injects
+  the token; it refuses `mcp_servers`, `container`, every server tool
+  (`web_search`, for example) and every content `source` that is not
+  inline (an image or document by URL): each would make the API reach the
+  internet for the agent. It logs each
+  request, allowed or denied, to
+  `~/.local/state/wmf-claude/model-proxy-<vm>.log`, where nothing in the VM
+  can reach it.
+- **`ssh -R` forwards the socket** into the guest as `127.0.0.1:PORT`
+  (sshd picks a free port) for the session's lifetime.
+- **The session runs in `bin/claude`'s contained mode** (`WMF_CLAUDE_MODEL_PROXY_PORT`,
+  set by `lima/guest-claude.sh`): `profiles/wmf-contained.json`, which is
+  `wmf-engineer` without any egress, the one port open, a placeholder
+  OAuth token, and non-essential traffic off. `--allow-post`, `--minimax`,
+  `--docker`, `--chrome`, `--ide`, `--local-web` and `--local-db` are
+  refused, and so is every nono flag except path grants: a local service,
+  such as a container with egress, could reach the internet for the agent. The VM registers no MCP servers.
+
+The host keeps a record of which VMs are contained VMs
+(`~/.config/wmf-claude/vm-<vm>-contained`); the guest has a root-owned marker,
+`/etc/wmf-claude/contained`. They must agree, or `claude` refuses to start.
+
+Not yet covered, and planned:
+
+- **The VM itself still has egress.** The nono sandbox has none, but a
+  process that escapes it, and the engineer's containers, can still reach
+  the internet. Locking the VM's network, and blocking `limactl` on the
+  host, comes next.
+- `--docker` (containers have egress), transcript and log retention, and a
+  per-engagement scope prompt.
+
+`tests/smoke-contained.sh` checks a running contained VM: the token location, the
+launcher, the proxy's refusals, and the sandbox's lack of egress.
+
 ## Verifying the boundary
 
 The static checks are in `tests/test-lima.sh`. `tests/smoke-lima.sh` runs the

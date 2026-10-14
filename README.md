@@ -149,6 +149,10 @@ bin/wmf-claude-vm review core <branch>      # then checkout or discard it
 model, Docker inside the VM, and the smoke test:
 [`docs/lima-vm.md`](docs/lima-vm.md).
 
+When the agent must have no egress but the model API (for Anthropic CVP work,
+for example), `bin/wmf-claude-vm create --contained` makes a VM whose sessions
+reach only the model API, through a proxy on the host that holds the token: [`docs/lima-vm.md#contained-mode`](docs/lima-vm.md#contained-mode).
+
 ## Bugs and questions
 
 Bugs and feature requests go to the

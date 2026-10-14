@@ -295,6 +295,7 @@ cp "$REPO_ROOT/bin/claude" "$FAKE_REPO/bin/claude"
 # the real network section.
 jq '{security: {signal_mode: "isolated"}, network: .network}' \
   "$REPO_ROOT/profiles/wmf-engineer.json" > "$FAKE_REPO/profiles/wmf-engineer.json"
+cp "$REPO_ROOT/profiles/wmf-contained.json" "$FAKE_REPO/profiles/wmf-contained.json"
 # An IDE terminal sets this, which would put every launch below in IDE mode.
 unset CLAUDE_CODE_SSE_PORT
 mkdir -p "$FAKE_REPO/wiring"
@@ -394,6 +395,59 @@ for os in Linux Darwin; do
 done
 out="$(run_fake_linux_claude --local-web --sandbox-policy landlock --)"
 if grep -q '^NONO_ARG:' <<<"$out" && [[ "$(grep -cx 'NONO_ARG: --sandbox-policy' <<<"$out")" == 1 ]]; then pass "Linux: a user --sandbox-policy passes through once"; else fail "Linux: a user --sandbox-policy was refused or duplicated"; fi
+
+echo "--- bin/claude contained mode (WMF_CLAUDE_MODEL_PROXY_PORT) ---"
+# env -u: a wmf-claude session running these tests exports WMF_CLAUDE_PROFILE.
+run_contained() { env -u WMF_CLAUDE_PROFILE WMF_CLAUDE_MODEL_PROXY_PORT=7319 FAKE_UNAME=Linux FAKE_NONO_VERSION=0.80.0 \
+  PATH="$FAKE_REPO/bin:$PATH" bash "$FAKE_REPO/bin/claude" "$@" 2>&1; }
+out="$(run_contained)"
+if grep -qx "NONO_ARG: $FAKE_REPO/profiles/wmf-contained.json" <<<"$out" && grep -A1 -x 'NONO_ARG: --open-port' <<<"$out" | grep -qx 'NONO_ARG: 7319'; then
+  pass "contained: loads wmf-contained and opens the proxy port"
+else fail "contained: wrong profile or no --open-port 7319"; fi
+if grep -q 'contained (model API via host proxy only)' <<<"$out"; then pass "contained: shows in WMF_CLAUDE_SESSION"; else fail "contained: missing from WMF_CLAUDE_SESSION"; fi
+for args in "--docker=mediawiki" "--minimax" "--allow-post=en.wikipedia.org" "--chrome" "--ide" "--allow-domain example.org --" "--network-profile minimal --" "--sandbox-policy landlock --" "--credential anthropic --" "--allow-endpoint anthropic:GET:/x --" "--local-web" "--local-db" "--open-port 9000 --"; do
+  # shellcheck disable=SC2086
+  out="$(run_contained $args)"
+  if grep -q 'contained mode allows no egress' <<<"$out" && ! grep -q '^NONO_ARG:' <<<"$out"; then pass "contained: refuses $args"
+  else fail "contained: accepted $args"; fi
+done
+out="$(run_contained --read /tmp --allow-file /tmp/x --)"
+if grep -A1 -x 'NONO_ARG: --read' <<<"$out" | grep -qx 'NONO_ARG: /tmp' && ! grep -q 'contained mode allows no egress' <<<"$out"; then
+  pass "contained: path grants pass through"
+else fail "contained: path grants were refused"; fi
+out="$(WMF_CLAUDE_PROFILE=wmf-engineer WMF_CLAUDE_MODEL_PROXY_PORT=7319 run_fake_claude)"
+if grep -q 'contained mode uses the wmf-contained profile' <<<"$out" && ! grep -q '^NONO_ARG:' <<<"$out"; then pass "contained: refuses another WMF_CLAUDE_PROFILE"
+else fail "contained: accepted another WMF_CLAUDE_PROFILE"; fi
+out="$(WMF_CLAUDE_MODEL_PROXY_PORT=abc run_fake_claude)"
+if grep -q 'is not a TCP port' <<<"$out"; then pass "contained: refuses a bad port"; else fail "contained: accepted a bad port"; fi
+out="$(env -u WMF_CLAUDE_PROFILE WMF_CLAUDE_MODEL_PROXY_PORT=7319 FAKE_UNAME=Linux FAKE_NONO_VERSION=0.79.0 PATH="$FAKE_REPO/bin:$PATH" bash "$FAKE_REPO/bin/claude" 2>&1)"
+if grep -q 'cannot open localhost ports' <<<"$out"; then pass "contained: nono 0.79 on Linux refuses (the port cannot work)"; else fail "contained: nono 0.79 on Linux launched"; fi
+# launch-claude.sh sets the session environment inside the sandbox.
+CONTAINED_BIN="$(mktemp -d)"
+printf '#!/bin/sh\nenv\n' > "$CONTAINED_BIN/claude"; chmod +x "$CONTAINED_BIN/claude"
+out="$(WMF_CLAUDE_MODEL_PROXY_PORT=7319 ANTHROPIC_API_KEY=leak PATH="$CONTAINED_BIN:$PATH" bash "$REPO_ROOT/bin/launch-claude.sh" 2>&1)"
+if grep -qx 'ANTHROPIC_BASE_URL=http://127.0.0.1:7319' <<<"$out" && grep -q '^CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-wmf-claude-placeholder$' <<<"$out" \
+   && grep -q '^NO_PROXY=127.0.0.1,localhost' <<<"$out" && grep -qx 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1' <<<"$out" \
+   && ! grep -q '^ANTHROPIC_API_KEY=' <<<"$out"; then
+  pass "contained: launch-claude.sh points Claude at the proxy port, with a placeholder token"
+else fail "contained: launch-claude.sh environment is wrong"; fi
+out="$(PATH="$CONTAINED_BIN:$PATH" bash "$REPO_ROOT/bin/launch-claude.sh" 2>&1)"
+if ! grep -q '^ANTHROPIC_BASE_URL=http://127.0.0.1' <<<"$out"; then pass "launch-claude.sh sets no contained-mode environment outside contained mode"
+else fail "launch-claude.sh set the contained-mode environment outside contained mode"; fi
+rm -rf "$CONTAINED_BIN"
+
+echo "--- profiles/wmf-contained.json: wmf-engineer's protections, no egress ---"
+E="$REPO_ROOT/profiles/wmf-engineer.json"; C="$REPO_ROOT/profiles/wmf-contained.json"
+for key in security filesystem unsafe_macos_seatbelt_rules workdir extends; do
+  if [[ "$(jq -cS ".$key" "$E")" == "$(jq -cS ".$key" "$C")" ]]; then pass "wmf-contained.$key matches wmf-engineer"
+  else fail "wmf-contained.$key differs from wmf-engineer (keep them in sync)"; fi
+done
+if jq -e --slurpfile e "$E" '(.environment.allow_vars - $e[0].environment.allow_vars) == []' "$C" >/dev/null; then
+  pass "wmf-contained env allowlist is a subset of wmf-engineer's"
+else fail "wmf-contained allows env vars that wmf-engineer does not"; fi
+if jq -e '.network == {"allow_domain": ["deny-all.invalid"]}' "$C" >/dev/null; then
+  pass "wmf-contained network: only the deny-all placeholder (an empty allowlist would allow all)"
+else fail "wmf-contained network is not exactly the deny-all placeholder"; fi
 
 echo "--- bin/claude --minimax arg routing ---"
 has_minimax() { grep -qx 'NONO_ARG: --allow-domain' <<<"$1" && grep -qx 'NONO_ARG: api.minimax.io' <<<"$1"; }

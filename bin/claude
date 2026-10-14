@@ -95,6 +95,9 @@ Environment:
   WMF_CLAUDE_NONO_VERBOSE=1   show nono's banner and exit summary (denied paths)
   WMF_DOCKER_HANDSHAKE=PATH   bare --docker: read the broker handshake from PATH
                               (set by the Lima VM launcher, lima/guest-claude.sh)
+  WMF_CLAUDE_MODEL_PROXY_PORT=PORT    contained mode: profile wmf-contained, no egress; the model API
+                              only via the host proxy on 127.0.0.1:PORT (set by
+                              lima/guest-claude.sh in a contained VM, docs/lima-vm.md)
 
 Refuses --capability-elevation, --trust-override, --dangerously-skip-permissions.
 For Claude Code's own flags: claude -- --help
@@ -105,6 +108,22 @@ fi
 # Which profiles/<name>.json to load; defaults to wmf-engineer. Lets additional
 # profiles (e.g. wmf-data-scientist) be selected without changing this script.
 PROFILE="${WMF_CLAUDE_PROFILE:-wmf-engineer}"
+# contained mode: in a contained VM, lima/guest-claude.sh sets WMF_CLAUDE_MODEL_PROXY_PORT to the
+# localhost port where the host-side model API proxy (bin/wmf-claude-model-proxy)
+# is forwarded. The session then runs with profiles/wmf-contained.json, which has no
+# egress of its own, and reaches the model only through that port.
+PROXY_PORT="${WMF_CLAUDE_MODEL_PROXY_PORT:-}"
+if [[ -n "$PROXY_PORT" ]]; then
+  if ! [[ "$PROXY_PORT" =~ ^[0-9]+$ ]] || (( PROXY_PORT < 1 || PROXY_PORT > 65535 )); then
+    echo "error: WMF_CLAUDE_MODEL_PROXY_PORT='$PROXY_PORT' is not a TCP port" >&2
+    exit 1
+  fi
+  if [[ -n "${WMF_CLAUDE_PROFILE:-}" && "$WMF_CLAUDE_PROFILE" != wmf-contained ]]; then
+    echo "error: contained mode uses the wmf-contained profile; unset WMF_CLAUDE_PROFILE" >&2
+    exit 1
+  fi
+  PROFILE=wmf-contained
+fi
 PROFILE_PATH="$SCRIPT_DIR/profiles/$PROFILE.json"
 if [[ ! -f "$PROFILE_PATH" ]]; then
   echo "error: profile '$PROFILE' not found at $PROFILE_PATH" >&2
@@ -228,12 +247,45 @@ for arg in "${NONO_ARGS[@]}"; do
   esac
 done
 
+# contained mode: refuse every flag that adds egress or needs the host. --docker
+# waits for containers without a network (their egress is not limited yet).
+CONTAINED_NONO_ARGS=()
+if [[ -n "$PROXY_PORT" ]]; then
+  contained_refused=""
+  $WANT_MINIMAX && contained_refused+=" --minimax"
+  [[ -n "$ALLOW_POST_HOSTS" ]] && contained_refused+=" --allow-post"
+  $WANT_DOCKER && contained_refused+=" --docker"
+  $WANT_CHROME && contained_refused+=" --chrome"
+  # A local service may itself reach the internet (a container with egress,
+  # a wiki that fetches URLs), so the session gets no localhost port but the
+  # proxy's.
+  $WANT_LOCAL_WEB && contained_refused+=" --local-web"
+  $WANT_LOCAL_DB && contained_refused+=" --local-db"
+  { $WANT_IDE || [[ -n "${CLAUDE_CODE_SSE_PORT:-}" ]]; } && contained_refused+=" --ide"
+  # nono flags: an allowlist of path grants. Anything else (a localhost
+  # port, a credential route, a new nono flag) could add egress.
+  expect_value=false
+  for arg in "${NONO_ARGS[@]}"; do
+    if $expect_value; then expect_value=false; continue; fi
+    case "$arg" in
+      --allow|--read|--read-file|--allow-file) expect_value=true ;;
+      --allow=*|--read=*|--read-file=*|--allow-file=*) ;;
+      *) contained_refused+=" $arg" ;;
+    esac
+  done
+  if [[ -n "$contained_refused" ]]; then
+    echo "error: contained mode allows no egress but the model API; refused:$contained_refused" >&2
+    exit 1
+  fi
+  CONTAINED_NONO_ARGS=(--open-port "$PROXY_PORT")
+fi
+
 # On Linux, nono before 0.80 ignores --open-port in proxy mode, so every
 # localhost connect in the session fails with EACCES. Refuse the flags that
 # open a localhost port, with a clear message. A version that cannot be read
 # is not refused.
 WANTS_LOCALHOST=false
-if $WANT_LOCAL_WEB || $WANT_CHROME || $WANT_LOCAL_DB || $WANT_DOCKER || $WANT_IDE; then
+if $WANT_LOCAL_WEB || $WANT_CHROME || $WANT_LOCAL_DB || $WANT_DOCKER || $WANT_IDE || [[ -n "$PROXY_PORT" ]]; then
   WANTS_LOCALHOST=true
 fi
 for arg in "${NONO_ARGS[@]}"; do
@@ -1192,6 +1244,7 @@ if $WANT_LOCAL_WEB && { ! $WANT_CHROME || [[ -n "$LOCAL_WEB_PORTS" ]]; }; then
   session+=("--local-web${LOCAL_WEB_PORTS:+=$LOCAL_WEB_PORTS}")
 fi
 $WANT_CHROME && session+=(--chrome)
+[[ -n "$PROXY_PORT" ]] && session+=("contained (model API via host proxy only)")
 $WANT_MINIMAX && session+=(--minimax)
 [[ -n "$ALLOW_POST_HOSTS" ]] && session+=("--allow-post=$ALLOW_POST_HOSTS")
 if $WANT_DOCKER; then
@@ -1270,6 +1323,7 @@ NONO_CMD=(nono run --profile "$PROFILE_PATH" "${NONO_OUTPUT_ARGS[@]}" \
   "${PROXY_CA_NONO_ARGS[@]}" \
   "${DOCKER_BROKER_NONO_ARGS[@]}" \
   "${IDE_NONO_ARGS[@]}" \
+  "${CONTAINED_NONO_ARGS[@]}" \
   "${NONO_ARGS[@]}" \
   -- "$SCRIPT_DIR/bin/launch-claude.sh" --plugin-dir "$SCRIPT_DIR" \
   "${SETTINGS_CLAUDE_ARGS[@]}" \

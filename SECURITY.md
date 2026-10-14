@@ -158,6 +158,16 @@ address, Docker is rootful — is in [`docs/lima-vm.md`](docs/lima-vm.md).
 `tests/test-lima.sh` asserts the template's shape; `tests/smoke-lima.sh`
 checks a running VM.
 
+A **contained VM** (`bin/wmf-claude-vm create --contained`) keeps the Claude token on the
+host. `bin/wmf-claude-vm` runs `bin/wmf-claude-model-proxy` on the host for
+each session and forwards it into the guest over SSH; the proxy is the only
+path to the model API. It allows two endpoints, replaces the client's
+credentials with the token, refuses the MCP connector, server tools and URL
+content sources (anything that makes the API fetch for the agent), and logs
+every request on the host. The session runs with `profiles/wmf-contained.json`,
+which has no egress. The VM's own network is not locked yet. See
+[`docs/lima-vm.md#contained-mode`](docs/lima-vm.md#contained-mode).
+
 ## Residual risks
 
 What the sandbox does *not* protect against, even with no flags.
@@ -177,6 +187,7 @@ What the sandbox does *not* protect against, even with no flags.
 ./tests/test-templates.sh   # manifest, frontmatter, permission-rule shapes
 ./tests/test-lima.sh        # Lima VM mode: template shape, pinned installs, launcher invariants
 ./tests/smoke-lima.sh       # Lima VM mode: a running VM (host only, outside nono)
+./tests/smoke-contained.sh        # contained VM: token on the host, proxy, no sandbox egress (host only)
 ```
 
 This file describes intent. To audit what nono actually enforces — including

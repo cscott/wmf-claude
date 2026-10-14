@@ -7,6 +7,7 @@
 #   WMF_CLAUDE_SKIP_UPDATE=1   skip the `claude update` step
 #   WMF_CLAUDE_SKIP_BUILD=1    skip bin/wmf-claude-build (the Lima guest builds
 #                              the tree as its owner and runs this as `agent`)
+#   WMF_CLAUDE_CONTAINED=1           contained VM: register no MCP servers (no egress)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -148,55 +149,66 @@ else
   "$ROOT/bin/wmf-claude-build"
 fi
 
-step "Registering MCP servers"
-echo ""
-dim "    The Phabricator MCP server reads phabricator.wikimedia.org"; echo ""
-dim "    anonymously — no auth token, public data only. Your username is the"; echo ""
-dim "    default subscriber filter, so \"show my tasks\" returns yours."; echo ""
-echo ""
-
-# Recall the previous username so upgrades don't force a retype (from the public
-# `mcp get` output, not ~/.claude.json).
-DEFAULT_PHAB_USER=""
-if EXISTING_MCP=$(claude mcp get phabricator 2>/dev/null); then
-  DEFAULT_PHAB_USER=$(printf '%s\n' "$EXISTING_MCP" \
-    | grep -o 'PHABRICATOR_USERNAME=[^[:space:]"]*' \
-    | head -n1 | cut -d= -f2- || true)
-fi
-if [[ -n "$DEFAULT_PHAB_USER" ]]; then
-  read -rp "    Phabricator username [$DEFAULT_PHAB_USER]: " PHAB_USER
-  PHAB_USER="${PHAB_USER:-$DEFAULT_PHAB_USER}"
+# A contained VM has no egress for the MCP servers (lima/guest-install.sh sets
+# WMF_CLAUDE_CONTAINED there). Remove any earlier registration so that a session
+# does not start servers that cannot connect.
+if [[ -n "${WMF_CLAUDE_CONTAINED:-}" ]]; then
+  step "Registering MCP servers"
+  for server in phabricator gerrit gitlab; do
+    claude mcp remove --scope user "$server" >/dev/null 2>&1 || true
+  done
+  ok "Skipped: a contained VM has no egress for them"
 else
-  read -rp "    Phabricator username: " PHAB_USER
+  step "Registering MCP servers"
+  echo ""
+  dim "    The Phabricator MCP server reads phabricator.wikimedia.org"; echo ""
+  dim "    anonymously — no auth token, public data only. Your username is the"; echo ""
+  dim "    default subscriber filter, so \"show my tasks\" returns yours."; echo ""
+  echo ""
+
+  # Recall the previous username so upgrades don't force a retype (from the public
+  # `mcp get` output, not ~/.claude.json).
+  DEFAULT_PHAB_USER=""
+  if EXISTING_MCP=$(claude mcp get phabricator 2>/dev/null); then
+    DEFAULT_PHAB_USER=$(printf '%s\n' "$EXISTING_MCP" \
+      | grep -o 'PHABRICATOR_USERNAME=[^[:space:]"]*' \
+      | head -n1 | cut -d= -f2- || true)
+  fi
+  if [[ -n "$DEFAULT_PHAB_USER" ]]; then
+    read -rp "    Phabricator username [$DEFAULT_PHAB_USER]: " PHAB_USER
+    PHAB_USER="${PHAB_USER:-$DEFAULT_PHAB_USER}"
+  else
+    read -rp "    Phabricator username: " PHAB_USER
+  fi
+  if [[ -z "$PHAB_USER" ]]; then
+    fail "Phabricator username is required."
+    exit 1
+  fi
+
+  claude mcp remove --scope user phabricator >/dev/null 2>&1 || true
+  claude mcp add --scope user phabricator \
+    -e "PHABRICATOR_USERNAME=$PHAB_USER" \
+    -- node "$ROOT/mcp-phabricator/src/index.js" >/dev/null 2>&1
+  ok "phabricator registered"
+
+  # PYTHONDONTWRITEBYTECODE: don't scatter .pyc through the venv.
+  claude mcp remove --scope user gerrit >/dev/null 2>&1 || true
+  claude mcp add --scope user gerrit \
+    -e "PYTHONPATH=$ROOT/gerrit-mcp-server/" \
+    -e "PYTHONDONTWRITEBYTECODE=1" \
+    -- "$ROOT/gerrit-mcp-server/.venv/bin/python" \
+    "$ROOT/gerrit-mcp-server/gerrit_mcp_server/main.py" stdio >/dev/null 2>&1
+  ok "gerrit registered"
+
+  # Anonymous: no GITLAB_PRIVATE_TOKEN, so the server reads public projects only.
+  claude mcp remove --scope user gitlab >/dev/null 2>&1 || true
+  claude mcp add --scope user gitlab \
+    -e "PYTHONPATH=$ROOT/gitlab-mcp-server/" \
+    -e "PYTHONDONTWRITEBYTECODE=1" \
+    -- "$ROOT/gitlab-mcp-server/.venv/bin/python" \
+    "$ROOT/gitlab-mcp-server/gitlab_mcp_server/main.py" >/dev/null 2>&1
+  ok "gitlab registered"
 fi
-if [[ -z "$PHAB_USER" ]]; then
-  fail "Phabricator username is required."
-  exit 1
-fi
-
-claude mcp remove --scope user phabricator >/dev/null 2>&1 || true
-claude mcp add --scope user phabricator \
-  -e "PHABRICATOR_USERNAME=$PHAB_USER" \
-  -- node "$ROOT/mcp-phabricator/src/index.js" >/dev/null 2>&1
-ok "phabricator registered"
-
-# PYTHONDONTWRITEBYTECODE: don't scatter .pyc through the venv.
-claude mcp remove --scope user gerrit >/dev/null 2>&1 || true
-claude mcp add --scope user gerrit \
-  -e "PYTHONPATH=$ROOT/gerrit-mcp-server/" \
-  -e "PYTHONDONTWRITEBYTECODE=1" \
-  -- "$ROOT/gerrit-mcp-server/.venv/bin/python" \
-  "$ROOT/gerrit-mcp-server/gerrit_mcp_server/main.py" stdio >/dev/null 2>&1
-ok "gerrit registered"
-
-# Anonymous: no GITLAB_PRIVATE_TOKEN, so the server reads public projects only.
-claude mcp remove --scope user gitlab >/dev/null 2>&1 || true
-claude mcp add --scope user gitlab \
-  -e "PYTHONPATH=$ROOT/gitlab-mcp-server/" \
-  -e "PYTHONDONTWRITEBYTECODE=1" \
-  -- "$ROOT/gitlab-mcp-server/.venv/bin/python" \
-  "$ROOT/gitlab-mcp-server/gitlab_mcp_server/main.py" >/dev/null 2>&1
-ok "gitlab registered"
 
 # Write the config bin/claude --chrome passes via --mcp-config. Never registered
 # globally, so the CDP-controlled-browser surface stays off other sessions.

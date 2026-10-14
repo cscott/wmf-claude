@@ -5,9 +5,11 @@
 # Read docs/lima-vm.md first.
 #
 # Usage:
-#   bin/wmf-claude-vm create [limactl create flags]  # create the VM, install wmf-claude into it
+#   bin/wmf-claude-vm create [--contained] [limactl create flags]  # create the VM, install wmf-claude into it
+#                                                    # --contained: a contained VM (model API via the host proxy only)
 #   bin/wmf-claude-vm update                         # refresh the in-VM wmf-claude from this checkout's HEAD
-#   bin/wmf-claude-vm login                          # sign Claude Code in, as the agent (once per VM)
+#   bin/wmf-claude-vm login                          # sign Claude Code in, as the agent (once per VM);
+#                                                    # contained VM: store a setup-token token on the host
 #   bin/wmf-claude-vm push DIR [NAME]                # copy a git repo into the agent's workspace (git bundle)
 #   bin/wmf-claude-vm claude NAME [bin/claude args]  # run sandboxed Claude Code in workspace NAME
 #   bin/wmf-claude-vm pull NAME [DEST]               # fetch the agent's branches into vm/* of the repo NAME was pushed from (or DEST)
@@ -73,6 +75,27 @@ host_rev() { git -C "$ROOT" rev-parse --short=12 HEAD; }
 # Which host repository each workspace came from, so pull, review, checkout
 # and discard need only the workspace name. One "NAME<TAB>PATH" line each, per VM.
 WS_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/wmf-claude/vm-$VM-workspaces"
+
+# contained mode (docs/lima-vm.md#contained-mode). The host record says which VMs are contained
+# VMs; it is the authority, as the guest's marker is in reach of VM root. The
+# token stays on the host: in the login keychain on macOS, else in a 0600 file.
+CONTAINED_RECORD="${XDG_CONFIG_HOME:-$HOME/.config}/wmf-claude/vm-$VM-contained"
+MODEL_TOKEN_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/wmf-claude/vm-$VM-model-token"
+MODEL_KEYCHAIN_SERVICE=wmf-claude-model
+CONTAINED_GUEST_MARKER=/etc/wmf-claude/contained
+is_contained() { [[ -f "$CONTAINED_RECORD" ]]; }
+use_keychain() { [[ "$(uname -s)" == Darwin ]]; }
+contained_check_guest() {
+  guest test -f "$CONTAINED_GUEST_MARKER" \
+    || die "the host records '$VM' as a contained VM, but $CONTAINED_GUEST_MARKER is missing in the guest. Recreate it: bin/wmf-claude-vm reset"
+}
+model_have_token() {
+  if use_keychain; then
+    security find-generic-password -s "$MODEL_KEYCHAIN_SERVICE" -a "$VM" >/dev/null 2>&1
+  else
+    [[ -s "$MODEL_TOKEN_FILE" ]]
+  fi
+}
 ws_save() {  # $1 NAME  $2 host repository (top level)
   [[ "$2" != *$'\t'* && "$2" != *$'\n'* ]] || die "cannot record a path with a tab or newline: $2"
   mkdir -p "$(dirname "$WS_FILE")"
@@ -117,6 +140,16 @@ print_next_steps() {
   echo ""
   echo "  $(green "The VM is ready.") Next:"
   echo ""
+  if is_contained; then
+    echo "    $(bold "command claude setup-token")                    $(dim "on the host, outside the sandbox: a long-lived token")"
+    echo "    $(bold "bin/wmf-claude-vm login")                       $(dim "store it in the host keychain; the VM never holds it")"
+    echo "    $(bold "bin/wmf-claude-vm push ~/src/some-repo")        $(dim "copy a repo in (git bundle)")"
+    echo "    $(bold "bin/wmf-claude-vm claude some-repo")            $(dim "Claude Code there; the model API via the host proxy only")"
+    echo ""
+    echo "  $(dim "See docs/lima-vm.md#contained-mode.")"
+    echo ""
+    return
+  fi
   echo "    $(bold "bin/wmf-claude-vm login")                       $(dim "sign Claude Code in (once)")"
   echo "    $(bold "bin/wmf-claude-vm push ~/src/some-repo")        $(dim "copy a repo in (git bundle)")"
   echo "    $(bold "bin/wmf-claude-vm claude some-repo")            $(dim "run Claude Code there, sandboxed")"
@@ -130,6 +163,14 @@ cmd_create() {
   need limactl git tar
   [[ -f "$TEMPLATE" ]] || die "template missing: $TEMPLATE"
   vm_exists && die "VM '$VM' exists; use update, or reset to recreate it"
+  local contained=false arg
+  local args=()
+  for arg in "$@"; do
+    if [[ "$arg" == --contained ]]; then contained=true; else args+=("$arg"); fi
+  done
+  set -- ${args[@]+"${args[@]}"}
+  # A record left by a contained VM that was deleted outside this script.
+  $contained || rm -f "$CONTAINED_RECORD"
   step "Creating VM $VM"
   dim "    Debian 13, no host mounts, no port forwards. The first boot downloads the"; echo ""
   dim "    image and installs Docker; this takes a few minutes."; echo ""
@@ -149,6 +190,14 @@ cmd_create() {
   limactl stop "$VM" >/dev/null
   limactl start --tty=false "$VM"
   ok "VM is up"
+  if $contained; then
+    # Before cmd_update: lima/guest-install.sh reads the marker.
+    guest sudo install -d -m 0755 /etc/wmf-claude
+    guest sudo sh -c "date -u +%FT%TZ > $CONTAINED_GUEST_MARKER && chmod 0644 $CONTAINED_GUEST_MARKER"
+    mkdir -p "$(dirname "$CONTAINED_RECORD")"
+    date -u +%FT%TZ > "$CONTAINED_RECORD"
+    ok "contained VM: the model API is reachable only through the host proxy"
+  fi
   cmd_update
   print_next_steps
 }
@@ -308,7 +357,66 @@ cmd_claude() {
   valid_name "$name" || die "invalid NAME '$name'"
   shift
   require_running
+  if is_contained; then
+    contained_session "$name" "$@"
+    return
+  fi
   exec limactl shell --workdir "$ENGINEER_HOME" "$VM" -- "$INSTALL/lima/guest-claude.sh" "$name" "$@"
+}
+
+# A contained session: bin/wmf-claude-model-proxy on the host, with the token, on a
+# Unix socket in the instance directory; ssh -R forwards it into the guest as
+# 127.0.0.1:PORT (sshd picks a free port, so sessions can run side by side);
+# lima/guest-claude.sh --model-proxy-port PORT runs bin/claude in contained mode. Both host
+# processes stop with the session. ControlMaster=no keeps the forward off
+# Lima's shared SSH connection.
+contained_session() {
+  local name="$1"; shift
+  need ssh python3
+  contained_check_guest
+  model_have_token || die "no model token for '$VM'; store one: bin/wmf-claude-vm login"
+  local dir sock log errf sshlog port i src
+  dir=$(limactl list --format '{{.Dir}}' "$VM")
+  sock="$dir/sock/model-$$.sock"
+  log="${XDG_STATE_HOME:-$HOME/.local/state}/wmf-claude/model-proxy-$VM.log"
+  MODEL_PROXY_PID=""; MODEL_SSH_PID=""
+  errf=$(mktemp); sshlog=$(mktemp)
+  MODEL_TMP=("$errf" "$sshlog")
+  if use_keychain; then
+    src=(--keychain-service "$MODEL_KEYCHAIN_SERVICE" --keychain-account "$VM")
+  else
+    src=(--token-file "$MODEL_TOKEN_FILE")
+  fi
+  trap 'model_proxy_stop' EXIT
+  trap 'exit 130' INT TERM
+  python3 -B "$ROOT/bin/wmf-claude-model-proxy" --socket "$sock" --log "$log" "${src[@]}" </dev/null 2>"$errf" &
+  MODEL_PROXY_PID=$!
+  # No fixed limit while the proxy lives: a locked keychain asks to unlock.
+  while [[ ! -S "$sock" ]] && kill -0 "$MODEL_PROXY_PID" 2>/dev/null; do sleep 0.1; done
+  [[ -S "$sock" ]] || die "the model proxy did not start: $(cat "$errf")"
+  # -n: stdin from /dev/null, so the forward never reads the session's terminal.
+  ssh -n -F "$dir/ssh.config" -o ControlMaster=no -o ControlPath=none -o ExitOnForwardFailure=yes \
+    -o ServerAliveInterval=15 -o LogLevel=INFO -N -R "127.0.0.1:0:$sock" "lima-$VM" 2>"$sshlog" &
+  MODEL_SSH_PID=$!
+  port=""
+  for i in $(seq 100); do
+    port=$(sed -nE 's/.*Allocated port ([0-9]+).*/\1/p' "$sshlog" | head -n1)
+    [[ -n "$port" ]] && break
+    kill -0 "$MODEL_SSH_PID" 2>/dev/null || break
+    sleep 0.1
+  done
+  [[ -n "$port" ]] || die "the SSH forward to the guest did not start: $(cat "$sshlog")"
+  dim "    model API: host proxy -> guest 127.0.0.1:$port; log: $log"; echo ""
+  limactl shell --workdir "$ENGINEER_HOME" "$VM" -- "$INSTALL/lima/guest-claude.sh" --model-proxy-port "$port" "$name" "$@"
+}
+# The EXIT trap. Stop the processes first: nothing after them may keep them
+# alive. The ${a[@]+...} form: macOS /bin/bash 3.2 with set -u treats an
+# empty array as unset.
+model_proxy_stop() {
+  if [[ -n "${MODEL_SSH_PID:-}" ]]; then kill "$MODEL_SSH_PID" 2>/dev/null || true; fi
+  if [[ -n "${MODEL_PROXY_PID:-}" ]]; then kill "$MODEL_PROXY_PID" 2>/dev/null || true; fi
+  wait 2>/dev/null || true
+  rm -f ${MODEL_TMP[@]+"${MODEL_TMP[@]}"}
 }
 
 # /login cannot run in the sandbox on Linux: Claude Code binds an ephemeral
@@ -321,6 +429,15 @@ cmd_claude() {
 cmd_login() {
   need limactl
   require_running
+  if is_contained; then
+    cmd_login_contained
+    return
+  fi
+  # The reverse of contained_check_guest: without the host record, a contained guest
+  # must still never get a login inside the VM.
+  if guest test -f "$CONTAINED_GUEST_MARKER"; then
+    die "'$VM' is a contained VM, but this host has no record of it ($CONTAINED_RECORD). Recreate it: bin/wmf-claude-vm reset --contained"
+  fi
   guest_agent env -C "$AGENT_HOME" \
     PATH="/usr/local/bin:/usr/bin:/bin:$AGENT_HOME/.local/bin" claude auth login
   guest_agent bash -c '
@@ -332,6 +449,39 @@ cmd_login() {
     mv "$f.new" "$f"
   '
   ok "signed in; sandboxed sessions skip the first-run screens"
+}
+
+# contained VM: the token never enters the VM. Store a long-lived token from
+# `claude setup-token` (run on the host, outside the sandbox) where the host
+# proxy reads it, and mark the first-run onboarding as done in the VM: its
+# connectivity check would need platform.claude.com, which the VM cannot
+# reach. Remove any login that an earlier version left in the VM.
+cmd_login_contained() {
+  contained_check_guest
+  echo "Create a long-lived token on the host, outside the wmf-claude sandbox:"
+  echo "    command claude setup-token"
+  if use_keychain; then
+    echo "Paste it at the keychain prompt (twice). It goes only into your login keychain."
+    security add-generic-password -U -s "$MODEL_KEYCHAIN_SERVICE" -a "$VM" \
+      -l "wmf-claude model token ($VM)" -w || die "could not store the token in the keychain"
+  else
+    local token
+    read -rsp "Token (not echoed): " token; echo ""
+    [[ -n "$token" ]] || die "no token given"
+    mkdir -p "$(dirname "$MODEL_TOKEN_FILE")"
+    (umask 077; printf '%s' "$token" > "$MODEL_TOKEN_FILE")
+  fi
+  guest_agent bash -c '
+    set -e
+    umask 077
+    rm -f "$HOME/.claude/.credentials.json"
+    [ -e "$HOME/.claude.json" ] || echo "{}" > "$HOME/.claude.json"
+    f=$(readlink -f "$HOME/.claude.json")
+    jq ".hasCompletedOnboarding = true" "$f" > "$f.new"
+    chmod 0600 "$f.new"
+    mv "$f.new" "$f"
+  '
+  ok "token stored on the host; the VM holds none"
 }
 
 # shell [--agent] [-- CMD...]: an interactive shell, or one command, in the
@@ -357,6 +507,9 @@ cmd_status() {
     return 0
   fi
   limactl list "$VM"
+  if is_contained; then
+    printf '  mode:             contained (token on the host: %s)\n' "$(model_have_token && echo stored || echo MISSING, run login)"
+  fi
   [[ "$(vm_status)" == Running ]] || return 0
   echo ""
   guest bash -c '
@@ -383,6 +536,15 @@ cmd_delete() {
   read -rp "Type the VM name to confirm: " reply
   [[ "$reply" == "$VM" ]] || die "not confirmed"
   limactl delete --force "$VM"
+  if is_contained; then
+    rm -f "$CONTAINED_RECORD"
+    if use_keychain; then
+      echo "The model token stays in your keychain. To remove it:"
+      echo "    security delete-generic-password -s $MODEL_KEYCHAIN_SERVICE -a $VM"
+    else
+      echo "The model token stays in $MODEL_TOKEN_FILE; delete it if you are done."
+    fi
+  fi
 }
 
 cmd="${1:-help}"
@@ -402,7 +564,9 @@ case "$cmd" in
   start)  need limactl; vm_exists || die "VM '$VM' does not exist; create it: bin/wmf-claude-vm create"; limactl start --tty=false "$VM" ;;
   stop)   need limactl; limactl stop "$VM" ;;
   delete) cmd_delete ;;
-  reset)  cmd_delete; cmd_create "$@" ;;
+  reset)
+    if is_contained; then set -- --contained "$@"; fi
+    cmd_delete; cmd_create "$@" ;;
   -h|--help|help) usage ;;
   *) die "unknown command '$cmd' (see bin/wmf-claude-vm --help)" ;;
 esac

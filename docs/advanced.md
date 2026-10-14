@@ -57,6 +57,7 @@ threat model, so there is no supported way to pass them.
 | `WMF_CLAUDE_SKIP_BUILD` | `bin/wmf-claude-setup` only: skip `bin/wmf-claude-build`. The Lima guest uses it, where the tree belongs to another user |
 | `WMF_DOCKER_HANDSHAKE` | Bare `--docker` (attach mode): read the broker handshake from this path instead of the runtime dir. Set by the Lima guest launcher; unset before the sandbox starts |
 | `WMF_CLAUDE_VM` | `bin/wmf-claude-vm`: the Lima instance name (default `wmf-claude`) |
+| `WMF_CLAUDE_MODEL_PROXY_PORT` | `bin/claude` contained mode: profile `wmf-contained`, no egress, the model API only via the host proxy on this localhost port. Set by `lima/guest-claude.sh` in a contained VM |
 
 ## Startup notices and the status line
 
@@ -99,9 +100,9 @@ It is a separate entry point, not a `bin/claude` flag:
 
 | Command | Effect |
 |---|---|
-| `create [limactl create flags]` | Create the VM from `lima/wmf-claude.yaml`, then `update` |
+| `create [--contained] [limactl create flags]` | Create the VM from `lima/wmf-claude.yaml`, then `update`. `--contained`: a contained VM, whose sessions reach the model API only through the host proxy ([lima-vm.md#contained-mode](lima-vm.md#contained-mode)) |
 | `update` | Upload this checkout's HEAD (submodules included) and reinstall it in the guest |
-| `login` | Sign Claude Code in as `agent` (`claude auth login`, outside nono); once per VM |
+| `login` | Sign Claude Code in as `agent` (`claude auth login`, outside nono); once per VM. On a contained VM: store a `claude setup-token` token in the host keychain instead |
 | `push DIR [NAME]` | Git-bundle a repo into `/home/agent/work/NAME` |
 | `claude NAME [bin/claude args]` | Sandboxed session in that workspace, as the `agent` user. `--docker=SERVICE` starts the broker as the engineer; `--chrome` and `--ide` are refused |
 | `pull NAME [DEST]` | Fetch the agent's branches into `vm/*` (remote-tracking refs) of the repo NAME was pushed from, or of DEST; nothing is checked out |

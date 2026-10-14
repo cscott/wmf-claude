@@ -12,7 +12,8 @@ The rules, which `check_template()` asserts, and the tests too:
   ports to the host), no containerd, no SSH agent or X11 forwarding, no
   rosetta, no extra networks;
 - `plain: false`, because plain mode ignores `mounts` (D10);
-- every mount is read-only, under /run/wmf-sbx/host/, of a git dir, with
+- every mount is read-only, under /run/wmf-sbx/host/, of a git dir or
+  the objects dir of one (what a repository borrows, repos.py), with
   `mountType` 9p on QEMU and virtiofs on vz, never reverse-sshfs; a 9p
   mount has no guest cache;
 - Lima's user (`engineer`) has a uid that is neither the host's (the
@@ -179,6 +180,15 @@ def is_git_dir_name(path):
     return path.endswith(".git") or "/.git/modules/" in path
 
 
+def is_mountable(path):
+    """True for a git dir, or the objects dir of one: the object dirs that a
+    repository borrows from are mounted too (repos.alternates)."""
+    path = path.rstrip("/")
+    if os.path.basename(path) == "objects":
+        path = os.path.dirname(path)
+    return is_git_dir_name(path)
+
+
 def check_template(tmpl, host_uid=None):
     """Raise TemplateError if `tmpl` breaks a rule in the module docstring."""
     def bad(msg):
@@ -206,8 +216,8 @@ def check_template(tmpl, host_uid=None):
             bad(f"mount {loc} must have writable: false")
         if not (m.get("mountPoint") or "").startswith(HOST_MOUNT_ROOT + "/"):
             bad(f"mount {loc} must be under {HOST_MOUNT_ROOT}/")
-        if not is_git_dir_name(loc):
-            bad(f"mount {loc} is not a git dir")
+        if not is_mountable(loc):
+            bad(f"mount {loc} is not a git dir or its objects dir")
         if os.path.abspath(loc) in (home, "/"):
             bad(f"mount {loc} is a home or root directory")
         if tmpl.get("mountType") == "9p" and (m.get("9p") or {}).get("cache") != "none":

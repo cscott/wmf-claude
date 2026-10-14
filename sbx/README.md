@@ -38,7 +38,7 @@ Every command is `wmf-sbx VERB ...`, or `wmf-sbx-VERB ...`:
 | Verb | What it does |
 |---|---|
 | `create` | make a sandbox (builds the golden image first, if needed) |
-| `resume NAME`, `run --name NAME` | start Claude Code in the sandbox |
+| `resume NAME` | start Claude Code in the sandbox |
 | `exec NAME -- CMD` | run a command in the VM as the agent, outside nono |
 | `allow NAME HOST...`, `logs NAME` | let a sandbox behind the egress proxy reach more hosts; show what the proxy allowed and denied ("The egress proxy") |
 | `cp [-r] SRC DST` | copy a file or a directory between the host and a sandbox, or between two sandboxes (`NAME:PATH`); `-r` is optional |
@@ -197,8 +197,9 @@ sandbox). Delete that file to see them all again. Sessions always skip
 
 ## Defaults from settings.yaml
 
-Every option of every command (but `resume`, `run` and `logs`, for now)
-takes its default from `~/.config/wmf-sbx/settings.yaml`. For `--some-flag` of `wmf-sbx VERB`,
+Every option of every command (but `resume`, for now) takes its default
+from `~/.config/wmf-sbx/settings.yaml`; `logs` has no options of its own
+(its arguments are `tail`'s). For `--some-flag` of `wmf-sbx VERB`,
 the key is `VERB.someFlag` (the option's name in camelCase). A
 subcommand nests:
 

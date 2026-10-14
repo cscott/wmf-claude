@@ -4,7 +4,6 @@ contained mode).
 
 Usage:
   wmf-sbx resume NAME [LAUNCHER-FLAG ...] [-- CLAUDE-ARG ...]
-  wmf-sbx run --name NAME [LAUNCHER-FLAG ...] [-- CLAUDE-ARG ...]
 
 Starts the VM if it is stopped and checks the invariants, then runs
 upstream's bin/claude in the VM as the agent, in the primary clone, under
@@ -245,16 +244,6 @@ def stop_proxy(name, proxy, lima=None):
     except lima_mod.LimaError:
         pass   # the next resume removes the rule (no listener)
     proxy.stop()
-
-
-def run_main(argv=None, lima=None, env=None):
-    """`wmf-sbx run --name NAME ...`: the same as `resume NAME ...`."""
-    argv = sys.argv[1:] if argv is None else list(argv)
-    if len(argv) < 2 or argv[0] != "--name":
-        print("usage: wmf-sbx run --name NAME [LAUNCHER-FLAG ...] [-- CLAUDE-ARG ...]",
-              file=sys.stderr)
-        return 2
-    return main([argv[1]] + argv[2:], lima=lima, env=env)
 
 
 if __name__ == "__main__":

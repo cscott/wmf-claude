@@ -17,8 +17,10 @@ sandbox. Delete it, or move its content into `sbx/`, when the port lands.
 - [`PLAN-SUDO.md`](PLAN-SUDO.md) — the plan for track A (`--sudo`),
   egress proxy first: `nono proxy` on the host, owned by the QEMU wrapper.
   The egress proxy is done, and the default on QEMU (`--no-egress-proxy`
-  opts out). `--sudo` (the "A3 steps") RAN on the host to step 5; step 6,
-  `--sudo --nested`, is written and waits for its host run.
+  opts out). `--sudo` (the "A3 steps") RAN on the host, step 6
+  (`--sudo --nested`) and its acceptance test included.
+- [`HANDOFF-TRACK-A.md`](HANDOFF-TRACK-A.md) — where track A stands, what
+  is open, and how to work on it. Start there for track A.
 - [`HANDOFF-LIMA-QCOW2-OVERLAYS.md`](HANDOFF-LIMA-QCOW2-OVERLAYS.md) —
   the evidence and test procedure behind D12 (qcow2 overlays on an
   immutable golden image). Read it before track B.

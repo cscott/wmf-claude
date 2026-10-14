@@ -15,6 +15,14 @@ suspends gc, as with Docker sbx.
 The git dir is `git rev-parse --git-common-dir`, so that a worktree
 mounts the repository's git dir. The clone is on the branch that the
 host checkout is on (detached when the host's HEAD is).
+
+A host repository that borrows objects itself (its own alternates file:
+`git clone --shared` or `--reference`) has those object dirs mounted too,
+and the clone in the VM lists their mounts in its alternates. The case
+that needs it: `create` in a sandbox, of a sandbox's clone, whose
+alternates name /run/wmf-sbx/host/<path>/.git/objects. In the inner VM
+that is the mount of the clone's own git dir, not the host's objects
+(RAN, nested: "unable to read tree").
 """
 
 import os
@@ -57,15 +65,43 @@ def check_vm_path(path):
         raise RepoError(f"{path!r} has a newline or NUL in it")
 
 
+def alternates(gitdir, limit=5):
+    """The object dirs that `gitdir` borrows from, through its alternates
+    file and theirs (as git follows them, up to `limit` deep), each once,
+    as real absolute paths. Missing ones are left out: git ignores them,
+    and so does the clone in the VM."""
+    out = []
+    todo = [(os.path.join(gitdir, "objects"), 0)]
+    while todo:
+        objects, depth = todo.pop(0)
+        try:
+            with open(os.path.join(objects, "info", "alternates"), encoding="utf-8") as f:
+                lines = f.read().splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith("#") or line.startswith('"'):
+                continue
+            alt = os.path.realpath(os.path.join(objects, line))
+            if alt in out or not os.path.isdir(alt) or alt == os.path.realpath(objects):
+                continue
+            out.append(alt)
+            if depth + 1 < limit:
+                todo.append((alt, depth + 1))
+    return out
+
+
 def host_repo(path, run=subprocess.run, predicted=False):
-    """{path, gitDir, branch, sha} of the host checkout at `path`.
+    """{path, gitDir, alternates, branch, sha} of the host checkout at
+    `path` (`alternates`: the object dirs it borrows from).
 
     `predicted` is for a dry run of a repository that is not cloned yet:
     its git dir is then PATH/.git, and the branch and commit are not
     known."""
     check_vm_path(path)
     if predicted:
-        return {"path": path, "gitDir": os.path.join(path, ".git"),
+        return {"path": path, "gitDir": os.path.join(path, ".git"), "alternates": [],
                 "branch": None, "sha": None}
     res = _git(path, ["rev-parse", "--path-format=absolute", "--git-common-dir"], run)
     if res.returncode != 0:
@@ -78,15 +114,18 @@ def host_repo(path, run=subprocess.run, predicted=False):
     sha = res.stdout.strip()
     res = _git(path, ["symbolic-ref", "-q", "--short", "HEAD"], run)
     branch = res.stdout.strip() if res.returncode == 0 else None
-    return {"path": path, "gitDir": gitdir, "branch": branch or None, "sha": sha}
+    return {"path": path, "gitDir": gitdir, "alternates": alternates(gitdir),
+            "branch": branch or None, "sha": sha}
 
 
 def git_dirs(repos):
-    """The git dirs to mount, each once (two worktrees share one)."""
+    """The dirs to mount, each once (two worktrees share one): the git
+    dirs, then the object dirs they borrow from."""
     seen = []
-    for r in repos:
-        if r["gitDir"] not in seen:
-            seen.append(r["gitDir"])
+    for d in ([r["gitDir"] for r in repos]
+              + [a for r in repos for a in r.get("alternates", ())]):
+        if d not in seen:
+            seen.append(d)
     return seen
 
 
@@ -118,7 +157,8 @@ def guest_scripts(repos, upstreams, keep, readonly, refresh=False):
         root.append(_call("prepare", mount, path, owner, *(["refresh"] if refresh else [])))
         clones.setdefault(owner, [lib]).append(_call(
             "refresh_repo" if refresh else "clone_repo", mount, path, r["branch"] or "", r["sha"],
-            upstreams.get(path, ""), "0" if path in keep else "1"))
+            upstreams.get(path, ""), "0" if path in keep else "1",
+            *[template_mod.mount_point(a) for a in r.get("alternates", ())]))
     return "\n".join(root) + "\n", {o: "\n".join(s) + "\n" for o, s in clones.items()}
 
 

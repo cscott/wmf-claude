@@ -83,7 +83,8 @@ cananian, 2026-10-14: small changes, to do once the blind run in a warm sandbox 
 
 - [ ] **A cheap class of clone for CI-only dependencies** (shallow, no host remote, no
   reset): `create` now adds CI's dependencies of the named repos (below), which are full
-  clones like the others.
+  clones like the others. (note from the engineer: declined for now in favor of
+  better reuse of cloned repos)
 - [ ] **Phan's `../../extensions/<Name>`, upstream**: the sandbox links `../../extensions` and
   `../../skins` beside each clone to core's (`setup.link_phan_paths`, where the name is
   free). The real fix is upstream: mediawiki-phan-config's `$IP` (`MW_INSTALL_PATH`, else
@@ -93,6 +94,9 @@ cananian, 2026-10-14: small changes, to do once the blind run in a warm sandbox 
   (cldr, CommunityConfiguration, Gadgets) outside nono (21 s) and under the session's nono
   (19 s), about 2.7 GB at its peak; with the links moved aside, 42 undeclared-symbol
   findings, all in those three.
+  (engineer's note: my recollection is that is already a helper
+  function registered by mediawiki-phan to add an extension as a
+  dependency, but no extension is using it yet.)
 - [ ] **Dependency repos' own `vendor/`** (B4 blind run, 2026-10-14): setup runs `composer
   update` in every repo, so each dependency has a `vendor/` beside core's merged one. CI
   installs one only in the repo under test. Two effects: phan reports `PhanRedefined*`
@@ -521,6 +525,11 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   20 tools; the skills use 5 read-only ones; 15 write under the engineer's credential.
 - [ ] **Upstream topic: Claude Code's hooks tell the agent to offer profile changes after any
   nono denial, even a harmless `ls ~`**.
+- [ ] To investigate: the original 'sbx' port ran the MCP on the *host
+      side* of the sandbox, which allowed MCP services to have safe
+      access to user secrets.  I think we've reverted to *guest side*
+      MCP in the lima port.  If so, we should create a plan to
+      transition back to host-side MCP in both sudo and nono modes.
 
 ### From the design documents
 
@@ -533,7 +542,7 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   How to merge two sandboxes' memories?
 - [ ] **In-VM GitLab access with a token**, if wanted: needs a credential design (nono
   `--credential`, or the host proxy of track A); the old sbx secret-swap design does not
-  apply.
+  apply. (note from the engineer: probably requires host-side MCP, see above.)
 
 - [ ] **Broaden `WMF_CLAUDE_STE=0`** to the other places that ask for ASD-STE100: the
   `write-commit-msg` skill, the `mediawiki-dev` agent, and the `templates/CLAUDE.md` and
@@ -541,6 +550,30 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   (enough for now, cananian 2026-10-11). Skills and agents are static text: they could say
   "unless the SessionStart context says not to", or the hook could add a line that overrides
   them.
+
+### Quality-of-life issues
+- [ ] Streamline the process for copying commits from the sandbox to
+      the host.  Right now on the host we do something like `git
+      safe-reset` (to ensure that there is no unsaved work on the
+      local branch which hasn't been pushed to gerrit, and reset to
+      the master/main branch), followed by `git reset --hard <sandbox
+      name>/<arbitrary branch name>`.  `git-review` is very sensitive
+      to the 'remote' recorded for the current working branch and
+      wants it to point to gerrit (check this assumption against the
+      source).  A naive tracking branch points the remote to the
+      sandbox remote, and so we can't `git review` directly from the
+      tracking branch.  I think ideally we'd want to be able to `git
+      safe-reset <sandbox name>/<branch name>` and have it (a)
+      autocomplete the <branch name> once we'd typed the <sandbox
+      name>, (b) do the safety checks for unsaved work on the branch
+      we're about to leave, (c) leave us in a branch tracking the
+      sandbox remote so that `git pull` will pull down the most recent
+      changes, and (d) still have `git review` work to push the
+      changes to gerrit. We might not be able to have all those things
+      at once, and maybe that behavior isn't compatible with the
+	  present behavior of `git safe-reset` and we should choose a
+	  different command name -- or use something other than `git pull`
+	  to get the latest work from the remote? Needs a plan with options.
 
 ### Upstream work and repo hygiene
 
@@ -597,6 +630,11 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   `sbx/bin/`; tests in `sbx/tests/`; `python3 -m wmf_sbx <cmd>` via `__main__.COMMANDS`.
   PyYAML is the only runtime dependency. Verb lists in `bin/wmf-sbx`, `COMMANDS` and
   `bin/wmf-sbx-<verb>` must agree (a test checks).
+- `git-safe-reset` and `git-review-check` are intended to be
+  used/useful on the host as well as the guest; don't hardcode any
+  assumption that is only true on the sandbox or behavior that only
+  makes sense inside the sandbox unless guarded by a check that
+  $SANDBOX_NAME exists.
 - `setup.py` must stay import-free: it runs in the VM as `python3 - --lima PLAN` from stdin, so
   a change to it needs no new image.
 
@@ -616,6 +654,10 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
 - `realpath` every host path that is mounted, stored or compared, including paths the code
   computes about itself (`_SBX_ROOT`, `kit.SBX_ROOT`, the `bin/` shims' `__file__`).
   `abspath` does not resolve symlinks. Do not realpath a host command (e.g. `node`).
+  The bind-mounts used inside the sandbox are to real paths, and
+  symlinks on the host do not generally exist in the guest, so if we
+  use a path containing symlinks it will probably break/refer to a
+  different file if/when that same path is used inside the guest.
 - Raw-path arguments (`/`, `~`, `./`, `../`, `.`, `..`) skip name resolution.
 - Nested-mount guard: refuse two repo directories where one contains the other
   (`find_nested_mount_conflict`; now guards Lima mount points).

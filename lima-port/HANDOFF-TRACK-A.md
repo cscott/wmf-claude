@@ -82,10 +82,10 @@ So step 6 is done by its own definition. What is left is below.
   `git fetch https://github.com/cscott/wmf-claude.git
   lima-port:refs/remotes/github/lima-port`, then `git switch -C lima-port
   github/lima-port` (never `reset --hard`) and rebase newer commits.
-- **Commit trailer:** `Co-Authored-By: Claude Opus 5.5
+- **Commit trailer:** `Assisted-by: Claude Opus 5.5
   <noreply@anthropic.com>` (the engineer's choice for this repo).
 - **Untracked files in the checkout are the engineer's** (session exports,
-  `egnest-session.txt` holds a token, `proxy.log`, `responses*.txt`,
+  `responses*.txt`,
   `eg*-*.txt`, `sudo-egress-m7-logs/`): never commit them; stage explicit
   paths only.
 - **Names:** `WMF_SBX_*` is host configuration only; `WMF_CLAUDE_*` is for

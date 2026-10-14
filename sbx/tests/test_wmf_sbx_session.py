@@ -354,7 +354,7 @@ class SessionFilesTests(unittest.TestCase):
         self.assertIn("`agent`, under nono, with no sudo.", contained)
         self.assertIn("(`--local-web`)", contained)
         sudo = session.home_claude_md("demo", sudo=True)
-        self.assertIn("`agent`, with passwordless sudo and no nono.", sudo)
+        self.assertIn("`agent`, with passwordless sudo.", sudo)
         self.assertNotIn("under nono", sudo)
         self.assertNotIn("--local-web", sudo)
         self.assertNotIn("@MODE@", sudo + contained)

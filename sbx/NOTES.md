@@ -452,7 +452,7 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   key and its meta, and replace the CA at the warm start (or keep the CA out of the
   snapshot). The restart in `snapshot.freeze` already goes through `vm.start_instance`,
   which starts in egress mode.
-- **`--sudo` (A3 steps 1 to 5, written 2026-10-14; not yet RAN).** `create --sudo` (or
+- **`--sudo` (A3 steps 1 to 5, written and RAN 2026-10-14).** `create --sudo` (or
   `settings.yaml` `session: sudo: true`) needs the egress proxy, and refuses `--nested`
   until step 6. The provisioning writes `/etc/sudoers.d/90-wmf-sbx-agent` (visudo-checked;
   `env_keep` for the proxy variables) and `/etc/wmf-sbx/sudo`, and a contained sandbox
@@ -466,6 +466,14 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   from its sudoers file". The invariants run as the engineer, and `/etc/sudoers.d` is
   0750 root:root, so its `test -e` failed with the file there. The test now runs under
   `sudo -n`, as a check of its own.
+  RAN on the host after that (egsudo, 2026-10-14): `status` all ok; `resume --allow-post`
+  refused (exit 2); in the session, `sudo apt-get install`, `mw-install-browser`, WebFetch
+  (403 at CONNECT for www.kernel.org, then 200 after `wmf-sbx allow`, with no restart); the
+  status line; `sudo nft flush ruleset`, then curl `--noproxy '*'` to an IP failed at once
+  and the proxy still refused a host off its list; a wiki POST got 403 (`endpoint rules
+  denied POST`); `sudo mount -o remount,rw` of a `.git` share, then a write got
+  `Read-only file system` from the host side. Not explained: some 30 denied CONNECTs to
+  `metadata.ftp-master.debian.org` (backoff 1, 2, 4 s) just before the session started.
 
 ### Testing in the sandbox
 

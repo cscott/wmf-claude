@@ -407,7 +407,7 @@ RAN on the engineer's host, after step 4:
 - in a session: `sudo apt-get install` (one small package),
   `mw-install-browser`, the egress bullet and `allow`, a WebFetch (Node
   trusts the egress CA through `NODE_EXTRA_CA_CERTS`), and the status line
-  (`WMF sandbox VM · sudo, no nono · host egress proxy`);
+  (`WMF sandbox VM · sudo · host egress proxy`);
 - as agent root:
   - `sudo nft flush ruleset`, then a direct `140.82.112.3:443`, a host off
     the list and a wiki POST all fail;

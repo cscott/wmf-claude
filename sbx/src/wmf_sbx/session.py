@@ -48,7 +48,7 @@ SUDO_SETTINGS = f"{WMF_CLAUDE_DIR}/wiring/settings-merge.json"
 SUDO_SANDBOX_BACKEND = "lima-sbx-sudo"
 # The status line's session segment (bin/statusline.sh), which bin/claude
 # sets in a contained session.
-SUDO_SESSION = "sudo, no nono · host egress proxy"
+SUDO_SESSION = "sudo · host egress proxy"
 WIKI_PORT = 4000
 KARMA_PORT = 9876
 
@@ -459,7 +459,7 @@ was made for. An undeclared class from an extension that
 # The mode, in ~/.claude/CLAUDE.md and RUNNING_TESTS_MD: contained, then
 # a `sudo` sandbox (no nono, so no --local-web either).
 CONTAINED_MODE = "under nono, with no sudo"
-SUDO_MODE = ("with passwordless sudo and no nono. The VM, and the egress proxy\n"
+SUDO_MODE = ("with passwordless sudo. The VM, and the egress proxy\n"
              "on the engineer's machine, are the boundary")
 LOCAL_WEB_LINE = "reaches local web ports (`--local-web`)."
 SUDO_LOCAL_WEB_LINE = "reaches local web ports."

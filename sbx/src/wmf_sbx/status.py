@@ -40,7 +40,7 @@ def main(argv=None, lima=None, env=None):
     print(f"vm        {vm_mod.instance_name(name)}: {vm_status or 'MISSING'} "
           f"({state.get('vmType') or '?'})")
     print(f"primary   {state.get('primaryDir') or '-'}")
-    print("mode      " + ("sudo: the agent has sudo, and Claude Code runs without nono"
+    print("mode      " + ("sudo: the agent has sudo; the VM and the host egress proxy are the boundary"
                           if state.get("sudo") else
                           "contained: the agent has no sudo, and Claude Code runs under nono"))
     key = state.get("image")

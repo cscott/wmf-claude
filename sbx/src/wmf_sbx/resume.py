@@ -10,7 +10,7 @@ Starts the VM if it is stopped and checks the invariants, then runs
 upstream's bin/claude in the VM as the agent, in the primary clone, under
 nono (session.launcher_argv). LAUNCHER-FLAGs go to bin/claude, e.g.
 `--allow-post=HOST` or `--local-db`; CLAUDE-ARGs go to Claude Code. A
-`create --sudo` sandbox runs Claude Code with no bin/claude and no nono,
+`create --sudo` sandbox starts Claude Code with bin/launch-claude.sh,
 so it takes no LAUNCHER-FLAGs.
 
 Without CLAUDE-ARGs, a sandbox that has had a conversation gets
@@ -109,8 +109,8 @@ def main(argv=None, lima=None, env=None):
         name, state = vm_mod.resolve(target, env=env)
         if state.get("sudo") and launcher_flags:
             print(color_mod.error(
-                f"error: {launcher_flags[0]}: {name} is a sudo sandbox, which runs Claude "
-                f"Code with no bin/claude and no nono, so it takes no launcher flags. Its "
+                f"error: {launcher_flags[0]}: {name} is a sudo sandbox, which starts Claude "
+                f"Code with bin/launch-claude.sh, so it takes no bin/claude flags. Its "
                 f"network is the host egress proxy's: `wmf-sbx allow {name} HOST` adds a "
                 f"host; local ports need no flag."), file=sys.stderr)
             return 2

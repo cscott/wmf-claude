@@ -291,7 +291,7 @@ session runs. The proxy lands before the trusted-VM session.
 
 ## A3 `--sudo` end to end (after A2)
 
-- `create --sudo` / `--no-sudo`, `repos.yaml` `agentSudo:`; recorded in
+- `create --sudo` / `--no-sudo`, `settings.yaml` `session: sudo:`; recorded in
   state; `exec`, `status`, `resume` read it.
 - The image grants nothing new; provisioning adds `agent` to `sudo`
   NOPASSWD only in a `sudo` sandbox, with a marker like `nested`'s, so
@@ -343,7 +343,7 @@ The egress proxy is now the default on QEMU and RAN end to end (NOTES), so
 In order, each a commit with its unit tests:
 
 1. **create and state.** `--sudo/--no-sudo` (BooleanOptionalAction, default
-   None) takes its default from `settings.yaml` `agentSudo:` (a bool; the
+   None) takes its default from `settings.yaml` `session: sudo:` (a bool; the
    built-in default is false, D9). `--sudo` needs the egress proxy:
    `egress_choice` treats it as an explicit `--egress-proxy` (vz and missing
    host tools are errors), and `--sudo --no-egress-proxy` is an error. Until
@@ -390,7 +390,7 @@ In order, each a commit with its unit tests:
    passwordless sudo, no nono", no `--local-web`). The new backend joins
    test-templates.sh's backend checks.
 5. **Docs.**
-   - sbx/README.md: `create --sudo`, `agentSudo:`, the two modes.
+   - sbx/README.md: `create --sudo`, `session: sudo:`, the two modes.
    - sbx/SECURITY.md: the mode column and §6 residuals. The guest side of
      every channel is hostile: `git-remote-wmfsbx` fetches, `cp` out,
      `limactl shell` output, the Lima guest agent, the phantom credential.

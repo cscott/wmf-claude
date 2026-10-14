@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""List the sandboxes that wmf-sbx owns, with their VM status and image.
+"""List the sandboxes that wmf-sbx owns, with their VM status and image
+(and `sudo` for a `create --sudo` sandbox).
 
 Usage:
   wmf-sbx ls
@@ -29,8 +30,8 @@ def main(argv=None, lima=None, env=None):
         if state.get("backend") != "lima":
             continue
         st = instances.get(vm_mod.PREFIX + name, "MISSING")
-        print(f"{name:24} {st:10} image {state.get('image') or '?'}  "
-              f"{state.get('primaryDir') or ''}")
+        print(f"{name:24} {st:10} {'sudo' if state.get('sudo') else '':4} "
+              f"image {state.get('image') or '?'}  {state.get('primaryDir') or ''}")
     return 0
 
 

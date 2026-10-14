@@ -420,7 +420,9 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   the agent refused to work around the 403 by itself. example.com: denied by the egress
   proxy ("not in the allowlist"); after `allow`, "DNS resolution returned no addresses",
   as for example.org in item 7: the engineer's resolver has no example.com. Test `allow`
-  with www.kernel.org. Not yet: the bullet in a session (a new image), and a create with
+  with www.kernel.org. On the host, `curl -x` to the proxies: `allow egdef pypi.org`, then
+  the old proxy's port still gave 403 (it keeps the old list, for open connections) and
+  the new port 200. Not yet: the bullet in a session (a new image), and a create with
   core (composer, npm, the wiki install) on the default path.
 - **`--nested` behind the egress proxy** (RAN on the engineer's host, 2026-10-13: `create
   --egress-proxy --nested` passes every invariant and finishes, after 388cbb3 and d6b8628;

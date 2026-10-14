@@ -13,7 +13,8 @@ also gets $SANDBOX_NAME, as a session does (bin/git-review-check).
 `--engineer` runs it as Lima's user instead, which has sudo. It refuses
 a working directory that the agent can write (its home, /tmp): the
 engineer's tools must not pick up a file the agent put there, such as a
-git hook (HANDOFF-LIMA.md §4).
+git hook (HANDOFF-LIMA.md §4). In a `create --sudo` sandbox the agent
+has sudo too, so that guards nothing; it says so.
 
 Usage:
   wmf-sbx exec [--engineer] [-w DIR] NAME -- CMD [ARGS...]
@@ -57,6 +58,11 @@ def main(argv=None, lima=None, env=None):
             if agent_writable(workdir):
                 raise vm_mod.VmError(
                     f"--engineer refuses {workdir}: the agent can write there")
+            if state.get("sudo"):
+                print(color_mod.warning(
+                    f"note: {name} is a sudo sandbox: the agent has root in the VM too, "
+                    f"so it can change anything that this command runs or reads"),
+                    file=sys.stderr)
             argv_in = cmd
         elif args.workdir:
             argv_in = vm_mod.agent_argv(cmd, workdir=args.workdir, env=agent_env)

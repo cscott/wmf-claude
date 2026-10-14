@@ -3,14 +3,16 @@
 One command makes a disposable MediaWiki development sandbox: a Lima VM
 with clones of the repos you name and their MediaWiki dependencies, a
 working wiki, and the wmf-claude plugin. Claude Code runs in it as an
-unprivileged user under nono. The host gets a git remote to fetch the
-agent's work.
+unprivileged user under nono, or, with `create --sudo`, as a user with
+sudo and no nono, behind the host's egress proxy ("Two modes"). The host
+gets a git remote to fetch the agent's work.
 
 - `SECURITY.md`: what the agent can and cannot reach.
 - `NOTES.md`: open to-do items, and the decisions and findings that the
   code depends on.
 - `../lima-port/HANDOFF-LIMA.md`: the port's decisions (D1 to D12) and
-  the work that remains (track A, `--sudo`; track B, copy-on-write disks).
+  the work that remains (track A, `--sudo --nested`; track B,
+  copy-on-write disks). `../lima-port/PLAN-SUDO.md`: the `--sudo` steps.
 
 ## Install
 
@@ -147,7 +149,11 @@ session:
                                       # dark-ansi, light-ansi
   ste: false                          # leave out the ASD-STE100 rule for comments and
                                       # commit messages (default: true)
+  sudo: true                          # `create --sudo` by default (--no-sudo overrides;
+                                      # default: false)
 ```
+
+`sudo` is `create`'s, not Claude Code's: see "Two modes".
 
 Two more sections of the file apply to every new sandbox:
 
@@ -381,6 +387,10 @@ wmf-sbx create PRIMARY[:ro] [EXTRA[:ro] ...] [options]
 - `--no-egress-proxy`: the VM is not behind the host's egress proxy
   ("The egress proxy"). `--egress-proxy` makes `create` fail, not warn,
   when the proxy cannot be used.
+- `--sudo`: the agent has passwordless sudo, and Claude Code runs with no
+  nono ("Two modes"). It needs the egress proxy, so QEMU, and cannot be
+  combined with `--no-egress-proxy` or (for now) `--nested`. `--no-sudo`
+  overrides `session: sudo: true` in `settings.yaml`.
 - `--nested`: **lower security; only for work on wmf-claude or wmf-sbx
   itself.** Do not use it for other work. nono gives the agent more in a
   nested sandbox: `/dev/kvm`, the `kvm` group, Lima's sockets, more
@@ -440,6 +450,29 @@ nftables in the VM, as before), when:
 `--no-egress-proxy` asks for that on purpose, with no warning; an
 explicit `--egress-proxy` turns the warning into an error. A sandbox
 behind the proxy has no warm snapshot yet ("Warm snapshots").
+
+## Two modes
+
+**Contained** (the default): the agent has no sudo, and each session
+runs upstream's `bin/claude`, so nono, inside the VM. `resume` passes
+launcher flags such as `--allow-post=HOST` to `bin/claude`.
+
+**`--sudo`**: the agent has passwordless sudo (a file in
+`/etc/sudoers.d`; it is in neither the `sudo` nor the `docker` group),
+and each session runs Claude Code with the wmf-claude plugin and the
+tool layer of `wiring/settings-merge.json`, but with no nono. The agent
+can `sudo apt-get install` what a task needs, through the proxy. The
+boundary is the VM and the host's egress proxy, which root in the guest
+cannot change; the proxy still applies the profile's endpoint rules (a
+wiki POST gets `403`). So `--sudo` needs the proxy, and `create` fails
+rather than fall back to the guest's own rules. A `--sudo` sandbox takes
+no launcher flags (`wmf-sbx allow` adds a host), and `status` and `ls`
+show its mode. The invariants still run at every start, but root in the
+guest can make them pass; `SECURITY.md` §6b says what that changes.
+
+```bash
+wmf-sbx create --sudo ~/src/Cite
+```
 
 ## Working with Gerrit
 
@@ -536,7 +569,7 @@ golden image cache").
 sandbox is a Lima instance `wmf-sbx-NAME` whose disk is a copy-on-write
 overlay on the golden image on QEMU (`disk.py`), and a copy of it on
 `vz`. It has two users: `engineer` (Lima's user, with sudo, drives
-setup) and `agent` (no sudo, the host uid). Provisioning at every boot
+setup) and `agent` (no sudo unless `--sudo`, the host uid). Provisioning at every boot
 loads an nftables host block (no host, LAN or link-local addresses; the
 agent gets TCP 80 and 443 only, off the VM), narrows the ephemeral port
 range (see `SECURITY.md`), and turns TIOCSTI off. `vm.INVARIANTS` are

@@ -18,6 +18,11 @@
 #   wmf-sbx image build|ls|rm|prune     the golden image
 #   wmf-sbx login                       sign in to Claude once, for every sandbox
 #   wmf-sbx resolve | ls-remotes        repo resolution, host remotes
+#
+# Every option (but resume's, run's and logs') takes its default from
+# ~/.config/wmf-sbx/settings.yaml (VERB: {someFlag: ...}; README, "Defaults
+# from settings.yaml"); --no-settings after the verb ignores them, and
+# --config PATH reads another file.
 set -euo pipefail
 # Kept from the Docker backend: an SSH agent socket has no business in
 # any command this starts.

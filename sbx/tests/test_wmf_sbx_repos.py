@@ -693,6 +693,18 @@ class CreateFlowTests(Env):
         calls = self.clone_calls(repos=[other])
         self.assertEqual([c[5] for c in calls], ["0", "0"])
 
+    def test_a_borrowing_repo_mounts_what_it_borrows(self):
+        # RAN (nested): the template check refused the objects dir mount.
+        base = os.path.join(self.tmp, "src", "base")
+        git_repo(base)
+        borrower = os.path.join(self.tmp, "src", "borrower")
+        subprocess.run(["git", "clone", "-q", "--shared", base, borrower], check=True,
+                       capture_output=True)
+        git(borrower, "remote", "set-url", "origin", "https://gerrit.wikimedia.org/r/b")
+        calls = self.clone_calls(repos=[borrower])
+        borrowed = template.mount_point(os.path.join(base, ".git", "objects"))
+        self.assertEqual({c[1]: c[6:] for c in calls}, {self.repo: [], borrower: [borrowed]})
+
     def test_a_failed_clone_fails_the_create(self):
         class Broken(FakeLima):
             def call(self, *args, **kw):

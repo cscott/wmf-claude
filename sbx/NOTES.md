@@ -148,8 +148,10 @@ Development scaffolding:
   own git dir, so the host's objects were not there. Earlier inner sandboxes cloned
   `wmf-sbx-src` repos, which borrow nothing. Now any repo's alternates (also a host
   `--reference` clone) are mounted too, and the clone in the VM lists their mounts
-  (`repos.alternates`, `clone_repo`'s extra arguments). Not run yet in a nested VM: there
-  the alternate's mount is a re-export of the outer VM's 9p mount.
+  (`repos.alternates`, `clone_repo`'s extra arguments; `template.is_mountable` lets the
+  objects dir through the check). RAN in egnest (egress proxy): the inner clone has both
+  alternates, status and log read every object, `git fsck --connectivity-only` exits 0.
+  QEMU's 9p shares on the outer VM's own 9p mount of the host's objects without trouble.
 - nono's CA: `$SSL_CERT_FILE` is the system bundle plus nono's CA (151 certificates);
   `image.session_ca_file` keeps the ones the system bundle lacks (compared as DER), at a
   fixed path (`~/.cache/wmf-sbx/session-ca.pem`), so a resume in a later session refreshes

@@ -77,7 +77,7 @@ turns the second one off.
 ## The helper: `cli.py`
 
 One new module, `src/wmf_sbx/cli.py`. Every command builds its parser
-in a `build_parser()` and calls:
+in its `main` and calls:
 
 ```python
 def parse_args(parser, argv, section, config_default=resolve.DEFAULT_CONFIG):
@@ -198,7 +198,8 @@ Each step is one commit with the sbx suite green.
    `--no-settings`, `session.settings`, and the caveat-emptor
    sentence. `bin/wmf-sbx` usage: one line for `--no-settings`.
 6. **The test that keeps it uniform.** It walks every command in
-   `__main__.COMMANDS` through its `build_parser()` and asserts: no
+   `__main__.COMMANDS` through the parser its `main` hands to
+   `cli.parse_args` (the test patches `parse_args` to catch it) and asserts: no
    `store_true` action is left; every option except `--config` and
    `--settings` maps to a key; and two options never map to one key. A
    second test gives each command's parser a settings file whose section

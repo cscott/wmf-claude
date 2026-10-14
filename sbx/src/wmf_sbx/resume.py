@@ -3,17 +3,25 @@
 contained mode).
 
 Usage:
-  wmf-sbx resume NAME [LAUNCHER-FLAG ...] [-- CLAUDE-ARG ...]
+  wmf-sbx resume [--[no-]continue] NAME [-- [LAUNCHER-FLAG ... --] CLAUDE-ARG ...]
 
 Starts the VM if it is stopped and checks the invariants, then runs
 upstream's bin/claude in the VM as the agent, in the primary clone, under
-nono (session.launcher_argv). LAUNCHER-FLAGs go to bin/claude, e.g.
-`--allow-post=HOST` or `--local-db`; CLAUDE-ARGs go to Claude Code. A
-`create --sudo` sandbox runs Claude Code with no bin/claude and no nono,
-so it takes no LAUNCHER-FLAGs.
+nono (session.launcher_argv). After the first `--`, the words are
+bin/claude's, by its own rule: those before a second `--` are its flags
+(LAUNCHER-FLAGs, e.g. `--allow-post=HOST`, `--local-db` or
+`--allow PATH`), and the rest are Claude Code's. Without a second `--`,
+they are all Claude Code's: `wmf-sbx resume NAME -- --allow-post=HOST --`
+continues the conversation with one more grant. A `create --sudo`
+sandbox runs Claude Code with no bin/claude and no nono, so it takes no
+LAUNCHER-FLAGs.
 
-Without CLAUDE-ARGs, a sandbox that has had a conversation gets
-`--continue`.
+`--continue` passes Claude Code `--continue`, and `--no-continue` starts
+a new conversation. With neither, a sandbox that has had a conversation
+gets `--continue` when there are no CLAUDE-ARGs. The sandbox has had one
+once an interactive session in it has exited cleanly; the first session
+that does not (a closed terminal, a host that slept) leaves that unknown,
+and `--continue` then picks it up.
 
 The credential stays on the host (track L, credproxy.py): $ANTHROPIC_API_KEY,
 $CLAUDE_CODE_OAUTH_TOKEN, the file ~/.config/wmf-sbx/claude-oauth-token
@@ -24,9 +32,11 @@ credential, Claude Code asks you to log in, and that login stays in this
 VM.
 """
 
+import argparse
 import os
 import sys
 
+from . import cli as cli_mod
 from . import color as color_mod
 from . import credproxy as credproxy_mod
 from . import egress as egress_mod
@@ -53,12 +63,14 @@ AGENT_SUBCOMMANDS = frozenset(
 )
 
 
-def split_args(argv):
-    """(ours, Claude's or None). Everything after `--` is Claude Code's."""
-    if "--" in argv:
-        i = argv.index("--")
-        return list(argv[:i]), list(argv[i + 1:])
-    return list(argv), None
+def split_launcher(rest):
+    """(bin/claude's flags, Claude Code's args), from the words after the
+    first `--`, by bin/claude's own rule: its flags are the ones before a
+    `--`, and without one every word is Claude Code's."""
+    if "--" in rest:
+        i = rest.index("--")
+        return list(rest[:i]), list(rest[i + 1:])
+    return [], list(rest)
 
 
 def starts_a_conversation(claude_args):
@@ -74,10 +86,17 @@ def starts_a_conversation(claude_args):
     return not (args and args[0] in AGENT_SUBCOMMANDS)
 
 
-def default_claude_args(attached):
-    """The tail when the caller gave none: --continue once a conversation
-    exists."""
-    return ["--continue"] if attached else []
+def claude_args_for(cont, claude_args, attached):
+    """Claude Code's args. `cont` is --continue (True), --no-continue
+    (False), or neither (None): then --continue once a conversation
+    exists, if the caller gave no args. An arg that already picks the
+    conversation (`-c`, `--resume ID`) gets no second one."""
+    claude_args = list(claude_args)
+    if cont is None:
+        cont = attached and not claude_args
+    if cont and not any(a in SESSION_FLAGS or a.startswith("--resume=") for a in claude_args):
+        return ["--continue"] + claude_args
+    return claude_args
 
 
 def set_attached(name, env=None):
@@ -91,21 +110,37 @@ def set_attached(name, env=None):
         print(f"warning: could not record the attach state ({e}).", file=sys.stderr)
 
 
+def build_parser():
+    parser = argparse.ArgumentParser(
+        prog="wmf-sbx resume", description="Start a Claude Code session in a sandbox.",
+        epilog="After the first --, the words are bin/claude's: the ones before a second "
+               "-- are its flags (--allow-post=HOST, --local-db, --allow PATH, ...), the "
+               "rest are Claude Code's. With no second --, they are all Claude Code's: "
+               "`wmf-sbx resume NAME -- --allow-post=HOST --` continues the conversation "
+               "with one more grant.")
+    parser.add_argument("--continue", dest="continue", action=argparse.BooleanOptionalAction,
+                        default=None,
+                        help="continue the last conversation, or (--no-continue) start a new "
+                             "one (default: continue once the sandbox has had one, when no "
+                             "CLAUDE-ARGs are given)")
+    parser.add_argument("name", help="the sandbox (or a path shortcut such as .)")
+    parser.add_argument("rest", nargs=argparse.REMAINDER, metavar="ARGS",
+                        help="[LAUNCHER-FLAG ... --] CLAUDE-ARG ...")
+    return parser
+
+
 def main(argv=None, lima=None, env=None):
-    argv = sys.argv[1:] if argv is None else list(argv)
-    ours, claude_args = split_args(argv)
-    if not ours or ours[0] in ("-h", "--help"):
-        print(__doc__.split("Usage:", 1)[1].split("\n\n", 1)[0].rstrip(), file=sys.stderr)
-        return 0 if ours else 2
-    target, launcher_flags = ours[0], ours[1:]
-    bad = [f for f in launcher_flags if not f.startswith("--")]
-    if bad:
-        print(color_mod.error(f"error: {bad[0]!r}: launcher flags start with --; put "
-                              f"Claude Code's arguments after --"), file=sys.stderr)
-        return 2
+    parser = build_parser()
+    args, _config = cli_mod.parse_args(parser, argv, "resume")
+    launcher_flags, claude_args = split_launcher(args.rest)
+    # resume's --local-web= opens the wiki's and the browsers' ports, and
+    # bin/claude keeps the last --local-web= it is given.
+    if any(f.startswith("--local-web=") for f in launcher_flags):
+        parser.error(f"--local-web=PORTS would replace the ports a session already has "
+                     f"({session_mod.local_ports()}); `--open-port=PORT` opens one more")
     lima = lima or lima_mod.Limactl()
     try:
-        name, state = vm_mod.resolve(target, env=env)
+        name, state = vm_mod.resolve(args.name, env=env)
         if state.get("sudo") and launcher_flags:
             print(color_mod.error(
                 f"error: {launcher_flags[0]}: {name} is a sudo sandbox, which runs Claude "
@@ -134,8 +169,8 @@ def main(argv=None, lima=None, env=None):
             f"$CLAUDE_CODE_OAUTH_TOKEN, {credproxy_mod.token_file(env)}, or a Claude Code "
             "login). Run `wmf-sbx login` once for all sandboxes; for now, Claude Code will "
             "ask you to log in, in this VM only."), file=sys.stderr)
-    if claude_args is None:
-        claude_args = default_claude_args(state.get("attached"))
+    claude_args = claude_args_for(getattr(args, "continue"), claude_args,
+                                  state.get("attached"))
     proxy = None
     try:
         cred_path = None

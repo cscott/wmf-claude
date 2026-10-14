@@ -626,9 +626,27 @@ class ProxyRefreshTests(unittest.TestCase):
 class ResumeArgsTests(unittest.TestCase):
 
     def test_split(self):
-        self.assertEqual(resume.split_args(["x", "--local-db", "--", "-p", "hi"]),
-                         (["x", "--local-db"], ["-p", "hi"]))
-        self.assertEqual(resume.split_args(["x"]), (["x"], None))
+        self.assertEqual(resume.split_launcher(["--local-db", "--", "-p", "hi"]),
+                         (["--local-db"], ["-p", "hi"]))
+        self.assertEqual(resume.split_launcher(["--local-db", "--"]), (["--local-db"], []))
+        self.assertEqual(resume.split_launcher(["-p", "hi"]), ([], ["-p", "hi"]))
+        self.assertEqual(resume.split_launcher([]), ([], []))
+
+    def test_continue(self):
+        f = resume.claude_args_for
+        # neither: only with no args, once a conversation exists
+        self.assertEqual(f(None, [], False), [])
+        self.assertEqual(f(None, [], True), ["--continue"])
+        self.assertEqual(f(None, ["--model", "haiku"], True), ["--model", "haiku"])
+        # --continue: always, but never twice
+        self.assertEqual(f(True, [], False), ["--continue"])
+        self.assertEqual(f(True, ["--model", "haiku"], False),
+                         ["--continue", "--model", "haiku"])
+        for picked in (["-c"], ["--resume", "x"], ["--resume=x"], ["-r"]):
+            self.assertEqual(f(True, picked, True), picked)
+        # --no-continue: never
+        self.assertEqual(f(False, [], True), [])
+        self.assertEqual(f(False, ["-c"], True), ["-c"])
 
     def test_conversations(self):
         self.assertTrue(resume.starts_a_conversation([]))
@@ -637,8 +655,6 @@ class ResumeArgsTests(unittest.TestCase):
         self.assertFalse(resume.starts_a_conversation(["--print", "hi"]))
         self.assertFalse(resume.starts_a_conversation(["mcp", "list"]))
         self.assertFalse(resume.starts_a_conversation(["--version"]))
-        self.assertEqual(resume.default_claude_args(False), [])
-        self.assertEqual(resume.default_claude_args(True), ["--continue"])
 
 
 class ResumeMainTests(Env):
@@ -735,8 +751,60 @@ class ResumeMainTests(Env):
         self.assertEqual(self.launches(), [])
         self.assertIn("security invariant", self.err)
 
-    def test_a_non_flag_before_the_separator_is_refused(self):
-        self.assertEqual(self.resume("hello"), 2)
+    def test_a_word_before_the_separator_is_refused(self):
+        for argv in (["hello"], ["--allow-post=x"]):
+            with self.subTest(argv=argv), self.assertRaises(SystemExit) as cm:
+                self.resume(*argv)
+            self.assertEqual(cm.exception.code, 2)
+        self.assertEqual(self.lima.calls, [])
+
+    def launcher_and_claude(self):
+        launch = self.launches()[-1]
+        i = launch.index(session.LAUNCHER)
+        j = launch.index("--", i)
+        return launch[i:j], launch[j + 1:]
+
+    def test_launcher_flags_go_before_a_second_separator(self):
+        self.resume()
+        self.assertEqual(self.resume("--", "--allow", "/srv/x", "--allow-post=a.org", "--"), 0,
+                         self.err)
+        launcher, claude = self.launcher_and_claude()
+        self.assertEqual(launcher[-3:], ("--allow", "/srv/x", "--allow-post=a.org"))
+        self.assertEqual(claude, ("--continue",))
+        # without the second --, every word is Claude Code's
+        self.resume("--", "--model", "haiku")
+        launcher, claude = self.launcher_and_claude()
+        self.assertNotIn("--model", launcher)
+        self.assertEqual(claude, ("--model", "haiku"))
+
+    def test_continue_and_no_continue(self):
+        self.assertEqual(self.resume_opts(["--continue"]), 0, self.err)
+        self.assertEqual(self.launcher_and_claude()[1], ("--continue",))
+        self.assertTrue(state_mod.load("demo", self.env)["attached"])
+        self.resume_opts(["--no-continue"])
+        self.assertEqual(self.launcher_and_claude()[1], ())
+        self.resume_opts(["--continue"], "--", "-c")
+        self.assertEqual(self.launcher_and_claude()[1], ("-c",))
+
+    def test_settings_resume_continue(self):
+        settings = os.path.join(self.tmp, "settings.yaml")
+        with open(settings, "w", encoding="utf-8") as f:
+            f.write("resume:\n  continue: false\n")
+        self.resume()
+        self.resume_opts(["--config", settings])
+        self.assertEqual(self.launcher_and_claude()[1], ())
+        self.resume_opts(["--config", settings, "--continue"])
+        self.assertEqual(self.launcher_and_claude()[1], ("--continue",))
+
+    def resume_opts(self, opts, *argv):
+        return self.quiet(resume.main, list(opts) + ["demo"] + list(argv), lima=self.lima,
+                          env=self.env)
+
+    def test_local_web_ports_are_refused(self):
+        with self.assertRaises(SystemExit) as cm:
+            self.resume("--", "--local-web=8080", "--")
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn("--open-port=PORT", self.err)
         self.assertEqual(self.lima.calls, [])
 
     def test_info_commands_do_not_mark_it_attached(self):
@@ -838,7 +906,7 @@ class ResumeMainTests(Env):
         self.assertEqual(launch[-2:], ("-p", "hi"))
 
     def test_a_sudo_sandbox_refuses_launcher_flags(self):
-        self.assertEqual(self.sudo_resume("--allow-post=en.wikipedia.org"), 2)
+        self.assertEqual(self.sudo_resume("--", "--allow-post=en.wikipedia.org", "--"), 2)
         self.assertIn("sudo sandbox", self.err)
         self.assertIn("wmf-sbx allow demo HOST", self.err)
         self.assertFalse([s for s in self.lima.shells() if session.SUDO_LAUNCHER in s])

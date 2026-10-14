@@ -198,9 +198,10 @@ sandbox). Delete that file to see them all again. Sessions always skip
 
 ## Defaults from settings.yaml
 
-Every option of every command (but `resume`, for now) takes its default
-from `~/.config/wmf-sbx/settings.yaml`; `logs` has no options of its own
-(its arguments are `tail`'s). For `--some-flag` of `wmf-sbx VERB`,
+Every option of every command takes its default from
+`~/.config/wmf-sbx/settings.yaml`; `logs` has no options of its own (its
+arguments are `tail`'s), and `resume`'s launcher flags and Claude Code
+arguments, after its `--`, take none. For `--some-flag` of `wmf-sbx VERB`,
 the key is `VERB.someFlag` (the option's name in camelCase). A
 subcommand nests:
 
@@ -507,8 +508,17 @@ behind the proxy has no warm snapshot yet ("Warm snapshots").
 ## Two modes
 
 **Contained** (the default): the agent has no sudo, and each session
-runs upstream's `bin/claude`, so nono, inside the VM. `resume` passes
-launcher flags such as `--allow-post=HOST` to `bin/claude`.
+runs upstream's `bin/claude`, so nono, inside the VM. After `resume`'s
+`--`, the words are `bin/claude`'s, by its own rule: its flags before a
+second `--`, Claude Code's after it. So
+`wmf-sbx resume sbx-cite -- --allow-post=HOST --` continues the
+conversation with one more grant, and `-- -p "..."` passes Claude Code
+its arguments. Without arguments for Claude Code, `resume` continues
+the last conversation once there is one; `resume --continue` always
+does (when the first session ended without a clean exit, the sandbox
+does not know it had one), and `resume --no-continue` starts a new
+one. Leave `resume.continue` out of settings.yaml: `true` fails on a
+new sandbox, which has nothing to continue.
 
 **`--sudo`**: the agent has passwordless sudo (a file in
 `/etc/sudoers.d`; it is in neither the `sudo` nor the `docker` group),

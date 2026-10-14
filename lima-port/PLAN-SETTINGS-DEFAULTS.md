@@ -38,9 +38,10 @@ its own, so there is no list of exceptions to remember.
   key moves or is renamed, the old one goes; ask the engineer about
   their own settings.yaml instead of keeping an alias. (The `images:`
   cache policy section became `imageCache:` this way, commit 2d838ce.)
-- **Follow-ups, not this plan:** `resume` on argparse (it parses by
-  hand today); defaults for positional arguments. Both are below, under
-  "Follow-ups". `logs` stays as it is: it has no options of its own,
+- **Follow-ups, not this plan:** defaults for positional arguments,
+  below under "Follow-ups". `resume` is on argparse now: its own option
+  `--[no-]continue` takes a default, and the words after its `--`
+  (`bin/claude`'s flags, Claude Code's arguments) take none. `logs` stays as it is: it has no options of its own,
   only `tail`'s. `run`, an alias of `resume`, is removed.
 
 ## The rule
@@ -210,18 +211,9 @@ Each step is one commit with the sbx suite green.
 
 ## Follow-ups (not in this plan)
 
-- **`resume` on argparse.** It splits its arguments by hand
-  (`split_args`): LAUNCHER-FLAGs go to `bin/claude` and CLAUDE-ARGs
-  after `--` to Claude Code. On argparse it gets the helper like the
-  others. The pass-
-  through parts become known options where they are ours (the launcher
-  flags `bin/claude` takes: `--local-web[=PORTS]`, `--allow-post=HOST`,
-  `--local-db`, ...), so `resume: {localWeb: true}` works, and
-  `parse_known_args`/REMAINDER keeps `--` CLAUDE-ARGs as they are.
 - **Positional arguments.** A default NAME of `.` for the commands that
   take one: `rm` included, because it asks first; `create PRIMARY` too.
   And settings defaults for positionals (`create: {primary: ...}`), by
   the same rule. Parsing problems to solve there: `allow NAME HOST...`
   and `exec NAME -- CMD` with NAME optional, and the guessing in
-  `logs`' `split_args` (NAME first or last; resume's goes away with
-  the first follow-up).
+  `logs`' `split_args` (NAME first or last).

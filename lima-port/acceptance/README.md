@@ -12,7 +12,7 @@ wmf-sbx create --reset-all --name sbx-testverify \
   gerrit:mediawiki/services/parsoid
 limactl shell --workdir / wmf-sbx-sbx-testverify -- \
   sudo -u agent sh -c 'cat > /home/agent/TESTING.md' < lima-port/acceptance/TESTING.md
-wmf-sbx resume sbx-testverify --read-file=/home/agent/TESTING.md -- \
+wmf-sbx resume sbx-testverify -- --read-file=/home/agent/TESTING.md -- \
   -p "Read ~/TESTING.md and do what it says." \
   --allowedTools "Bash Read Write Edit Glob Grep TodoWrite Monitor TaskOutput TaskStop" \
   --max-turns 400

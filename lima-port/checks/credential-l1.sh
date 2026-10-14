@@ -85,7 +85,7 @@ step "2 one tool call, outside nono" "$WMF_SBX" exec "$NAME" -- env "${ENVS[@]}"
     ~/.claude/settings.json.l1bak > ~/.claude/settings.json' _ "$BASE"
 step "3 one tool call, in a session (nono)" \
   env -u ANTHROPIC_API_KEY -u CLAUDE_CODE_OAUTH_TOKEN "$PHANTOM_ENV=$PHANTOM" \
-  "$WMF_SBX" resume "$NAME" --open-port="$PORT" -- "${TOOL[@]}"
+  "$WMF_SBX" resume "$NAME" -- --open-port="$PORT" -- "${TOOL[@]}"
 "$WMF_SBX" exec "$NAME" -- bash -c 'mv ~/.claude/settings.json.l1bak ~/.claude/settings.json'
 
 # 4 (apikey only): option N, nono's own credential proxy in the VM. The
@@ -94,7 +94,7 @@ step "3 one tool call, in a session (nono)" \
 # sk-ant-...). This step does not use the host proxy.
 if [[ $MODE == apikey ]]; then
   step "4 option N: nono --credential anthropic (in the VM)" \
-    "$WMF_SBX" resume "$NAME" --credential=anthropic -- -p \
+    "$WMF_SBX" resume "$NAME" -- --credential=anthropic -- -p \
     'Run this exact command and reply with its output verbatim: echo "base=$ANTHROPIC_BASE_URL key-is-real=$(case $ANTHROPIC_API_KEY in sk-ant-*) echo yes;; *) echo no;; esac) len=${#ANTHROPIC_API_KEY}"' \
     --model haiku --allowedTools Bash
 fi

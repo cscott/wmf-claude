@@ -19,7 +19,7 @@
 #   wmf-sbx login                       sign in to Claude once, for every sandbox
 #   wmf-sbx resolve | ls-remotes        repo resolution, host remotes
 #
-# Every option (but resume's) takes its default from
+# Every option takes its default from
 # ~/.config/wmf-sbx/settings.yaml (VERB: {someFlag: ...}; README, "Defaults
 # from settings.yaml"); --no-settings after the verb ignores them, and
 # --config PATH reads another file.

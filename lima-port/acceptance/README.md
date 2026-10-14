@@ -12,7 +12,7 @@ wmf-sbx create --reset-all --name sbx-testverify \
   gerrit:mediawiki/services/parsoid
 limactl shell --workdir / wmf-sbx-sbx-testverify -- \
   sudo -u agent sh -c 'cat > /home/agent/TESTING.md' < lima-port/acceptance/TESTING.md
-wmf-sbx resume sbx-testverify --read-file=/home/agent/TESTING.md -- \
+wmf-sbx resume sbx-testverify -- --read-file=/home/agent/TESTING.md -- \
   -p "Read ~/TESTING.md and do what it says. This session is not interactive: \
 it ends when you end a turn and no Monitor is running. While you wait for \
 background work, keep a Monitor running that reports when that work ends." \

@@ -270,10 +270,9 @@ class UnknownSectionTests(unittest.TestCase):
 
 
 
-# The commands that parse their arguments by hand: resume, until it
-# moves to argparse (lima-port/PLAN-SETTINGS-DEFAULTS.md, "Follow-ups");
-# logs, whose arguments are tail's.
-NOT_YET = {"logs", "resume"}
+# The command that parses its arguments by hand: logs, whose arguments
+# are tail's.
+NOT_YET = {"logs"}
 
 
 class _Captured(Exception):

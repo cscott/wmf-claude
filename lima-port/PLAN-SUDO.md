@@ -336,6 +336,82 @@ session runs. The proxy lands before the trusted-VM session.
 Exit (as HANDOFF §11): `mw-install-browser` runs on demand through the
 proxy; the blind run passes in a `--sudo` sandbox on Linux.
 
+### A3 steps (written 2026-10-14, after the egress default ran)
+
+The egress proxy is now the default on QEMU and RAN end to end (NOTES), so
+`--sudo` is mostly the guest grant, a second kind of session, and texts.
+In order, each a commit with its unit tests:
+
+1. **create and state.** `--sudo/--no-sudo` (BooleanOptionalAction, default
+   None) takes its default from `settings.yaml` `agentSudo:` (a bool; the
+   built-in default is false, D9). `--sudo` needs the egress proxy:
+   `egress_choice` treats it as an explicit `--egress-proxy` (vz and missing
+   host tools are errors), and `--sudo --no-egress-proxy` is an error. Until
+   step 6, `--sudo --nested` is an error. The state gets `"sudo": true`;
+   `status`, `ls` and `--dry-run` show the mode. create says in a dim line
+   that the agent has root in the VM and no nono, and the host proxy is the
+   network boundary. The old "not ported yet" error goes.
+2. **The guest grant.** `sandbox-provision.sh` gets `@AGENT_SUDO@`
+   (template.py). With it: `/etc/sudoers.d/90-wmf-sbx-agent` (`agent
+   ALL=(ALL) NOPASSWD: ALL`, plus `Defaults:agent env_keep` for the proxy
+   variables, so `sudo curl` and the helpers' `sudo apt-get` find the
+   proxy; checked with `visudo -cf`) and the marker `/etc/wmf-sbx/sudo`.
+   Without it, both are removed, as is the group removal now. The agent is
+   never put in the `sudo` or `docker` group. The provisioning runs at every
+   boot from the instance config, so no new image is needed.
+   `vm.invariants(egress, sudo)`: a `sudo` sandbox swaps "the agent is not
+   in sudo or docker" and "the agent cannot sudo" for "the agent is not in
+   docker" and "the agent can sudo"; the egress ones are required. A
+   contained sandbox still fails if the sudoers file is there. The guest
+   checks are only diagnostics in a `sudo` sandbox (root can make them
+   pass); SECURITY.md says so.
+3. **The session.** `session.launcher_argv` for a `sudo` sandbox: the
+   credential wrapper, then `/opt/wmf-claude/bin/launch-claude.sh
+   --plugin-dir /opt/wmf-claude --settings
+   /opt/wmf-claude/wiring/settings-merge.json` + Claude's args. No bin/claude,
+   no nono. The env: `WMF_CLAUDE_SANDBOX_BACKEND=lima-sbx-sudo`,
+   `WMF_CLAUDE_HOME=/opt/wmf-claude` (the status line),
+   `WMF_CLAUDE_SESSION` (the mode, for the status line),
+   `WMF_CLAUDE_SBX_EGRESS`, and the egress proxy's variables
+   (`vm.guest_proxy_env`: `sudo -u agent` drops those of
+   `/etc/environment`, and nono set them before). To check: Node finds the
+   egress CA (WebFetch through the proxy). `resume` refuses bin/claude flags
+   (`--allow-post` etc.) for a `sudo` sandbox, with why, and does not add
+   `--open-port`. The credential proxy is unchanged (`cred.sock`).
+4. **What Claude is told.** `hooks/context/lima-sbx-sudo/{sandbox,
+   environment}.txt`:
+   - no nono; the agent has passwordless sudo in a disposable VM;
+   - the network is the host proxy's: the allowlist and the profile's
+     endpoint rules (a wiki POST gets 403), `wmf-sbx allow`;
+   - `sudo apt-get install` works through it;
+   - do not change the VM's network setup (nft, `/etc/environment`, the
+     resolver): it cuts only this VM off.
+   `session.home_claude_md` and `RUNNING_TESTS_MD` get `sudo` wording ("with
+   passwordless sudo, no nono", no `--local-web`). The new backend joins
+   test-templates.sh's backend checks.
+5. **Docs.**
+   - sbx/README.md: `create --sudo`, `agentSudo:`, the two modes.
+   - sbx/SECURITY.md: the mode column and §6 residuals. The guest side of
+     every channel is hostile: `git-remote-wmfsbx` fetches, `cp` out,
+     `limactl shell` output, the Lima guest agent, the phantom credential.
+     The two-user split is not a boundary.
+   - lima-port/README.md.
+   - NOTES.
+   - `exec --engineer` on a `sudo` sandbox says the agent has sudo too.
+6. **`--sudo --nested`** (as A3 above: the loopback forwarder for inner
+   VMs, the egress CA for them, the warning's wording). Last, as its own
+   step; step 1 refuses it until then.
+
+RAN on the engineer's host, after step 4:
+- `create --sudo Cite`, its invariants, `status`;
+- in a session: `sudo apt-get install` (one small package),
+  `mw-install-browser`, the egress bullet and `allow`;
+- as agent root:
+  - `sudo nft flush ruleset`, then a direct `140.82.112.3:443`, a host off
+    the list and a wiki POST all fail;
+  - `mount -o remount,rw` on a mount, then a write: the host is unchanged.
+- The HANDOFF §11 blind run.
+
 ## Later, not in this track
 
 - Contained mode on the same proxy (NOTES "Local ports" bookmark): the

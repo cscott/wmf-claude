@@ -56,15 +56,18 @@ highest first:
 3. the code default: `default=`, or the value computed when the option
    is None, as for `--memory` and `--vm-type`.
 
-`null` in settings is the same as no key. A key that the command does
-not have is an error, which lists the keys it does have: a typo must
-not be silently ignored.
-At the top level, a section that `load_config` does not know gets a
-warning, not an error (today a stale `images:` is silently ignored). A
-warning still catches a typo, and one settings.yaml can serve a stable
-wmf-sbx and a development one that adds a section: the stable one
-warns and carries on. Step 1 does this, with the list of command
-sections from step 6's walk.
+`null` in settings is the same as no key.
+
+**Unknown keys warn; they are not errors.** A key that the command does
+not have gets a warning that lists the keys it does have, and is
+ignored. The same goes for a top-level section that `load_config` does
+not know (today a stale `images:` is silently ignored), and for an
+unknown `session:` key (today an error). A warning still catches a
+typo, and one settings.yaml can serve a stable wmf-sbx and a
+development one that adds a section or an option: the stable one warns
+and carries on. A known key with a value of the wrong type is still an
+error: that is not a version skew. Step 1 does the top level, with the
+list of command sections from step 6's walk.
 
 Only `--config` and `--settings/--no-settings` cannot come from
 settings. They say which file to read and whether to read it. (`-h`
@@ -96,7 +99,7 @@ How it works:
    given: `session.settings`, then `--settings`, decide whether the
    section is used.
 3. **The section.** For each key: find the action whose camelCased
-   `dest` matches; refuse unknown keys; check the value's type against
+   `dest` matches; warn about unknown keys and skip them; check the value's type against
    the action (a boolean pair: bool; `type=int`: int; `choices`: one of
    them; `append` or `nargs`: a list; `null` always passes); then
    `parser.set_defaults(dest=value)`. For a mutually exclusive group
@@ -169,8 +172,8 @@ would); `login --image`; `ls-remotes --path`; `resolve --path`.
 - `--image` from settings: an image that `image gc` has removed gives
   the same error as on the command line.
 - `session.preference_settings` accepts `settings` (a bool), and no
-  longer `sudo`: a `session: {sudo: ...}` is an unknown key, as any
-  other typo is.
+  longer `sudo`: a `session: {sudo: ...}` is an unknown key, which
+  now warns (above) instead of failing.
 
 ## Steps
 

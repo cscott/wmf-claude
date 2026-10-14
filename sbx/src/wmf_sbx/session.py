@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """The Claude session of a Lima sandbox (lima-port/HANDOFF-LIMA.md §8,
-phase 6). Contained mode only: the agent runs Claude Code under nono,
-through upstream's bin/claude.
+phase 6). In contained mode the agent runs Claude Code under nono,
+through upstream's bin/claude. In a `sudo` sandbox (PLAN-SUDO.md, A3) it
+runs bin/launch-claude.sh with no nono: the host egress proxy is the
+network boundary.
 
 At create (create.py, setup.py --lima), as the agent:
 - wmf-claude-setup registers the MCP servers and pulls nono's base pack,
@@ -35,9 +37,18 @@ from . import state as state_mod
 from . import template as template_mod
 from . import vm as vm_mod
 
-LAUNCHER = "/opt/wmf-claude/bin/claude"
-WMF_CLAUDE_SETUP = "/opt/wmf-claude/bin/wmf-claude-setup"
+WMF_CLAUDE_DIR = "/opt/wmf-claude"
+LAUNCHER = f"{WMF_CLAUDE_DIR}/bin/claude"
+WMF_CLAUDE_SETUP = f"{WMF_CLAUDE_DIR}/bin/wmf-claude-setup"
 SANDBOX_BACKEND = "lima-sbx"
+# A `sudo` sandbox: bin/claude's own launcher, with the plugin and the
+# tool layer that bin/claude would pass, and no nono.
+SUDO_LAUNCHER = f"{WMF_CLAUDE_DIR}/bin/launch-claude.sh"
+SUDO_SETTINGS = f"{WMF_CLAUDE_DIR}/wiring/settings-merge.json"
+SUDO_SANDBOX_BACKEND = "lima-sbx-sudo"
+# The status line's session segment (bin/statusline.sh), which bin/claude
+# sets in a contained session.
+SUDO_SESSION = "sudo, no nono · host egress proxy"
 WIKI_PORT = 4000
 KARMA_PORT = 9876
 
@@ -260,11 +271,37 @@ def upstream_proxy(env=None, state=None):
     return hostport or None
 
 
+def sudo_launcher_argv(state, cred_path=None, claude_args=()):
+    """argv to run in the guest for one session of a `sudo` sandbox: the
+    agent runs bin/launch-claude.sh in the primary clone, with no nono.
+    The egress proxy's variables are in the env: `sudo -u agent` drops
+    those of /etc/environment, and nono set its own in a contained
+    session. NODE_EXTRA_CA_CERTS: Node trusts its own CA list, not the
+    system's, which has the sandbox's egress CA (Lima's caCerts)."""
+    name = state.get("name") or "<this sandbox>"
+    claude = ([SUDO_LAUNCHER, "--plugin-dir", WMF_CLAUDE_DIR, "--settings", SUDO_SETTINGS]
+              + list(claude_args))
+    wrapper = ["bash", "-c", CREDENTIAL_WRAPPER, "_", cred_path or ""] + claude
+    env = dict(egress_mod.guest_environment(name))
+    env.update({"no_proxy": SESSION_NO_PROXY, "NO_PROXY": SESSION_NO_PROXY,
+                "NODE_EXTRA_CA_CERTS": image_mod.SYSTEM_CA_BUNDLE,
+                "WMF_CLAUDE_SANDBOX_BACKEND": SUDO_SANDBOX_BACKEND,
+                "WMF_CLAUDE_HOME": WMF_CLAUDE_DIR,
+                "WMF_CLAUDE_SESSION": SUDO_SESSION,
+                "WMF_CLAUDE_SBX_EGRESS": name})
+    return vm_mod.agent_argv(wrapper, workdir=state["primaryDir"], env=env)
+
+
 def launcher_argv(state, cred_path=None, launcher_flags=(), claude_args=(),
                   proxy=None):
     """argv to run in the guest (as the engineer, Lima's user) for one
     contained session: the agent runs bin/claude in the primary clone
-    with the grants for the other clones and the mounts."""
+    with the grants for the other clones and the mounts. A `sudo`
+    sandbox takes no launcher flags (resume refuses them)."""
+    if state.get("sudo"):
+        if launcher_flags:
+            raise SessionError("a sudo sandbox takes no bin/claude flags")
+        return sudo_launcher_argv(state, cred_path=cred_path, claude_args=claude_args)
     primary = state["primaryDir"]
     readonly = set(state.get("readOnly") or [])
     grants = []

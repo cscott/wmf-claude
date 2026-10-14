@@ -1534,6 +1534,12 @@ if [[ "$out" == "WMF nono sandbox · --local-db=3306 --docker=mediawiki" ]]; the
 else
   fail "status line segment wrong: '$out'"
 fi
+out="$(WMF_CLAUDE_SANDBOX_BACKEND=lima-sbx-sudo WMF_CLAUDE_SESSION="sudo, no nono" WMF_CLAUDE_UPDATE= sl_run '{}')"
+if [[ "$out" == "WMF sandbox VM · sudo, no nono" ]]; then
+  pass "status line does not say nono for a wmf-sbx sudo VM"
+else
+  fail "status line segment wrong for lima-sbx-sudo: '$out'"
+fi
 out="$(WMF_CLAUDE_PROFILE=wmf-data-scientist WMF_CLAUDE_SESSION= WMF_CLAUDE_UPDATE=2 sl_run '{}')"
 if [[ "$out" == *"(wmf-data-scientist)"* && "$out" == *"update available (2 behind"* ]]; then
   pass "status line names a non-default profile and a pending update"

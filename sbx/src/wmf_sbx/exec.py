@@ -8,7 +8,10 @@ are the caller's, and the exit status is the command's. The command
 gets the sandbox's proxy variables (the host's, or the egress proxy's)
 (vm.guest_proxy_env): `sudo` drops the ones Lima put in the guest's
 environment, and a nested sandbox's inner VM has no other way out. It
-also gets $SANDBOX_NAME, as a session does (bin/git-review-check).
+also gets $SANDBOX_NAME, as a session does (bin/git-review-check), and
+the session's other variables ($MW_INSTALL_PATH and the wiki's, the git
+identity, settings.yaml `environment:`), which `create` recorded in the
+host's state: not from the guest, where the agent could change them.
 
 `--engineer` runs it as Lima's user instead, which has sudo. It refuses
 a working directory that the agent can write (its home, /tmp): the
@@ -60,8 +63,11 @@ def main(argv=None, lima=None, env=None):
         parser.error("give a command after the sandbox name: NAME -- CMD [ARGS...]")
     try:
         name, state = vm_mod.resolve(args.name, env=env)
-        # The proxy, and the sandbox's name, as a session has them.
-        agent_env = dict(vm_mod.guest_proxy_env(name, env, forward=True))
+        # The session's variables (MW_INSTALL_PATH, ...; from the host's
+        # state, never the agent's settings.json), the proxy, and the
+        # sandbox's name, as a session has them.
+        agent_env = dict(state.get(session_mod.EXEC_ENV_KEY) or {})
+        agent_env.update(vm_mod.guest_proxy_env(name, env, forward=True))
         agent_env[session_mod.SANDBOX_NAME_VAR] = name
         if args.engineer:
             workdir = args.workdir or vm_mod.ENGINEER_HOME

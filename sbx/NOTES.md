@@ -1057,6 +1057,12 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
 - php-ast is built from source at the commit WMF CI pins (`image.PHP_AST`; Debian 13's 1.1.2 is
   too old for phan 6). Change it when CI does.
 - WMF CI targets Node 24 (24.18.0); the image has one global Node from the nodejs.org tarball.
+- `wmf-sbx exec` has the session's variables (RAN 2026-10-14: `exec NAME bash` had no
+  `$MW_INSTALL_PATH`, and an extension's `composer phan` failed; a session gets them from
+  `~/.claude/settings.json` `env`, which exec never read). `create` records them in the host
+  state (`sessionEnv`, less the credential proxy's); exec passes them. Not from the guest's
+  settings.json: the agent can write it, and exec runs outside nono (an `LD_PRELOAD` there
+  would run in an engineer's exec). A sandbox made before this has none: recreate it.
 - One create per sandbox name: `create` holds an flock on `sandboxes/.NAME.creating`
   (`state.reserve`) from the moment it has the name to its end, before the golden image;
   `reserved_names` counts as taken. Before, a second `create --name X` started while the

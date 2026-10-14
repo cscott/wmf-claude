@@ -140,6 +140,19 @@ SANDBOX_NAME_VAR = "SANDBOX_NAME"
 CREDENTIAL_PROXY_ENV = {"NO_PROXY": SESSION_NO_PROXY, "no_proxy": SESSION_NO_PROXY,
                         "ENABLE_TOOL_SEARCH": "true"}
 
+# The state key of the variables that `wmf-sbx exec` gives a command as the
+# agent: the session's `env`, less the credential proxy's.
+EXEC_ENV_KEY = "sessionEnv"
+
+
+def exec_env(session_env_vars):
+    """The session's variables for `wmf-sbx exec`: the wiki, test and
+    composer variables, the git identity and settings.yaml `environment:`;
+    not the credential proxy's (exec runs no Claude Code)."""
+    return {k: v for k, v in session_env_vars.items()
+            if k not in CREDENTIAL_PROXY_ENV and not k.startswith("ANTHROPIC_")}
+
+
 # Reads the credential file (if any), deletes it, then runs the launcher.
 CREDENTIAL_WRAPPER = ('f=$1; shift; if [ -n "$f" ]; then set -a; . "$f"; set +a; '
                       'rm -f -- "$f"; fi; exec "$@"')

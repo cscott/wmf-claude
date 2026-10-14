@@ -1021,6 +1021,11 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         name, resolved_for_kit, readonly, identity=session_mod.git_identity(run=run),
         preferences=preferences, claude_version=claude_version, quiet=quiet,
         environment=config["environment"], sudo=sudo)
+    # `wmf-sbx exec` gives a command the session's variables (MW_INSTALL_PATH
+    # and the others) from here, not from the guest's settings.json, which
+    # the agent can write: exec runs outside nono.
+    state[session_mod.EXEC_ENV_KEY] = session_mod.exec_env(plan["session"]["env"])
+    state_mod.save(state, env)
     try:
         home = env.get("HOME") or os.path.expanduser("~")
         session_mod.wmf_claude_setup(

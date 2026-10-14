@@ -33,6 +33,7 @@ import wmf_sbx.ls as ls  # noqa: E402
 import wmf_sbx.rm as rm  # noqa: E402
 import wmf_sbx.egress as egress  # noqa: E402
 import wmf_sbx.start as start  # noqa: E402
+import wmf_sbx.session as session_mod  # noqa: E402
 import wmf_sbx.state as state_mod  # noqa: E402
 import wmf_sbx.status as status_mod  # noqa: E402
 import wmf_sbx.stop as stop  # noqa: E402
@@ -560,6 +561,14 @@ class CreateTests(Env):
         lima.call = call
         return self.create(*extra, lima=lima)
 
+    def test_create_records_the_session_variables_for_exec(self):
+        self.assertEqual(self.create("--name", "demo"), 0, self.err)
+        recorded = state_mod.load("demo", self.env)[session_mod.EXEC_ENV_KEY]
+        self.assertEqual(recorded["SANDBOX_NAME"], "demo")
+        self.assertIn("COMPOSER_HOME", recorded)
+        self.assertFalse([k for k in recorded
+                          if k in session_mod.CREDENTIAL_PROXY_ENV or k.startswith("ANTHROPIC_")])
+
     def test_the_plan_says_which_repos_were_named(self):
         # setup.py runs `composer update` only in those and core.
         self.assertEqual(self.create_tracking("--name", "one"), 0, self.err)
@@ -966,7 +975,6 @@ class CreateTests(Env):
                              for c in self.lima.calls))
 
     def test_sudo_records_it_behind_the_egress_proxy(self):
-        import wmf_sbx.session as session_mod
         with mock.patch.object(session_mod, "session_plan",
                                wraps=session_mod.session_plan) as plan:
             self.assertEqual(self.egress_create("--sudo", flag=None), 0, self.err)
@@ -1282,6 +1290,22 @@ class ExecTests(Env):
             with self.subTest(args=args):
                 self.quiet(exec_mod.main, args, lima=lima, env=self.env)
                 self.assertIn("SANDBOX_NAME=sbx-demo", lima.shells()[-1])
+
+    def test_exec_has_the_session_variables_from_the_host_state(self):
+        # RAN 2026-10-14: `wmf-sbx exec NAME bash` had no $MW_INSTALL_PATH,
+        # and `composer phan` in an extension failed without it.
+        lima = self.sandbox()
+        st = state_mod.load("sbx-demo", self.env)
+        st[session_mod.EXEC_ENV_KEY] = {"MW_INSTALL_PATH": "/h/core", "MW_SERVER": "http://x"}
+        state_mod.save(st, self.env)
+        for args in (["sbx-demo", "--", "ls"], ["-w", "/srv/x", "sbx-demo", "--", "ls"]):
+            with self.subTest(args=args):
+                self.quiet(exec_mod.main, args, lima=lima, env=self.env)
+                self.assertIn("MW_INSTALL_PATH=/h/core", lima.shells()[-1])
+        # --engineer runs as Lima's user, without the agent's variables.
+        self.quiet(exec_mod.main, ["--engineer", "-w", "/srv/x", "sbx-demo", "--", "ls"],
+                   lima=lima, env=self.env)
+        self.assertNotIn("MW_INSTALL_PATH=/h/core", lima.shells()[-1])
 
     def test_exec_returns_the_commands_status(self):
         lima = self.sandbox(lima=FakeLima(rc=7))

@@ -131,7 +131,8 @@ class CliTests(unittest.TestCase):
         state_mod.save(state, env={"XDG_STATE_HOME": self.state_home})
 
     def run_script(self, *args):
-        env = dict(os.environ, XDG_STATE_HOME=self.state_home)
+        # HOME: not the engineer's settings.yaml
+        env = dict(os.environ, XDG_STATE_HOME=self.state_home, HOME=self.tmp.name)
         return subprocess.run(
             [sys.executable, SCRIPT] + list(args),
             capture_output=True, text=True, env=env,

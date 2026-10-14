@@ -9,13 +9,14 @@ Usage:
 import argparse
 import sys
 
+from . import cli as cli_mod
 from . import lima as lima_mod
 from . import state as state_mod
 from . import vm as vm_mod
 
 
 def main(argv=None, lima=None, env=None):
-    argparse.ArgumentParser(description=__doc__.splitlines()[0]).parse_args(argv)
+    cli_mod.parse_args(argparse.ArgumentParser(description=__doc__.splitlines()[0]), argv, "ls")
     lima = lima or lima_mod.Limactl()
     try:
         instances = lima.instances()

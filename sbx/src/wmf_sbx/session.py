@@ -155,7 +155,7 @@ class SessionError(Exception):
 # `sudo` is create's default for --sudo/--no-sudo instead.
 PERMISSION_MODES = ("default", "acceptEdits", "plan", "auto", "bypassPermissions")
 THEMES = ("dark", "light", "dark-daltonized", "light-daltonized", "dark-ansi", "light-ansi")
-PREFERENCE_KEYS = ("model", "permission_mode", "theme", "ste", "sudo", "settings")
+PREFERENCE_KEYS = ("model", "permission_mode", "theme", "ste", "settings")
 
 
 def first_run_marker(env=None):
@@ -204,7 +204,7 @@ def preference_settings(prefs, quiet=True, warn=lambda msg: None):
     theme = prefs.get("theme")
     if theme is not None and theme not in THEMES:
         raise SessionError(f"settings.yaml: session.theme {theme!r}: want one of {', '.join(THEMES)}")
-    for key in ("ste", "sudo", "settings"):
+    for key in ("ste", "settings"):
         value = prefs.get(key)
         if value is not None and not isinstance(value, bool):
             raise SessionError(f"settings.yaml: session.{key} {value!r}: want true or false")

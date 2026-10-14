@@ -150,11 +150,12 @@ session:
                                       # dark-ansi, light-ansi
   ste: false                          # leave out the ASD-STE100 rule for comments and
                                       # commit messages (default: true)
-  sudo: true                          # `create --sudo` by default (--no-sudo overrides;
-                                      # default: false)
+  settings: false                     # take no option defaults from this file
+                                      # ("Defaults from settings.yaml"; default: true)
 ```
 
-`sudo` is `create`'s, not Claude Code's: see "Two modes".
+`create --sudo` by default is `create: {sudo: true}`, not a `session:`
+key: see "Defaults from settings.yaml".
 
 Two more sections of the file apply to every new sandbox:
 
@@ -387,7 +388,7 @@ wmf-sbx create PRIMARY[:ro] [EXTRA[:ro] ...] [options]
   remote has the same name.
 - `--no-remotes`: add no host remote, and leave host gc as it is.
 - `--clone-missing`: clone the repos that are not on the host yet without
-  asking ("Naming a repo", above). Default: settings.yaml `create.cloneMissing`.
+  asking ("Naming a repo", above).
 - `--cold`, `--no-snapshot`, `--no-expire`: see "Warm snapshots" and
   "The golden image cache". `--full-disk`: a full copy of the golden
   image on QEMU too, and no snapshot.
@@ -398,8 +399,7 @@ wmf-sbx create PRIMARY[:ro] [EXTRA[:ro] ...] [options]
   when the proxy cannot be used.
 - `--sudo`: the agent has passwordless sudo, and Claude Code runs with no
   nono ("Two modes"). It needs the egress proxy, so QEMU, and cannot be
-  combined with `--no-egress-proxy` or (for now) `--nested`. `--no-sudo`
-  overrides `session: sudo: true` in `settings.yaml`.
+  combined with `--no-egress-proxy` or (for now) `--nested`.
 - `--nested`: **lower security; only for work on wmf-claude or wmf-sbx
   itself.** Do not use it for other work. nono gives the agent more in a
   nested sandbox: `/dev/kvm`, the `kvm` group, Lima's sockets, more

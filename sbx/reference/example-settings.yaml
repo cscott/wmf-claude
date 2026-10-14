@@ -37,12 +37,36 @@ session:
   permission_mode: acceptEdits   # or bypassPermissions, plan, auto, default
   theme: dark
   # ste: false                   # leave out the ASD-STE100 writing rule
-  # sudo: true                   # `create --sudo` by default (--no-sudo overrides)
+  # settings: false              # take no option defaults from this file
+                                 # (--settings overrides)
 
-# Defaults for `create` options. The command-line flag overrides each.
+# Defaults for the options of each command (sbx/README.md, "Defaults
+# from settings.yaml"): `VERB: {someFlag: value}` for `wmf-sbx VERB
+# --some-flag`. The command line overrides each; null is "no default
+# here". `wmf-sbx VERB --help` names the key of each option.
 create: {}
-  # cloneMissing: true           # clone missing repos without asking
-                                 # (--clone-missing; --no-clone-missing overrides)
+  # name: sbx-main               # --name: always this sandbox name
+  # deps: false                  # --no-deps
+  # ciDeps: false                # --no-ci-deps
+  # phanDeps: false              # --no-phan-deps
+  # dev: false                   # --no-dev
+  # suggests: false              # --no-suggests
+  # cloneMissing: true           # --clone-missing: clone missing repos without asking
+  # resetAll: true               # --reset-all
+  # remotes: false               # --no-remotes
+  # vmType: qemu                 # --vm-type (null: vz on macOS, qemu elsewhere)
+  # cold: true                   # --cold
+  # snapshot: false              # --no-snapshot
+  # expire: false                # --no-expire (null: imageCache.expire)
+  # fullDisk: true               # --full-disk
+  # cpus: 4                      # --cpus
+  # memory: 8GiB                 # --memory (null: 8GiB, more with --nested)
+  # disk: 60GiB                  # --disk
+  # nested: true                 # --nested (LOWER SECURITY)
+  # image: KEY                   # --image
+  # egressProxy: true            # --egress-proxy (null: where the host can)
+  # sudo: true                   # --sudo (LOWER SECURITY)
+  # dryRun: true                 # --dry-run
 
 # Environment variables for every new sandbox's sessions (in the agent's
 # ~/.claude/settings.json `env`). Not ANTHROPIC_* or NO_PROXY: wmf-sbx sets

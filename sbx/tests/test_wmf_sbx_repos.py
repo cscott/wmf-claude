@@ -79,6 +79,25 @@ class HostRepoTests(Tmp):
         self.assertEqual(repos.git_dirs([repos.host_repo(path), r]),
                          [os.path.join(path, ".git")])
 
+    def test_borrowed_object_dirs_are_mounted_too(self):
+        base = os.path.join(self.tmp, "base")
+        git_repo(base)
+        path = os.path.join(self.tmp, "core")
+        subprocess.run(["git", "clone", "-q", "--shared", base, path], check=True,
+                       capture_output=True)
+        # a relative entry, and a missing one, which git skips too
+        with open(os.path.join(path, ".git", "objects", "info", "alternates"), "a") as f:
+            f.write("../../base/.git/objects\n" + os.path.join(self.tmp, "gone") + "\n")
+        r = repos.host_repo(path)
+        borrowed = os.path.join(base, ".git", "objects")
+        self.assertEqual(r["alternates"], [borrowed])
+        self.assertEqual(repos.host_repo(base)["alternates"], [])
+        self.assertEqual(repos.git_dirs([r, repos.host_repo(base)]),
+                         [os.path.join(path, ".git"), os.path.join(base, ".git"), borrowed])
+        _root, clones = repos.guest_scripts([r], {}, set(), set())
+        line = [x for x in clones["agent"].splitlines() if x.startswith("clone_repo ")][0]
+        self.assertEqual(shlex.split(line)[7:], [template.mount_point(borrowed)])
+
     def test_not_a_repository(self):
         os.makedirs(os.path.join(self.tmp, "plain"))
         with self.assertRaisesRegex(repos.RepoError, "not a git repository"):
@@ -92,6 +111,7 @@ class HostRepoTests(Tmp):
 
     def test_predicted_for_a_dry_run(self):
         r = repos.host_repo(os.path.join(self.tmp, "x"), predicted=True)
+        self.assertEqual(r["alternates"], [])
         self.assertEqual(r["gitDir"], os.path.join(self.tmp, "x", ".git"))
 
 
@@ -178,7 +198,7 @@ class GuestScriptCase(Tmp):
         os.makedirs(os.path.join(self.host, ".git", "hooks"), exist_ok=True)
 
     def clone(self, dest, branch, sha, upstream, reset, check=True, file_upstreams=False,
-              fn="clone_repo"):
+              fn="clone_repo", extra=(), mount=None):
         env = dict(os.environ, PATH=os.path.join(SBX, "bin") + ":" + os.environ["PATH"],
                    GIT_CONFIG_GLOBAL="/dev/null", GIT_AUTHOR_NAME="t",
                    GIT_AUTHOR_EMAIL="t@example.org", GIT_COMMITTER_NAME="t",
@@ -187,7 +207,8 @@ class GuestScriptCase(Tmp):
             env.update(GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="protocol.file.allow",
                        GIT_CONFIG_VALUE_0="always")
         script = open(repos.GUEST_SCRIPT).read() + "\n" + repos._call(
-            fn, os.path.join(self.host, ".git"), dest, branch, sha, upstream, reset)
+            fn, mount or os.path.join(self.host, ".git"), dest, branch, sha, upstream, reset,
+            *extra)
         return subprocess.run(["bash", "-s"], input=script, text=True, env=env,
                               capture_output=True, check=check)
 
@@ -217,6 +238,38 @@ class CloneRepoTests(GuestScriptCase):
         self.assertEqual(git(dest, "rev-parse", "HEAD"), git(shallow, "rev-parse", "HEAD"))
         self.assertFalse(os.path.exists(
             os.path.join(dest, ".git", "objects", "info", "alternates")))
+
+    def nested_mount(self):
+        """A sandbox's clone, as an inner VM's mount shows it: its
+        alternates name the mount's own objects dir (the path of the host
+        mount in the outer VM), and the host's objects are elsewhere.
+        Returns (the mount, the host's objects)."""
+        mount = os.path.join(self.tmp, "run", "host.git")
+        shutil.copytree(os.path.join(self.host, ".git"), mount, symlinks=True)
+        outer = os.path.join(self.tmp, "outer")
+        subprocess.run(["git", "clone", "-q", "--shared", "-b", "topic", mount, outer],
+                       check=True, capture_output=True)
+        hostobj = os.path.join(self.tmp, "run", "objects-of-host")
+        os.rename(os.path.join(mount, "objects"), hostobj)
+        shutil.rmtree(mount)
+        os.rename(os.path.join(outer, ".git"), mount)
+        return mount, hostobj
+
+    def test_a_nested_clone_borrows_from_the_mounted_alternates(self):
+        mount, hostobj = self.nested_mount()
+        sha = git(self.host, "rev-parse", "HEAD")
+        dest = os.path.join(self.tmp, "vm", "inner")
+        res = self.clone(dest, "topic", sha, "", "0", mount=mount, check=False)
+        self.assertNotEqual(res.returncode, 0)    # RAN, nested: "unable to read tree"
+        shutil.rmtree(dest, True)
+        res = self.clone(dest, "topic", sha, "", "0", mount=mount, extra=[hostobj])
+        self.assertEqual(git(dest, "rev-parse", "HEAD"), sha)
+        self.assertEqual(git(dest, "status", "--porcelain"), "")
+        with open(os.path.join(dest, ".git", "objects", "info", "alternates")) as f:
+            self.assertEqual(f.read().splitlines(), [os.path.join(mount, "objects"), hostobj])
+        dest = os.path.join(self.tmp, "vm", "detached")
+        self.clone(dest, "", sha, "", "0", mount=mount, extra=[hostobj])
+        self.assertEqual(git(dest, "rev-parse", "HEAD"), sha)
 
     def test_a_dependency_is_reset_to_upstream_master(self):
         dest = os.path.join(self.tmp, "vm", "dep")

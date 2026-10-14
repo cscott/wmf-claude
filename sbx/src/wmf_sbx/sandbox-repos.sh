@@ -67,13 +67,25 @@ prepare() {
 # `--shared`: the clone borrows the host's objects through the alternates
 # file, so nothing is copied; the host suspends gc for it (remotes.py).
 # The clone is on the host's branch, or detached at the host's commit.
+# The arguments after the sixth are the mounts of the object dirs that the
+# host repo borrows from (repos.py). The clone needs them at once (its
+# branch's commit may be there only), then lists them in its alternates.
 clone_repo() {
   local mount=$1 path=$2 branch=$3 sha=$4 upstream=$5 reset=$6 remote alt
+  local extra=("${@:7}") borrowed
+  borrowed=$(IFS=:; echo "${extra[*]}")
   echo "+ git clone --shared $mount $path" >&2
   if [[ -n "$branch" ]]; then
-    git -c core.hooksPath=/dev/null clone -q --shared -b "$branch" -- "$mount" "$path"
+    GIT_ALTERNATE_OBJECT_DIRECTORIES=$borrowed \
+      git -c core.hooksPath=/dev/null clone -q --shared -b "$branch" -- "$mount" "$path"
   else
-    git -c core.hooksPath=/dev/null clone -q --shared --no-checkout -- "$mount" "$path"
+    GIT_ALTERNATE_OBJECT_DIRECTORIES=$borrowed \
+      git -c core.hooksPath=/dev/null clone -q --shared --no-checkout -- "$mount" "$path"
+  fi
+  if [[ ${#extra[@]} -gt 0 && -f "$path/.git/objects/info/alternates" ]]; then
+    printf '%s\n' "${extra[@]}" >> "$path/.git/objects/info/alternates"
+  fi
+  if [[ -z "$branch" ]]; then
     git -C "$path" -c core.hooksPath=/dev/null checkout -q --detach "$sha"
   fi
   # A shallow host repo gives no alternates: git copies the objects

@@ -142,6 +142,14 @@ Development scaffolding:
   already, so this looks as it does on the host. Not under `/home/agent`: the inner VM has
   the clones at the same paths (D8), and that is its own agent's home (N3: create refused
   `~/wmf-sbx-src`). A sandbox installed before this keeps its old settings.
+- `create` in a sandbox of the sandbox's own clone (`create --name inner .` in egnest) failed
+  with "unable to read tree" (RAN): the clone's alternates name
+  `/run/wmf-sbx/host/<path>/.git/objects`, which in the inner VM is the mount of that clone's
+  own git dir, so the host's objects were not there. Earlier inner sandboxes cloned
+  `wmf-sbx-src` repos, which borrow nothing. Now any repo's alternates (also a host
+  `--reference` clone) are mounted too, and the clone in the VM lists their mounts
+  (`repos.alternates`, `clone_repo`'s extra arguments). Not run yet in a nested VM: there
+  the alternate's mount is a re-export of the outer VM's 9p mount.
 - nono's CA: `$SSL_CERT_FILE` is the system bundle plus nono's CA (151 certificates);
   `image.session_ca_file` keeps the ones the system bundle lacks (compared as DER), at a
   fixed path (`~/.cache/wmf-sbx/session-ca.pem`), so a resume in a later session refreshes

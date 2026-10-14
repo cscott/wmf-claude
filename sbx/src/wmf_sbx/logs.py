@@ -43,7 +43,7 @@ def main(argv=None, env=None, execvp=os.execvp):
         name, state = vm_mod.resolve(arg, env=env)
         if not egress_mod.enabled(state):
             raise vm_mod.VmError(f"{name} is not behind the egress proxy "
-                                 f"(create --egress-proxy): it has no proxy log")
+                                 f"(vz, or create --no-egress-proxy): it has no proxy log")
         path = egress_mod.log_file(name, env)
         if not os.path.isfile(path):
             raise vm_mod.VmError(f"{name} has no proxy log yet ({path}): "

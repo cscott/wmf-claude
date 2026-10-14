@@ -110,7 +110,7 @@ def main(argv=None, env=None, kill=os.kill, ps=subprocess.run):
     try:
         name, state = vm_mod.resolve(args.name, env=env)
         if not egress_mod.enabled(state):
-            raise AllowError(f"{name} is not behind the egress proxy (create --egress-proxy); "
+            raise AllowError(f"{name} is not behind the egress proxy (vz, or create --no-egress-proxy); "
                              f"its guest reaches the network itself")
         have = egress_mod.extra_domains(name, env)
         if args.list:

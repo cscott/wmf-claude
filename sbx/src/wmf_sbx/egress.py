@@ -71,7 +71,7 @@ SETUP_DOMAINS = ("registry.nono.sh",)
 CA_DAYS = 365
 # How long the wrapper waits for a new proxy to listen.
 LISTEN_TIMEOUT = 15
-# The state key of a sandbox behind the proxy (create --egress-proxy).
+# The state key of a sandbox behind the proxy (the default on QEMU).
 STATE_KEY = "egress"
 STATE_VALUE = "proxy"
 WRAPPER = os.path.join(kit.REPO_ROOT, "sbx", "bin", "wmf-sbx-qemu")
@@ -235,6 +235,20 @@ def wrapper_env(name, env=None, arch=None, which=shutil.which):
     return {f"QEMU_SYSTEM_{arch.upper()}": WRAPPER,
             "WMF_SBX_QEMU_REAL": real,
             "WMF_SBX_EGRESS_CONFIG": write_config(name, env)}
+
+
+def missing_tools(env=None, arch=None, which=shutil.which):
+    """The host commands that a sandbox behind the proxy needs and PATH
+    lacks: QEMU (the wrapper runs it), nono (`nono proxy`), openssl (the
+    CA, make_ca)."""
+    env = os.environ if env is None else env
+    try:
+        arch = arch or qemu_arch()
+    except EgressError:
+        return [f"qemu-system-{platform.machine().lower()}"]
+    # An env with no PATH finds nothing (not the caller's own PATH).
+    return [t for t in (f"qemu-system-{arch}", "nono", "openssl")
+            if not which(t, path=env.get("PATH", ""))]
 
 
 TIME_SYNC_DONE = ("Time sync: guest clock adjusted", "Time sync: drift")

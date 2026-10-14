@@ -19,6 +19,9 @@ On the host you need:
 - [Lima](https://lima-vm.io/) 2.x. On Linux also QEMU (`qemu-system-x86`
   or `qemu-system-arm`, `qemu-utils`) and, for speed, KVM. On macOS Lima
   uses `vz`.
+- For the egress proxy (QEMU; see "The egress proxy"):
+  [nono](https://github.com/nolabs-ai/nono) and `openssl`. Without them,
+  `create` warns and makes a sandbox that is not behind the proxy.
 - Python 3 with PyYAML, git and jq.
 - A checkout of this repository with its submodules
   (`git clone --recurse-submodules`). The golden image is built from it.
@@ -36,6 +39,7 @@ Every command is `wmf-sbx VERB ...`, or `wmf-sbx-VERB ...`:
 | `create` | make a sandbox (builds the golden image first, if needed) |
 | `resume NAME`, `run --name NAME` | start Claude Code in the sandbox |
 | `exec NAME -- CMD` | run a command in the VM as the agent, outside nono |
+| `allow NAME HOST...`, `logs NAME` | let a sandbox behind the egress proxy reach more hosts; show what the proxy allowed and denied ("The egress proxy") |
 | `cp [-r] SRC DST` | copy a file or a directory between the host and a sandbox, or between two sandboxes (`NAME:PATH`); `-r` is optional |
 | `ls`, `status NAME` | list sandboxes; check one (VM, image, security invariants) |
 | `start NAME`, `stop NAME` | boot or stop the VM; nothing is lost |
@@ -278,6 +282,9 @@ the result as the newest snapshot; within the day it does not, and the
 next create fetches and updates a little more instead.
 How a repo got in (named, or as a dependency) does not matter, so the
 dependency flags change the snapshot only by changing the set.
+A sandbox behind the egress proxy (the default on QEMU) neither uses nor
+makes a snapshot yet: its create is always cold. `--no-egress-proxy`
+keeps the snapshots.
 
 - The freeze stops and starts the sandbox once, at the end of `create`,
   and writes a new snapshot of a few GiB; `create` says how long it
@@ -377,6 +384,9 @@ wmf-sbx create PRIMARY[:ro] [EXTRA[:ro] ...] [options]
   dependencies counted): each mount is a PCI device function, 8 to a
   slot of the VM's bus. `create` refuses more; `--no-phan-deps`,
   `--no-ci-deps` or `--no-dev` leave dependencies out.
+- `--no-egress-proxy`: the VM is not behind the host's egress proxy
+  ("The egress proxy"). `--egress-proxy` makes `create` fail, not warn,
+  when the proxy cannot be used.
 - `--nested`: **lower security; only for work on wmf-claude or wmf-sbx
   itself.** Do not use it for other work. nono gives the agent more in a
   nested sandbox: `/dev/kvm`, the `kvm` group, Lima's sockets, more
@@ -405,6 +415,37 @@ wmf-sbx create PRIMARY[:ro] [EXTRA[:ro] ...] [options]
 `wmf-sbx exec`, or `wmf-sbx rm` it. A failed per-repo setup step (a
 `composer update` or `npm ci`) is only a warning; the agent finds the
 list in `~/.wmf-sbx/wmf-sbx-setup.status`.
+
+## The egress proxy
+
+On QEMU, a sandbox is by default behind an **egress proxy on the host**:
+the VM has no network route and no DNS, and its one way out is a
+`nono proxy` that the QEMU wrapper runs on the host. The guest cannot
+change the policy, even as root. The proxy allows the `wmf-engineer`
+profile's hosts (with its read-only endpoint rules for the wikis), the
+package registries and Debian's mirror; anything else gets `403`.
+
+```bash
+wmf-sbx allow NAME example.org       # at once, also in a running session
+wmf-sbx allow NAME '*.example.org'
+wmf-sbx allow NAME --list            # or --rm HOST
+wmf-sbx logs NAME                    # the proxy's log; -f follows it (tail's options)
+```
+
+The agent in the sandbox is told to ask you for `wmf-sbx allow` when a
+host it needs is denied.
+
+`create` makes a sandbox that is not behind the proxy, with a warning
+that the guest then enforces its network policy itself (nono and
+nftables in the VM, as before), when:
+
+- the VM is `vz` (macOS): the proxy needs QEMU's `restrict=on` network;
+  `--vm-type qemu` puts it behind the proxy;
+- the host lacks `qemu-system-ARCH`, `nono` or `openssl` on its `PATH`.
+
+`--no-egress-proxy` asks for that on purpose, with no warning; an
+explicit `--egress-proxy` turns the warning into an error. A sandbox
+behind the proxy has no warm snapshot yet ("Warm snapshots").
 
 ## Working with Gerrit
 

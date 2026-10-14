@@ -44,6 +44,40 @@ from . import vm as vm_mod
 NESTED_WARNING = ("warning: a nested sandbox is less secure: nono gives the agent /dev/kvm, "
                   "Lima's sockets and more hosts. Use it only to work on wmf-claude itself.")
 
+# A default create on vz (macOS) or a host without what the egress proxy
+# needs: the sandbox it makes has the guest's own route (the engineer,
+# 2026-10-13).
+EGRESS_FALLBACK = ("warning: {why}, so {name} is not behind the host egress proxy: the "
+                   "guest, not the host, enforces its network policy. {fix}")
+
+
+def egress_choice(requested, vm_type, name, env, missing=None):
+    """(behind the egress proxy, a warning or None) for a create.
+
+    `requested` is --egress-proxy (True), --no-egress-proxy (False), or
+    neither (None): then it is the default where the host can run it, and
+    a fallback with a warning where it cannot. Raises VmError for an
+    --egress-proxy that cannot be had."""
+    if requested is False:
+        return False, None
+    if vm_type == "vz":
+        if requested:
+            raise vm_mod.VmError("--egress-proxy needs QEMU (--vm-type qemu); vz has "
+                                 "no restrict=on network")
+        return False, EGRESS_FALLBACK.format(
+            why="the egress proxy needs QEMU and this is vz", name=name,
+            fix="`--vm-type qemu` puts it behind the proxy; `--no-egress-proxy` "
+                "leaves out this warning.")
+    lacking = egress_mod.missing_tools(env) if missing is None else missing
+    if lacking:
+        if requested:
+            raise vm_mod.VmError(f"--egress-proxy needs {', '.join(lacking)} on the "
+                                 f"host's PATH")
+        return False, EGRESS_FALLBACK.format(
+            why=f"the host has no {', '.join(lacking)}", name=name,
+            fix="Install it for the proxy; `--no-egress-proxy` leaves out this warning.")
+    return True, None
+
 
 CLONE_URL_BUILDERS = {
     "gerrit": lambda path: f"https://gerrit.wikimedia.org/r/{path}",
@@ -558,10 +592,13 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
     parser.add_argument("--image", metavar="KEY",
                         help="use this cached golden image (`wmf-sbx image ls`) "
                         "instead of the one for the current inputs")
-    parser.add_argument("--egress-proxy", action="store_true",
-                        help="QEMU only: the VM's only way out is a proxy on the host, "
-                        "with the profile's allowlist (`wmf-sbx allow` adds a host); "
-                        "the VM has no route and no DNS of its own")
+    parser.add_argument("--egress-proxy", action=argparse.BooleanOptionalAction,
+                        default=None,
+                        help="the default on QEMU: the VM's only way out is a proxy on "
+                        "the host, with the profile's allowlist (`wmf-sbx allow` adds a "
+                        "host); the VM has no route and no DNS of its own. "
+                        "--no-egress-proxy: the guest's own route, nono in the guest "
+                        "the only allowlist, and warm snapshots")
     parser.add_argument("--sudo", action="store_true",
                         help="give the agent sudo (not yet: track A, D9/D11)")
     parser.add_argument(
@@ -680,11 +717,17 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         # Warm snapshots need the overlay (track B3).
         vm_type = args.vm_type or ("qemu" if args.egress_proxy
                                    else template_mod.default_vm_type())
+        egress, warning = egress_choice(args.egress_proxy, vm_type, name, env)
+        if warning:
+            print(warning, file=sys.stderr)
         overlay = disk_mod.uses_overlay(vm_type) and not args.full_disk
         # Not behind the egress proxy yet: its disk holds the sandbox's
         # own egress CA and guest network setup, which the snapshot key
         # does not cover.
-        use_snapshots = overlay and not args.no_snapshot and not args.egress_proxy
+        use_snapshots = overlay and not args.no_snapshot and not egress
+        if egress and overlay and not args.no_snapshot:
+            say("+ no warm snapshot: not yet behind the egress proxy "
+                "(--no-egress-proxy uses them)")
         readonly = {path for (_spec, is_ro), (_c, path, _n) in zip(split, resolved) if is_ro}
         snap_repos = [(c, path, path in readonly) for c, path, _n in resolved]
 
@@ -769,7 +812,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
             nested=args.nested,
             proxy_ports=template_mod.loopback_proxy_ports(env),
             ca_files=image_mod.extra_ca_files(env),
-            egress_ca=egress_mod.ca_cert(name, env) if args.egress_proxy else None)
+            egress_ca=egress_mod.ca_cert(name, env) if egress else None)
     except (state_mod.StateError, vm_mod.VmError, image_mod.ImageError,
             template_mod.TemplateError, lima_mod.LimaError, repos_mod.RepoError,
             LaunchError, disk_mod.DiskError) as e:
@@ -797,11 +840,11 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         state["disk"] = "overlay"
     if snap:
         state["snapshot"] = snap[1]
-    if args.egress_proxy:
+    if egress:
         state[egress_mod.STATE_KEY] = egress_mod.STATE_VALUE
     state_mod.save(state, env)
     try:
-        if args.egress_proxy:
+        if egress:
             say(f"+ egress CA {egress_mod.ca_cert(name, env)} (behind the host egress proxy)")
             egress_mod.make_ca(name, env)
         vm_mod.create(name, tmpl, lima=lima, log=say, backing=backing if overlay else None,
@@ -824,7 +867,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         say("+ nested: QEMU and Lima in the sandbox, the agent in the kvm group")
         base = image_mod.base_image(arch)
         staged = None
-        if args.egress_proxy:
+        if egress:
             # The host gives it the base image: behind the egress proxy
             # its download's mirror redirect is refused.
             try:

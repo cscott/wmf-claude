@@ -17,7 +17,7 @@ design and threat model are D9 and D11 in
 | Kernel | the host's | a guest kernel, behind a hypervisor (Lima: `vz` or QEMU) |
 | Filesystem | the host's, minus a deny list | the VM's; host repos only as read-only mounts of their git dirs |
 | Root | none (`NO_NEW_PRIVS`) | none: `agent` has no sudo, and nono runs inside the VM too |
-| Network | nono's allowlist proxy | the same nono proxy, inside an nftables host block |
+| Network | nono's allowlist proxy | the same nono proxy; on QEMU behind a second one on the host, the VM's only way out (§3) |
 | Credentials | the engineer's files, minus a deny list | none: the Claude credential stays on the host, behind a proxy |
 | Work leaves by | the agent's own writes to the host | the engineer's `git fetch` of the agent's commits |
 
@@ -90,6 +90,21 @@ paths in the profile stay denied.
 
 ## 3. Network
 
+**The host egress proxy** (QEMU, the default). The VM's network is
+QEMU's `restrict=on` user network: no route out and no DNS. Its only
+ways out are `guestfwd`s on 192.168.5.100 to sockets on the host: a
+`nono proxy` (the allowlist: the profile's hosts with its endpoint
+rules, the package registries, Debian's mirror, and the hosts that
+`wmf-sbx allow` adds), a resolver that gives fake addresses, and the
+credential proxy (§4). The QEMU wrapper starts them, so the policy is
+outside the guest: root in the guest cannot change it. The proxy logs
+each connection (`wmf-sbx logs`). A session's nono then lets every host
+through to that proxy, and still applies the profile's endpoint rules.
+`create` falls back to the guest's own route, with a warning, on `vz`
+and on a host without QEMU, nono or openssl; `--no-egress-proxy` asks
+for it. The rest of this section is about that guest-side policy, which
+also applies behind the proxy.
+
 **Egress from a session** goes through nono's proxy, which allows the
 `wmf-engineer` profile's domains (read-only GET/HEAD endpoints for the
 wikis and docs) plus, per session, the package registries and the
@@ -115,10 +130,10 @@ control comes with `--sudo` mode.)
 
 **Residuals:**
 
-- DNS queries go to Lima's resolver and from there to the host's: a
-  channel for small amounts of data. Planned: external egress control,
-  with no DNS in the guest, or else a filtering DNS forwarder
-  (sbx/NOTES.md, "Local ports").
+- Off the egress proxy (`vz`, `--no-egress-proxy`), DNS queries go to
+  Lima's resolver and from there to the host's: a channel for small
+  amounts of data. Behind the proxy the guest has no DNS: the resolver
+  gives fake addresses and sends no query out.
 - An allowed host is a channel too: the proxy filters by host name, and
   some allowed hosts accept writes (the package registries, GitHub).
 - NAT reaches the host's services on its public addresses on TCP 80 and
@@ -183,9 +198,10 @@ control comes with `--sudo` mode.)
   gives the memory it frees back to the host. It moves each of Lima's
   `-virtfs` mounts to an `-fsdev` and a `virtio-9p-pci` at a fixed PCI
   address (8 to a slot), with the same path, mount tag and options; it
-  refuses a `-virtfs` that is not `local`. For a `--sudo` sandbox it
-  also starts the egress proxy (track A); it refuses a boot that has
-  neither that proxy's config nor the plain mode that `wmf-sbx` sets.
+  refuses a `-virtfs` that is not `local`. For a sandbox behind the
+  egress proxy (§3) it also starts that proxy, the resolver and the
+  credential proxy; it refuses a boot that has neither that proxy's
+  config nor the plain mode that `wmf-sbx` sets.
 - **Attack surface on the host:** the hypervisor; the 9p or virtiofs
   server, which parses guest requests; `limactl shell` (SSH to the guest
   with Lima's key in `~/.lima/_config/user`).

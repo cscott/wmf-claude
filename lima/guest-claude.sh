@@ -2,9 +2,15 @@
 # Start a sandboxed Claude Code session as `agent`, from the engineer side of
 # the Lima guest. bin/wmf-claude-vm claude runs this over limactl shell.
 #
-#   guest-claude.sh NAME [bin/claude args...]
+#   guest-claude.sh [--model-proxy-port PORT] NAME [bin/claude args...]
 #
 # NAME is a workspace under /home/agent/work (see bin/wmf-claude-vm push).
+#
+# In a contained VM (root-owned marker /etc/wmf-claude/contained), bin/wmf-claude-vm runs
+# the model API proxy on the host and forwards it to 127.0.0.1:PORT here; the
+# session then runs in bin/claude's contained mode (WMF_CLAUDE_MODEL_PROXY_PORT). The marker
+# and the flag must agree: a contained VM never starts a session without the proxy,
+# and a normal VM never starts one in contained mode.
 #
 # --docker=SERVICE is handled here, not by the agent's bin/claude: the broker
 # must run as a user that can reach the Docker socket, and the agent cannot.
@@ -20,12 +26,26 @@ INSTALL="${WMF_CLAUDE_GUEST_INSTALL:-/opt/wmf-claude}"
 AGENT="${WMF_CLAUDE_GUEST_AGENT:-agent}"
 AGENT_HOME="${WMF_CLAUDE_GUEST_AGENT_HOME:-/home/$AGENT}"
 RUN_DIR="${WMF_CLAUDE_GUEST_RUN_DIR:-/run/wmf-claude}"
+CONTAINED_MARKER="${WMF_CLAUDE_GUEST_CONTAINED_MARKER:-/etc/wmf-claude/contained}"
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
 note() { printf 'note: %s\n' "$1" >&2; }
 
+PROXY_PORT=""
+if [[ "${1:-}" == --model-proxy-port ]]; then
+  PROXY_PORT="${2:-}"
+  [[ "$PROXY_PORT" =~ ^[0-9]+$ ]] || die "--model-proxy-port needs a port"
+  shift 2
+fi
+if [[ -f "$CONTAINED_MARKER" && -z "$PROXY_PORT" ]]; then
+  die "this is a contained VM; start sessions with bin/wmf-claude-vm claude, which runs the model API proxy"
+fi
+if [[ ! -f "$CONTAINED_MARKER" && -n "$PROXY_PORT" ]]; then
+  die "--model-proxy-port given, but this VM is not a contained VM ($CONTAINED_MARKER is missing)"
+fi
+
 NAME="${1:-}"
-[[ -n "$NAME" ]] || die "usage: guest-claude.sh NAME [bin/claude args...]"
+[[ -n "$NAME" ]] || die "usage: guest-claude.sh [--model-proxy-port PORT] NAME [bin/claude args...]"
 shift
 [[ "$NAME" =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ && "$NAME" != *..* ]] \
   || die "invalid workspace name '$NAME'"
@@ -55,6 +75,11 @@ for arg in "$@"; do
 done
 
 ENV_ARGS=()
+if [[ -n "$PROXY_PORT" ]]; then
+  # Containers would still have egress; bin/claude refuses --docker too.
+  [[ -z "$DOCKER_SERVICE" ]] || die "--docker is not available in a contained VM yet"
+  ENV_ARGS+=("WMF_CLAUDE_MODEL_PROXY_PORT=$PROXY_PORT")
+fi
 if [[ -n "$DOCKER_SERVICE" ]]; then
   COMPOSE="$WORK/docker-compose.yml"
   [[ -f "$COMPOSE" ]] || die "--docker=$DOCKER_SERVICE: no $COMPOSE"

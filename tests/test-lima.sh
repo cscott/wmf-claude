@@ -154,6 +154,15 @@ check  "bin/claude unsets it on every path"         "$REPO_ROOT/bin/claude" '^un
 check  "attach mode uses the override"              "$REPO_ROOT/bin/claude" 'HS_FILE="\$\{DOCKER_HANDSHAKE_OVERRIDE:-'
 
 echo ""
+echo "--- bin/wmf-claude-model-proxy: request policy ---"
+# -B: loading the proxy as a module must not write bin/__pycache__.
+if out=$(python3 -B "$REPO_ROOT/tests/test-model-proxy.py" 2>&1); then
+  pass "test-model-proxy.py ($(grep -c '^PASS' <<<"$out") checks)"
+else
+  fail "test-model-proxy.py"; grep -v '^PASS' <<<"$out" | sed 's/^/        /'
+fi
+
+echo ""
 echo "--- scripts parse ---"
 for f in "$VM" "$GI" "$GC"; do
   if bash -n "$f" 2>/dev/null; then pass "bash -n ${f#"$REPO_ROOT"/}"; else fail "bash -n ${f#"$REPO_ROOT"/}"; fi
@@ -194,6 +203,51 @@ check  "the broker runs as the engineer"            "$GC" 'python3 "\$INSTALL/bi
 check  "handshake is group-readable (0640)"         "$GC" 'chmod 0640 "\$HS"'
 check  "the agent runs with a fixed PATH"           "$GC" 'sudo -H -u "\$AGENT" env -C "\$WORK" PATH="\$AGENT_PATH"'
 check  "~/.local/bin is last on the agent PATH"     "$GC" 'AGENT_PATH="/usr/local/bin:/usr/bin:/bin:\$AGENT_HOME/\.local/bin"'
+
+echo ""
+echo "--- contained mode: launchers ---"
+check  "guest-claude: contained marker requires --model-proxy-port"   "$GC" 'this is a contained VM; start sessions with bin/wmf-claude-vm claude'
+check  "guest-claude: --model-proxy-port requires the marker"   "$GC" 'this VM is not a contained VM'
+check  "guest-claude: passes WMF_CLAUDE_MODEL_PROXY_PORT"        "$GC" 'ENV_ARGS\+=\("WMF_CLAUDE_MODEL_PROXY_PORT=\$PROXY_PORT"\)'
+check  "guest-install: no MCP servers in a contained VM"      "$GI" 'CONTAINED_ENV=\(WMF_CLAUDE_CONTAINED=1\)'
+check  "vm: create --contained writes the guest marker"        "$VM" 'date -u \+%FT%TZ > \$CONTAINED_GUEST_MARKER'
+check  "vm: create --contained writes the host record"         "$VM" 'date -u \+%FT%TZ > "\$CONTAINED_RECORD"'
+check  "vm: the host record decides contained mode"            "$VM" '^is_contained\(\) \{ \[\[ -f "\$CONTAINED_RECORD" \]\]; \}'
+check  "vm: model proxy bridge off Lima's shared connection"     "$VM" 'ssh -n -F "\$dir/ssh.config" -o ControlMaster=no -o ControlPath=none -o ExitOnForwardFailure=yes'
+check  "vm: model proxy bridge binds guest loopback, free port"  "$VM" '-R "127.0.0.1:0:\$sock"'
+check  "vm: reset keeps a contained VM a contained VM"               "$VM" 'if is_contained; then set -- --contained "\$@"; fi'
+# cmd_login_contained must never run claude auth login (that puts the token in the VM).
+login_contained=$(awk '/^cmd_login_contained\(\) \{/,/^\}/' "$VM")
+if [[ -n "$login_contained" ]] && ! grep -q 'claude auth login' <<<"$login_contained"; then pass "vm: contained login never signs Claude in inside the VM"
+else fail "vm: contained login runs claude auth login, or is missing"; fi
+# model_proxy_stop (the EXIT trap of a contained session) must stop the proxy and the
+# forward under set -u, also on macOS /bin/bash 3.2, where an empty array is
+# unbound. Run it in every bash we have, with nothing to clean up and with
+# two live processes.
+model_proxy_stop_fn=$(awk '/^model_proxy_stop\(\) \{/,/^\}/' "$VM")
+for sh in bash /bin/bash; do
+  command -v "$sh" >/dev/null 2>&1 || continue
+  if out=$("$sh" -c "set -euo pipefail; $model_proxy_stop_fn
+    MODEL_TMP=(); MODEL_SSH_PID=''; MODEL_PROXY_PID=''; model_proxy_stop
+    sleep 30 & MODEL_SSH_PID=\$!; sleep 30 & MODEL_PROXY_PID=\$!; t=\$(mktemp); MODEL_TMP=(\"\$t\")
+    model_proxy_stop
+    if kill -0 \$MODEL_SSH_PID 2>/dev/null || kill -0 \$MODEL_PROXY_PID 2>/dev/null || [ -e \"\$t\" ]; then echo LEFT; fi" 2>&1) \
+     && [[ "$out" != *LEFT* ]]; then
+    pass "vm: model_proxy_stop stops the proxy and forward ($("$sh" -c 'echo $BASH_VERSION'))"
+  else
+    fail "vm: model_proxy_stop under $sh: $out"
+  fi
+done
+# guest-claude.sh refuses mismatches before it starts anything.
+GT=$(mktemp -d); mkdir -p "$GT/home/work/ws"
+gc() { WMF_CLAUDE_GUEST_AGENT_HOME="$GT/home" WMF_CLAUDE_GUEST_CONTAINED_MARKER="$GT/contained" bash "$GC" "$@" 2>&1; }
+out=$(touch "$GT/contained"; gc ws)
+if grep -q 'this is a contained VM' <<<"$out"; then pass "guest-claude: contained VM without --model-proxy-port refused"; else fail "guest-claude: contained VM without --model-proxy-port: $out"; fi
+out=$(gc --model-proxy-port 7319 ws --docker=mediawiki)
+if grep -q 'not available in a contained VM' <<<"$out"; then pass "guest-claude: --docker refused in a contained VM"; else fail "guest-claude: --docker in a contained VM: $out"; fi
+out=$(rm -f "$GT/contained"; gc --model-proxy-port 7319 ws)
+if grep -q 'not a contained VM' <<<"$out"; then pass "guest-claude: --model-proxy-port refused outside a contained VM"; else fail "guest-claude: --model-proxy-port outside a contained VM: $out"; fi
+rm -rf "$GT"
 
 echo ""
 echo "========================="

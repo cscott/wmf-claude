@@ -1,0 +1,356 @@
+#!/usr/bin/env python3
+"""Model API proxy for a contained Lima VM (runs on the HOST, outside the VM).
+
+The contained VM has no egress. Its only path out is this proxy, which
+bin/wmf-claude-vm forwards into the guest as a localhost port (ssh -R). The
+Claude OAuth token stays here, on the host: the VM, and everything in it,
+never sees it.
+
+The proxy is the security boundary for model access, so it is strict:
+  - Exact paths: POST /v1/messages and POST /v1/messages/count_tokens only.
+    The query string is passed on; it does not take part in the match.
+  - One request per connection. The request must have Content-Length and no
+    Transfer-Encoding. The proxy reads exactly that many bytes, forwards
+    them, and closes. Nothing after the body is read, so a second, pipelined
+    request never reaches the API.
+  - The client's credentials are dropped (Authorization, x-api-key, Cookie,
+    Proxy-*), and the host token is injected. A key from inside the VM can
+    never reach the API.
+  - The body must be a JSON object with no mcp_servers and no container,
+    every tool must be a client tool (no "type", or "custom"), and every
+    content "source", at any depth, must be inline (base64, text or
+    content). Server tools such as web_search, the MCP connector and URL
+    sources all make the API reach the internet for the agent.
+  - TLS to api.anthropic.com is verified. The response streams back as it
+    arrives (server-sent events).
+  - Every request is logged, allowed or denied, as one JSON line.
+
+Usage:
+  bin/wmf-claude-model-proxy --socket PATH --log PATH \\
+      (--keychain-service S --keychain-account A | --token-file PATH)
+"""
+
+import argparse
+import http.client
+import json
+import os
+import signal
+import socketserver
+import ssl
+import stat
+import subprocess
+import sys
+import threading
+import time
+
+UPSTREAM_HOST = "api.anthropic.com"
+ALLOWED = {("POST", "/v1/messages"), ("POST", "/v1/messages/count_tokens")}
+MAX_HEADER_BYTES = 64 * 1024
+MAX_BODY_BYTES = 32 * 1024 * 1024
+# Reading the request must not hold a thread forever. The response may stream
+# for minutes, so the limit applies only until the body is read.
+REQUEST_TIMEOUT = 60
+UPSTREAM_TIMEOUT = 600
+# Hop-by-hop, credential and framing headers. The proxy sets its own.
+DROP_HEADERS = {
+    "authorization", "x-api-key", "cookie", "host", "content-length",
+    "transfer-encoding", "connection", "keep-alive", "te", "trailer",
+    "upgrade", "expect",
+}
+DROP_RESPONSE_HEADERS = {
+    "connection", "keep-alive", "transfer-encoding", "content-length",
+    "trailer", "upgrade", "set-cookie",
+}
+
+
+def load_token(args):
+    if args.token_file:
+        st = os.stat(args.token_file)
+        if st.st_mode & 0o077:
+            sys.exit(f"error: {args.token_file} must not be readable by others (chmod 0600)")
+        with open(args.token_file) as f:
+            token = f.read().strip()
+    else:
+        out = subprocess.run(
+            ["security", "find-generic-password", "-s", args.keychain_service,
+             "-a", args.keychain_account, "-w"],
+            capture_output=True, text=True)
+        if out.returncode != 0:
+            sys.exit(f"error: no token in the keychain for service {args.keychain_service!r}, "
+                     f"account {args.keychain_account!r}")
+        token = out.stdout.strip()
+    if not token or any(c in token for c in "\r\n"):
+        sys.exit("error: the token is empty or malformed")
+    return token
+
+
+class Log:
+    def __init__(self, path):
+        self.lock = threading.Lock()
+        os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        self.f = os.fdopen(fd, "a", buffering=1)
+
+    def write(self, **event):
+        event["ts"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        with self.lock:
+            self.f.write(json.dumps(event, sort_keys=True) + "\n")
+
+
+INLINE_SOURCES = {"base64", "text", "content"}
+
+
+def find_remote_source(node):
+    """Return the type of the first non-inline content source, or None."""
+    if isinstance(node, dict):
+        src = node.get("source")
+        if isinstance(src, dict) and src.get("type") not in INLINE_SOURCES:
+            return repr(src.get("type"))
+        # A tool call's input is the model's own arguments, not content the
+        # API fetches; a tool may have a parameter called "source".
+        children = [v for k, v in node.items()
+                    if not (k == "input" and str(node.get("type", "")).endswith("tool_use"))]
+    elif isinstance(node, list):
+        children = node
+    else:
+        return None
+    for child in children:
+        found = find_remote_source(child)
+        if found:
+            return found
+    return None
+
+
+def no_duplicate_keys(pairs):
+    # A parser that keeps the first of two equal keys would see another
+    # document than the one this policy checked. Refuse duplicates.
+    keys = [k for k, _ in pairs]
+    if len(keys) != len(set(keys)):
+        raise ValueError("duplicate key")
+    return dict(pairs)
+
+
+def body_policy(body):
+    """Return a denial reason, or None when the body is allowed."""
+    try:
+        doc = json.loads(body, object_pairs_hook=no_duplicate_keys)
+    except RecursionError:
+        return "body is nested too deeply"
+    except ValueError:
+        return "body is not JSON, or has a duplicate key"
+    if not isinstance(doc, dict):
+        return "body is not a JSON object"
+    if doc.get("mcp_servers"):
+        return "mcp_servers is not allowed (the API would connect to them)"
+    if "container" in doc:
+        return "container is not allowed (server-side code execution)"
+    try:
+        remote = find_remote_source(doc.get("messages")) or find_remote_source(doc.get("system"))
+    except RecursionError:
+        return "body is nested too deeply"
+    if remote:
+        return f"content source {remote} is not allowed (only inline sources; the API would fetch a URL)"
+    tools = doc.get("tools") or []
+    if not isinstance(tools, list):
+        return "tools is not a list"
+    for tool in tools:
+        if not isinstance(tool, dict):
+            return "a tool is not an object"
+        kind = tool.get("type")
+        if kind not in (None, "custom"):
+            return f"server tool {kind!r} is not allowed"
+    return None
+
+
+class Handler(socketserver.StreamRequestHandler):
+    def deny(self, status, reason, **log):
+        self.server.log.write(decision="deny", status=status, reason=reason, **log)
+        body = json.dumps({"type": "error", "error": {
+            "type": "permission_error",
+            "message": f"wmf-claude model proxy: {reason}"}}).encode()
+        head = (f"HTTP/1.1 {status} Denied\r\nContent-Type: application/json\r\n"
+                f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n")
+        try:
+            self.wfile.write(head.encode() + body)
+        except OSError:
+            pass
+
+    def handle(self):
+        # Every request ends in a response and a log line, also on a bug.
+        self.connection.settimeout(REQUEST_TIMEOUT)
+        try:
+            self.handle_request()
+        except TimeoutError:
+            self.server.log.write(decision="deny", status=408, reason="request not received in time")
+        except Exception as e:  # noqa: BLE001
+            self.deny(400, f"request refused: {type(e).__name__}")
+
+    def handle_request(self):
+        started = time.monotonic()
+        # Request line and headers, with a hard size limit.
+        raw = b""
+        while not raw.endswith(b"\r\n\r\n"):
+            line = self.rfile.readline(MAX_HEADER_BYTES + 1)
+            if not line:
+                if raw:
+                    self.server.log.write(decision="deny", status=400, reason="connection closed mid-request")
+                return
+            raw += line
+            if len(raw) > MAX_HEADER_BYTES:
+                return self.deny(431, "request headers too large")
+        lines = raw.decode("latin-1").split("\r\n")
+        try:
+            method, target, version = lines[0].split(" ")
+        except ValueError:
+            return self.deny(400, "malformed request line")
+        path = target.split("?", 1)[0]
+        log = {"method": method, "path": path}
+        if version != "HTTP/1.1":
+            return self.deny(505, "only HTTP/1.1 is accepted", **log)
+        if (method, path) not in ALLOWED:
+            return self.deny(403, f"{method} {path} is not allowed", **log)
+
+        headers = []
+        content_length = None
+        for line in lines[1:]:
+            if not line:
+                continue
+            if ":" not in line or line[0] in " \t":
+                return self.deny(400, "malformed header", **log)
+            name, value = line.split(":", 1)
+            name, value = name.strip(), value.strip()
+            lname = name.lower()
+            if lname == "transfer-encoding":
+                return self.deny(411, "Transfer-Encoding is not accepted; send Content-Length", **log)
+            if lname == "content-length":
+                if content_length is not None or not (value.isascii() and value.isdigit()):
+                    return self.deny(400, "bad Content-Length", **log)
+                content_length = int(value)
+            elif lname in DROP_HEADERS or lname.startswith("proxy-"):
+                continue
+            else:
+                headers.append((name, value))
+        if content_length is None:
+            return self.deny(411, "Content-Length is required", **log)
+        if content_length > MAX_BODY_BYTES:
+            return self.deny(413, "body too large", **log)
+
+        body = self.rfile.read(content_length)
+        if len(body) != content_length:
+            return self.deny(400, "body shorter than Content-Length", **log)
+        reason = body_policy(body)
+        if reason:
+            return self.deny(403, reason, req_bytes=content_length, **log)
+
+        self.connection.settimeout(None)
+        headers.append(("Authorization", f"Bearer {self.server.token}"))
+        headers.append(("Content-Length", str(content_length)))
+        conn = http.client.HTTPSConnection(
+            UPSTREAM_HOST, 443, timeout=UPSTREAM_TIMEOUT, context=self.server.tls)
+        resp_bytes = 0
+        status = None
+        try:
+            conn.putrequest(method, target, skip_host=False, skip_accept_encoding=True)
+            for name, value in headers:
+                conn.putheader(name, value)
+            conn.endheaders(body)
+            resp = conn.getresponse()
+            status = resp.status
+            out = [f"HTTP/1.1 {resp.status} {resp.reason}\r\n"]
+            for name, value in resp.getheaders():
+                if name.lower() not in DROP_RESPONSE_HEADERS:
+                    out.append(f"{name}: {value}\r\n")
+            out.append("Connection: close\r\n\r\n")
+            self.wfile.write("".join(out).encode("latin-1"))
+            # Close-delimited body: relay each chunk as it arrives.
+            while True:
+                chunk = resp.read1(65536)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                self.wfile.flush()
+                resp_bytes += len(chunk)
+        except ValueError as e:
+            # A header value that http.client refuses (a bare CR or LF).
+            if status is None:
+                return self.deny(400, f"request refused: {e}", **log)
+            self.server.log.write(decision="error", reason=str(e), status=status, **log)
+            return
+        except (OSError, http.client.HTTPException) as e:
+            self.server.log.write(decision="error", reason=str(e), status=status, **log)
+            if status is None:
+                try:
+                    self.wfile.write(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                except OSError:
+                    pass
+            return
+        finally:
+            conn.close()
+        self.server.log.write(
+            decision="allow", status=status, req_bytes=content_length, resp_bytes=resp_bytes,
+            ms=int((time.monotonic() - started) * 1000), **log)
+
+
+class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+    daemon_threads = True
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--socket", required=True, help="Unix socket to listen on (created 0600)")
+    ap.add_argument("--log", required=True, help="JSON-lines request log (appended, 0600)")
+    src = ap.add_mutually_exclusive_group(required=True)
+    src.add_argument("--keychain-service", help="macOS keychain service of the token")
+    src.add_argument("--token-file", help="file that holds the token (0600)")
+    ap.add_argument("--keychain-account", help="macOS keychain account of the token")
+    args = ap.parse_args()
+    if args.keychain_service and not args.keychain_account:
+        ap.error("--keychain-service needs --keychain-account")
+
+    # sockaddr_un holds 104 bytes on macOS (108 on Linux), with the NUL.
+    if len(os.fsencode(os.path.abspath(args.socket))) > 103:
+        sys.exit(f"error: socket path too long for AF_UNIX: {args.socket}")
+    token = load_token(args)
+    sock_dir = os.path.dirname(os.path.abspath(args.socket))
+    os.makedirs(sock_dir, mode=0o700, exist_ok=True)
+    if os.path.lexists(args.socket):
+        if not stat.S_ISSOCK(os.lstat(args.socket).st_mode):
+            sys.exit(f"error: {args.socket} exists and is not a socket")
+        os.unlink(args.socket)
+    old = os.umask(0o177)
+    try:
+        server = Server(args.socket, Handler)
+    finally:
+        os.umask(old)
+    server.token = token
+    server.log = Log(args.log)
+    server.tls = tls_context()
+    # SIGTERM (bin/wmf-claude-vm stops the proxy with it) exits through the
+    # finally below, which removes the socket.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    server.log.write(decision="start", socket=args.socket, pid=os.getpid())
+    print(f"wmf-claude model proxy on {args.socket}, log {args.log}", file=sys.stderr, flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.log.write(decision="stop", pid=os.getpid())
+        try:
+            os.unlink(args.socket)
+        except OSError:
+            pass
+
+
+def tls_context():
+    """A verifying TLS context. A python.org build on macOS has no CA
+    certificates until its 'Install Certificates' step runs, so add the
+    macOS system bundle when it is there."""
+    ctx = ssl.create_default_context()
+    if os.path.exists("/etc/ssl/cert.pem"):
+        ctx.load_verify_locations("/etc/ssl/cert.pem")
+    return ctx
+
+
+if __name__ == "__main__":
+    main()

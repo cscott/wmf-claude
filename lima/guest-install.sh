@@ -121,7 +121,11 @@ fi
 # it. Interactive: it asks for the Phabricator username, as ./setup.sh does
 # on the host, and recalls the previous answer.
 step "Per-user setup for $AGENT"
-as_agent WMF_CLAUDE_SKIP_BUILD=1 WMF_CLAUDE_IN_VM=1 "$INSTALL/bin/wmf-claude-setup"
+# A contained VM (root-owned marker, written by bin/wmf-claude-vm create --contained)
+# gets no MCP servers: it has no egress for them.
+CONTAINED_ENV=()
+[[ -f /etc/wmf-claude/contained ]] && CONTAINED_ENV=(WMF_CLAUDE_CONTAINED=1)
+as_agent WMF_CLAUDE_SKIP_BUILD=1 WMF_CLAUDE_IN_VM=1 "${CONTAINED_ENV[@]}" "$INSTALL/bin/wmf-claude-setup"
 as_agent mkdir -p "$AGENT_HOME/work"
 
 echo ""

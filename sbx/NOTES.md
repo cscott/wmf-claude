@@ -428,8 +428,11 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   repos, `npm ci`, the wiki install, all as without the proxy, and `Sandbox egcite is
   ready`. Its log denies only `wmf-sbx-check.invalid` and, 3 times during `npm ci`,
   `scarf.sh`: the `@scarf/scarf` postinstall's download analytics (npm does not run that
-  script, by its allow-scripts warning; nothing failed). Leave it denied. Not yet: the
-  session-start bullet in a session, and `allow` from it.
+  script, by its allow-scripts warning; nothing failed). Leave it denied.
+  A session in it: `WMF_CLAUDE_SBX_EGRESS` is `egcite`, and the bullet is there. Asked to
+  fetch www.kernel.org, Claude got the 502, did not work around it, and asked for `wmf-sbx
+  allow egcite www.kernel.org`; after the engineer ran it, the same fetch gave the page
+  ("The Linux Kernel Archives") with no restart. The default path is done on Linux.
 - **`--nested` behind the egress proxy** (RAN on the engineer's host, 2026-10-13: `create
   --egress-proxy --nested` passes every invariant and finishes, after 388cbb3 and d6b8628;
   an inner `create .` of wmf-claude in it ran too, after 24c67e9 and 3ab7488 (the clone

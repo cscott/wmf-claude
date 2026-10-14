@@ -826,7 +826,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
             nested=args.nested,
             proxy_ports=template_mod.loopback_proxy_ports(env),
             ca_files=image_mod.extra_ca_files(env),
-            egress_ca=egress_mod.ca_cert(name, env) if egress else None)
+            egress_ca=egress_mod.ca_cert(name, env) if egress else None, sudo=sudo)
     except (state_mod.StateError, vm_mod.VmError, image_mod.ImageError,
             template_mod.TemplateError, lima_mod.LimaError, repos_mod.RepoError,
             LaunchError, disk_mod.DiskError) as e:

@@ -276,6 +276,31 @@ class VmTests(Env):
         res = subprocess.run(["bash", "-n"], input=script, text=True, capture_output=True)
         self.assertEqual(res.returncode, 0, res.stderr)
 
+    def test_a_sudo_sandbox_checks_that_the_agent_can_sudo(self):
+        checks = [d for d, _t in vm.invariants(sudo=True)]
+        self.assertNotIn("the agent cannot sudo", checks)
+        self.assertIn("the agent can sudo, from its sudoers file", checks)
+        self.assertIn("the agent is not in sudo or docker", checks)
+        # Root in the guest can undo its own rules: the host's are required.
+        for desc, _t in vm.EGRESS_INVARIANTS:
+            self.assertIn(desc, checks)
+        self.assertIn("the agent cannot sudo", [d for d, _t in vm.invariants(egress=True)])
+
+    def test_start_checks_a_sudo_sandbox_as_one(self):
+        lima = self.sandbox(lima=FakeLima())
+        st = state_mod.load("sbx-demo", self.env)
+        st.update({"egress": "proxy", "sudo": True})
+        state_mod.save(st, self.env)
+        egress.make_dir("sbx-demo", self.env)
+        egress.set_port("sbx-demo", 40999, self.env)
+        out = io.StringIO()
+        self.assertTrue(start.check("sbx-demo", lima=lima, out=out, env=self.env))
+        self.assertIn("the agent can sudo", out.getvalue())
+        self.assertNotIn("the agent cannot sudo", out.getvalue())
+        script = lima.invariant_scripts[-1]
+        res = subprocess.run(["bash", "-n"], input=script, text=True, capture_output=True)
+        self.assertEqual(res.returncode, 0, res.stderr)
+
     def test_start_checks_the_egress_invariants_of_an_egress_sandbox(self):
         lima = self.sandbox(lima=FakeLima())
         st = state_mod.load("sbx-demo", self.env)
@@ -827,6 +852,8 @@ class CreateTests(Env):
         self.assertEqual(self.egress_create("--sudo", flag=None), 0, self.err)
         st = state_mod.load("demo", self.env)
         self.assertEqual((st["sudo"], st["egress"], st["vmType"]), (True, "proxy", "qemu"))
+        script = self.lima.templates["wmf-sbx-demo"]["provision"][0]["script"]
+        self.assertIn('AGENT_SUDO="1"', script)
         self.assertIn("+ sudo: the agent has passwordless sudo", self.err)
 
     def test_settings_session_sudo_is_the_default(self):
@@ -844,6 +871,8 @@ class CreateTests(Env):
     def test_not_sudo_by_default(self):
         self.assertEqual(self.egress_create(flag=None), 0, self.err)
         self.assertNotIn("sudo", state_mod.load("demo", self.env))
+        script = self.lima.templates["wmf-sbx-demo"]["provision"][0]["script"]
+        self.assertIn('AGENT_SUDO=""', script)
         self.assertNotIn("+ sudo:", self.err)
 
     def test_sudo_does_not_fall_back_from_the_egress_proxy(self):

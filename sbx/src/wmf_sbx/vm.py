@@ -293,11 +293,11 @@ def shell(name, argv, lima=None, workdir=ENGINEER_HOME, check=True, capture=True
 # The security invariants that `start` and `status` check in a running
 # sandbox (HANDOFF-LIMA.md §4, contained mode). Each is a shell test that
 # prints nothing and exits 0 when the invariant holds.
+NO_SUDO = ("the agent cannot sudo", "! sudo -u agent sudo -n true 2>/dev/null")
 INVARIANTS = [
     ("the agent is not in sudo or docker",
      "! id -nG agent | grep -qwE 'sudo|docker'"),
-    ("the agent cannot sudo",
-     "! sudo -u agent sudo -n true 2>/dev/null"),
+    NO_SUDO,
     ("the host block (nft) is loaded",
      "sudo -n nft list table inet wmf_sbx_hostblock >/dev/null"),
     ("TIOCSTI is off",
@@ -348,18 +348,34 @@ EGRESS_INVARIANTS = [
 ]
 
 
-def invariants(egress=False):
+# A `create --sudo` sandbox (D9) swaps NO_SUDO for these. Root in it can
+# make any guest check pass, so they only say that the sandbox is as
+# create made it; what holds against the agent is on the host
+# (restrict=on, the egress proxy), and EGRESS_INVARIANTS are required.
+SUDO_INVARIANTS = [
+    ("the agent can sudo, from its sudoers file",
+     "sudo -u agent sudo -n true 2>/dev/null && test -e /etc/sudoers.d/90-wmf-sbx-agent"),
+    ("the sudo marker is there", "test -e /etc/wmf-sbx/sudo"),
+]
+
+
+def invariants(egress=False, sudo=False):
+    if sudo:
+        return ([c for c in INVARIANTS if c != NO_SUDO] + SUDO_INVARIANTS
+                + EGRESS_INVARIANTS)
     return INVARIANTS + (EGRESS_INVARIANTS if egress else [])
 
 
-def check_invariants(name, host_uid=None, lima=None, egress=False, loopback_port=22):
+def check_invariants(name, host_uid=None, lima=None, egress=False, loopback_port=22,
+                     sudo=False):
     """[(description, ok)] for each invariant, in one guest call; with
-    `egress`, the egress proxy's too. `loopback_port`: a port that
-    listens on the host's loopback."""
+    `egress`, the egress proxy's too, and with `sudo`, those of a sudo
+    sandbox. `loopback_port`: a port that listens on the host's
+    loopback."""
     host_uid = os.getuid() if host_uid is None else host_uid
     script = [f"WMF_SBX_HOST_UID={int(host_uid)}",
               f"WMF_SBX_LOOPBACK_PORT={int(loopback_port)}"]
-    checks = invariants(egress)
+    checks = invariants(egress, sudo)
     for i, (_desc, test) in enumerate(checks):
         script.append(f"if {test}; then echo {i}:ok; else echo {i}:FAIL; fi")
     result = shell(name, ["bash", "-c", "\n".join(script)], lima=lima, check=False)

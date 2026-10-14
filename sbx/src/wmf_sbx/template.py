@@ -109,13 +109,14 @@ def loopback_proxy_ports(env=None):
 EPHEMERAL_PORTS = (49152, 53247)
 
 
-def provision_script(proxy_ports=(), egress=False):
+def provision_script(proxy_ports=(), egress=False, sudo=False):
     with open(PROVISION_SCRIPT, encoding="utf-8") as f:
         script = f.read()
     ports = (egress_mod.DNS_PORT, egress_mod.EGRESS_PORT, egress_mod.CRED_PORT)
     return (script.replace("@ENGINEER@", ENGINEER)
                   .replace("@PROXY_PORTS@", " ".join(str(p) for p in proxy_ports))
                   .replace("@EPHEMERAL_PORTS@", "%d %d" % EPHEMERAL_PORTS)
+                  .replace("@AGENT_SUDO@", "1" if sudo else "")
                   .replace("@EGRESS@", egress_mod.EGRESS_ADDR if egress else "")
                   .replace("@EGRESS_PORTS@", ", ".join(str(p) for p in ports))
                   .replace("@EGRESS_FILES@", egress_mod.guest_provision() if egress else ""))
@@ -123,13 +124,14 @@ def provision_script(proxy_ports=(), egress=False):
 
 def sandbox_template(golden_path, arch, gitdirs=(), vm_type=None, cpus=DEFAULT_CPUS,
                      memory=DEFAULT_MEMORY, disk=DEFAULT_DISK, proxy_ports=(),
-                     ca_files=(), host_uid=None, nested=False, egress_ca=None):
+                     ca_files=(), host_uid=None, nested=False, egress_ca=None, sudo=False):
     """The instance config, as a dict.
 
     `golden_path` is the cached golden image; `limactl create` copies it
     (D2). `gitdirs` are host git dirs to mount read-only (phase 4).
     `egress_ca` (the sandbox's egress CA, egress.make_ca) puts the
-    sandbox behind the host egress proxy."""
+    sandbox behind the host egress proxy. `sudo` gives the agent
+    passwordless sudo, which needs the egress proxy (D9)."""
     vm_type = vm_type or default_vm_type()
     if vm_type not in MOUNT_TYPES:
         raise TemplateError(f"unknown vmType {vm_type!r} (want qemu or vz)")
@@ -141,6 +143,9 @@ def sandbox_template(golden_path, arch, gitdirs=(), vm_type=None, cpus=DEFAULT_C
             f"(--no-phan-deps, --no-ci-deps, --no-dev, --no-suggests), or name fewer repos.")
     if egress_ca and vm_type != "qemu":
         raise TemplateError("the egress proxy needs vmType qemu (its wrapper is QEMU's)")
+    if sudo and not egress_ca:
+        raise TemplateError("a sudo agent needs the host egress proxy: root in the guest "
+                            "can undo the guest's own network rules")
     host_uid = os.getuid() if host_uid is None else host_uid
     if host_uid == ENGINEER_UID:
         raise TemplateError(f"the host uid {host_uid} is the engineer's uid in the guest")
@@ -160,7 +165,8 @@ def sandbox_template(golden_path, arch, gitdirs=(), vm_type=None, cpus=DEFAULT_C
                 "forwardX11": False, "forwardX11Trusted": False},
         "user": {"name": ENGINEER, "home": f"/home/{ENGINEER}", "uid": ENGINEER_UID},
         "provision": [{"mode": "system",
-                       "script": provision_script(proxy_ports, egress=bool(egress_ca))}],
+                       "script": provision_script(proxy_ports, egress=bool(egress_ca),
+                                                  sudo=sudo)}],
         "probes": [{
             "mode": "readiness",
             "description": "wmf-sbx sandbox provisioning",

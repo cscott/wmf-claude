@@ -521,7 +521,7 @@ def prune_images(keep=(), env=None, min_age=None, now=None):
 
 
 # `image gc` (and the gc at the end of `create`) removes the unused images
-# older than this; settings.yaml `images: {gcAge: ...}` changes it.
+# older than this; settings.yaml `imageCache: {gcAge: ...}` changes it.
 GC_AGE = "7d"
 DURATION_RE = re.compile(r"^\s*(\d+)\s*([dhm]?)\s*$")
 
@@ -537,25 +537,25 @@ def parse_duration(text, what="a duration"):
 
 
 def gc_age(config=None):
-    """settings.yaml `images.gcAge`, as a timedelta."""
-    images = (config or {}).get("images") or {}
-    return parse_duration(images.get("gcAge", GC_AGE), "settings.yaml images.gcAge")
+    """settings.yaml `imageCache.gcAge`, as a timedelta."""
+    images = (config or {}).get("imageCache") or {}
+    return parse_duration(images.get("gcAge", GC_AGE), "settings.yaml imageCache.gcAge")
 
 
 # A golden image older than this is rebuilt at the next `create`, with the
-# same inputs (track B3): settings.yaml `images: {maxAge: ..., expire: ...}`.
+# same inputs (track B3): settings.yaml `imageCache: {maxAge: ..., expire: ...}`.
 MAX_AGE = "14d"
 # A warm create freezes a new snapshot only when the one it started from
-# is older than this (settings.yaml `images.snapshotInterval`): within it,
+# is older than this (settings.yaml `imageCache.snapshotInterval`): within it,
 # the next create fetches and updates a little more, and a freeze (a stop,
 # a start and a full generation written) is not worth it.
 SNAPSHOT_INTERVAL = "1d"
 
 
 def snapshot_interval(config=None):
-    images = (config or {}).get("images") or {}
+    images = (config or {}).get("imageCache") or {}
     return parse_duration(images.get("snapshotInterval", SNAPSHOT_INTERVAL),
-                          "settings.yaml images.snapshotInterval")
+                          "settings.yaml imageCache.snapshotInterval")
 
 
 # The input that tells a rebuilt image of the same inputs from the first
@@ -564,15 +564,15 @@ EPOCH = "epoch"
 
 
 def max_age(config=None):
-    images = (config or {}).get("images") or {}
-    return parse_duration(images.get("maxAge", MAX_AGE), "settings.yaml images.maxAge")
+    images = (config or {}).get("imageCache") or {}
+    return parse_duration(images.get("maxAge", MAX_AGE), "settings.yaml imageCache.maxAge")
 
 
 def expires(config=None):
-    """settings.yaml `images.expire` (default true)."""
-    value = ((config or {}).get("images") or {}).get("expire", True)
+    """settings.yaml `imageCache.expire` (default true)."""
+    value = ((config or {}).get("imageCache") or {}).get("expire", True)
     if not isinstance(value, bool):
-        raise ImageError(f"settings.yaml images.expire: {value!r} is not true or false")
+        raise ImageError(f"settings.yaml imageCache.expire: {value!r} is not true or false")
     return value
 
 
@@ -599,10 +599,10 @@ def images_for(inputs, env=None):
 def choose_inputs(inputs, env=None, config=None, expire=None, renew=False, now=None,
                   min_left=None):
     """(inputs, note): the inputs of the golden image to use. The newest
-    cached image of `inputs` while it is younger than images.maxAge (with
+    cached image of `inputs` while it is younger than imageCache.maxAge (with
     at least `min_left` to go); else new inputs with an EPOCH, which
     build() makes a new image of. With `expire` False (--no-expire,
-    images.expire: false) an old image stays, with a warning, unless
+    imageCache.expire: false) an old image stays, with a warning, unless
     `renew` (--cold). `note` is a line to show, or None."""
     now = now or datetime.datetime.now(datetime.timezone.utc)
     found = images_for(inputs, env)
@@ -618,17 +618,17 @@ def choose_inputs(inputs, env=None, config=None, expire=None, renew=False, now=N
     old = (f"{age.days} days old" if age.days else
            f"{age.total_seconds() / 3600:.0f} h old")
     days = old if left <= datetime.timedelta(0) else \
-        f"{old}, {left.total_seconds() / 3600:.0f} h before images.maxAge"
+        f"{old}, {left.total_seconds() / 3600:.0f} h before imageCache.maxAge"
     if expire is None:
         expire = expires(config)
     if not expire and not renew:
         return manifest["inputs"], (
-            f"warning: golden image {key} is {days} (images.maxAge {duration(limit)}); it is kept "
-            f"(--no-expire or images.expire: false). When it suits you, `wmf-sbx create "
+            f"warning: golden image {key} is {days} (imageCache.maxAge {duration(limit)}); it is kept "
+            f"(--no-expire or imageCache.expire: false). When it suits you, `wmf-sbx create "
             f"--cold` builds a new one, with the Debian updates since.")
     new = dict(_base(inputs))
     new[EPOCH] = now.isoformat(timespec="seconds")
-    return new, f"+ golden image {key} is {days} (images.maxAge {duration(limit)}): building a new one"
+    return new, f"+ golden image {key} is {days} (imageCache.maxAge {duration(limit)}): building a new one"
 
 
 def gc_images(env=None, config=None, keep=(), now=None):
@@ -1016,7 +1016,7 @@ def main(argv=None, env=None, lima=None, run=subprocess.run, out=sys.stdout):
     r = sub.add_parser("rm", help="remove one image (refused if a sandbox uses it)")
     r.add_argument("key")
     g = sub.add_parser("gc", help="remove the images that no sandbox uses and that are "
-                                  f"older than settings.yaml images.gcAge ({GC_AGE})")
+                                  f"older than settings.yaml imageCache.gcAge ({GC_AGE})")
     g.add_argument("--config", default=None, help="the settings file")
     sub.add_parser("prune", help="remove every image that no sandbox uses (to free "
                                  "disk space)")

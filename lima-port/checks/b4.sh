@@ -12,11 +12,11 @@
 # Phases (`all` runs them in order; each can run alone):
 #   base        make sure B4_REPO has a snapshot (a cold create if not)
 #   concurrent  two warm creates of B4_REPO at once, with
-#               images.snapshotInterval 0: both work, both freeze (one
+#               imageCache.snapshotInterval 0: both work, both freeze (one
 #               after the other: the key's lock), each on its own new
 #               generation
 #   rebuild     a sandbox on the current golden image, stopped; then a
-#               create with images.maxAge 0: it builds a new golden image
+#               create with imageCache.maxAge 0: it builds a new golden image
 #               and is cold on it. The old sandbox still starts and
 #               passes `status`; `image gc` keeps its files; after it is
 #               removed, `image prune` removes the old image and its
@@ -92,7 +92,7 @@ phase_concurrent() {
   local t0=$SECONDS pa pb ra rb fails=0
   echo "-- b4a and b4b: two creates at once ($LOGS/b4a.log, $LOGS/b4b.log)"
   local cfg=$LOGS/settings-interval0.yaml
-  { [ -f "$SETTINGS" ] && grep -v '^images:' "$SETTINGS"; printf 'images:\n  snapshotInterval: 0m\n'; } > "$cfg"
+  { [ -f "$SETTINGS" ] && grep -v '^imageCache:' "$SETTINGS"; printf 'imageCache:\n  snapshotInterval: 0m\n'; } > "$cfg"
   create b4a --config "$cfg" & pa=$!
   sleep 2
   create b4b --config "$cfg" & pb=$!
@@ -126,11 +126,11 @@ phase_rebuild() {
   exists b4old || { result "rebuild: FAILED"; return 1; }
   old=$(golden_of b4old)
   sbx stop b4old >/dev/null 2>&1
-  # The settings, with images.maxAge 0: the next create builds anew.
+  # The settings, with imageCache.maxAge 0: the next create builds anew.
   cfg=$LOGS/settings-maxage0.yaml
-  { [ -f "$SETTINGS" ] && grep -v '^images:' "$SETTINGS"; printf 'images:\n  maxAge: 0m\n'; } > "$cfg"
+  { [ -f "$SETTINGS" ] && grep -v '^imageCache:' "$SETTINGS"; printf 'imageCache:\n  maxAge: 0m\n'; } > "$cfg"
   t0=$SECONDS
-  echo "-- b4new: with images.maxAge 0 ($LOGS/b4new.log; it builds an image)"
+  echo "-- b4new: with imageCache.maxAge 0 ($LOGS/b4new.log; it builds an image)"
   create b4new --config "$cfg"; report b4new $? $((SECONDS - t0))
   exists b4new || { result "rebuild: FAILED"; return 1; }
   new=$(golden_of b4new)

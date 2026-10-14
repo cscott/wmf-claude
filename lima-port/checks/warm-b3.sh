@@ -11,7 +11,7 @@
 #   cold   `create` of B3_REPO and its dependencies with no snapshot yet
 #          (--cold): its time, and the snapshot it makes
 #   warm   a commit on a new branch in the host repo of B3_REPO, then a
-#          second `create` of the same repos, with images.snapshotInterval
+#          second `create` of the same repos, with imageCache.snapshotInterval
 #          0 (so it freezes): it must start from the snapshot, check out
 #          that commit, have a working wiki, its own machine-id, and make
 #          the next generation; its time, and the freeze's
@@ -102,7 +102,7 @@ phase_warm() {
          commit -q --allow-empty -m "B3 check: a host commit after the snapshot"
   sha=$(git -C "$host" rev-parse HEAD)
   local cfg=$LOGS/settings-interval0.yaml
-  { [ -f "$SETTINGS" ] && grep -v '^images:' "$SETTINGS"; printf 'images:\n  snapshotInterval: 0m\n'; } > "$cfg"
+  { [ -f "$SETTINGS" ] && grep -v '^imageCache:' "$SETTINGS"; printf 'imageCache:\n  snapshotInterval: 0m\n'; } > "$cfg"
   timed_create b3b --config "$cfg" || { result "warm: create FAILED"; return 1; }
   grep -E '^\+ snapshot .*frozen in' "$LOGS/b3b.log" | sed 's/^/   | /'
   grep -q '^+ warm: from snapshot' "$LOGS/b3b.log" || fail "the create was not warm"

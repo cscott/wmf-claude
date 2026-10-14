@@ -512,7 +512,7 @@ def lima_sandbox_names(lima, env=None):
 
 
 # A cold create does not make a snapshot on a golden image with less than
-# this to go before images.maxAge: it builds the image again first.
+# this to go before imageCache.maxAge: it builds the image again first.
 SNAPSHOT_GRACE = datetime.timedelta(days=1)
 
 
@@ -619,7 +619,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
                         help="neither start from a warm snapshot nor make one")
     parser.add_argument("--no-expire", action="store_true",
                         help="keep using a golden image older than settings.yaml "
-                             "images.maxAge (14 days), with a warning; for a demo")
+                             "imageCache.maxAge (14 days), with a warning; for a demo")
     parser.add_argument("--full-disk", action="store_true",
                         help="on QEMU too, give the sandbox a full copy of the golden "
                              "image, not a copy-on-write overlay on it")
@@ -827,7 +827,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
             inputs = (inputs_fn() if inputs_fn
                       else image_mod.image_inputs(env=env, packages=config["packages"]))
             # The newest image of these inputs, or a new one when it is
-            # older than images.maxAge (track B3). A cold snapshot is not
+            # older than imageCache.maxAge (track B3). A cold snapshot is not
             # made on an image with less than SNAPSHOT_GRACE to go.
             base_inputs = inputs
             expire = False if args.no_expire else None
@@ -1036,7 +1036,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
             fresh = age
     if fresh is not None:
         say(f"+ no new snapshot: {skey}/{snap[0]} is {_ago(fresh)} old "
-            f"(settings.yaml images.snapshotInterval: "
+            f"(settings.yaml imageCache.snapshotInterval: "
             f"{image_mod.duration(image_mod.snapshot_interval(config))}); the sandbox stays on it")
     elif use_snapshots:
         meta = {"golden": key, "nested": bool(args.nested),

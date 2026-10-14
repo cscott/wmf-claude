@@ -484,6 +484,14 @@ class BuilderTests(unittest.TestCase):
         self.assertEqual(out["https_proxy"], "http://nono:s3cret@192.168.5.2:49509")
         self.assertEqual(out["http_proxy"], "http://u:p@proxy.example:3128")
 
+    def test_git_sends_proxy_credentials_at_once(self):
+        # RAN (nested): git's anyauth CONNECT has no credentials, and nono's
+        # proxy aborts it.
+        out = image.guest_proxy_env({"https_proxy": "http://nono:s3cret@127.0.0.1:49509"})
+        self.assertEqual(out["GIT_HTTP_PROXY_AUTHMETHOD"], "basic")
+        out = image.guest_proxy_env({"https_proxy": "http://127.0.0.1:3128"})
+        self.assertNotIn("GIT_HTTP_PROXY_AUTHMETHOD", out)
+
     def test_no_proxy_means_no_variables(self):
         self.assertEqual(image.guest_proxy_env({"HOME": "/x"}), {})
 

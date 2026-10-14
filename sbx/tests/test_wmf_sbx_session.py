@@ -349,6 +349,16 @@ class SessionFilesTests(unittest.TestCase):
         for docker in (".sbx-originals", "git://", "The other CLAUDE.md"):
             self.assertNotIn(docker, text)
 
+    def test_home_claude_md_says_the_mode(self):
+        contained = session.home_claude_md("demo")
+        self.assertIn("`agent`, under nono, with no sudo.", contained)
+        self.assertIn("(`--local-web`)", contained)
+        sudo = session.home_claude_md("demo", sudo=True)
+        self.assertIn("`agent`, with passwordless sudo and no nono.", sudo)
+        self.assertNotIn("under nono", sudo)
+        self.assertNotIn("--local-web", sudo)
+        self.assertNotIn("@MODE@", sudo + contained)
+
     def test_write_session_merges_env_and_writes_files(self):
         with tempfile.TemporaryDirectory() as home:
             os.makedirs(os.path.join(home, ".claude"))
@@ -519,6 +529,23 @@ class ContextTextTests(unittest.TestCase):
         self.assertTrue(lima.startswith(nono))
         self.assertIn("wmf-sbx resume", lima[len(nono):])
         self.assertTrue(os.path.isfile(os.path.join(ctx, "lima-sbx", "environment.txt")))
+
+    def test_the_sudo_backend_says_sudo_and_no_nono(self):
+        hook = os.path.join(REPO_ROOT, "bin", "session-start.sh")
+        res = subprocess.run(["bash", hook], capture_output=True, text=True,
+                             env=dict(os.environ, WMF_CLAUDE_SANDBOX_BACKEND="lima-sbx-sudo",
+                                      WMF_CLAUDE_SBX_EGRESS="demo"))
+        self.assertEqual(res.stderr, "")
+        out = res.stdout
+        self.assertIn("passwordless sudo", out)
+        self.assertNotIn("sandboxed by nono", out)
+        self.assertNotIn("there is no sudo", out)
+        self.assertNotIn("--allow-post", out)
+        self.assertIn("composer serve", out)
+        # no nono in between: curl gets the egress proxy's own 403 (NOTES)
+        self.assertIn("`CONNECT tunnel failed, response 403`", out)
+        self.assertIn("`wmf-sbx allow demo HOST`", out)
+        self.assertNotIn("but not read it back", out)
 
     def test_the_hook_selects_the_backend(self):
         hook = os.path.join(REPO_ROOT, "bin", "session-start.sh")

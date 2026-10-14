@@ -948,7 +948,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
     plan["session"] = session_mod.session_plan(
         name, resolved_for_kit, readonly, identity=session_mod.git_identity(run=run),
         preferences=preferences, claude_version=claude_version, quiet=quiet,
-        environment=config["environment"])
+        environment=config["environment"], sudo=sudo)
     try:
         home = env.get("HOME") or os.path.expanduser("~")
         session_mod.wmf_claude_setup(

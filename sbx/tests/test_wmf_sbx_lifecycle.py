@@ -849,7 +849,11 @@ class CreateTests(Env):
                              for c in self.lima.calls))
 
     def test_sudo_records_it_behind_the_egress_proxy(self):
-        self.assertEqual(self.egress_create("--sudo", flag=None), 0, self.err)
+        import wmf_sbx.session as session_mod
+        with mock.patch.object(session_mod, "session_plan",
+                               wraps=session_mod.session_plan) as plan:
+            self.assertEqual(self.egress_create("--sudo", flag=None), 0, self.err)
+        self.assertTrue(plan.call_args.kwargs["sudo"])
         st = state_mod.load("demo", self.env)
         self.assertEqual((st["sudo"], st["egress"], st["vmType"]), (True, "proxy", "qemu"))
         script = self.lima.templates["wmf-sbx-demo"]["provision"][0]["script"]

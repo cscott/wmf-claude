@@ -608,6 +608,32 @@ class DoCloneTests(unittest.TestCase):
                 )
 
 
+class ConfirmClonesTests(unittest.TestCase):
+    MISSING = [("gerrit:mediawiki/extensions/Cite", "/w/Cite")]
+
+    def test_nothing_missing_or_clone_missing_needs_no_question(self):
+        def never(_q):
+            raise AssertionError("asked")
+        self.assertTrue(c.confirm_clones([], False, False, prompt=never))
+        self.assertTrue(c.confirm_clones(self.MISSING, True, False, prompt=never))
+
+    def test_no_terminal_is_no(self):
+        def never(_q):
+            raise AssertionError("asked")
+        self.assertFalse(c.confirm_clones(self.MISSING, False, False, prompt=never))
+
+    def test_the_answer_on_a_terminal(self):
+        with mock.patch("sys.stderr"):
+            for answer, ok in (("y", True), (" YES ", True), ("", False), ("n", False),
+                               ("sure", False)):
+                self.assertEqual(c.confirm_clones(self.MISSING, False, True,
+                                                  prompt=lambda _q, a=answer: a), ok, answer)
+
+            def eof(_q):
+                raise EOFError
+            self.assertFalse(c.confirm_clones(self.MISSING, False, True, prompt=eof))
+
+
 _SAME_AS_USERNAME = object()  # see HostMcpTests.fake_run
 
 

@@ -41,7 +41,7 @@ LEGACY_KEYS = {"rules": "repos", "extra_environment": "environment",
 _LEGACY_NOTED = set()   # say it once per run, not once per repo
 CONFIG_DEFAULTS = {"repos": [], "environment": {}, "packages": [],
                    "dependency_overrides": {}, "link_overrides": {},
-                   "extra_dependencies": {}, "images": {}}
+                   "extra_dependencies": {}, "images": {}, "create": {}}
 _SCHEME_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9+.-]*):(.*)$")
 
 

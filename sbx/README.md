@@ -58,8 +58,9 @@ primary repo is that directory.
 1. **Tell wmf-sbx where your repos are.** wmf-sbx names repos by their
    Gerrit or GitLab project (`gerrit:mediawiki/extensions/Cite`); rules in
    `~/.config/wmf-sbx/settings.yaml` map projects to directories on your
-   machine. A sandbox works on clones of those directories, and a repo
-   that is not there yet is cloned there first. Start from the example
+   machine. A sandbox works on clones of those directories. `create`
+   offers to clone a repo that is not there yet (`--clone-missing` clones
+   without asking). Start from the example
    and change the paths to your layout:
 
    ```bash
@@ -336,7 +337,11 @@ The project is then mapped to a host directory by the `repos:` rules in
 first, for example `gerrit:mediawiki/extensions/{name}` →
 `~/Wikimedia/Extensions/{name}`. `reference/example-settings.yaml` is a
 commented example. A repo that is not on the host yet is cloned there
-first. (Before `settings.yaml`, the file was `repos.yaml` and `repos:` was
+first, if you agree: `create` lists those repos and asks before it clones
+them. With no terminal to ask on, it stops with an error.
+`--clone-missing` (or `create: {cloneMissing: true}` in settings.yaml)
+clones them without asking; `--no-clone-missing` overrides that setting.
+(Before `settings.yaml`, the file was `repos.yaml` and `repos:` was
 `rules:`; the old names still work, with a note.)
 
 ## Dependencies
@@ -379,6 +384,8 @@ wmf-sbx create PRIMARY[:ro] [EXTRA[:ro] ...] [options]
 - `--name NAME`: the sandbox name (default `sbx-<primary>`). The host
   remote has the same name.
 - `--no-remotes`: add no host remote, and leave host gc as it is.
+- `--clone-missing`: clone the repos that are not on the host yet without
+  asking ("Naming a repo", above). Default: settings.yaml `create.cloneMissing`.
 - `--cold`, `--no-snapshot`, `--no-expire`: see "Warm snapshots" and
   "The golden image cache". `--full-disk`: a full copy of the golden
   image on QEMU too, and no snapshot.

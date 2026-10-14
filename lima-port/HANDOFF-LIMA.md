@@ -1514,8 +1514,9 @@ clonefile option stays open for later. Decided with cananian,
   upstream change brings it in; a blind run in a sandbox from a
   snapshot; a golden rebuild (old sandboxes boot, gc keeps their
   files); two creates at once. The first two RAN in B3 (warm-b3.sh).
-  The rebuild and the concurrent creates: `lima-port/checks/b4.sh`
-  (not RAN; after the sync with track A). The blind run is a session.
+  The rebuild and the concurrent creates: `lima-port/checks/b4.sh`,
+  RAN 2026-10-14 after the sync with track A, every phase passed
+  (sbx/NOTES.md). Still to do: the blind run, a session.
   Built after B3 (cananian, 2026-10-14): a warm create freezes only
   when its snapshot is older than `images.snapshotInterval` (1 day),
   which saves the stop, the start and a 5 GiB generation per create;

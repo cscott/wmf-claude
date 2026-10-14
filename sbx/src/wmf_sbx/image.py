@@ -572,6 +572,15 @@ def _base(inputs):
     return {k: v for k, v in (inputs or {}).items() if k != EPOCH}
 
 
+def duration(delta):
+    """As settings.yaml writes it: 14d, 12h, 30m."""
+    s = int(delta.total_seconds())
+    for unit, n in (("d", 86400), ("h", 3600), ("m", 60)):
+        if s and s % n == 0:
+            return f"{s // n}{unit}"
+    return f"{s // 60}m"
+
+
 def images_for(inputs, env=None):
     """[(key, manifest)] of the cached images built from `inputs` (any
     epoch), newest first."""
@@ -598,18 +607,20 @@ def choose_inputs(inputs, env=None, config=None, expire=None, renew=False, now=N
     left = limit - age
     if left > (min_left or datetime.timedelta(0)):
         return manifest["inputs"], None
-    days = f"{age.days} days old" if left <= datetime.timedelta(0) else \
-        f"{age.days} days old, {left.total_seconds() / 3600:.0f} h before images.maxAge"
+    old = (f"{age.days} days old" if age.days else
+           f"{age.total_seconds() / 3600:.0f} h old")
+    days = old if left <= datetime.timedelta(0) else \
+        f"{old}, {left.total_seconds() / 3600:.0f} h before images.maxAge"
     if expire is None:
         expire = expires(config)
     if not expire and not renew:
         return manifest["inputs"], (
-            f"warning: golden image {key} is {days} ({limit.days} days); it is kept "
+            f"warning: golden image {key} is {days} (images.maxAge {duration(limit)}); it is kept "
             f"(--no-expire or images.expire: false). When it suits you, `wmf-sbx create "
             f"--cold` builds a new one, with the Debian updates since.")
     new = dict(_base(inputs))
     new[EPOCH] = now.isoformat(timespec="seconds")
-    return new, f"+ golden image {key} is {days} ({limit.days} days): building a new one"
+    return new, f"+ golden image {key} is {days} (images.maxAge {duration(limit)}): building a new one"
 
 
 def gc_images(env=None, config=None, keep=(), now=None):

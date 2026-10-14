@@ -641,7 +641,14 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   rebase onto the golden image copies the snapshot's data: 5 GiB per create), so a warm
   create freezes only when its snapshot is older than `images.snapshotInterval` (1 day; the
   engineer's choice over a fingerprint of what changed); a superseded one goes at the next
-  `image gc` after an hour. The golden image is keyed on the
+  `image gc` after an hour. B4 RAN 2026-10-14 (`lima-port/checks/b4.sh`, nested, inner
+  sandboxes at 3 GiB, every phase passed): two warm creates at once, 106 s each, froze one
+  after the other (34 s and 40 s, 4.7 GiB each) on their own generations; a warm create with
+  no freeze (snapshot minutes old) took 58 s, so the freeze costs about 45 s; a golden
+  image rebuilt with `maxAge: 0m` made the next create cold on it (636 s with the build),
+  the sandbox on the old image still started and passed `status`, `image gc` kept its
+  files, and `image prune` removed the old image and its 3 snapshots once nothing used
+  them. The golden image is keyed on the
   wmf-claude HEAD, so in development every new commit makes the next create cold.
 - Host memory (RAN 2026-10-13): QEMU keeps every page a guest touched (Lima's QEMU has no
   balloon), so a 16 GiB nested sandbox that built an image held 15 GB of the host, and the

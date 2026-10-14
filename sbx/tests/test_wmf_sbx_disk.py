@@ -253,11 +253,16 @@ class GoldenAgeTests(unittest.TestCase):
         old = self.entry(self.INPUTS, 20 * self.day)
         key, note = self.choose()
         self.assertNotEqual(key, old)
-        self.assertIn("20 days old", note)
+        self.assertIn("20 days old (images.maxAge 14d)", note)
         # Built: the next create, an hour later, uses it (not a third).
         new_inputs = dict(self.INPUTS, epoch=self.now.isoformat(timespec="seconds"))
         self.assertEqual(self.entry(new_inputs, datetime_hours(1)), key)
         self.assertEqual(self.choose(), (key, None))
+
+    def test_an_image_younger_than_a_day_says_hours(self):
+        self.entry(self.INPUTS, datetime_hours(3))
+        _key, note = self.choose(config={"images": {"maxAge": "0m"}})
+        self.assertIn("is 3 h old (images.maxAge 0m)", note)
 
     def test_no_expire_keeps_it_with_a_warning_unless_renewed(self):
         old = self.entry(self.INPUTS, 20 * self.day)

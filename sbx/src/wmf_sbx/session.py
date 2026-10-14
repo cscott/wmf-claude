@@ -140,10 +140,11 @@ class SessionError(Exception):
 
 # The engineer's preferences for every new sandbox, from the `session:`
 # section of ~/.config/wmf-sbx/settings.yaml. They go into the agent's
-# ~/.claude/settings.json at create, so each sandbox starts with them.
+# ~/.claude/settings.json at create, so each sandbox starts with them;
+# `sudo` is create's default for --sudo/--no-sudo instead.
 PERMISSION_MODES = ("default", "acceptEdits", "plan", "auto", "bypassPermissions")
 THEMES = ("dark", "light", "dark-daltonized", "light-daltonized", "dark-ansi", "light-ansi")
-PREFERENCE_KEYS = ("model", "permission_mode", "theme", "ste")
+PREFERENCE_KEYS = ("model", "permission_mode", "theme", "ste", "sudo")
 
 
 def first_run_marker(env=None):
@@ -190,9 +191,11 @@ def preference_settings(prefs, quiet=True):
     theme = prefs.get("theme")
     if theme is not None and theme not in THEMES:
         raise SessionError(f"settings.yaml: session.theme {theme!r}: want one of {', '.join(THEMES)}")
+    for key in ("ste", "sudo"):
+        value = prefs.get(key)
+        if value is not None and not isinstance(value, bool):
+            raise SessionError(f"settings.yaml: session.{key} {value!r}: want true or false")
     ste = prefs.get("ste")
-    if ste is not None and not isinstance(ste, bool):
-        raise SessionError(f"settings.yaml: session.ste {ste!r}: want true or false")
     patch = {}
     model = prefs.get("model")
     if model is not None:

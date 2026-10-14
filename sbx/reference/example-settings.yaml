@@ -36,6 +36,7 @@ session:
   permission_mode: acceptEdits   # or bypassPermissions, plan, auto, default
   theme: dark
   # ste: false                   # leave out the ASD-STE100 writing rule
+  # sudo: true                   # `create --sudo` by default (--no-sudo overrides)
 
 # Environment variables for every new sandbox's sessions (in the agent's
 # ~/.claude/settings.json `env`). Not ANTHROPIC_* or NO_PROXY: wmf-sbx sets

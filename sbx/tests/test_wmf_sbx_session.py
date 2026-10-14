@@ -406,6 +406,11 @@ class PreferenceTests(unittest.TestCase):
         self.assertEqual(plan["env"]["WMF_CLAUDE_STE"], "0")
         self.assertNotIn("env", plan["settings"])
 
+    def test_sudo_is_a_session_key_for_create_not_a_claude_setting(self):
+        self.assertEqual(session.preference_settings({"sudo": True}), {})
+        with self.assertRaisesRegex(session.SessionError, r"session.sudo 'yes': want true"):
+            session.preference_settings({"sudo": "yes"})
+
     def test_the_first_sandbox_asks_for_the_bypass_confirmation(self):
         prefs = {"permission_mode": "bypassPermissions"}
         self.assertNotIn("skipDangerousModePermissionPrompt",

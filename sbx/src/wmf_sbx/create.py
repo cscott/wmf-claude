@@ -51,18 +51,19 @@ EGRESS_FALLBACK = ("warning: {why}, so {name} is not behind the host egress prox
                    "guest, not the host, enforces its network policy. {fix}")
 
 
-def egress_choice(requested, vm_type, name, env, missing=None):
+def egress_choice(requested, vm_type, name, env, missing=None, flag="--egress-proxy"):
     """(behind the egress proxy, a warning or None) for a create.
 
     `requested` is --egress-proxy (True), --no-egress-proxy (False), or
     neither (None): then it is the default where the host can run it, and
     a fallback with a warning where it cannot. Raises VmError for an
-    --egress-proxy that cannot be had."""
+    explicit request that cannot be had; `flag` names what asked for it
+    (--sudo needs the proxy too)."""
     if requested is False:
         return False, None
     if vm_type == "vz":
         if requested:
-            raise vm_mod.VmError("--egress-proxy needs QEMU (--vm-type qemu); vz has "
+            raise vm_mod.VmError(f"{flag} needs QEMU (--vm-type qemu); vz has "
                                  "no restrict=on network")
         return False, EGRESS_FALLBACK.format(
             why="the egress proxy needs QEMU and this is vz", name=name,
@@ -71,7 +72,7 @@ def egress_choice(requested, vm_type, name, env, missing=None):
     lacking = egress_mod.missing_tools(env) if missing is None else missing
     if lacking:
         if requested:
-            raise vm_mod.VmError(f"--egress-proxy needs {', '.join(lacking)} on the "
+            raise vm_mod.VmError(f"{flag} needs {', '.join(lacking)} on the "
                                  f"host's PATH")
         return False, EGRESS_FALLBACK.format(
             why=f"the host has no {', '.join(lacking)}", name=name,
@@ -600,8 +601,10 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
                         "host); the VM has no route and no DNS of its own. "
                         "--no-egress-proxy: the guest's own route, nono in the guest "
                         "the only allowlist, and warm snapshots")
-    parser.add_argument("--sudo", action="store_true",
-                        help="give the agent sudo (not yet: track A, D9/D11)")
+    parser.add_argument("--sudo", action=argparse.BooleanOptionalAction, default=None,
+                        help="give the agent passwordless sudo, and run Claude Code without "
+                        "nono: the VM and the host egress proxy are the boundary (QEMU "
+                        "only). Default: settings.yaml session.sudo, else --no-sudo")
     parser.add_argument(
         "--dry-run", action="store_true",
         help="Print the plan, the image key and the Lima config; build, clone "
@@ -613,13 +616,6 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
 
     def say(msg):
         print(color_mod.dim(msg), file=sys.stderr)
-
-    if args.sudo:
-        print(color_mod.error(
-            "error: --sudo is not ported yet: it needs the QEMU egress proxy "
-            "(lima-port/HANDOFF-LIMA.md D9, D11, track A). Use the "
-            "sbx-docker-final branch for a root agent until then."), file=sys.stderr)
-        return 1
 
     try:
         config = resolve_mod.load_config(args.config)
@@ -659,6 +655,18 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         session_mod.check_environment(config["environment"])
     except session_mod.SessionError as e:
         print(color_mod.error(f"error: {e}"), file=sys.stderr)
+        return 1
+    sudo = args.sudo if args.sudo is not None else bool(preferences.get("sudo"))
+    # A root agent can undo anything in its guest, so the network policy
+    # must sit on the host (D9, D11).
+    if sudo and args.egress_proxy is False:
+        print(color_mod.error("error: --sudo needs the host egress proxy; it cannot be "
+                              "--no-egress-proxy"), file=sys.stderr)
+        return 1
+    if sudo and args.nested:
+        print(color_mod.error("error: --sudo --nested is not ported yet (lima-port/"
+                              "PLAN-SUDO.md, A3 step 6); --no-sudo makes a nested "
+                              "sandbox"), file=sys.stderr)
         return 1
 
     for (spec, is_ro), (canonical, path, needs_clone) in zip(split, resolved):
@@ -717,11 +725,15 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         # On QEMU the disk is an overlay on the golden image (D12), and
         # Lima gets the placeholder; `vz` copies the golden image (D2).
         # Warm snapshots need the overlay (track B3).
-        vm_type = args.vm_type or ("qemu" if args.egress_proxy
+        vm_type = args.vm_type or ("qemu" if args.egress_proxy or sudo
                                    else template_mod.default_vm_type())
-        egress, warning = egress_choice(args.egress_proxy, vm_type, name, env)
+        egress, warning = egress_choice(True if sudo else args.egress_proxy, vm_type,
+                                        name, env, flag="--sudo" if sudo else "--egress-proxy")
         if warning:
             print(color_mod.warning(warning), file=sys.stderr)
+        if sudo:
+            say("+ sudo: the agent has passwordless sudo and runs Claude Code without "
+                "nono; the VM and the host egress proxy are its boundary")
         overlay = disk_mod.uses_overlay(vm_type) and not args.full_disk
         # Not behind the egress proxy yet: its disk holds the sandbox's
         # own egress CA and guest network setup, which the snapshot key
@@ -844,6 +856,8 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         state["snapshot"] = snap[1]
     if egress:
         state[egress_mod.STATE_KEY] = egress_mod.STATE_VALUE
+    if sudo:
+        state["sudo"] = True
     state_mod.save(state, env)
     try:
         if egress:

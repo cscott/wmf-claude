@@ -823,9 +823,41 @@ class CreateTests(Env):
         self.assertFalse(any("usermod -aG kvm" in " ".join(map(str, c))
                              for c in self.lima.calls))
 
-    def test_sudo_is_refused_for_now(self):
-        self.assertEqual(self.create("--sudo"), 1)
-        self.assertIn("not ported yet", self.err)
+    def test_sudo_records_it_behind_the_egress_proxy(self):
+        self.assertEqual(self.egress_create("--sudo", flag=None), 0, self.err)
+        st = state_mod.load("demo", self.env)
+        self.assertEqual((st["sudo"], st["egress"], st["vmType"]), (True, "proxy", "qemu"))
+        self.assertIn("+ sudo: the agent has passwordless sudo", self.err)
+
+    def test_settings_session_sudo_is_the_default(self):
+        with open(self.config, "w") as f:
+            f.write("session:\n  sudo: true\n")
+        self.assertEqual(self.egress_create(flag=None), 0, self.err)
+        self.assertTrue(state_mod.load("demo", self.env)["sudo"])
+
+    def test_no_sudo_overrides_the_setting(self):
+        with open(self.config, "w") as f:
+            f.write("session:\n  sudo: true\n")
+        self.assertEqual(self.egress_create("--no-sudo", flag=None), 0, self.err)
+        self.assertNotIn("sudo", state_mod.load("demo", self.env))
+
+    def test_not_sudo_by_default(self):
+        self.assertEqual(self.egress_create(flag=None), 0, self.err)
+        self.assertNotIn("sudo", state_mod.load("demo", self.env))
+        self.assertNotIn("+ sudo:", self.err)
+
+    def test_sudo_does_not_fall_back_from_the_egress_proxy(self):
+        self.assertEqual(self.egress_create("--sudo", "--vm-type", "vz", flag=None), 1)
+        self.assertIn("--sudo needs QEMU", self.err)
+        self.assertEqual(self.egress_create("--sudo", flag=None, missing=["nono"]), 1)
+        self.assertIn("--sudo needs nono on the host's PATH", self.err)
+        self.assertIsNone(state_mod.load("demo", self.env))
+
+    def test_sudo_refuses_no_egress_proxy_and_nested(self):
+        self.assertEqual(self.egress_create("--sudo", flag="--no-egress-proxy"), 1)
+        self.assertIn("--sudo needs the host egress proxy", self.err)
+        self.assertEqual(self.egress_create("--sudo", "--nested", flag=None), 1)
+        self.assertIn("--sudo --nested is not ported yet", self.err)
         self.assertEqual(self.lima.calls, [])
 
     def test_a_taken_name_is_refused(self):
@@ -931,6 +963,16 @@ class StartStopStatusTests(Env):
         self.assertEqual(self.quiet(status_mod.main, ["sbx-demo"], lima=lima, env=self.env), 0,
                          self.out + self.err)
         self.assertIn("checksum matches", self.out)
+
+    def test_status_shows_the_mode(self):
+        lima = self.sandbox(status="Stopped")
+        self.quiet(status_mod.main, ["sbx-demo"], lima=lima, env=self.env)
+        self.assertIn("mode      contained: the agent has no sudo", self.out)
+        st = state_mod.load("sbx-demo", self.env)
+        st["sudo"] = True
+        state_mod.save(st, self.env)
+        self.quiet(status_mod.main, ["sbx-demo"], lima=lima, env=self.env)
+        self.assertIn("mode      sudo: the agent has sudo", self.out)
 
     def test_status_shows_the_egress_proxy_of_a_sandbox_behind_it(self):
         lima = self.sandbox(status="Stopped")

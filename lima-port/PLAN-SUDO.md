@@ -417,18 +417,21 @@ RAN on the engineer's host, after step 4:
   - `mount -o remount,rw` on a mount, then a write: the host is unchanged.
 - The HANDOFF §11 blind run.
 
-To RUN on the engineer's host, after step 6:
-- `create --sudo --nested wmf-claude`: the warning, the forwarder line,
-  `status`;
-- in the session: `systemctl status wmf-sbx-egress-forward.socket`, then
-  an inner `wmf-sbx create` (an image build and an inner VM, through the
-  forwarder; TLS with the egress CA);
-- `wmf-sbx exec` with an inner `wmf-sbx create` or `limactl start`;
-- `resume` after the session ends, with the inner VM still up.
-- **The acceptance test.** In a `--sudo --nested` sandbox of wmf-claude,
-  the agent changes its own clone of wmf-claude, then uses that clone's
-  `sbx/bin/wmf-sbx` to create an inner sandbox and runs the acceptance
-  test in it, against the changed copy. Step 6 is done when this passes.
+RAN on the engineer's host, after step 6 (2026-10-14, `create --sudo --nested
+--name egsn wmf-claude`, defaults 10 GiB and 120 GiB):
+- create: every check, the nested warning, the forwarder line, `status`;
+- in the session: the forwarder is up; an inner `create` of Translate built
+  its image and booted through the forwarder, with TLS on the egress CA;
+- `wmf-sbx exec egsn -- …`: the forwarder's proxy variables, an inner
+  `stop`/`start` and an inner `curl` (301);
+- `resume egsn` with the inner VM up: the inner VM kept running;
+- the nested marker (`640 root:agent`, the base URL and the phantom): an
+  inner `resume` with no credential variable answered from the marker alone;
+- **the acceptance test**: the agent in egsn ran the blind run in an inner
+  sandbox against its own clone of wmf-claude. All passed but Translate's
+  `composer phan`, OOM-killed in the 4 GiB inner VM (`nested.INNER_MEMORY`;
+  HANDOFF-TRACK-A.md, open item 1). The report is on the egsn branch, not on
+  `lima-port`.
 
 ## Later, not in this track
 

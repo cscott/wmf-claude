@@ -459,7 +459,7 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   `metadata.ftp-master.debian.org` (backoff 1, 2, 4 s) were `apt-listchanges.timer`
   ("Try hourly to initialize apt-listchanges database": `apt-get changelog`, on the first
   hour mark after boot); the image now masks it and apt's daily timers.
-- **`--sudo --nested` (A3 step 6, written 2026-10-14, not yet RAN).** An inner VM's only
+- **`--sudo --nested` (A3 step 6, written and RAN 2026-10-14).** An inner VM's only
   way out is 192.168.5.2, the outer guest's loopback. A contained session's nono proxy
   listens there; a `sudo` session and `exec` have none. So every nested egress sandbox
   gets a root forwarder at create (`nested.forward_script`): a systemd socket on
@@ -472,9 +472,12 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   `/usr/local/share/ca-certificates/cloud-init-ca-cert-*.crt` (the egress CA and the
   host's extra ones). `resume` does not stop the inner VMs of a `sudo` sandbox: its
   `pgrep nono` cannot see a session there, and no Landlock scope separates sessions.
-  RAN on the host (egsn, 2026-10-14): the forwarder, an inner create and the acceptance
-  run in it, `exec` (its proxy variables, an inner stop/start and an inner curl through
-  the forwarder), and a resume that left the inner VM running.
+  RAN on the host (egsn, 2026-10-14): the forwarder, an inner create (Translate) and the
+  acceptance run in it, `exec` (its proxy variables, an inner stop/start and an inner curl
+  through the forwarder), a resume that left the inner VM running, and an inner `resume`
+  that took its credential from the nested marker alone. The acceptance run passed but for
+  Translate's `composer phan`, OOM-killed twice (exit 137, 2.65 GB in a 3.9 GB guest) at
+  `nested.INNER_MEMORY` 4 GiB: open, see "Host memory".
 - **An inner sandbox's credential (2026-10-14, after egsn).** The inner `resume` found
   none ("Not logged in"): the VM has only its session's phantom. The credential proxy now
   chains in a nested sandbox: `resume` of a nested sandbox writes the session's

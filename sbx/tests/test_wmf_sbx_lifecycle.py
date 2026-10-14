@@ -744,6 +744,10 @@ class CreateTests(Env):
         self.assertEqual(self.egress_create("--nested"), 0, self.err)
         st = state_mod.load("demo", self.env)
         self.assertEqual((st["egress"], st["nested"], st["vmType"]), ("proxy", True, "qemu"))
+        # The install's curl of Lima and the base image goes through it.
+        install = [c for c in self.lima.shells() if c[4:6] == ("sudo", "env")]
+        self.assertEqual(len(install), 1, self.lima.shells())
+        self.assertIn(f"https_proxy={egress.proxy_url()}", install[0])
 
     def test_not_behind_the_egress_proxy_by_default(self):
         self.assertEqual(self.create("--name", "demo"), 0, self.err)

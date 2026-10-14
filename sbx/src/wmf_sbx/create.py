@@ -832,8 +832,9 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         print(color_mod.error(NESTED_WARNING), file=sys.stderr)
         say("+ nested: QEMU and Lima in the sandbox, the agent in the kvm group")
         script = nested_mod.install_script(arch, image_mod.base_image(arch), nested_src)
+        # Behind the egress proxy, its variables: curl has no other way out.
         argv = (["sudo", "env"] + [f"{k}={v}" for k, v in
-                                   sorted(image_mod.guest_proxy_env(env).items())]
+                                   sorted(vm_mod.guest_proxy_env(name, env).items())]
                 + ["bash", "-s"])
         res = vm_mod.shell(name, argv, lima=lima, input=script, check=False, capture=False)
         if res.returncode != 0:

@@ -232,9 +232,11 @@ class Env(unittest.TestCase):
 
     def quiet(self, fn, *a, **kw):
         err, out = io.StringIO(), io.StringIO()
-        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(out):
-            rc = fn(*a, **kw)
-        self.err, self.out = err.getvalue(), out.getvalue()
+        try:
+            with contextlib.redirect_stderr(err), contextlib.redirect_stdout(out):
+                rc = fn(*a, **kw)
+        finally:
+            self.err, self.out = err.getvalue(), out.getvalue()
         return rc
 
 
@@ -442,9 +444,11 @@ class CreateTests(Env):
         self.assertEqual((rc, cloned), (1, []))
 
     def test_create_clone_missing_must_be_a_boolean(self):
-        rc, _asked, cloned = self.create_missing(settings="create:\n  cloneMissing: yes please\n")
-        self.assertEqual((rc, cloned), (1, []))
-        self.assertIn("create.cloneMissing must be true or false", self.err)
+        with self.assertRaises(SystemExit) as cm:
+            self.create_missing(settings="create:\n  cloneMissing: yes please\n")
+        self.assertEqual(cm.exception.code, 1)
+        self.assertIn("settings.yaml create.cloneMissing: 'yes please': want true or false",
+                      self.err)
 
     def test_a_dry_run_neither_asks_nor_clones(self):
         rc, asked, cloned = self.create_missing("--dry-run", answer="n", tty=True)
@@ -942,15 +946,22 @@ class CreateTests(Env):
         self.assertIn('AGENT_SUDO="1"', script)
         self.assertIn("+ sudo: the agent has passwordless sudo", self.err)
 
-    def test_settings_session_sudo_is_the_default(self):
+    def test_settings_create_sudo_is_the_default(self):
         with open(self.config, "w") as f:
-            f.write("session:\n  sudo: true\n")
+            f.write("create:\n  sudo: true\n")
         self.assertEqual(self.egress_create(flag=None), 0, self.err)
         self.assertTrue(state_mod.load("demo", self.env)["sudo"])
 
-    def test_no_sudo_overrides_the_setting(self):
+    def test_session_sudo_is_not_read(self):
         with open(self.config, "w") as f:
             f.write("session:\n  sudo: true\n")
+        self.assertEqual(self.egress_create(flag=None), 0, self.err)
+        self.assertNotIn("sudo", state_mod.load("demo", self.env))
+        self.assertIn("unknown `session:` key(s): sudo", self.err)
+
+    def test_no_sudo_overrides_the_setting(self):
+        with open(self.config, "w") as f:
+            f.write("create:\n  sudo: true\n")
         self.assertEqual(self.egress_create("--no-sudo", flag=None), 0, self.err)
         self.assertNotIn("sudo", state_mod.load("demo", self.env))
 
@@ -1001,6 +1012,24 @@ class CreateTests(Env):
     def test_a_taken_name_is_refused(self):
         self.assertEqual(self.create("--name", "demo", lima=FakeLima({"wmf-sbx-demo": "Stopped"})), 1)
         self.assertIn("exists already", self.err)
+
+    def test_a_name_from_settings_is_used_and_not_made_unique(self):
+        with open(self.config, "w") as f:
+            f.write("create:\n  name: mine\n")
+        self.assertEqual(self.create(), 0, self.err)
+        self.assertIsNotNone(state_mod.load("mine", self.env))
+        self.assertEqual(self.create(lima=FakeLima({"wmf-sbx-mine": "Stopped"})), 1)
+        self.assertIn("exists already", self.err)
+
+    def test_settings_dry_run_and_no_dry_run(self):
+        # Every option has a pair, so a settings default can be undone.
+        with open(self.config, "w") as f:
+            f.write("create:\n  dryRun: true\n  remotes: false\n")
+        self.assertEqual(self.create("--name", "demo"), 0, self.err)
+        self.assertIsNone(state_mod.load("demo", self.env))
+        self.assertEqual(self.create("--name", "demo", "--no-dry-run"), 0, self.err)
+        self.assertIsNotNone(state_mod.load("demo", self.env))
+        self.assertNotIn("git fetch demo", self.err)
 
     def test_the_default_name_avoids_lima_instances_too(self):
         lima = FakeLima({"wmf-sbx-sbx-demo": "Stopped"})

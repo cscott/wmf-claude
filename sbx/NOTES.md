@@ -457,7 +457,7 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   snapshot). The restart in `snapshot.freeze` already goes through `vm.start_instance`,
   which starts in egress mode.
 - **`--sudo` (A3 steps 1 to 5, written and RAN 2026-10-14).** `create --sudo` (or
-  `settings.yaml` `session: sudo: true`) needs the egress proxy. The provisioning writes `/etc/sudoers.d/90-wmf-sbx-agent` (visudo-checked;
+  `settings.yaml` `create: sudo: true`) needs the egress proxy. The provisioning writes `/etc/sudoers.d/90-wmf-sbx-agent` (visudo-checked;
   `env_keep` for the proxy variables) and `/etc/wmf-sbx/sudo`, and a contained sandbox
   removes both at each boot. A session runs `bin/launch-claude.sh` with no nono, with the
   egress proxy's variables (`sudo -u agent` drops `/etc/environment`'s) and

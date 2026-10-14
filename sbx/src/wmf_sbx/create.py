@@ -23,6 +23,7 @@ import subprocess
 import sys
 
 from . import ci_deps as ci_mod
+from . import cli as cli_mod
 from . import color as color_mod
 from . import deps as deps_mod
 from . import disk as disk_mod
@@ -583,44 +584,43 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         help="Additional repos to make available in the sandbox; append ':ro' for read-only"
     )
     parser.add_argument("--name", help="Sandbox name (default: derived from the primary repo)")
-    parser.add_argument("--config", default=resolve_mod.DEFAULT_CONFIG)
     parser.add_argument(
-        "--no-deps", action="store_true",
-        help="Use only the repos named on the command line -- no MediaWiki "
+        "--deps", action=argparse.BooleanOptionalAction, default=True,
+        help="--no-deps: use only the repos named on the command line -- no MediaWiki "
         "dependency walk, no implicit core/Vector",
     )
-    parser.add_argument("--no-ci-deps", action="store_true",
-                        help="Do not add WMF CI's dependencies of the named repos "
-                        "(integration/config, fetched from gitiles)")
-    parser.add_argument("--no-phan-deps", action="store_true",
-                        help="Add CI's test dependencies, but not those only its "
-                        "phan job checks out")
-    parser.add_argument("--no-dev", action="store_true",
-                        help="Skip 'dev-requires' when walking dependencies")
-    parser.add_argument("--no-suggests", action="store_true",
-                        help="Skip 'suggests' when walking dependencies")
-    parser.add_argument("--clone-missing", action=argparse.BooleanOptionalAction,
-                        default=None,
+    parser.add_argument("--ci-deps", action=argparse.BooleanOptionalAction, default=True,
+                        help="--no-ci-deps: do not add WMF CI's dependencies of the named "
+                        "repos (integration/config, fetched from gitiles)")
+    parser.add_argument("--phan-deps", action=argparse.BooleanOptionalAction, default=True,
+                        help="--no-phan-deps: add CI's test dependencies, but not those "
+                        "only its phan job checks out")
+    parser.add_argument("--dev", action=argparse.BooleanOptionalAction, default=True,
+                        help="--no-dev: skip 'dev-requires' when walking dependencies")
+    parser.add_argument("--suggests", action=argparse.BooleanOptionalAction, default=True,
+                        help="--no-suggests: skip 'suggests' when walking dependencies")
+    parser.add_argument("--clone-missing", action=argparse.BooleanOptionalAction, default=False,
                         help="clone the repos that are not on this machine yet, at the "
-                        "settings.yaml path, without asking. Default: settings.yaml "
-                        "create.cloneMissing; else ask, and with no terminal fail")
-    parser.add_argument("--reset-all", action="store_true",
+                        "settings.yaml path, without asking. Default: ask, and with no "
+                        "terminal fail")
+    parser.add_argument("--reset-all", action=argparse.BooleanOptionalAction, default=False,
                         help="Reset every clone to upstream master, the repos "
                         "named on the command line too")
-    parser.add_argument("--no-remotes", action="store_true",
-                        help="Don't touch any host .git/config: no remote "
+    parser.add_argument("--remotes", action=argparse.BooleanOptionalAction, default=True,
+                        help="--no-remotes: don't touch any host .git/config: no remote "
                         "to fetch the sandbox's work, and gc is not suspended")
     parser.add_argument("--vm-type", choices=sorted(template_mod.MOUNT_TYPES),
                         help="Lima driver (default: vz on macOS, qemu elsewhere)")
-    parser.add_argument("--cold", action="store_true",
+    parser.add_argument("--cold", action=argparse.BooleanOptionalAction, default=False,
                         help="do not start from the warm snapshot of these repos; make a "
                              "new one (and a new golden image, if it is old)")
-    parser.add_argument("--no-snapshot", action="store_true",
-                        help="neither start from a warm snapshot nor make one")
-    parser.add_argument("--no-expire", action="store_true",
-                        help="keep using a golden image older than settings.yaml "
-                             "imageCache.maxAge (14 days), with a warning; for a demo")
-    parser.add_argument("--full-disk", action="store_true",
+    parser.add_argument("--snapshot", action=argparse.BooleanOptionalAction, default=True,
+                        help="--no-snapshot: neither start from a warm snapshot nor make one")
+    parser.add_argument("--expire", action=argparse.BooleanOptionalAction, default=None,
+                        help="--no-expire: keep using a golden image older than "
+                             "settings.yaml imageCache.maxAge (14 days), with a warning; "
+                             "for a demo. Default: settings.yaml imageCache.expire")
+    parser.add_argument("--full-disk", action=argparse.BooleanOptionalAction, default=False,
                         help="on QEMU too, give the sandbox a full copy of the golden "
                              "image, not a copy-on-write overlay on it")
     parser.add_argument("--cpus", type=int, default=template_mod.DEFAULT_CPUS)
@@ -631,7 +631,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
     parser.add_argument("--disk",
                         help=f"default {template_mod.DEFAULT_DISK} "
                         f"({nested_mod.DISK} with --nested)")
-    parser.add_argument("--nested", action="store_true",
+    parser.add_argument("--nested", action=argparse.BooleanOptionalAction, default=False,
                         help="LOWER SECURITY, only to work on wmf-claude itself: let the agent "
                         "run Lima VMs of its own (QEMU, Lima, /dev/kvm; nono grants more)")
     parser.add_argument("--image", metavar="KEY",
@@ -644,16 +644,16 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
                         "host); the VM has no route and no DNS of its own. "
                         "--no-egress-proxy: the guest's own route, nono in the guest "
                         "the only allowlist, and warm snapshots")
-    parser.add_argument("--sudo", action=argparse.BooleanOptionalAction, default=None,
+    parser.add_argument("--sudo", action=argparse.BooleanOptionalAction, default=False,
                         help="give the agent passwordless sudo, and run Claude Code without "
                         "nono: the VM and the host egress proxy are the boundary (QEMU "
-                        "only). Default: settings.yaml session.sudo, else --no-sudo")
+                        "only)")
     parser.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run", action=argparse.BooleanOptionalAction, default=False,
         help="Print the plan, the image key and the Lima config; build, clone "
         "and create nothing"
     )
-    args = parser.parse_args(argv)
+    args, config = cli_mod.parse_args(parser, argv, "create")
     lima = lima or lima_mod.Limactl(run=run)
     env = os.environ if env is None else env
 
@@ -661,14 +661,13 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         print(color_mod.dim(msg), file=sys.stderr)
 
     try:
-        config = resolve_mod.load_config(args.config)
         split = [split_ro_suffix(spec) for spec in [args.primary] + args.extra]
         resolved = [resolve_repo(spec, args.config) for spec, _is_ro in split]
         origins_by_path = {}
         unreachable = set()
-        if not args.no_deps:
+        if args.deps:
             ci_maps = None
-            if not args.no_ci_deps:
+            if args.ci_deps:
                 # Once per create, for every repo named.
                 ci_maps = ci_mod.fetch_maps(
                     deps_mod.gerrit_opener(deps_mod.gerrit_user_agent(config)), warn=_warn)
@@ -678,9 +677,9 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
                           "dependencies only. --no-ci-deps skips the lookup.")
             resolved, split, origins_by_path, unreachable = expand_dependencies(
                 resolved, split, config, args.config,
-                include_dev=not args.no_dev,
-                include_suggests=not args.no_suggests,
-                ci_maps=ci_maps, phan_deps=not args.no_phan_deps,
+                include_dev=args.dev,
+                include_suggests=args.suggests,
+                ci_maps=ci_maps, phan_deps=args.phan_deps,
             )
     except resolve_mod.ResolutionError as e:
         print(color_mod.error(f"error: {e}"), file=sys.stderr)
@@ -700,7 +699,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
     except session_mod.SessionError as e:
         print(color_mod.error(f"error: {e}"), file=sys.stderr)
         return 1
-    sudo = args.sudo if args.sudo is not None else bool(preferences.get("sudo"))
+    sudo = args.sudo
     # A root agent can undo anything in its guest, so the network policy
     # must sit on the host (D9, D11).
     if sudo and args.egress_proxy is False:
@@ -734,14 +733,8 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
     # A clone writes to the engineer's disk, outside the sandbox: ask
     # first, before the slow work (the golden image) starts.
     missing = [(canonical, path) for canonical, path, needs_clone in resolved if needs_clone]
-    clone_missing = (args.clone_missing if args.clone_missing is not None
-                     else config["create"].get("cloneMissing", False))
-    if not isinstance(clone_missing, bool):
-        print(color_mod.error(f"error: {args.config}: create.cloneMissing must be true "
-                              f"or false"), file=sys.stderr)
-        return 1
     interactive = (isatty or sys.stdin.isatty)()
-    if not args.dry_run and not confirm_clones(missing, clone_missing, interactive,
+    if not args.dry_run and not confirm_clones(missing, args.clone_missing, interactive,
                                                prompt=prompt):
         print(color_mod.error(
             f"error: {len(missing)} repo(s) are not on this machine, and were not "
@@ -796,8 +789,8 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         # Not behind the egress proxy yet: its disk holds the sandbox's
         # own egress CA and guest network setup, which the snapshot key
         # does not cover.
-        use_snapshots = overlay and not args.no_snapshot and not egress
-        if egress and overlay and not args.no_snapshot:
+        use_snapshots = overlay and args.snapshot and not egress
+        if egress and overlay and args.snapshot:
             say("+ no warm snapshot: not yet behind the egress proxy "
                 "(--no-egress-proxy uses them)")
         readonly = {path for (_spec, is_ro), (_c, path, _n) in zip(split, resolved) if is_ro}
@@ -831,7 +824,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
             # older than imageCache.maxAge (track B3). A cold snapshot is not
             # made on an image with less than SNAPSHOT_GRACE to go.
             base_inputs = inputs
-            expire = False if args.no_expire else None
+            expire = args.expire
             inputs, note = image_mod.choose_inputs(
                 inputs, env=env, config=config, expire=expire, renew=args.cold, now=now)
             if use_snapshots and snapshot_for(image_mod.cache_key(inputs))[1] is None:
@@ -988,7 +981,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         print(color_mod.error(f"error: {e}"), file=sys.stderr)
         print(f"  `wmf-sbx rm {name}` removes what was made.", file=sys.stderr)
         return 1
-    if args.no_remotes:
+    if not args.remotes:
         print(color_mod.warning("warning: --no-remotes: the host cannot fetch from this "
                                 "sandbox, and gc stays on in the host repos, so a host "
                                 "`git gc --prune=now` can break the clones in the VM."),
@@ -1058,7 +1051,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
           f"  wmf-sbx status {name}          check it\n"
           f"  wmf-sbx stop|start {name}\n"
           f"  wmf-sbx rm {name}\n"
-          + ("" if args.no_remotes else
+          + ("" if not args.remotes else
              f"  git fetch {name}               (on the host, in a repo) the agent's work\n"),
           file=sys.stderr, end="")
     return 0

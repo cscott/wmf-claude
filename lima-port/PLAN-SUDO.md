@@ -291,8 +291,8 @@ session runs. The proxy lands before the trusted-VM session.
 
 ## A3 `--sudo` end to end (after A2)
 
-- `create --sudo` / `--no-sudo`, `settings.yaml` `session: sudo:`; recorded in
-  state; `exec`, `status`, `resume` read it.
+- `create --sudo` / `--no-sudo`, `settings.yaml` `create: sudo:` (once
+  `session: sudo:`); recorded in state; `exec`, `status`, `resume` read it.
 - The image grants nothing new; provisioning adds `agent` to `sudo`
   NOPASSWD only in a `sudo` sandbox, with a marker like `nested`'s, so
   the invariants know which mode they check.

@@ -323,7 +323,7 @@ INVARIANTS = [
 ]
 
 
-# A sandbox behind the host egress proxy (create --egress-proxy) also has
+# A sandbox behind the host egress proxy (the default on QEMU) also has
 # these. Each passes offline: a failed connection is a pass. Root tries
 # them, as the nftables rules let root out where they block the agent.
 # Never a POST (sbx/tests must not POST to a production host).

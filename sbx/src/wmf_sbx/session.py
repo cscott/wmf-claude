@@ -288,10 +288,14 @@ def launcher_argv(state, cred_path=None, launcher_flags=(), claude_args=(),
                "--listen-port", "0"] + grants
               + list(launcher_flags) + ["--"] + list(claude_args))
     wrapper = ["bash", "-c", CREDENTIAL_WRAPPER, "_", cred_path or ""] + claude
-    return vm_mod.agent_argv(wrapper, workdir=primary,
-                             env={"WMF_CLAUDE_SANDBOX_BACKEND": SANDBOX_BACKEND,
-                                  # no "Press Enter" pause after bin/claude's notices
-                                  "WMF_CLAUDE_NO_PAUSE": "1"})
+    env = {"WMF_CLAUDE_SANDBOX_BACKEND": SANDBOX_BACKEND,
+           # no "Press Enter" pause after bin/claude's notices
+           "WMF_CLAUDE_NO_PAUSE": "1"}
+    if egress_mod.enabled(state):
+        # The session-start hook's egress bullet names the sandbox in the
+        # `wmf-sbx allow` command that it gives.
+        env["WMF_SBX_EGRESS"] = state.get("name") or "<this sandbox>"
+    return vm_mod.agent_argv(wrapper, workdir=primary, env=env)
 
 
 def put_credential(name, cred, lima=None):

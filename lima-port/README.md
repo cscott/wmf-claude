@@ -16,6 +16,8 @@ sandbox. Delete it, or move its content into `sbx/`, when the port lands.
   QEMU) and B (qcow2 copy-on-write disks) come after it). Read this first.
 - [`PLAN-SUDO.md`](PLAN-SUDO.md) — the plan for track A (`--sudo`),
   egress proxy first: `nono proxy` on the host, owned by the QEMU wrapper.
+  The egress proxy is done, and the default on QEMU (`--no-egress-proxy`
+  opts out); `--sudo` itself is not.
 - [`HANDOFF-LIMA-QCOW2-OVERLAYS.md`](HANDOFF-LIMA-QCOW2-OVERLAYS.md) —
   the evidence and test procedure behind D12 (qcow2 overlays on an
   immutable golden image). Read it before track B.

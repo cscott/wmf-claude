@@ -704,7 +704,7 @@ class CreateTests(Env):
         self.assertEqual(self.create("--name", "demo", "--nested"), 1)
         self.assertIn("--nested: /home/agent/wmf-sbx-src is under /home/agent", self.err)
 
-    def egress_create(self, *extra, lima=None):
+    def egress_create(self, *extra, lima=None, flag="--egress-proxy", missing=()):
         def make_ca(name, env=None):
             egress.make_dir(name, env)
             with open(egress.ca_cert(name, env), "w") as f:
@@ -715,8 +715,9 @@ class CreateTests(Env):
                 mock.patch.object(egress, "wrapper_env",
                                   side_effect=lambda n, e: self.wrapper_env.append(n)
                                   or {"WMF_SBX_EGRESS_CONFIG": "x"}), \
-                mock.patch.object(egress, "wait_time_sync", return_value=True):
-            rc = self.create("--name", "demo", "--egress-proxy", *extra, lima=lima)
+                mock.patch.object(egress, "wait_time_sync", return_value=True), \
+                mock.patch.object(egress, "missing_tools", return_value=list(missing)):
+            rc = self.create("--name", "demo", *([flag] if flag else []), *extra, lima=lima)
         self.made_ca = made.call_count
         return rc
 
@@ -762,10 +763,38 @@ class CreateTests(Env):
         self.assertFalse([c for c in self.lima.calls if c[0] == "copy"
                           and c[2].endswith(nested.STAGED_BASE)])
 
-    def test_not_behind_the_egress_proxy_by_default(self):
-        self.assertEqual(self.create("--name", "demo"), 0, self.err)
+    def test_behind_the_egress_proxy_by_default(self):
+        self.assertEqual(self.egress_create(flag=None), 0, self.err)
+        st = state_mod.load("demo", self.env)
+        self.assertEqual((st["egress"], st["vmType"]), ("proxy", "qemu"))
+        self.assertEqual(self.lima.start_env, {"WMF_SBX_EGRESS_CONFIG": "x"})
+        self.assertNotIn("not behind the host egress proxy", self.err)
+        self.assertIn("+ no warm snapshot: not yet behind the egress proxy", self.err)
+
+    def test_no_egress_proxy_is_the_guests_own_route(self):
+        self.assertEqual(self.egress_create(flag="--no-egress-proxy"), 0, self.err)
         self.assertNotIn("egress", state_mod.load("demo", self.env))
         self.assertNotIn("WMF_SBX_EGRESS_CONFIG", self.lima.start_env or {})
+        self.assertEqual(self.made_ca, 0)
+        self.assertNotIn("not behind the host egress proxy", self.err)
+
+    def test_the_default_falls_back_on_vz_with_a_warning(self):
+        self.assertEqual(self.egress_create("--vm-type", "vz", flag=None), 0, self.err)
+        st = state_mod.load("demo", self.env)
+        self.assertNotIn("egress", st)
+        self.assertEqual(st["vmType"], "vz")
+        self.assertIn("the guest, not the host, enforces its network policy", self.err)
+        self.assertIn("`--vm-type qemu`", self.err)
+
+    def test_the_default_falls_back_without_the_hosts_tools(self):
+        self.assertEqual(self.egress_create(flag=None, missing=["nono"]), 0, self.err)
+        self.assertNotIn("egress", state_mod.load("demo", self.env))
+        self.assertIn("warning: the host has no nono, so demo is not behind", self.err)
+
+    def test_egress_proxy_without_the_hosts_tools_is_an_error(self):
+        self.assertEqual(self.egress_create(missing=["nono", "openssl"]), 1)
+        self.assertIn("--egress-proxy needs nono, openssl on the host's PATH", self.err)
+        self.assertIsNone(state_mod.load("demo", self.env))
 
     def test_not_nested_by_default(self):
         self.assertEqual(self.create("--name", "demo", "--memory", "6GiB"), 0, self.err)

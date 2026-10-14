@@ -264,6 +264,21 @@ class StartTests(unittest.TestCase):
         with self.assertRaises(egress.EgressError):
             egress.wrapper_env("demo", self.env, arch="x86_64", which=lambda c, path=None: None)
 
+    def test_the_host_tools_that_are_missing(self):
+        have = {"qemu-system-x86_64", "openssl"}
+        seen = []
+
+        def which(cmd, path=None):
+            seen.append(path)
+            return f"/usr/bin/{cmd}" if cmd in have else None
+        self.assertEqual(egress.missing_tools(self.env, arch="x86_64", which=which), ["nono"])
+        self.assertEqual(set(seen), {"/usr/bin"})
+        have.add("nono")
+        self.assertEqual(egress.missing_tools(self.env, arch="x86_64", which=which), [])
+        # no PATH: nothing is found (not the test runner's own PATH)
+        self.assertEqual(egress.missing_tools({}, arch="aarch64"),
+                         ["qemu-system-aarch64", "nono", "openssl"])
+
     def test_the_machine_names_map_to_qemu_s(self):
         self.assertEqual(egress.qemu_arch("arm64"), "aarch64")
         self.assertEqual(egress.qemu_arch("AMD64"), "x86_64")

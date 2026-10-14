@@ -111,12 +111,17 @@ class LauncherTests(unittest.TestCase):
             self.assertIn(("--allow-domain", domain), pairs)
 
     def test_behind_the_egress_proxy_every_host_goes_to_it(self):
-        a = session.launcher_argv(dict(STATE, egress="proxy"), proxy="192.168.5.100:3128")
+        a = session.launcher_argv(dict(STATE, egress="proxy", name="box"), proxy="192.168.5.100:3128")
         launcher = a[a.index(session.LAUNCHER):]
         pairs = list(zip(launcher, launcher[1:]))
         self.assertIn(("--allow-domain", "*"), pairs)
         self.assertNotIn(("--allow-domain", "registry.npmjs.org"), pairs)
         self.assertIn(("--upstream-proxy", "192.168.5.100:3128"), pairs)
+        # The session-start hook names the sandbox in `wmf-sbx allow`.
+        self.assertIn("WMF_SBX_EGRESS=box", a)
+
+    def test_off_the_egress_proxy_the_hook_says_nothing_of_it(self):
+        self.assertFalse([x for x in self.argv() if x.startswith("WMF_SBX_EGRESS=")])
 
     def test_a_nested_sandbox_gets_the_lima_grants(self):
         argv = session.launcher_argv(dict(STATE, nested=True, nestedSrc="/home/eng/wmf-sbx-src"))

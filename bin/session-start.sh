@@ -85,6 +85,15 @@ if [[ -n "${GERRITUA:-}" ]]; then
 GERRITUA
 fi
 
+# Emitted only when wmf-sbx runs this session behind its host egress proxy
+# (WMF_SBX_EGRESS is the sandbox's name). That proxy, on the engineer's
+# machine, is then the allowlist for every host.
+if [[ -n "${WMF_SBX_EGRESS:-}" ]]; then
+  cat <<EGRESS
+- All traffic out of this VM goes through an egress proxy on the engineer's machine, and only hosts on its allowlist get through. A host off the list gets \`403\` (\`not in the allowlist\`). Do not work around it: ask the engineer to run \`wmf-sbx allow ${WMF_SBX_EGRESS} HOST\` on their machine, which takes effect at once, with no restart; \`wmf-sbx logs ${WMF_SBX_EGRESS}\` shows what the proxy denied.
+EGRESS
+fi
+
 # Emitted only when this session is attached to a Docker dev container (the
 # broker exports WMF_DOCKER_BROKER_URL into the sandbox). This is the reliable,
 # always-present signal that routes PHP/composer/npm through the container — it

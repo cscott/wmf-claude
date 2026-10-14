@@ -136,6 +136,49 @@ class LauncherTests(unittest.TestCase):
             res = subprocess.run(["bash", "-n"], input=script, text=True, capture_output=True)
             self.assertEqual(res.returncode, 0, res.stderr)
 
+    def test_a_staged_base_image_is_used_instead_of_a_download(self):
+        import wmf_sbx.nested as nested
+        base = image.base_image("x86_64")
+        script = nested.install_script("x86_64", base, "/home/eng/wmf-sbx-src",
+                                       staged=nested.STAGED_BASE)
+        res = subprocess.run(["bash", "-n"], input=script, text=True, capture_output=True)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertNotIn(base["location"], script)
+        self.assertIn(f"install -m 0644 {nested.STAGED_BASE} ", script)
+        self.assertIn("sha512sum -c", script)
+        self.assertIn(f"rm -f {nested.STAGED_BASE}", script)
+
+    def test_host_base_downloads_once_and_checks_the_digest(self):
+        import hashlib
+        import io
+        import wmf_sbx.nested as nested
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp)
+        env = {"XDG_CACHE_HOME": tmp}
+        data = b"qcow2 bytes"
+        base = {"location": "https://cloud.debian.org/x/debian.qcow2",
+                "digest": "sha512:" + hashlib.sha512(data).hexdigest()}
+        fetched = []
+
+        def urlopen(url, timeout=None):
+            fetched.append(url)
+            return io.BytesIO(data)
+        os.makedirs(nested.base_cache_dir(env))
+        old = os.path.join(nested.base_cache_dir(env), "old.qcow2")
+        open(old, "w").close()
+        path = nested.host_base(base, env=env, log=lambda m: None, urlopen=urlopen)
+        self.assertEqual(path, os.path.join(nested.base_cache_dir(env), "debian.qcow2"))
+        with open(path, "rb") as f:
+            self.assertEqual(f.read(), data)
+        self.assertFalse(os.path.exists(old))
+        nested.host_base(base, env=env, log=lambda m: None, urlopen=urlopen)
+        self.assertEqual(fetched, [base["location"]])
+        bad = dict(base, location="https://cloud.debian.org/x/other.qcow2",
+                   digest="sha512:" + "0" * 128)
+        with self.assertRaises(nested.NestedError):
+            nested.host_base(bad, env=env, log=lambda m: None, urlopen=urlopen)
+        self.assertEqual(os.listdir(nested.base_cache_dir(env)), ["debian.qcow2"])
+
     def test_the_nested_install_runs_limactl_as_the_agent_and_checks_the_base_image(self):
         import wmf_sbx.nested as nested
         base = image.base_image("x86_64")

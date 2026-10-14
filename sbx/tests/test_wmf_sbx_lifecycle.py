@@ -734,6 +734,8 @@ class CreateTests(Env):
         self.assertEqual(self.wrapper_env, ["demo"])
         self.assertEqual(self.lima.start_env, {"WMF_SBX_EGRESS_CONFIG": "x"})
         self.assertNotIn("snapshot", st)
+        self.assertIn("(the first boot runs the provisioning, behind the host egress proxy)",
+                      self.err)
 
     def test_egress_proxy_refuses_vz(self):
         self.assertEqual(self.egress_create("--vm-type", "vz"), 1)
@@ -741,13 +743,24 @@ class CreateTests(Env):
         self.assertIsNone(state_mod.load("demo", self.env))
 
     def test_egress_proxy_with_nested(self):
-        self.assertEqual(self.egress_create("--nested"), 0, self.err)
+        with mock.patch.object(nested, "host_base", return_value="/cache/base/b.qcow2"):
+            self.assertEqual(self.egress_create("--nested"), 0, self.err)
         st = state_mod.load("demo", self.env)
         self.assertEqual((st["egress"], st["nested"], st["vmType"]), ("proxy", True, "qemu"))
-        # The install's curl of Lima and the base image goes through it.
+        # The install's curl of Lima goes through it.
         install = [c for c in self.lima.shells() if c[4:6] == ("sudo", "env")]
         self.assertEqual(len(install), 1, self.lima.shells())
         self.assertIn(f"https_proxy={egress.proxy_url()}", install[0])
+        # The base image comes from the host: its mirror redirect is refused.
+        self.assertIn(("copy", "/cache/base/b.qcow2",
+                       f"wmf-sbx-demo:{nested.STAGED_BASE}", False), self.lima.calls)
+
+    def test_a_plain_nested_create_downloads_the_base_image_in_the_guest(self):
+        with mock.patch.object(nested, "host_base") as host_base:
+            self.assertEqual(self.create("--name", "demo", "--nested"), 0, self.err)
+        host_base.assert_not_called()
+        self.assertFalse([c for c in self.lima.calls if c[0] == "copy"
+                          and c[2].endswith(nested.STAGED_BASE)])
 
     def test_not_behind_the_egress_proxy_by_default(self):
         self.assertEqual(self.create("--name", "demo"), 0, self.err)

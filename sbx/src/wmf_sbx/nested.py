@@ -10,8 +10,10 @@ the `kvm` group and the session grants below (N1, sbx/NOTES.md, "Nested
 Lima").
 """
 
+import hashlib
 import os
 import shlex
+import urllib.request
 
 from . import image as image_mod
 from . import lima as lima_mod
@@ -48,6 +50,59 @@ WMF_SBX_DIRS = (f"{vm_mod.AGENT_HOME}/.local/state/wmf-sbx",
 # that is its own agent's home (RAN, N3: create refused
 # ~/wmf-sbx-src/extensions/Cite).
 SRC_NAME = "wmf-sbx-src"
+# Where `create` copies the host's base image in, for a sandbox behind the
+# egress proxy: cloud.debian.org redirects to a geo-picked mirror, which
+# its list cannot name. The install moves it to image.LOCAL_BASE_DIR.
+STAGED_BASE = "/tmp/wmf-sbx-base.qcow2"
+
+
+class NestedError(Exception):
+    pass
+
+
+def base_cache_dir(env=None):
+    """The host's copies of base images, beside the image cache."""
+    return os.path.join(os.path.dirname(image_mod.cache_root(env)), "base")
+
+
+def _digest_ok(path, digest):
+    algo, _, want = digest.partition(":")
+    if algo not in ("sha256", "sha512") or not want:
+        raise NestedError(f"unknown base image digest {digest!r}")
+    h = hashlib.new(algo)
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest() == want
+
+
+def host_base(base, env=None, log=print, urlopen=urllib.request.urlopen):
+    """The path of a host copy of the base image `base` (image.base_image()),
+    downloaded once and checked against its digest. Copies of other base
+    images are removed."""
+    d = base_cache_dir(env)
+    os.makedirs(d, exist_ok=True)
+    name = os.path.basename(base["location"])
+    path = os.path.join(d, name)
+    if not (os.path.isfile(path) and _digest_ok(path, base["digest"])):
+        log(f"+ base image {name} (downloaded on the host, for the sandbox)")
+        tmp = f"{path}.tmp.{os.getpid()}"
+        try:
+            with urlopen(base["location"], timeout=60) as resp, open(tmp, "wb") as f:
+                for chunk in iter(lambda: resp.read(1 << 20), b""):
+                    f.write(chunk)
+            if not _digest_ok(tmp, base["digest"]):
+                raise NestedError(f"{base['location']}: the digest does not match")
+            os.replace(tmp, path)
+        except OSError as e:
+            raise NestedError(f"downloading {base['location']} failed: {e}") from None
+        finally:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+    for other in os.listdir(d):
+        if other != name:
+            os.unlink(os.path.join(d, other))
+    return path
 
 
 def src_dir(host_home):
@@ -182,13 +237,14 @@ def stop_inner(name, lima=None, log=print):
     return stopped
 
 
-def install_script(arch, base, src):
+def install_script(arch, base, src, staged=None):
     """A bash script, run as root in the sandbox: QEMU, firmware, Lima
     LIMA_VERSION (checked against its release's SHA256SUMS), the base
     image `base` (image.base_image(), checked against its digest) in
     image.LOCAL_BASE_DIR, `src` for the inner sandboxes' repos, settings
     for the inner wmf-sbx if it has none,
-    the agent in the kvm group, and the marker."""
+    the agent in the kvm group, and the marker. With `staged`, the base
+    image is that file in the guest (STAGED_BASE), not a download."""
     if arch not in PACKAGES:
         raise ValueError(f"no nested support for {arch}")
     tarball = f"lima-{LIMA_VERSION}-Linux-{LIMA_ARCH[arch]}.tar.gz"
@@ -201,6 +257,9 @@ def install_script(arch, base, src):
     limactl = (f"runuser -u {shlex.quote(vm_mod.AGENT)} -- env HOME={vm_mod.AGENT_HOME} "
                "/usr/local/bin/limactl")
     q = shlex.quote
+    fetch_base = (f"install -m 0644 {q(staged)} {q(base_file + '.tmp')}" if staged else
+                  f"curl -fsSL -o {q(base_file + '.tmp')} {q(base['location'])}")
+    cleanup = f"rm -f {q(staged)}\n" if staged else ""
     return f"""set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 echo "+ apt-get install {' '.join(PACKAGES[arch])}" >&2
@@ -220,12 +279,12 @@ install -d -m 0755 {' '.join(q(d) for d in READ_DIRS)}
 # The base image, for image builds in the sandbox (image.local_base()).
 if ! echo {q(digest + '  ' + base_file)} | {algo}sum -c --quiet >/dev/null 2>&1; then
   echo "+ base image {os.path.basename(base_file)}" >&2
-  curl -fsSL -o {q(base_file + '.tmp')} {q(base['location'])}
+  {fetch_base}
   echo {q(digest + '  ' + base_file + '.tmp')} | {algo}sum -c --quiet
   chmod 0644 {q(base_file + '.tmp')}
   mv {q(base_file + '.tmp')} {q(base_file)}
 fi
-# Root makes it: the agent may not write its parent.
+{cleanup}# Root makes it: the agent may not write its parent.
 install -d -m 0700 -o {q(vm_mod.AGENT)} -g "$(id -g {q(vm_mod.AGENT)})" {q(src)}
 runuser -u {q(vm_mod.AGENT)} -- mkdir -p -m 0700 {' '.join(q(d) for d in (LIMA_HOME,) + WMF_SBX_DIRS)}
 runuser -u {q(vm_mod.AGENT)} -- sh -c {q('test -e "$1" || cat > "$1"')} sh {q(settings_file)} <<'WMF_SBX_SETTINGS'

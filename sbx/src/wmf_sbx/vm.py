@@ -89,6 +89,15 @@ def vm_type_of(name, lima, env=None):
     return m.group(1) if m else None
 
 
+def egress_note(name, env=None, alone=False):
+    """For a `+ limactl start` line: says when the sandbox is behind the
+    egress proxy."""
+    from . import state as state_mod
+    if not egress_mod.enabled(state_mod.load(name, env)):
+        return ""
+    return " (behind the host egress proxy)" if alone else ", behind the host egress proxy"
+
+
 def start_instance(name, lima, env=None, vm_type=None, log=print):
     """`limactl start`, through the QEMU wrapper on QEMU. A sandbox behind
     the egress proxy starts it in egress mode (egress.wrapper_env), and
@@ -133,7 +142,7 @@ def create(name, tmpl, lima=None, log=print, backing=None, env=None):
         log(f"+ qemu-img create -b {backing} (the disk: a copy-on-write overlay)")
         lima.overlay_disk(inst, backing, env=env)
         check_disk(name, lima=lima, env=env)
-    log(f"+ limactl start {inst} (the first boot runs the provisioning)")
+    log(f"+ limactl start {inst} (the first boot runs the provisioning{egress_note(name, env)})")
     start_instance(name, lima, env=env, vm_type=tmpl.get("vmType"), log=log)
     if backing:
         check_disk(name, lima=lima, env=env, running=True)
@@ -218,7 +227,7 @@ def ensure_running(name, lima=None, log=print, env=None):
             image_mod.extra_ca_files(env)
         except (image_mod.ImageError, OSError) as e:
             log(f"warning: could not refresh the extra CA certificates ({e})")
-        log(f"+ limactl start {instance_name(name)}")
+        log(f"+ limactl start {instance_name(name)}" + egress_note(name, env, alone=True))
         start_instance(name, lima, env=env, log=log)
 
 

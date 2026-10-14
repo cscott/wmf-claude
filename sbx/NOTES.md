@@ -100,14 +100,6 @@ Development scaffolding:
 
 ### Lima, QEMU and the disks (track B)
 
-- [ ] **More than 24 repos on QEMU: a PCI bridge.** Each git-dir mount is a `-virtfs`
-  (virtio-9p-pci) on q35's root bus, which takes 31 devices; Lima's 6 and the balloon
-  leave 24 (`template.MAX_QEMU_MOUNTS`; RAN 2026-10-14: Translate, Cite and Parsoid with
-  their dependencies are 25, and QEMU refused the balloon). The QEMU wrapper could rewrite
-  each `-virtfs` into `-fsdev` plus `-device virtio-9p-pci,bus=BRIDGE` on one or more
-  `pcie-pci-bridge`s (31 devices each), and raise the limit to match. Plain `limactl
-  start` (no wrapper) would then not boot such a sandbox.
-
 ### Nested Lima (track C)
 
 - N1 (engineer's host, KVM, a sandbox from `lima-port/checks/n1-spike.sh`): the agent runs
@@ -670,6 +662,15 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   the balloon; the QEMU's RSS went 809 MiB, 3873 MiB with 3 GiB touched in the guest, and
   751 MiB 30 s after the guest freed it. Page cache is not free memory: a guest that read a lot keeps it until it needs
   the memory.
+- PCI slots (RAN 2026-10-14): Lima gives each git-dir mount a `-virtfs`, which takes a
+  slot of q35's root bus. With Lima's 6 devices the bus held 24 mounts and the balloon
+  locally (QEMU 8.2.2), and not 25: Translate, Cite and Parsoid with their dependencies
+  are 25, and the engineer's sandbox did not start ("no slot/function available for
+  virtio-balloon-pci"). A `pcie-pci-bridge` behind a root port took only 31 more. The QEMU
+  wrapper now makes each `-virtfs` an `-fsdev` plus a `virtio-9p-pci` at an explicit
+  `addr=SLOT.FN`, 8 functions to a slot from 0x1e down (`qemu_wrapper.spread_virtfs`);
+  `template.MAX_QEMU_MOUNTS` is 96 (12 slots). Local QEMU booted Lima's devices with 1,
+  25 and 96 such mounts and the balloon.
 - Default VM memory is 8 GiB: phan on Translate was OOM-killed at 4 GiB.
 - Timings under TCG are 5–35× slower than a 16-core host (image build 26–41 min, create
   ~250–310 s, setup for Translate ~40 min); only compare them with each other.

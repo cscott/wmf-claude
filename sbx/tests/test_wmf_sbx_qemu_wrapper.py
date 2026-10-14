@@ -69,6 +69,60 @@ class ArgvTests(unittest.TestCase):
         self.assertEqual(qw.exit_status(3), 3)
 
 
+def virtfs(n, extra=""):
+    out = []
+    for i in range(n):
+        out += ["-virtfs", f"local,path=/h/r{i}/.git,mount_tag=lima-{i},"
+                           f"security_model=none,id=lima-{i}{extra}"]
+    return out
+
+
+class VirtfsTests(unittest.TestCase):
+
+    def devices(self, args):
+        return [args[i + 1] for i, a in enumerate(args[:-1]) if a == "-device"]
+
+    def test_eight_mounts_to_a_slot_from_the_top(self):
+        out = qw.spread_virtfs(["-m", "8192"] + virtfs(9) + ["-qmp", "x"])
+        self.assertNotIn("-virtfs", out)
+        self.assertEqual(out[:2], ["-m", "8192"])
+        self.assertEqual(out[-2:], ["-qmp", "x"])
+        devs = self.devices(out)
+        self.assertEqual(devs[0], "virtio-9p-pci,fsdev=wmf-sbx-fs0,mount_tag=lima-0,"
+                                  "addr=0x1e.0x0,multifunction=on")
+        self.assertEqual(devs[7], "virtio-9p-pci,fsdev=wmf-sbx-fs7,mount_tag=lima-7,addr=0x1e.0x7")
+        self.assertEqual(devs[8], "virtio-9p-pci,fsdev=wmf-sbx-fs8,mount_tag=lima-8,"
+                                  "addr=0x1d.0x0,multifunction=on")
+        self.assertEqual(out[out.index("-fsdev") + 1],
+                         "local,id=wmf-sbx-fs0,path=/h/r0/.git,security_model=none")
+
+    def test_a_comma_in_a_path_stays_escaped(self):
+        out = qw.spread_virtfs(["-virtfs", "local,path=/h/a,,b,mount_tag=t,security_model=none"])
+        self.assertEqual(out[1], "local,id=wmf-sbx-fs0,path=/h/a,,b,security_model=none")
+        self.assertEqual(qw._split_opts("a,,b,c"), ["a,b", "c"])
+
+    def test_no_virtfs_no_change(self):
+        self.assertEqual(qw.spread_virtfs(boot_args()), boot_args())
+
+    def test_the_last_slot_holds_the_limit(self):
+        out = qw.spread_virtfs(virtfs(qw.template_mod.MAX_QEMU_MOUNTS))
+        last = self.devices(out)[-1]
+        slot = qw.NINEP_TOP_SLOT - qw.template_mod.NINEP_SLOTS + 1
+        self.assertTrue(last.endswith(f"addr=0x{slot:x}.0x7"), last)
+
+    def test_refusals(self):
+        cases = {
+            "one more than the limit": virtfs(qw.template_mod.MAX_QEMU_MOUNTS + 1),
+            "a joined -virtfs": ["-virtfs=local,path=/h,mount_tag=t"],
+            "a proxy -virtfs": ["-virtfs", "proxy,sock_fd=3,mount_tag=t"],
+            "no mount_tag": ["-virtfs", "local,path=/h,security_model=none"],
+            "a dangling -virtfs": ["-m", "1", "-virtfs"],
+        }
+        for what, args in cases.items():
+            with self.subTest(what), self.assertRaises(qw.WrapperError):
+                qw.spread_virtfs(args)
+
+
 class RunTests(unittest.TestCase):
 
     def test_a_probe_runs_the_real_qemu_unchanged(self):
@@ -101,6 +155,16 @@ class RunTests(unittest.TestCase):
         (path, argv), = calls
         self.assertEqual(argv, ["/usr/bin/qemu-system-x86_64"] + boot_args()
                          + ["-device", qw.BALLOON])
+
+    def test_a_plain_boot_spreads_the_mounts_and_adds_the_balloon(self):
+        calls = []
+        qw.run(boot_args() + virtfs(2),
+               env={qw.REAL_VAR: "/usr/bin/qemu-system-x86_64", qw.PLAIN_VAR: "1"},
+               execv=lambda p, a: calls.append((p, a)), self_path=WRAPPER)
+        (_path, argv), = calls
+        self.assertEqual(argv, ["/usr/bin/qemu-system-x86_64"]
+                         + qw.spread_virtfs(boot_args() + virtfs(2)) + ["-device", qw.BALLOON])
+        self.assertNotIn("-virtfs", argv)
 
     def test_the_balloon_goes_on_limas_own_device(self):
         args = boot_args() + ["-device", "virtio-balloon-pci,id=b0"]

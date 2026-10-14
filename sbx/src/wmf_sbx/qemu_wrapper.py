@@ -12,7 +12,9 @@ free-page reporting. Lima runs it in place of QEMU
                          refused, so that a --sudo sandbox never boots
                          without its proxy by mistake.
 
-Every boot call gets a virtio balloon with free-page reporting
+Every boot call has its -virtfs mounts moved to multifunction slots
+(spread_virtfs: Lima gives each its own slot, and the root bus runs out
+at 30 or 31 devices), and gets a virtio balloon with free-page reporting
 (BALLOON): the guest gives the pages it frees back to the host. Without
 it QEMU keeps all the memory that the guest ever touched, and a few
 sandboxes that once ran an image build use up the host's memory (RAN:
@@ -46,6 +48,7 @@ import sys
 import threading
 
 from . import egress as egress_mod
+from . import template as template_mod
 from . import fakedns as fakedns_mod
 
 REAL_VAR = "WMF_SBX_QEMU_REAL"
@@ -100,6 +103,80 @@ def boot_argv(args, guestfwd):
         i += 1
     if users != 1:
         raise WrapperError(f"want exactly one -netdev user, found {users}")
+    return out
+
+
+# The highest root-bus slot the 9p devices take (q35 has the ICH9 at
+# 0x1f; virt has nothing there). They go downward from it; QEMU gives
+# Lima's other devices and the balloon the lowest free slots.
+NINEP_TOP_SLOT = 0x1e
+
+
+def _split_opts(value):
+    """QEMU's option list: `,` separates, `,,` is a comma."""
+    parts, cur, i = [], "", 0
+    while i < len(value):
+        if value[i] == ",":
+            if value[i + 1:i + 2] == ",":
+                cur += ","
+                i += 2
+                continue
+            parts.append(cur)
+            cur = ""
+        else:
+            cur += value[i]
+        i += 1
+    parts.append(cur)
+    return parts
+
+
+def _join_opts(parts):
+    return ",".join(p.replace(",", ",,") for p in parts)
+
+
+def spread_virtfs(args):
+    """`args` with each `-virtfs local,...` as an `-fsdev` and a
+    virtio-9p-pci at an explicit address: 8 to a root-bus slot (functions
+    0-7, multifunction on function 0), from NINEP_TOP_SLOT down. Lima
+    gives each mount a slot of its own, and the root bus holds 30 or 31
+    devices: a sandbox with 25 repos left no slot for the balloon (RAN).
+    The guest finds each mount by its mount_tag, as before."""
+    out, n, i = [], 0, 0
+    limit = template_mod.MAX_QEMU_MOUNTS
+    while i < len(args):
+        a = args[i]
+        if a.startswith(("-virtfs=", "--virtfs=")):
+            raise WrapperError(f"refusing a -virtfs in one argument: {a}")
+        if a not in ("-virtfs", "--virtfs"):
+            out.append(a)
+            i += 1
+            continue
+        if i + 1 >= len(args):
+            raise WrapperError(f"{a} without a value")
+        parts = _split_opts(args[i + 1])
+        if parts[0] != "local":
+            raise WrapperError(f"only a local -virtfs is moved: {args[i + 1]}")
+        tag, fs = None, []
+        for p in parts[1:]:
+            key = p.partition("=")[0]
+            if key == "mount_tag":
+                tag = p.partition("=")[2]
+            elif key != "id":
+                fs.append(p)
+        if not tag:
+            raise WrapperError(f"-virtfs with no mount_tag: {args[i + 1]}")
+        if n >= limit:
+            raise WrapperError(f"more than {limit} -virtfs mounts")
+        fsdev = f"wmf-sbx-fs{n}"
+        slot, function = NINEP_TOP_SLOT - n // 8, n % 8
+        device = ["virtio-9p-pci", f"fsdev={fsdev}", f"mount_tag={tag}",
+                  f"addr=0x{slot:x}.0x{function:x}"]
+        if function == 0:
+            device.append("multifunction=on")
+        out += ["-fsdev", _join_opts(["local", f"id={fsdev}"] + fs),
+                "-device", _join_opts(device)]
+        n += 1
+        i += 2
     return out
 
 
@@ -219,10 +296,10 @@ def run(args, env=None, popen=subprocess.Popen, execv=os.execv, self_path=None):
         if env.get(PLAIN_VAR) != "1":
             raise WrapperError(f"{CONFIG_VAR} is not set: no egress proxy for this VM "
                                f"(and {PLAIN_VAR} is not 1)")
-        execv(real, [real] + with_balloon(args))
+        execv(real, [real] + with_balloon(spread_virtfs(args)))
         return 0
     config = egress_mod.read_config(config_path)
-    argv = [real] + with_balloon(boot_argv(list(args), egress_mod.guestfwds(config)))
+    argv = [real] + with_balloon(spread_virtfs(boot_argv(list(args), egress_mod.guestfwds(config))))
 
     egress = Egress(config_path, dict(env), popen=popen)
     resolver = None

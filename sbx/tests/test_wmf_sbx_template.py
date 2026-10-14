@@ -206,7 +206,7 @@ class MountLimitTests(unittest.TestCase):
         dirs = [f"/h/r{i}/.git" for i in range(template.MAX_QEMU_MOUNTS)]
         self.assertEqual(len(make(vm_type="qemu", gitdirs=dirs)["mounts"]),
                          template.MAX_QEMU_MOUNTS)
-        with self.assertRaisesRegex(template.TemplateError, "at most 24.*--no-phan-deps"):
+        with self.assertRaisesRegex(template.TemplateError, f"at most {template.MAX_QEMU_MOUNTS}.*--no-phan-deps"):
             make(vm_type="qemu", gitdirs=dirs + ["/h/one-more/.git"])
 
     def test_vz_has_no_such_limit(self):

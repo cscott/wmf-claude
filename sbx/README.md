@@ -258,8 +258,10 @@ other Lima version.
 On QEMU, `wmf-sbx` starts the VM through `sbx/bin/wmf-sbx-qemu`, which
 adds free-page reporting: the memory a sandbox frees goes back to your
 machine, so a sandbox that once ran a big build does not hold all its
-memory while it idles. A sandbox started with a plain `limactl start`
-runs without it.
+memory while it idles. The wrapper also puts the git-dir mounts 8 to a
+PCI slot. Start a sandbox with `wmf-sbx start`: a plain `limactl start`
+runs it without free-page reporting, and does not boot a sandbox of
+more than about 24 repos.
 
 ### Warm snapshots
 
@@ -371,11 +373,10 @@ wmf-sbx create PRIMARY[:ro] [EXTRA[:ro] ...] [options]
   image on QEMU too, and no snapshot.
 - `--vm-type qemu|vz`, `--cpus N` (4), `--memory SIZE` (8GiB),
   `--disk SIZE` (60GiB).
-- On QEMU a sandbox takes at most 24 repos (git dirs mounted, the
-  dependencies counted): each mount is a PCI device, and the VM's bus has
-  room for 31, Lima's own and the memory balloon included. `create`
-  refuses more; `--no-phan-deps`, `--no-ci-deps` or `--no-dev` leave
-  dependencies out.
+- On QEMU a sandbox takes at most 96 repos (git dirs mounted, the
+  dependencies counted): each mount is a PCI device function, 8 to a
+  slot of the VM's bus. `create` refuses more; `--no-phan-deps`,
+  `--no-ci-deps` or `--no-dev` leave dependencies out.
 - `--nested`: **lower security; only for work on wmf-claude or wmf-sbx
   itself.** Do not use it for other work. nono gives the agent more in a
   nested sandbox: `/dev/kvm`, the `kvm` group, Lima's sockets, more

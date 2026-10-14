@@ -44,12 +44,15 @@ DEFAULT_MEMORY = "8GiB"
 DEFAULT_DISK = "60GiB"
 
 MOUNT_TYPES = {"qemu": "9p", "vz": "virtiofs"}
-# On QEMU each mount is a virtio-9p PCI device on the machine's root bus,
-# which takes 31 devices beside its own (RAN, 2026-10-14: 25 mounts and
-# Lima's 6 devices booted; with the balloon too, QEMU refused: "PCI: no
-# slot/function available"). Lima's 6 and the free-page-reporting balloon
-# (qemu_wrapper.BALLOON, which keeps the host's memory down) leave 24.
-MAX_QEMU_MOUNTS = 31 - 6 - 1
+# On QEMU each mount is a virtio-9p PCI device. As Lima gives them
+# (-virtfs), each takes a slot of the machine's root bus, which holds 30
+# or 31 devices with Lima's 6 (RAN 2026-10-14: 25 mounts and the
+# free-page-reporting balloon did not fit). The QEMU wrapper puts them 8
+# to a slot instead, as the functions of multifunction slots
+# (qemu_wrapper.spread_virtfs), in NINEP_SLOTS slots from the top: room
+# for MAX_QEMU_MOUNTS, with Lima's devices and the balloon below them.
+NINEP_SLOTS = 12
+MAX_QEMU_MOUNTS = 8 * NINEP_SLOTS
 
 
 class TemplateError(Exception):
@@ -134,7 +137,7 @@ def sandbox_template(golden_path, arch, gitdirs=(), vm_type=None, cpus=DEFAULT_C
     if vm_type == "qemu" and len(gitdirs) > MAX_QEMU_MOUNTS:
         raise TemplateError(
             f"{len(gitdirs)} git dirs to mount, and a QEMU sandbox takes at most "
-            f"{MAX_QEMU_MOUNTS} (each is a PCI device). Leave dependencies out "
+            f"{MAX_QEMU_MOUNTS} (each is a PCI device function). Leave dependencies out "
             f"(--no-phan-deps, --no-ci-deps, --no-dev, --no-suggests), or name fewer repos.")
     if egress_ca and vm_type != "qemu":
         raise TemplateError("the egress proxy needs vmType qemu (its wrapper is QEMU's)")

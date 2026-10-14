@@ -180,7 +180,10 @@ control comes with `--sudo` mode.)
 - **QEMU runs through `bin/wmf-sbx-qemu`** (on QEMU): Lima starts the
   wrapper in place of QEMU. It runs QEMU's probes unchanged, and adds a
   virtio balloon with free-page reporting to the boot, so that a guest
-  gives the memory it frees back to the host. For a `--sudo` sandbox it
+  gives the memory it frees back to the host. It moves each of Lima's
+  `-virtfs` mounts to an `-fsdev` and a `virtio-9p-pci` at a fixed PCI
+  address (8 to a slot), with the same path, mount tag and options; it
+  refuses a `-virtfs` that is not `local`. For a `--sudo` sandbox it
   also starts the egress proxy (track A); it refuses a boot that has
   neither that proxy's config nor the plain mode that `wmf-sbx` sets.
 - **Attack surface on the host:** the hypervisor; the 9p or virtiofs

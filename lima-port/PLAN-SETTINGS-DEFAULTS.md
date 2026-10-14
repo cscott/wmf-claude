@@ -29,12 +29,15 @@ its own, so there is no list of exceptions to remember.
   them off for every command. The command line wins over that, as
   always: `--settings` turns them back on, and `settings: true` does not
   undo an explicit `--no-settings`. This switch covers option defaults
-  only. `repos:`, `environment:`, `images:` and the others are still
+  only. `repos:`, `environment:`, `imageCache:` and the others are still
   read: `create` cannot resolve a repo without `repos:`.
 - **`session.sudo` moves to `create.sudo`.** `session:` holds Claude
-  Code's preferences; this is a `create` option. `session.sudo` is
-  still read, with a note, as `load_config` does for `repos.yaml`
-  (LEGACY_KEYS).
+  Code's preferences; this is a `create` option. There is no legacy
+  `session.sudo`.
+- **No compatibility keys.** The lima port is not released. When a
+  key moves or is renamed, the old one goes; ask the engineer about
+  their own settings.yaml instead of keeping an alias. (The `images:`
+  cache policy section became `imageCache:` this way, commit 2d838ce.)
 - **Follow-ups, not this plan:** `resume`/`run` and `logs` on argparse
   (they parse by hand today); defaults for positional arguments. Both
   are below, under "Follow-ups".
@@ -42,7 +45,7 @@ its own, so there is no list of exceptions to remember.
 ## The rule
 
 For an option `--some-flag` of `wmf-sbx VERB`, the settings key is
-`VERB.someFlag`: the argparse `dest` in camelCase, as `images.maxAge`
+`VERB.someFlag`: the argparse `dest` in camelCase, as `imageCache.maxAge`
 and `create.cloneMissing` are. A subcommand nests: `image build
 --keep-builder` is `image: {build: {keepBuilder: true}}`. Precedence,
 highest first:
@@ -56,6 +59,9 @@ highest first:
 `null` in settings is the same as no key. A key that the command does
 not have is an error, which lists the keys it does have: a typo must
 not be silently ignored.
+The same goes for the top level: `load_config` refuses a section it
+does not know (today a stale `images:` is silently ignored). Step 1
+does this, with the list of command sections from step 6's walk.
 
 Only `--config` and `--settings/--no-settings` cannot come from
 settings. They say which file to read and whether to read it. (`-h`
@@ -124,7 +130,7 @@ assertion, and the test in step 6 runs it over every command).
 | | `--no-suggests` | `--suggests/--no-suggests` | `suggests` |
 | | `--no-remotes` | `--remotes/--no-remotes` | `remotes` |
 | | `--no-snapshot` | `--snapshot/--no-snapshot` | `snapshot` |
-| | `--no-expire` | `--expire/--no-expire` (default null: `images.expire`) | `expire` |
+| | `--no-expire` | `--expire/--no-expire` (default null: `imageCache.expire`) | `expire` |
 | | `--reset-all`, `--cold`, `--full-disk`, `--nested`, `--dry-run` | `--X/--no-X` | `resetAll`, `cold`, `fullDisk`, `nested`, `dryRun` |
 | rm | `--dry-run`, `--keep-remotes`, `-f/--force`, `--prune` | `--X/--no-X` (`-f` stays) | `dryRun`, `keepRemotes`, `force`, `prune` |
 | exec | `--engineer` | `--engineer/--no-engineer` | `engineer` |
@@ -135,9 +141,9 @@ assertion, and the test in step 6 runs it over every command).
 
 Every spelling in use today keeps working, with the same meaning. The
 code reads `args.deps` where it read `not args.no_deps`, and so on.
-`--expire` null falls back to `images.expire`, which `image build` also
-reads. The two keys do not compete: `create.expire` is "this create",
-and `images.expire` is the cache policy.
+`--expire` null falls back to `imageCache.expire`, which `image build`
+also reads. The two keys do not compete: `create.expire` is "this
+create", and `imageCache.expire` is the cache policy.
 
 The value options are settable as they are: `create --name`, `--vm-type`,
 `--cpus`, `--memory`, `--disk`, `--image`, `--egress-proxy`, `--sudo`,
@@ -152,14 +158,16 @@ would); `login --image`; `ls-remotes --path`; `resolve --path`.
   `memory: 1GiB` is used as given, even with `nested: true`.
   `args.egress_proxy` True or False from settings is "requested", so
   `egress_choice` raises on vz. The hand-written lookups go away: the
-  `clone_missing` one from 24728b8, and `session.sudo`.
+  `clone_missing` one from 24728b8, and `session.sudo` (now
+  `create.sudo`).
 - `--name` from settings: if that sandbox exists, the error is the same
   as for `--name` on the command line ("exists already"). There is no
   `unique_sandbox_name` prompt, because the engineer named it.
 - `--image` from settings: an image that `image gc` has removed gives
   the same error as on the command line.
-- `session.preference_settings` accepts `settings` (a bool); `sudo` there
-  becomes the legacy key.
+- `session.preference_settings` accepts `settings` (a bool), and no
+  longer `sudo`: a `session: {sudo: ...}` is an unknown key, as any
+  other typo is.
 
 ## Steps
 
@@ -170,9 +178,8 @@ Each step is one commit with the sbx suite green.
    nesting, the type checks, unknown keys, mutually exclusive groups,
    the help suffix, `null`. Unit tests with small parsers; no command
    changes yet.
-2. **`create` on the helper.** The flag pairs; `create.sudo` (with
-   `session.sudo` as a legacy key, with a note); `--expire` null to
-   `images.expire`; `egressProxy`/`vmType`/`memory`/`disk` null as
+2. **`create` on the helper.** The flag pairs; `create.sudo` (and
+   `session.sudo` removed); `--expire` null to `imageCache.expire`; `egressProxy`/`vmType`/`memory`/`disk` null as
    today; the `cloneMissing` lookup removed. README `create` section,
    `reference/example-settings.yaml` (`create:` lists every key,
    commented out, and `session: settings:`).
@@ -211,12 +218,3 @@ Each step is one commit with the sbx suite green.
   and `exec NAME -- CMD` with NAME optional, and the guessing in
   `logs`/`resume` `split_args`, which goes away with the first
   follow-up.
-
-## Open question
-
-- **`image:` next to `images:`.** The subcommand section for `image
-  build` would be `image: {build: {...}}`, one letter from the
-  existing `images:` cache policy (`gcAge`, `maxAge`, `expire`,
-  `snapshotInterval`). Either accept it, or move those keys under
-  `image:` (`image: {maxAge: ..., build: {...}}`), with `images:` as a
-  legacy key. The second is tidier. It is one more legacy key.

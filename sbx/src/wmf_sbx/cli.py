@@ -10,11 +10,18 @@ command line wins over settings.yaml, which wins over the code's own
 default; `null` in settings is the same as no key. `--no-settings`, or
 `session: {settings: false}`, turns the settings defaults off.
 
+`--` is POSIX end of options, as in argparse: `rm -- -foo` removes the
+sandbox `-foo`. A command with a positional of `nargs=argparse.REMAINDER`
+passes through instead: the arguments after the first `--` go, as they
+are, to that positional's dest, and only those before it are parsed
+(`exec NAME -- CMD`, `resume NAME -- ...`).
+
 The helper does it with `parser.set_defaults`: the command reads `args.x`
 as before and never knows where the value came from.
 """
 
 import argparse
+import contextlib
 import json
 import sys
 
@@ -203,14 +210,59 @@ def _apply(parser, path, section, given, use, warn):
         _apply(sub, f"{path}.{name}", section.get(name), given, use, warn)
 
 
+def _remainder(parser):
+    """The positional of `parser` with nargs=REMAINDER, or None."""
+    found = [a for a in parser._actions
+             if not a.option_strings and a.nargs == argparse.REMAINDER]
+    assert len(found) <= 1, f"{parser.prog}: two REMAINDER positionals"
+    assert not (found and subparsers(parser)), f"{parser.prog}: REMAINDER and subcommands"
+    return found[0] if found else None
+
+
+@contextlib.contextmanager
+def _without(parser, action):
+    """`parser` parses as if it did not have `action`; its usage still
+    ends with `[-- METAVAR ...]` (its help section still lists it)."""
+    if action is None:
+        yield
+        return
+    saved_usage = parser.usage
+    i = parser._actions.index(action)
+    del parser._actions[i]
+    try:
+        if saved_usage is None:
+            usage = parser.format_usage().split(":", 1)[1].strip()
+            parser.usage = f"{usage} [-- {action.metavar or action.dest.upper()} ...]"
+        yield
+    finally:
+        parser._actions.insert(i, action)
+        parser.usage = saved_usage
+
+
 def parse_args(parser, argv, section, config_default=None, warn=_warn):
     """(args, config). Adds --config and --settings/--no-settings to
     `parser`, and gives every other option its default from settings.yaml
     `section` (the verb: "create", or "image" for a parser whose
     subcommands are `image: {build: ...}`). A settings file that cannot be
-    read, or a value of the wrong type, exits with status 1."""
+    read, or a value of the wrong type, exits with status 1. A REMAINDER
+    positional gets the arguments after the first `--` (a list, empty
+    without one)."""
     config_default = config_default or resolve_mod.DEFAULT_CONFIG
     _add_own_options(parser, config_default)
+    argv = sys.argv[1:] if argv is None else list(argv)
+    rest = _remainder(parser)
+    passed = []
+    if rest is not None and "--" in argv:
+        i = argv.index("--")
+        argv, passed = argv[:i], argv[i + 1:]
+    with _without(parser, rest):
+        args, config = _parse(parser, argv, section, config_default, warn)
+    if rest is not None:
+        setattr(args, rest.dest, passed)
+    return args, config
+
+
+def _parse(parser, argv, section, config_default, warn):
     try:
         given = _given(parser, argv)
     except _Pass1Error:

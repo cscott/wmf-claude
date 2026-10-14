@@ -216,6 +216,38 @@ class CliTests(unittest.TestCase):
         with self.assertRaises(cli._Pass1Error):
             cli._given(parser, ["--cpus", "four"])
 
+    def test_double_dash_ends_the_options(self):
+        self.settings("demo:\n  cold: true\n")
+        args = self.parse(["--cpus", "2", "--", "-foo"])
+        self.assertEqual((args.name, args.cpus, args.cold), ("-foo", 2, True))
+        self.assertIn("unrecognized arguments: --cold", self.fails(["x", "--", "--cold"], code=2))
+
+    def passing(self):
+        p = argparse.ArgumentParser(prog="wmf-sbx demo")
+        p.add_argument("name")
+        p.add_argument("--cold", action=argparse.BooleanOptionalAction, default=False)
+        p.add_argument("rest", nargs=argparse.REMAINDER, metavar="ARGS")
+        return p
+
+    def test_double_dash_passes_the_rest_to_a_remainder_positional(self):
+        self.settings("demo:\n  cold: true\n")
+        args = self.parse(["x", "--", "--no-cold", "--", "y"], parser=self.passing())
+        self.assertEqual((args.name, args.cold, args.rest), ("x", True, ["--no-cold", "--", "y"]))
+        args = self.parse(["--no-cold", "x"], parser=self.passing())
+        self.assertEqual((args.name, args.cold, args.rest), ("x", False, []))
+        # Before the --, it is not a positional.
+        self.assertIn("unrecognized arguments: y", self.fails(["x", "y"], parser=self.passing(),
+                                                              code=2))
+
+    def test_the_usage_shows_the_pass_through(self):
+        parser = self.passing()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit):
+            cli.parse_args(parser, ["-h"], "demo", config_default=self.config)
+        self.assertIn("name [-- ARGS ...]", out.getvalue())
+        self.assertIsNone(parser.usage)
+        self.assertIn("rest", [a.dest for a in parser._actions])
+
     def test_a_constant_flag_is_refused(self):
         p = argparse.ArgumentParser()
         p.add_argument("--cold", action="store_true")
@@ -287,8 +319,7 @@ def wrong_types(parser):
 
 def leaf_argvs(parser):
     """A command line for each leaf of `parser` (each image subcommand),
-    with its positionals filled in and --no-settings, which a REMAINDER
-    positional would swallow if it came last."""
+    with --no-settings and its positionals filled in."""
     subs = cli.subparsers(parser)
     if subs:
         return [[name] + argv for name, sub in subs.items() for argv in leaf_argvs(sub)]

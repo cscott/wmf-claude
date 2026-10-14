@@ -1205,6 +1205,16 @@ class ExecTests(Env):
                                     lima=lima, env=self.env), 0)
         self.assertIn("sbx-demo is a sudo sandbox: the agent has root in the VM too", self.err)
 
+    def test_the_command_can_start_before_the_double_dash(self):
+        lima = self.sandbox()
+        for argv, cmd in ((["git", "status"], ("git", "status")),
+                          (["git", "--", "status"], ("git", "--", "status")),
+                          (["wmf-sbx", "exec", "b", "--", "ls"],
+                           ("wmf-sbx", "exec", "b", "--", "ls"))):
+            with self.subTest(argv=argv):
+                self.quiet(exec_mod.main, ["sbx-demo"] + argv, lima=lima, env=self.env)
+                self.assertEqual(lima.shells()[-1][-len(cmd):], cmd)
+
     def test_a_command_is_required(self):
         lima = self.sandbox()
         with self.assertRaises(SystemExit):

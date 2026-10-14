@@ -18,6 +18,12 @@ has sudo too, so that guards nothing; it says so.
 
 Usage:
   wmf-sbx exec [--engineer] [-w DIR] NAME -- CMD [ARGS...]
+  wmf-sbx exec [--engineer] [-w DIR] NAME CMD [WORD...] [-- ARGS...]
+
+The second form is a shorthand: the words after NAME, none of which
+starts with -, begin the command, and a `--` with ARGS after them stays
+in it. So `wmf-sbx exec a wmf-sbx exec b -- ls` runs `wmf-sbx exec b --
+ls` in a.
 """
 
 import argparse
@@ -44,9 +50,12 @@ def main(argv=None, lima=None, env=None):
                         help="run as Lima's user (has sudo) instead of the agent")
     parser.add_argument("-w", "--workdir", help="working directory in the VM")
     parser.add_argument("name", help="the sandbox (or a path shortcut such as .)")
-    parser.add_argument("cmd", nargs=argparse.REMAINDER, help="-- CMD [ARGS...]")
+    parser.add_argument("words", nargs="*", metavar="CMD",
+                        help="the command, if it starts before the --")
+    parser.add_argument("args", nargs=argparse.REMAINDER, metavar="ARGS",
+                        help="the command (or the rest of it, after CMD)")
     args, _config = cli_mod.parse_args(parser, argv, "exec")
-    cmd = args.cmd[1:] if args.cmd[:1] == ["--"] else args.cmd
+    cmd = args.words + (["--"] if args.words and args.args else []) + args.args
     if not cmd:
         parser.error("give a command after the sandbox name: NAME -- CMD [ARGS...]")
     try:

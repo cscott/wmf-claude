@@ -238,6 +238,74 @@ for sh in bash /bin/bash; do
     fail "vm: model_proxy_stop under $sh: $out"
   fi
 done
+
+NET="$REPO_ROOT/lima/guest-contained-net.sh"
+echo ""
+echo "--- contained VM network phase: lima/guest-contained-net.sh ---"
+if bash -n "$NET" && [[ -x "$NET" ]]; then pass "guest-contained-net.sh parses and is executable"; else fail "guest-contained-net.sh"; fi
+lock_rules=$(awk '/^load_lock\(\) \{/,/^\}/' "$NET")
+check  "lock: output policy drop"                        "$NET" 'type filter hook output priority -10; policy drop;'
+check  "lock: forward policy drop (containers)"          "$NET" 'type filter hook forward priority -10; policy drop;'
+n_accept=$(grep -c ' accept$' <<<"$lock_rules")
+if [[ "$n_accept" == 8 ]]; then pass "lock: exactly the 8 expected accept rules"
+else fail "lock: $n_accept accept rules, want 8 (lo, established x2, docker0 x2, br-* x2, DHCP)"; fi
+for r in 'oifname "lo" accept' 'ct state established,related accept' 'oifname "docker0" accept' 'oifname "br-\*" accept' 'udp sport 68 udp dport 67 accept'; do
+  if grep -qE -e "$r" <<<"$lock_rules"; then pass "lock: allows only $r"; else fail "lock: missing $r"; fi
+done
+check  "install: unit runs before the network"           "$GI" '^Before=network-pre.target$'
+check  "install: unit restarts with nftables (its stop flushes the ruleset)" "$GI" '^PartOf=nftables.service$'
+check  "install: unit enabled early (sysinit)"           "$GI" '^WantedBy=sysinit.target$'
+check  "install: root-owned copy of the script"          "$GI" 'install -m 0755 -o root -g root "\$NEW/lima/guest-contained-net.sh" /usr/local/sbin/wmf-claude-contained-net'
+check  "vm: create --contained ends locked"                    "$VM" '"\$\(contained_net lock\)" == locked'
+check  "vm: sessions only when locked"                   "$VM" '\[\[ "\$net" == locked \]\] \|\| die'
+check  "vm: update refuses a locked VM"                  "$VM" 'is_contained && \[\[ "\$\(contained_phase\)" == locked \]\]'
+check  "vm: no lock or unlock during a session"          "$VM" '! contained_session_running \|\| die'
+check  "vm: check-host-block restores the lock on exit" "$VM" "trap 'if \\\$\\{RELOCK:-false\\}; then contained_net lock >/dev/null; fi' EXIT"
+check  "vm: check-host-block tests by IP, not by name"  "$VM" '--resolve "deb.debian.org:443:\$ip"'
+check  "vm: sessions honour WMF_CLAUDE_REQUIRE_HOST_BLOCK" "$VM" 'WMF_CLAUDE_REQUIRE_HOST_BLOCK:-'
+check  "vm: an interactive session waits on the warning" "$VM" 'Press Enter to start the session anyway'
+# host_block_state: verified only for an ok record of the current limactl.
+HB=$(mktemp -d); mkdir -p "$HB/bin"; printf '#!/bin/sh\n' > "$HB/bin/limactl"; chmod +x "$HB/bin/limactl"
+hb_fns="$(grep '^limactl_binary()' "$VM")
+$(awk '/^host_block_state\(\) \{/,/^\}/' "$VM")"
+hb() { PATH="$HB/bin:$PATH" bash -c "set -euo pipefail; HOST_BLOCK_RECORD='$HB/rec'; $hb_fns
+  host_block_state"; }
+real=$(PATH="$HB/bin:$PATH" python3 -c 'import os, shutil; print(os.path.realpath(shutil.which("limactl")))')
+[[ "$(hb)" == unchecked ]] && pass "host block: no record is 'unchecked'" || fail "host block: no record gave $(hb)"
+echo "ok 2026-01-01T00:00:00Z $real" > "$HB/rec"
+[[ "$(hb)" == verified ]] && pass "host block: an ok record for this limactl is 'verified'" || fail "host block: ok record gave $(hb)"
+echo "ok 2026-01-01T00:00:00Z /old/lima/2.1.0/bin/limactl" > "$HB/rec"
+[[ "$(hb)" == stale ]] && pass "host block: a record for another limactl is 'stale'" || fail "host block: other limactl gave $(hb)"
+echo "fail 2026-01-01T00:00:00Z $real" > "$HB/rec"
+[[ "$(hb)" == failed ]] && pass "host block: a failed record is 'failed'" || fail "host block: failed record gave $(hb)"
+rm -rf "$HB"
+# The phase logic, with a fake nft and id, in a scratch directory.
+NT=$(mktemp -d); mkdir -p "$NT/bin" "$NT/etc"
+printf '#!/bin/sh\necho 0\n' > "$NT/bin/id"
+cat > "$NT/bin/nft" <<'FAKE'
+#!/bin/bash
+# Fake nft: a file stands for the loaded table.
+case "$1 $2" in
+  "-f -") cat > /dev/null; touch "$NFT_STATE" ;;
+  "list table") [[ -e "$NFT_STATE" ]] ;;
+  "delete table") rm -f "$NFT_STATE" ;;
+esac
+FAKE
+chmod +x "$NT/bin/id" "$NT/bin/nft"
+net() { NFT_STATE="$NT/table" WMF_CLAUDE_GUEST_CONTAINED_DIR="$NT/etc" PATH="$NT/bin:$PATH" bash "$NET" "$@" 2>&1; }
+out=$(net status)
+if grep -q 'not a contained VM' <<<"$out"; then pass "net: refuses without the contained marker"; else fail "net without marker: $out"; fi
+touch "$NT/etc/contained"
+if [[ "$(net status)" == broken ]]; then pass "net: no phase file and no table is 'broken' (sessions refused)"; else fail "net: missing phase gave $(net status)"; fi
+if [[ "$(net apply)" == locked && "$(net status)" == locked ]]; then pass "net: a missing phase applies as locked"; else fail "net: apply without a phase did not lock"; fi
+echo garbage > "$NT/etc/net-phase"
+if [[ "$(net apply)" == locked ]]; then pass "net: an unknown phase applies as locked"; else fail "net: unknown phase did not lock"; fi
+if [[ "$(net open)" == open && "$(net status)" == open && ! -e "$NT/table" ]]; then pass "net: open removes the table"; else fail "net: open"; fi
+if [[ "$(net apply)" == open && ! -e "$NT/table" ]]; then pass "net: apply keeps an open phase open"; else fail "net: apply of open"; fi
+if [[ "$(net lock)" == locked && "$(net status)" == locked && -e "$NT/table" ]]; then pass "net: lock loads the table"; else fail "net: lock"; fi
+rm -f "$NT/table"
+if [[ "$(net status)" == broken ]]; then pass "net: phase locked without the table is 'broken'"; else fail "net: unloaded table not detected"; fi
+rm -rf "$NT"
 # guest-claude.sh refuses mismatches before it starts anything.
 GT=$(mktemp -d); mkdir -p "$GT/home/work/ws"
 gc() { WMF_CLAUDE_GUEST_AGENT_HOME="$GT/home" WMF_CLAUDE_GUEST_CONTAINED_MARKER="$GT/contained" bash "$GC" "$@" 2>&1; }
@@ -245,6 +313,8 @@ out=$(touch "$GT/contained"; gc ws)
 if grep -q 'this is a contained VM' <<<"$out"; then pass "guest-claude: contained VM without --model-proxy-port refused"; else fail "guest-claude: contained VM without --model-proxy-port: $out"; fi
 out=$(gc --model-proxy-port 7319 ws --docker=mediawiki)
 if grep -q 'not available in a contained VM' <<<"$out"; then pass "guest-claude: --docker refused in a contained VM"; else fail "guest-claude: --docker in a contained VM: $out"; fi
+out=$(gc --model-proxy-port 7319 ws)
+if grep -q "network is not locked" <<<"$out"; then pass "guest-claude: a contained session needs the lock"; else fail "guest-claude: contained session without the lock: $out"; fi
 out=$(rm -f "$GT/contained"; gc --model-proxy-port 7319 ws)
 if grep -q 'not a contained VM' <<<"$out"; then pass "guest-claude: --model-proxy-port refused outside a contained VM"; else fail "guest-claude: --model-proxy-port outside a contained VM: $out"; fi
 rm -rf "$GT"

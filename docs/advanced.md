@@ -57,6 +57,7 @@ threat model, so there is no supported way to pass them.
 | `WMF_CLAUDE_SKIP_BUILD` | `bin/wmf-claude-setup` only: skip `bin/wmf-claude-build`. The Lima guest uses it, where the tree belongs to another user |
 | `WMF_DOCKER_HANDSHAKE` | Bare `--docker` (attach mode): read the broker handshake from this path instead of the runtime dir. Set by the Lima guest launcher; unset before the sandbox starts |
 | `WMF_CLAUDE_VM` | `bin/wmf-claude-vm`: the Lima instance name (default `wmf-claude`) |
+| `WMF_CLAUDE_REQUIRE_HOST_BLOCK` | `bin/wmf-claude-vm claude` on a contained VM: refuse to start unless `check-host-block` passed for the current `limactl` binary (otherwise it only warns) |
 | `WMF_CLAUDE_MODEL_PROXY_PORT` | `bin/claude` contained mode: profile `wmf-contained`, no egress, the model API only via the host proxy on this localhost port. Set by `lima/guest-claude.sh` in a contained VM |
 
 ## Startup notices and the status line
@@ -107,6 +108,8 @@ It is a separate entry point, not a `bin/claude` flag:
 | `claude NAME [bin/claude args]` | Sandboxed session in that workspace, as the `agent` user. `--docker=SERVICE` starts the broker as the engineer; `--chrome` and `--ide` are refused |
 | `pull NAME [DEST]` | Fetch the agent's branches into `vm/*` (remote-tracking refs) of the repo NAME was pushed from, or of DEST; nothing is checked out |
 | `review NAME BRANCH`, `checkout NAME BRANCH`, `discard NAME BRANCH` | Show what `vm/BRANCH` adds, create a local branch from it, or delete it (plain git in NAME's host repo) |
+| `lock`, `unlock` | Contained VM: no egress (sessions run only then) or egress for setup ([lima-vm.md#network-phases-locked-and-open](lima-vm.md#network-phases-locked-and-open)) |
+| `check-host-block` | Contained VM: remove its lock for one request and check that a firewall on the host still blocks it; `status` shows the result. `WMF_CLAUDE_REQUIRE_HOST_BLOCK=1` makes sessions refuse until it passes for the current `limactl` |
 | `shell [--agent] [-- CMD...]` | Engineer shell (sudo, docker), or a shell as `agent`; with `-- CMD`, run just that command |
 | `status`, `start`, `stop`, `delete`, `reset` | Lifecycle; `delete` asks for the VM name |
 

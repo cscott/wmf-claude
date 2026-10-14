@@ -200,7 +200,7 @@ What each way of running wmf-claude guarantees:
 |---|---|---|---|
 | Around the agent | nono | nono, in a VM | nono, in a VM |
 | The agent's network | the profile's allowlist: Wikimedia sites (mostly read-only), Phabricator, Gerrit, GitLab, docs, the Anthropic API | the same | the model API only, through the host proxy |
-| The VM's network, outside nono | — | the internet; not the host, the LAN or private ranges | the same as a Lima VM: not locked yet (below) |
+| The VM's network, outside nono | — | the internet; not the host, the LAN or private ranges | none (locked) during sessions |
 | The model credential | on the host (keychain), in reach of the sandbox | in the VM, in reach of the sandbox | on the host only, out of the VM's reach |
 | Host files | nono denies credentials and dotfiles; the working directory is writable | none: code moves as git bundles | none |
 | MCP servers, Docker broker | yes | yes | no |
@@ -208,9 +208,8 @@ What each way of running wmf-claude guarantees:
 
 A normal Lima VM protects the host: an escape from nono lands in a VM
 without your files or keys. A contained VM also protects against
-exfiltration: the agent has no network but the model API, and never sees
-the credential. Locking the VM's own network, so that the same holds for
-anything that escapes nono, is planned (below).
+exfiltration: the agent, and anything that escapes nono, has no network
+but the model API, and never sees the credential.
 
 A contained VM is a separate VM, made contained at creation:
 
@@ -254,17 +253,78 @@ The host keeps a record of which VMs are contained VMs
 (`~/.config/wmf-claude/vm-<vm>-contained`); the guest has a root-owned marker,
 `/etc/wmf-claude/contained`. They must agree, or `claude` refuses to start.
 
-Not yet covered, and planned:
+### Network phases: locked and open
 
-- **The VM itself still has egress.** The nono sandbox has none, but a
-  process that escapes it, and the engineer's containers, can still reach
-  the internet. Locking the VM's network, and blocking `limactl` on the
-  host, comes next.
-- `--docker` (containers have egress), transcript and log retention, and a
-  per-engagement scope prompt.
+A contained VM has two network phases. **Locked** is the default, and the only
+phase in which `claude` starts: a root-owned nftables table (policy drop)
+lets nothing leave the VM, for any user or container, except loopback (the
+forwarded proxy arrives there), the Docker bridges, DHCP, and replies to the
+host's SSH session. **Open** gives normal egress for setup: `update`,
+packages, Docker images.
+
+```bash
+bin/wmf-claude-vm unlock      # open: set up, update, pull images
+bin/wmf-claude-vm update
+bin/wmf-claude-vm lock        # locked: before any session
+```
+
+`create --contained` ends locked. `update` refuses while locked; `lock` and
+`unlock` refuse while a session runs, since connections opened before the
+lock stay up. `lima/guest-contained-net.sh` (installed as
+`/usr/local/sbin/wmf-claude-contained-net`) holds the rules, and a systemd unit
+loads the recorded phase at boot, before the network starts. A missing or
+unknown phase loads as locked. `bin/wmf-claude-vm status` shows the phase;
+`broken` (the phase says locked but the table is not loaded) refuses
+sessions too.
+
+### Blocking the VM on the host
+
+The lock lives in the VM, so VM root could remove it. Lima's user-mode
+network cannot be turned off, but all of the VM's traffic leaves the host
+from Lima's own `limactl` process. A per-application firewall on the host
+can block that process, outside the VM's reach: LuLu on macOS, OpenSnitch on
+Linux, or any firewall that can match `limactl`. Whichever you use, prove it:
+
+```bash
+bin/wmf-claude-vm check-host-block   # the VM's lock off for one request; must still fail
+bin/wmf-claude-vm status             # host firewall: verified (date)
+```
+
+`check-host-block` records the result with the `limactl` binary it held for.
+After a Lima upgrade `status` says to check again, since the rule may no
+longer match. Sessions warn while the block is not verified; with
+`WMF_CLAUDE_REQUIRE_HOST_BLOCK=1` they refuse.
+
+With [LuLu](https://objective-see.org/products/lulu.html):
+
+- Set LuLu to **passive mode, allow**. In its default mode it blocks or
+  asks about every new connection, which breaks Claude Code on the host.
+- Add one rule: **block**, any address and port, for the real `limactl`
+  binary. `/opt/homebrew/bin/limactl` is a symlink, and LuLu goes by the
+  file, so use `readlink -f /opt/homebrew/bin/limactl` (for example
+  `/opt/homebrew/Cellar/lima/2.2.0/bin/limactl`). That path changes with
+  each `brew upgrade lima`: update the rule then, and rerun
+  `bin/wmf-claude-vm check-host-block`. `limactl shell` and the forward
+  still work: they reach Lima over loopback, inbound.
+- Turn the rule off while the VM is unlocked for setup, and on again before
+  a session.
+
+What the host block may not cover, should VM root remove the in-VM lock:
+**DNS**, which Lima answers with the Mac's resolver; whether those lookups
+leave from `limactl` (and so meet the block) or from macOS's
+`mDNSResponder` depends on how Lima resolves. `check-host-block` reports which:
+in our test DNS failed too. And **the Mac's loopback services**, which the
+guest reaches at `192.168.5.2`, since LuLu does not filter loopback. The in-VM lock blocks both. Closing them on
+the host needs a VM with no network at all (a vsock-only `vz` VM), which
+Lima does not offer yet.
+
+What is still not covered, and planned: `--docker` (containers would have
+egress in the open phase, and need images pulled while open), transcript
+and log retention, and a per-engagement scope prompt.
 
 `tests/smoke-contained.sh` checks a running contained VM: the token location, the
-launcher, the proxy's refusals, and the sandbox's lack of egress.
+locked network, the launcher, the proxy's refusals, and the sandbox's lack
+of egress.
 
 ## Verifying the boundary
 

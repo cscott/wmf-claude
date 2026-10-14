@@ -99,6 +99,36 @@ if [[ "$CURRENT" != "$NEW" ]]; then
   ok "$INSTALL -> $NEW"
 fi
 
+# Contained VM: the network phase script, root-owned, and the unit that loads the
+# recorded phase at boot, before the network starts. A copy outside
+# /opt/wmf-claude, which the engineer owns: root runs it.
+if [[ -f /etc/wmf-claude/contained ]]; then
+  step "Contained VM network phase"
+  sudo install -m 0755 -o root -g root "$NEW/lima/guest-contained-net.sh" /usr/local/sbin/wmf-claude-contained-net
+  sudo tee /etc/systemd/system/wmf-claude-contained-net.service >/dev/null <<'UNIT'
+[Unit]
+Description=wmf-claude contained VM network phase (no egress when locked)
+DefaultDependencies=no
+After=local-fs.target nftables.service
+# Debian's nftables.service flushes the whole ruleset when it stops. PartOf
+# restarts this unit with it, which loads the lock again.
+PartOf=nftables.service
+Before=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/wmf-claude-contained-net apply
+
+[Install]
+WantedBy=sysinit.target
+UNIT
+  sudo systemctl daemon-reload
+  sudo systemctl enable wmf-claude-contained-net.service >/dev/null 2>&1
+  ok "wmf-claude-contained-net installed; phase: $(sudo /usr/local/sbin/wmf-claude-contained-net status)"
+fi
+
 # 3. The agent. Claude Code's official installer puts the binary in
 # ~/.local/bin. It is not pinned or checksummed; accepted for now, and noted
 # in docs/lima-vm.md.

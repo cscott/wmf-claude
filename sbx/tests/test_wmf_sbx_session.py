@@ -32,6 +32,20 @@ import wmf_sbx.state as state_mod  # noqa: E402
 import wmf_sbx.vm as vm  # noqa: E402
 from test_wmf_sbx_lifecycle import Done, Env, FakeLima, allow_tmp, git_repo  # noqa: E402
 
+
+# A nested sandbox has a marker (image.NESTED_MARKER) holding the
+# enclosing session's phantom and base URL; the tests must not see it.
+_NOT_NESTED = mock.patch.object(image, "NESTED_MARKER", "/nonexistent/wmf-sbx-nested")
+
+
+def setUpModule():
+    _NOT_NESTED.start()
+
+
+def tearDownModule():
+    _NOT_NESTED.stop()
+
+
 REPO_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
 STATE = {"name": "demo", "primaryDir": "/home/me/src/Cite",
          "repos": ["/home/me/src/Cite", "/home/me/src/core", "/home/me/src/Vector"],
@@ -289,7 +303,7 @@ class LauncherTests(unittest.TestCase):
         grants = " ".join(nested.session_grants("/home/eng/wmf-sbx-src"))
         self.assertIn("--read " + image.LOCAL_BASE_DIR, grants)
         # The session's phantom, for an inner resume (credproxy).
-        self.assertIn("--read-file " + image.NESTED_MARKER, grants)
+        self.assertIn("--read-file " + nested.MARKER, grants)
         self.assertIn("--allow /home/eng/wmf-sbx-src", grants)
 
     def run_stop_inner(self, list_out, nono_running=False, stop_rc=0):

@@ -29,10 +29,11 @@ class SetupError(Exception):
     """The MediaWiki setup failed in the VM."""
 
 
-def build_plan(resolved_for_kit, links, readonly, primary):
+def build_plan(resolved_for_kit, links, readonly, primary, requested=None):
     """The plan for setup.py --lima. resolved_for_kit is [(canonical, path)]."""
     return kit_mod.build_plan(
-        resolved_for_kit, readonly_dirs=readonly, links=links, primary=primary)
+        resolved_for_kit, readonly_dirs=readonly, links=links, primary=primary,
+        requested=requested)
 
 
 def run_setup(name, plan, lima=None, env=None):

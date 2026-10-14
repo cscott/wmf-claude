@@ -7,6 +7,7 @@ import contextlib
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -836,6 +837,43 @@ class ApiTestingConfigTests(unittest.TestCase):
         self.assertEqual(self.read()["base_uri"], "http://example.test/")
 
 
+class DependencyVendorTests(unittest.TestCase):
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.repo = os.path.join(self.tmp.name, "Gadgets")
+        os.makedirs(os.path.join(self.repo, "vendor", "psr"))
+        subprocess.run(["git", "init", "-q", self.repo], check=True)
+
+    def drop(self):
+        return s.drop_own_vendor(self.repo, run=lambda argv, cwd=None: subprocess.run(
+            argv[4:] if argv[:4] == ["sudo", "-u", "agent", "-H"] else argv, cwd=cwd))
+
+    def test_an_untracked_vendor_left_by_an_earlier_create_goes(self):
+        with unittest.mock.patch.object(s, "agent_argv", side_effect=lambda a: list(a)):
+            self.assertTrue(self.drop())
+        self.assertFalse(os.path.exists(os.path.join(self.repo, "vendor")))
+
+    def test_a_vendor_in_git_stays(self):
+        with open(os.path.join(self.repo, "vendor", "psr", "x.php"), "w") as f:
+            f.write("<?php\n")
+        subprocess.run(["git", "-C", self.repo, "add", "vendor"], check=True)
+        with unittest.mock.patch.object(s, "agent_argv", side_effect=lambda a: list(a)):
+            self.assertFalse(self.drop())
+        self.assertTrue(os.path.isdir(os.path.join(self.repo, "vendor")))
+
+    def test_no_vendor_nothing_to_do(self):
+        os.rmdir(os.path.join(self.repo, "vendor", "psr"))
+        os.rmdir(os.path.join(self.repo, "vendor"))
+        self.assertFalse(self.drop())
+
+    def test_dependency_paths(self):
+        plan = {"repos": [{"path": "/a", "requested": True}, {"path": "/b", "requested": False},
+                          {"path": "/core", "requested": False}, {"path": "/c"}]}
+        self.assertEqual(s.dependency_paths(plan, "/core"), {"/b"})
+
+
 class LimaChainTests(unittest.TestCase):
     """The in-VM chain, driven through main(["--lima", PLAN]) -- ordering,
     which repos each step touches, and what's fatal. Each repo's path is its clone
@@ -930,6 +968,33 @@ class LimaChainTests(unittest.TestCase):
         path, core, cite = self.core_and_cite(core_files=[("composer.json", "{}")],
                                               cite_files=[("composer.json", "{}")])
         self.assertEqual(self.run_main(path)[0], 0)
+        self.assertEqual(self.dirs("composer", "update"), sorted([core, cite]))
+
+    def test_a_dependency_is_not_composer_updated(self):
+        # CI installs a vendor/ only in the repo under test; core always
+        # gets one, named or not.
+        core = self.repo("Wikimedia", "core", files=[("composer.json", "{}")])
+        self.repo("Wikimedia", "core", "extensions")
+        cite = self.repo("Wikimedia", "Extensions", "Cite", files=[("composer.json", "{}")])
+        gadgets = self.repo("Wikimedia", "Extensions", "Gadgets",
+                            files=[("composer.json", "{}")])
+        path = self.write_plan([
+            dict(self.entry(cite, "gerrit:mediawiki/extensions/Cite",
+                            link=("extensions", "Cite")), requested=True),
+            dict(self.entry(gadgets, "gerrit:mediawiki/extensions/Gadgets",
+                            link=("extensions", "Gadgets")), requested=False),
+            dict(self.entry(core, s.CORE_CANONICAL), requested=False),
+        ])
+        code, err = self.run_main(path)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.dirs("composer", "update"), sorted([core, cite]))
+        self.assertIn(f"composer update: not in {gadgets}, a dependency; run `composer "
+                      f"update` there before its own composer scripts", err)
+
+    def test_a_plan_without_requested_updates_every_clone(self):
+        path, core, cite = self.core_and_cite(core_files=[("composer.json", "{}")],
+                                              cite_files=[("composer.json", "{}")])
+        self.run_main(path)
         self.assertEqual(self.dirs("composer", "update"), sorted([core, cite]))
 
     def test_core_is_composer_updated_after_the_links_and_the_merge_file(self):

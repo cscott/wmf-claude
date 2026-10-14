@@ -192,6 +192,10 @@ class BuildPlanTests(unittest.TestCase):
         self.assertFalse(plan["repos"][0]["readOnly"])
         self.assertTrue(plan["repos"][1]["readOnly"])
 
+    def test_requested_marks_the_named_repos(self):
+        plan = k.build_plan(self.RESOLVED, requested={"/home/c/Wikimedia/Extensions/Cite"})
+        self.assertEqual([r["requested"] for r in plan["repos"]], [True, False])
+
     def test_explicit_primary_wins(self):
         plan = k.build_plan(self.RESOLVED, primary="/home/c/Wikimedia/core")
         self.assertEqual(plan["primary"], "/home/c/Wikimedia/core")

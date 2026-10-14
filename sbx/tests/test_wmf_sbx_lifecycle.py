@@ -560,6 +560,12 @@ class CreateTests(Env):
         lima.call = call
         return self.create(*extra, lima=lima)
 
+    def test_the_plan_says_which_repos_were_named(self):
+        # setup.py runs `composer update` only in those and core.
+        self.assertEqual(self.create_tracking("--name", "one"), 0, self.err)
+        plan = json.loads(next(i for i in self.lima_inputs if i and '"repos"' in i))
+        self.assertEqual([r.get("requested") for r in plan["repos"]], [True])
+
     def test_a_cold_create_makes_a_snapshot_after_the_setup(self):
         import wmf_sbx.snapshot as snapshot
         self.assertEqual(self.create_tracking("--name", "one"), 0, self.err)

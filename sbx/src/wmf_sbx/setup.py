@@ -518,6 +518,36 @@ def composer_update(repo_path, run=subprocess.run, profile_path=None):
     return result.returncode == 0
 
 
+def dependency_paths(plan, core_path):
+    """The clones that the engineer did not name (`requested` false in the
+    plan): the dependency walk's. They get no `composer update` (only
+    core, which every sandbox needs, does), so no `vendor/` of their own:
+    CI installs one only in the repo under test. A sibling's own
+    `vendor/` makes phan report `PhanRedefined*` for the classes it shares
+    with core's, and an extension that loads its own autoloader
+    (`load_composer_autoloader`) can put its versions of a library over
+    core's (EventLogging's json-schema, RAN 2026-10-14). A plan without
+    the field (older create) names every repo."""
+    return {r["path"] for r in plan.get("repos") or []
+            if r.get("requested") is False and r["path"] != core_path}
+
+
+def drop_own_vendor(repo_path, run=subprocess.run):
+    """Remove a dependency's `vendor/` that an earlier create left (a warm
+    snapshot made when the repo was named). True when one was removed.
+    A `vendor/` with files in git is the repo's own, and stays; so does
+    one in a directory git cannot read. (The check only reads, so it does
+    not go through `run`.)"""
+    vendor = os.path.join(repo_path, "vendor")
+    if not os.path.isdir(vendor):
+        return False
+    tracked = subprocess.run(agent_argv(["git", "-C", repo_path, "ls-files", "--", "vendor"]),
+                             capture_output=True, text=True)
+    if tracked.returncode != 0 or (tracked.stdout or "").strip():
+        return False
+    return as_agent(["rm", "-rf", "--", vendor], run=run).returncode == 0
+
+
 def composer_local_contents(parsoid_checkout=False):
     """Core's composer.local.json as a JSON string. Tab indent, as for
     the api-testing config: core's eslint lints every JSON file.
@@ -542,8 +572,9 @@ def write_composer_local(core_path, parsoid_checkout=False, run=subprocess.run):
     that extension's own vendor/ alone, and phan, which reads core's
     vendor/, reports its classes as undeclared.
 
-    Each extension keeps its own composer update too, as in CI: its
-    `composer test` and `composer phan` run from its own vendor/bin.
+    Each named extension keeps its own composer update too, as in CI:
+    its `composer test` and `composer phan` run from its own vendor/bin.
+    A dependency does not (dependency_paths).
 
     Like .env, an edited copy is left alone: an engineer's own
     composer.local.json can hold other merges they need. The form for the
@@ -1046,7 +1077,15 @@ def mediawiki_setup(plan, core_path, core_readonly, links, clones, warnings,
     except OSError as e:
         warnings.append(f"could not write {core_path}/{COMPOSER_LOCAL_NAME} ({e})")
 
+    dependencies = dependency_paths(plan, core_path)
     for work in clones:
+        if work in dependencies:
+            dropped = drop_own_vendor(work, run=run)
+            print(f"composer update: not in {work}, a dependency"
+                  + (" (removed the vendor/ an earlier create left)" if dropped else "")
+                  + "; run `composer update` there before its own composer scripts",
+                  file=sys.stderr)
+            continue
         profile = os.path.join(TIMING_DIR, "composer-" + work.strip("/").replace("/", "_") + ".log")
         start = time.monotonic()
         updated = composer_update(work, run=run, profile_path=profile)

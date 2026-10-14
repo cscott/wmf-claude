@@ -418,8 +418,14 @@ RUNNING_TESTS_MD = """\
 
 This sandbox holds its own set of repos; `ls "$MW_INSTALL_PATH"/extensions
 "$MW_INSTALL_PATH"/skins` and `echo "$PARSOID"` show which. Setup installed
-`vendor/` and `node_modules/` in every repo, and a SQLite wiki at
-`$MW_INSTALL_PATH` with every checked-out extension and skin loaded. A step
+`node_modules/` in every repo, `vendor/` in core and in the repos the
+sandbox was made for, and a SQLite wiki at `$MW_INSTALL_PATH` with every
+checked-out extension and skin loaded. A repo that came in only as a
+dependency has no `vendor/` of its own, as in CI. **Before you run a
+dependency's own composer scripts or tests in its directory (after a fix
+there, say), run `composer update` in it**; the setup log lists these
+repos. Then phan in the other repos can report `PhanRedefined*` for classes
+in that new `vendor/`: those are not yours. A step
 that failed is listed in `~/.wmf-sbx/wmf-sbx-setup.status` (and
 `~/.wmf-sbx/wmf-sbx-setup.log`), with where to find its cause; read them
 when something is missing, before you try to install it yourself.

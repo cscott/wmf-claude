@@ -98,17 +98,6 @@ cananian, 2026-10-14: small changes, to do once the blind run in a warm sandbox 
   (engineer's note: my recollection is that is already a helper
   function registered by mediawiki-phan to add an extension as a
   dependency, but no extension is using it yet.)
-- [ ] **Dependency repos' own `vendor/`** (B4 blind run, 2026-10-14): setup runs `composer
-  update` in every repo, so each dependency has a `vendor/` beside core's merged one. CI
-  installs one only in the repo under test. Two effects: phan reports `PhanRedefined*`
-  (Translate: all 243 of its issues, from `AbuseFilter/vendor/psr/log` and
-  `Elastica/vendor/ruflin/elastica`; 383 across the 24 repos), and EventLogging's
-  `load_composer_autoloader` loads its json-schema 6.13.1 over core's 5.3.4, which fails 2
-  `ArrayDefTest` cases in `core:unit` (they pass with `EventLogging/vendor` moved aside).
-  Choose: `composer update` only in the named repos (a dependency's own `composer test` and
-  phan then need it run by hand), or keep the `vendor/`s and exclude the siblings' `vendor/`
-  from phan and from the autoloader. Then correct MEDIAWIKI-TESTING.md §0 and §3 ("phan
-  should report what CI reports", "Composer libraries are not a cause here").
 - [ ] **Four core test failures, out to cananian** (B4 blind run; handoff
   `sbx/upstream/HANDOFF-CORE.md`, 2026-10-14; one branch and one Gerrit change each):
   (1) 11 AbuseFilter schema tests on the symlinks (`SchemaGenerator::normalizePath()`);
@@ -1068,6 +1057,16 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
 - php-ast is built from source at the commit WMF CI pins (`image.PHP_AST`; Debian 13's 1.1.2 is
   too old for phan 6). Change it when CI does.
 - WMF CI targets Node 24 (24.18.0); the image has one global Node from the nodejs.org tarball.
+- Dependency repos get no `composer update` (2026-10-14, decided by cananian after the B4
+  blind run): setup runs it only in core and in the repos named on the command line (the
+  plan's `requested`), and removes an untracked `vendor/` that a warm snapshot brought into
+  a dependency. With every repo updated, each dependency had a `vendor/` beside core's
+  merged one, which CI does not: phan reported `PhanRedefined*` (Translate: all 243 of its
+  issues, from `AbuseFilter/vendor/psr/log` and `Elastica/vendor/ruflin/elastica`; 383
+  across 24 repos), and EventLogging's `load_composer_autoloader` loaded its json-schema
+  6.13.1 over core's 5.3.4 (2 `ArrayDefTest` failures in `core:unit`). The session's
+  CLAUDE.md and MEDIAWIKI-TESTING.md §0 tell the agent to run `composer update` in a
+  dependency it changes, before that repo's own composer scripts. Not yet RAN.
 - Setup timings on real hardware (Linux, KVM; Cite, Popups, TextExtracts, PageImages, core,
   Vector, cold caches): every `composer update` together 27 s (core 20 s: resolve 2,
   install 12, autoload 6), every `npm ci` together 19 s. So no composer cache in the golden

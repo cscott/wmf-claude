@@ -159,7 +159,7 @@ def parsoid_env_vars(resolved, readonly_dirs=None):
     return {"MEDIAWIKI_HAS_INTEGRATION_TESTS": "1"}
 
 
-def build_plan(resolved, readonly_dirs=None, links=None, primary=None):
+def build_plan(resolved, readonly_dirs=None, links=None, primary=None, requested=None):
     """The plan that setup.py --lima runs from, as a plain dict.
 
     resolved: [(canonical_or_None, local_dir), ...], in command-line order
@@ -167,6 +167,8 @@ def build_plan(resolved, readonly_dirs=None, links=None, primary=None):
     links: {local_dir: (link_name, link_dir)} for the repos that should be
     symlinked into the core clone -- computed host-side, where the parsed
     manifests are (see sbx/README.md, Architecture).
+    requested: the local dirs named on the command line; the others came
+    from the dependency walk. None leaves the field out (every repo named).
     """
     readonly_dirs = set(readonly_dirs or [])
     links = links or {}
@@ -180,6 +182,8 @@ def build_plan(resolved, readonly_dirs=None, links=None, primary=None):
             "linkName": link_name,
             "linkDir": link_dir,
         })
+        if requested is not None:
+            repos[-1]["requested"] = path in requested
     if primary is None and repos:
         primary = repos[0]["path"]
     return {"version": PLAN_VERSION, "primary": primary, "repos": repos}

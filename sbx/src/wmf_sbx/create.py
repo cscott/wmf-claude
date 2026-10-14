@@ -997,7 +997,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
     plan = mediawiki_mod.build_plan(
         resolved_for_kit,
         links=link_plan(resolved_for_kit, overrides=config.get("link_overrides") or {}),
-        readonly=readonly, primary=primary_dir)
+        readonly=readonly, primary=primary_dir, requested=requested | {primary_dir})
     plan["session"] = session_mod.session_plan(
         name, resolved_for_kit, readonly, identity=session_mod.git_identity(run=run),
         preferences=preferences, claude_version=claude_version, quiet=quiet,

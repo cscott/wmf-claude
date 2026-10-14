@@ -35,9 +35,14 @@ At `sbx create` time:
 - Each repo you were named was cloned from the engineer's own checkout, at
   the branch and commit they had. Repos pulled in only as dependencies were
   reset to upstream `master`.
-- `composer update` ran in every checked-out repo, so each has a `vendor/`.
-  Core's also holds every extension's and skin's libraries, merged in
-  through `composer.local.json` as CI does.
+- `composer update` ran in core and in each repo you were named, so these
+  have a `vendor/`. Core's also holds every extension's and skin's
+  libraries, merged in through `composer.local.json` as CI does. A repo
+  pulled in only as a dependency has no `vendor/` of its own, as in CI;
+  the setup log names each one ("composer update: not in ..."). **If you
+  change a dependency, run `composer update` in it before you run its own
+  `composer test`, `composer phan` or anything from its `vendor/bin`.** Its
+  PHPUnit tests run from core and do not need it.
 - `npm ci` ran in every checked-out repo that has a `package.json`.
 - Every extension and skin in the closure is symlinked into
   `$MW_INSTALL_PATH/extensions/` or `$MW_INSTALL_PATH/skins/`, and
@@ -267,6 +272,14 @@ Composer libraries are not a cause here. As in CI, core's
 `vendor/`. If you add a library to an extension's `composer.json`, run
 `composer update` in core too (and in the extension, for its own
 `vendor/bin`), or phan reports the library's classes as undeclared.
+
+Only the repos you were named, and core, have a `vendor/` (§0). If you run
+`composer update` in a dependency, its `vendor/` is a second copy of
+libraries that core's `vendor/` also has, and phan in a repo that reads
+that dependency's directory reports `PhanRedefinedClassReference` (and
+other `PhanRedefined*`) issues that name `../../extensions/<Dep>/vendor/`.
+Those are not yours: compare with the run before your change, or move that
+`vendor/` aside while you run phan.
 
 ### JS dependencies
 

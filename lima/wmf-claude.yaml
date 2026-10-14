@@ -177,9 +177,8 @@ provision:
         meta l4proto { tcp, udp } ip6 daddr @private6 counter reject
       }
       # The agent (Claude, nono's proxy, the MCP servers) needs HTTPS only.
-      # This also narrows a session with --landlock-only, which lets nono
-      # allow UDP to all hosts and TCP on an open port to all hosts. DNS to
-      # Lima's resolver still passes in the block chain above.
+      # This is a second layer under nono's allowlist: it holds if a session
+      # gets past nono.
       chain agent_egress {
         ct state established,related accept
         tcp dport { 80, 443 } accept

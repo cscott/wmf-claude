@@ -20,7 +20,6 @@ unknown options and do nothing:
 | `--minimax` | Allow egress to `api.minimax.io` (MiniMax models) for this session. Not in the static profile. |
 | `--allow-post=HOSTS` | Allow POST (and every other method) to hosts that the profile keeps read-only, for this session. Comma-separated; a host under a profile wildcard works (`--allow-post=test.wikipedia.org`), as does the wildcard itself (`--allow-post='*.wikidata.org'`). A host that the profile does not list read-only is refused, and so are phabricator and gitlab (all methods there would open writes such as `git push`). |
 | `--local-db[=PORT]` | Open the local MariaDB/MySQL port (default 3306) for this session. Not in the static profile. |
-| `--landlock-only` | **Linux only.** Required with any flag that opens a localhost port, until [nolabs-ai/nono#1786](https://github.com/nolabs-ai/nono/issues/1786) is fixed. Runs nono with `--sandbox-policy landlock`, which weakens egress (see [SECURITY.md](../SECURITY.md)). Refuses ports 80 and 443; `--local-web` defaults to 8080. |
 | `--ide` | Connect to the open JetBrains/VS Code plugin window: opens its localhost port and runs with `signal_mode: allow_all`. Automatic when `CLAUDE_CODE_SSE_PORT` is set: the plugin sets it when it launches `claude`, and in the IDE's own terminal. |
 
 **nono flags** go before `--`; everything after `--` is passed to Claude:
@@ -104,7 +103,7 @@ It is a separate entry point, not a `bin/claude` flag:
 | `update` | Upload this checkout's HEAD (submodules included) and reinstall it in the guest |
 | `login` | Sign Claude Code in as `agent` (`claude auth login`, outside nono); once per VM |
 | `push DIR [NAME]` | Git-bundle a repo into `/home/agent/work/NAME` |
-| `claude NAME [bin/claude args]` | Sandboxed session in that workspace, as the `agent` user. `--docker=SERVICE` starts the broker as the engineer and implies `--landlock-only`; `--chrome` and `--ide` are refused |
+| `claude NAME [bin/claude args]` | Sandboxed session in that workspace, as the `agent` user. `--docker=SERVICE` starts the broker as the engineer; `--chrome` and `--ide` are refused |
 | `pull NAME [DEST]` | Fetch the agent's branches into `vm/*` (remote-tracking refs) of the repo NAME was pushed from, or of DEST; nothing is checked out |
 | `review NAME BRANCH`, `checkout NAME BRANCH`, `discard NAME BRANCH` | Show what `vm/BRANCH` adds, create a local branch from it, or delete it (plain git in NAME's host repo) |
 | `shell [--agent] [-- CMD...]` | Engineer shell (sudo, docker), or a shell as `agent`; with `-- CMD`, run just that command |

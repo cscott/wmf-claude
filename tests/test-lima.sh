@@ -192,7 +192,6 @@ check  "--chrome and --ide are refused"             "$GC" '--chrome\|--ide\)'
 check  "only --docker=SERVICE is accepted"          "$GC" '--docker=\*:\*\|--docker=auto\|--docker\|--docker=\|--egress=\*\)'
 check  "the broker runs as the engineer"            "$GC" 'python3 "\$INSTALL/bin/launch-docker-broker"'
 check  "handshake is group-readable (0640)"         "$GC" 'chmod 0640 "\$HS"'
-check  "--docker adds --landlock-only"              "$GC" 'AGENT_ARGS=\(--docker --landlock-only'
 check  "the agent runs with a fixed PATH"           "$GC" 'sudo -H -u "\$AGENT" env -C "\$WORK" PATH="\$AGENT_PATH"'
 check  "~/.local/bin is last on the agent PATH"     "$GC" 'AGENT_PATH="/usr/local/bin:/usr/bin:/bin:\$AGENT_HOME/\.local/bin"'
 

@@ -11,9 +11,8 @@
 # This script starts bin/launch-docker-broker as the engineer for the
 # workspace's docker-compose.yml, publishes its handshake in /run/wmf-claude
 # (group wmfbroker: engineer and agent), and runs bin/claude as the agent in
-# attach mode with WMF_DOCKER_HANDSHAKE set. The broker's port is a localhost
-# port, which on Linux needs --landlock-only (nolabs-ai/nono#1786), so that
-# flag is added.
+# attach mode with WMF_DOCKER_HANDSHAKE set. bin/claude opens the broker's
+# localhost port for the session; nono's full network filter stays on.
 set -euo pipefail
 
 # The WMF_CLAUDE_GUEST_* overrides exist for tests/test-lima.sh only.
@@ -82,9 +81,8 @@ if [[ -n "$DOCKER_SERVICE" ]]; then
   # The agent is in the directory's group (wmfbroker); let it read the file.
   chmod 0640 "$HS"
   ENV_ARGS+=("WMF_DOCKER_HANDSHAKE=$HS")
-  AGENT_ARGS=(--docker --landlock-only "${AGENT_ARGS[@]}")
+  AGENT_ARGS=(--docker "${AGENT_ARGS[@]}")
   note "Docker broker for '$DOCKER_SERVICE' runs as $(id -un); it stops with the session."
-  note "--docker needs a localhost port, so --landlock-only is added (nolabs-ai/nono#1786)."
 fi
 
 # Run as the agent, from the workspace. Not in a login shell: the agent's

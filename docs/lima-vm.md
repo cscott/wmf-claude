@@ -18,7 +18,7 @@ in and out by explicit copy. Claude's login state lives only in the VM.
 | **No host filesystem** | `mounts: []`. Lima's default is to mount `~` read-only; this template mounts nothing. `bin/wmf-claude-vm push`/`pull` move git bundles: commits and refs only, never `.git/config`, hooks or untracked files. |
 | **No inbound ports** | `plain: true` plus an ignore-all `portForwards` rule: Lima forwards nothing but its own SSH into the guest. No SSH agent or X11 forwarding, no Rosetta (it adds a host share). |
 | **Host and LAN blocked** | A root-owned nftables rule in the guest refuses new connections to private and link-local addresses: the host (`host.lima.internal`, and its LAN address), your LAN, and a VPN's internal ranges. DNS and DHCP to Lima's own subnet pass. Applies to the guest and to its containers. |
-| **Agent egress: HTTPS only** | The same rule gives the `agent` user (Claude, nono's proxy, the MCP servers) TCP 80 and 443 only. This narrows `--landlock-only`, which `--docker` needs: on its own it lets nono allow UDP to every host, and the rule leaves only DNS through the guest's resolver (below). |
+| **Agent egress: HTTPS only** | The same rule gives the `agent` user (Claude, nono's proxy, the MCP servers) TCP 80 and 443 only. It is a second layer under nono's allowlist, and holds if a session gets past nono. |
 | **Two users** | The Lima default user `engineer` has sudo and is in `docker`; Claude runs as `agent`, which has neither. nono does not mediate `connect()` to pathname AF_UNIX sockets on Linux, so this is what keeps the Docker socket (VM root) out of reach. The engineer never runs git in, or code from, a path the agent can write, and `agent` sessions start without a login shell, so the agent's dotfiles never run outside nono. |
 
 What it does **not** protect against:
@@ -33,15 +33,6 @@ What it does **not** protect against:
   public internet as the host does. The nft rule covers private address ranges
   only, so a host service on a public address stays reachable. DNS is answered
   by Lima's resolver on the host.
-- **DNS tunnelling in `--docker` sessions.** `--docker` adds `--landlock-only`,
-  which turns off nono's seccomp network layer, so the sandboxed process can
-  send UDP itself. It can then query the guest's resolver (systemd-resolved
-  on 127.0.0.53), which forwards to Lima's resolver on the host. The nft
-  rule does not close this: it does not filter loopback, and nono's proxy
-  runs as `agent` and needs the same resolver. A prompt-injected session can
-  therefore send data out in DNS queries for a domain it controls. Sessions
-  without `--docker` keep the seccomp layer, which refuses the UDP socket;
-  `tests/smoke-lima.sh` checks both cases.
 - **`docker compose up` in the agent's workspace runs agent-written config.**
   The compose file, overrides and `.env` there are the agent's to edit, and
   `docker` is VM root. Read them before you start containers, or keep a
@@ -120,9 +111,7 @@ bin/wmf-claude-vm pull NAME [DEST]       # agent's branches -> vm/* in the repo 
   repos (`extensions/Foo` inside `core`) are separate bundles:
   `push ~/src/mediawiki/extensions/Foo core/extensions/Foo`.
 - `claude` takes every `bin/claude` flag except `--chrome` and `--ide`, which
-  need the host. `--docker=SERVICE` is handled specially (below). Flags that
-  open a localhost port need `--landlock-only` on Linux, as on any Linux host
-  ([nolabs-ai/nono#1786](https://github.com/nolabs-ai/nono/issues/1786)).
+  need the host. `--docker=SERVICE` is handled specially (below).
 - `pull` runs `git bundle create` **as `agent`** with `core.hooksPath=/dev/null`
   and `core.fsmonitor=false`; git never runs in the agent's repository as
   `engineer`, so a planted hook or config cannot run with sudo. On the host the
@@ -167,7 +156,7 @@ bin/wmf-claude-vm claude core --docker=mediawiki
 `bin/launch-docker-broker` **as `engineer`** for the workspace's
 `docker-compose.yml`, publishes the
 `{port, token}` handshake in `/run/wmf-claude/` (mode 0640, group `wmfbroker`:
-engineer and agent), and launches `bin/claude --docker --landlock-only` as
+engineer and agent), and launches `bin/claude --docker` as
 `agent` with `WMF_DOCKER_HANDSHAKE` pointing at it — the launcher's attach
 mode. The broker stops with the session. Everything the broker enforces on the
 host (pinned compose file and service, allowlisted binaries, refusal of
@@ -202,7 +191,8 @@ off there; `update` is the only update path.
 The static checks are in `tests/test-lima.sh`. `tests/smoke-lima.sh` runs the
 live checks against a running VM, from the host and outside nono: the boundary
 below, the DNS channel, and a push/pull round trip in a throwaway workspace
-(`--claude` adds one sandboxed `claude -p` turn). What a real VM should show:
+(`--docker` adds the Docker broker in a throwaway container; `--claude`
+adds a sandboxed `claude -p` turn). What a real VM should show:
 
 ```bash
 bin/wmf-claude-vm shell

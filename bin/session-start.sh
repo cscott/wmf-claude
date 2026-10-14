@@ -88,9 +88,12 @@ fi
 # Emitted only when wmf-sbx runs this session behind its host egress proxy
 # (WMF_CLAUDE_SBX_EGRESS is the sandbox's name). That proxy, on the engineer's
 # machine, is then the allowlist for every host.
+# With no nono in between (lima-sbx-sudo), curl sees the proxy's own 403.
 if [[ -n "${WMF_CLAUDE_SBX_EGRESS:-}" ]]; then
+  refusal='`CONNECT tunnel failed, response 502` (this session'"'"'s nono reports the egress proxy'"'"'s refusal as 502)'
+  [[ "$BACKEND" == lima-sbx-sudo ]] && refusal='`CONNECT tunnel failed, response 403`'
   cat <<EGRESS
-- All traffic out of this VM goes through an egress proxy on the engineer's machine, and only hosts on its allowlist get through. A host off the list fails: curl says \`CONNECT tunnel failed, response 502\` (this session's nono reports the egress proxy's refusal as 502). Do not work around it: ask the engineer to run \`wmf-sbx allow ${WMF_CLAUDE_SBX_EGRESS} HOST\` on their machine, which takes effect at once, with no restart; \`wmf-sbx logs ${WMF_CLAUDE_SBX_EGRESS}\` shows what the proxy denied.
+- All traffic out of this VM goes through an egress proxy on the engineer's machine, and only hosts on its allowlist get through. A host off the list fails: curl says $refusal. Do not work around it: ask the engineer to run \`wmf-sbx allow ${WMF_CLAUDE_SBX_EGRESS} HOST\` on their machine, which takes effect at once, with no restart; \`wmf-sbx logs ${WMF_CLAUDE_SBX_EGRESS}\` shows what the proxy denied.
 EGRESS
 fi
 

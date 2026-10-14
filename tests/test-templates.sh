@@ -945,6 +945,14 @@ if WMF_CLAUDE_SBX_EGRESS=demo bash "$HOOK" 2>/dev/null | grep -qF '`wmf-sbx allo
 else
   fail "session-start does not explain the egress proxy when WMF_CLAUDE_SBX_EGRESS is set"
 fi
+# wmf-sbx's sudo VM has no nono, so curl sees the egress proxy's own 403.
+out="$(WMF_CLAUDE_SANDBOX_BACKEND=lima-sbx-sudo WMF_CLAUDE_SBX_EGRESS=demo bash "$HOOK" 2>/dev/null)"
+if grep -qF 'response 403`' <<<"$out" && ! grep -q 'nono reports' <<<"$out" \
+   && grep -q 'passwordless sudo' <<<"$out" && ! grep -q 'sandboxed by nono' <<<"$out"; then
+  pass "session-start's lima-sbx-sudo text says sudo, no nono, and the proxy's 403"
+else
+  fail "session-start's lima-sbx-sudo text mentions nono or the wrong refusal"
+fi
 
 echo "--- session-start hook: Docker broker routing ---"
 # The hook is the always-present, repo-agnostic signal that tells Claude to run

@@ -358,7 +358,7 @@ LIMA_HOME_CLAUDE_MD = """\
 ## This sandbox
 
 You are in a wmf-sbx sandbox named `@NAME@`: a disposable Lima VM on the
-engineer's machine. You run as the user `agent`, under nono, with no sudo.
+engineer's machine. You run as the user `agent`, @MODE@.
 
 ## Repo layout
 
@@ -456,10 +456,24 @@ was made for. An undeclared class from an extension that
 """
 
 
-def home_claude_md(name):
+# The mode, in ~/.claude/CLAUDE.md and RUNNING_TESTS_MD: contained, then
+# a `sudo` sandbox (no nono, so no --local-web either).
+CONTAINED_MODE = "under nono, with no sudo"
+SUDO_MODE = ("with passwordless sudo and no nono. The VM, and the egress proxy\n"
+             "on the engineer's machine, are the boundary")
+LOCAL_WEB_LINE = "reaches local web ports (`--local-web`)."
+SUDO_LOCAL_WEB_LINE = "reaches local web ports."
+
+
+def home_claude_md(name, sudo=False):
     """The agent's ~/.claude/CLAUDE.md: the sandbox, the repo layout, the
     commit rule, and how to run the tests."""
-    return LIMA_HOME_CLAUDE_MD.replace("@NAME@", name) + "\n" + RUNNING_TESTS_MD
+    head = LIMA_HOME_CLAUDE_MD.replace("@NAME@", name).replace(
+        "@MODE@", SUDO_MODE if sudo else CONTAINED_MODE)
+    tests = RUNNING_TESTS_MD
+    if sudo:
+        tests = tests.replace(LOCAL_WEB_LINE, SUDO_LOCAL_WEB_LINE)
+    return head + "\n" + tests
 
 
 def git_identity(run=subprocess.run):
@@ -526,7 +540,7 @@ def check_environment(environment):
 
 
 def session_plan(name, resolved_for_kit, readonly=(), identity=None, preferences=None,
-                 claude_version=None, quiet=True, environment=None):
+                 claude_version=None, quiet=True, environment=None, sudo=False):
     """The `session` part of the plan, which setup.py --lima writes as the
     agent: settings `env` (wmf-sbx's, then settings.yaml `environment:`)
     and the engineer's preferences, and files under the agent's home."""
@@ -543,7 +557,7 @@ def session_plan(name, resolved_for_kit, readonly=(), identity=None, preferences
         "claude_json": claude_json_patch(preferences, [path for _c, path in resolved_for_kit],
                                          claude_version, quiet=quiet),
         "files": [
-            {"path": "~/.claude/CLAUDE.md", "content": home_claude_md(name)},
+            {"path": "~/.claude/CLAUDE.md", "content": home_claude_md(name, sudo=sudo)},
             {"path": f"~/{kit_mod.TESTING_GUIDE}", "content": guide},
         ],
     }

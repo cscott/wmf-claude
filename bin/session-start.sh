@@ -90,7 +90,7 @@ fi
 # machine, is then the allowlist for every host.
 if [[ -n "${WMF_CLAUDE_SBX_EGRESS:-}" ]]; then
   cat <<EGRESS
-- All traffic out of this VM goes through an egress proxy on the engineer's machine, and only hosts on its allowlist get through. A host off the list gets \`403\` (\`not in the allowlist\`). Do not work around it: ask the engineer to run \`wmf-sbx allow ${WMF_CLAUDE_SBX_EGRESS} HOST\` on their machine, which takes effect at once, with no restart; \`wmf-sbx logs ${WMF_CLAUDE_SBX_EGRESS}\` shows what the proxy denied.
+- All traffic out of this VM goes through an egress proxy on the engineer's machine, and only hosts on its allowlist get through. A host off the list fails: curl says \`CONNECT tunnel failed, response 502\` (this session's nono reports the egress proxy's refusal as 502). Do not work around it: ask the engineer to run \`wmf-sbx allow ${WMF_CLAUDE_SBX_EGRESS} HOST\` on their machine, which takes effect at once, with no restart; \`wmf-sbx logs ${WMF_CLAUDE_SBX_EGRESS}\` shows what the proxy denied.
 EGRESS
 fi
 

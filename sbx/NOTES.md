@@ -367,9 +367,13 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   `--no-egress-proxy` (warm snapshots again) as designed. A real default `create --no-deps
   Cite` (a new golden image, then cold): every invariant passed, and setup
   (`wmf-claude-setup`, the plugin, the MCP registration) went through the proxy with no
-  denial but the two `wmf-sbx-check.invalid` checks. Not yet: a session in it (the
-  session-start bullet, `allow` while it runs), and a create with core (composer, npm,
-  the wiki install) on the default path.
+  denial but the two `wmf-sbx-check.invalid` checks. A session in it: no session-start
+  bullet (`WMF_SBX_EGRESS` was dropped by nono; now `WMF_CLAUDE_SBX_EGRESS`, 1dfd453), yet
+  the agent refused to work around the 403 by itself. example.com: denied by the egress
+  proxy ("not in the allowlist"); after `allow`, "DNS resolution returned no addresses",
+  as for example.org in item 7: the engineer's resolver has no example.com. Test `allow`
+  with www.kernel.org. Not yet: the bullet in a session (a new image), and a create with
+  core (composer, npm, the wiki install) on the default path.
 - **`--nested` behind the egress proxy** (RAN on the engineer's host, 2026-10-13: `create
   --egress-proxy --nested` passes every invariant and finishes, after 388cbb3 and d6b8628;
   an inner `create .` of wmf-claude in it ran too, after 24c67e9 and 3ab7488 (the clone
@@ -474,6 +478,14 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   `bin/wmf-claude-build`'s supply-chain checks (`npm ci --ignore-scripts`,
   `--require-hashes`, chrome-devtools-mcp one-package rule).
 - Never commit `responses*.txt` (host transcripts, gitignored); distil what matters into NOTES.
+- Variable names: the reader decides the prefix. `WMF_SBX_*` is read by wmf-sbx itself: the
+  engineer's configuration on the host (`WMF_SBX_CA_CERTS`, `WMF_SBX_GIT_HASH_OVERRIDE`),
+  and the QEMU wrapper's (`WMF_SBX_EGRESS_CONFIG`). `WMF_CLAUDE_*` is read by wmf-claude
+  (bin/claude, the hooks), also when wmf-sbx sets it for a session in the VM
+  (`WMF_CLAUDE_SANDBOX_BACKEND`, `WMF_CLAUDE_NO_PAUSE`, `WMF_CLAUDE_SBX_EGRESS`). nono gives
+  the session only the profile's `allow_vars`, which has `WMF_CLAUDE_*` and not
+  `WMF_SBX_*`; a `WMF_SBX_*` variable for the session is dropped with no error (RAN, egdef,
+  2026-10-14; a test now checks `launcher_argv`'s variables against `allow_vars`).
 - Python code: `sbx/src/wmf_sbx/`, on `sys.path` only (no pip packaging); thin wrappers in
   `sbx/bin/`; tests in `sbx/tests/`; `python3 -m wmf_sbx <cmd>` via `__main__.COMMANDS`.
   PyYAML is the only runtime dependency. Verb lists in `bin/wmf-sbx`, `COMMANDS` and

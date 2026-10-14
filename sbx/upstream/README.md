@@ -21,10 +21,12 @@ files the task and the change. When cananian gives the Gerrit and
 Phabricator numbers, record them in `sbx/NOTES.md`, and delete the
 handoff when the fix merges.
 
-| Handoff | Repo of the fix | Bug | Gerrit / task |
+| Handoff, issue | Repo of the fix | Bug | Gerrit / task |
 |---|---|---|---|
-| `HANDOFF-ABUSEFILTER.md` | mediawiki/core | `SchemaGenerator::normalizePath()` leaves the path absolute for a symlinked extension: 11 AbuseFilter schema tests fail | — |
-| `HANDOFF-CORE.md` | mediawiki/core | api-testing `ReparseDependentPages.js` expects the `?title=` red-link URL; Parsoid read views write `/index.php/X?action=edit` | — |
+| `HANDOFF-CORE.md` 1 | mediawiki/core | `SchemaGenerator::normalizePath()` leaves the path absolute for a symlinked extension: 11 AbuseFilter schema tests fail | — |
+| `HANDOFF-CORE.md` 2 | mediawiki/core | api-testing `ReparseDependentPages.js` expects the `?title=` red-link URL; Parsoid read views write `/index.php/X?action=edit` | — |
+| `HANDOFF-CORE.md` 3 | mediawiki/core | `UndoIntegrationTest::testMcrUndoAction` has no title in its context; EventLogging's hook dereferences it | — |
+| `HANDOFF-CORE.md` 4 | mediawiki/core | `WikiBirthdayTest` does not clear the `GetHumanTimestamp` hook, which cldr handles | — |
 
 A wmf-claude fix that is ready goes upstream as a GitLab merge request,
 not as a task here. Those already sent or merged:

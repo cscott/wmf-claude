@@ -104,27 +104,23 @@ cananian, 2026-10-14: small changes, to do once the blind run in a warm sandbox 
   phan then need it run by hand), or keep the `vendor/`s and exclude the siblings' `vendor/`
   from phan and from the autoloader. Then correct MEDIAWIKI-TESTING.md §0 and §3 ("phan
   should report what CI reports", "Composer libraries are not a cause here").
-- [ ] **AbuseFilter's schema tests fail on the symlinks** (B4 blind run): 11
-  `AbuseFilterSchemaTest` cases expect `-- Source: <absolute path>`, because the extension
-  is a symlink to a clone outside core and `SchemaGenerator` makes the path relative only
-  to `MW_INSTALL_PATH` or `$wgExtensionDirectory`. The bug is core's
-  (`SchemaGenerator::normalizePath()`); `sbx/upstream/HANDOFF-ABUSEFILTER.md` is the
-  handoff, out to cananian (2026-10-14). Record its Gerrit change and task here; until it
-  merges, say so in MEDIAWIKI-TESTING.md §0.
-- [ ] **MEDIAWIKI-TESTING.md, stale after the B4 blind run**: core api-testing now has 18
-  failures, not 17 (`ReparseDependentPages.js`: since core `87bc95497cb` made Parsoid the
-  default parser, red links are `/index.php/Template:X?action=edit&redlink=1`, which the
-  test's regex does not match; `sbx/upstream/HANDOFF-CORE.md` is the handoff, out to
-  cananian; record its Gerrit change and task here); the Popups `navigator` workaround (§3) is not needed with
-  `mw-node-qunit` 7.11.0; §2's list of `--testsuite=includes` failures from loaded
-  extensions misses 8 classes (`NamespaceInfoTest`, `ActionEntryPointTest::testForceSafeMode`,
+- [ ] **Four core test failures, out to cananian** (B4 blind run; handoff
+  `sbx/upstream/HANDOFF-CORE.md`, 2026-10-14; one branch and one Gerrit change each):
+  (1) 11 AbuseFilter schema tests on the symlinks (`SchemaGenerator::normalizePath()`);
+  (2) api-testing `ReparseDependentPages.js`, the 18th failure (the red-link URL of Parsoid
+  read views, since core `87bc95497cb`); (3) `UndoIntegrationTest::testMcrUndoAction`, 4
+  errors with EventLogging (no title in the test's context); (4) `WikiBirthdayTest`, 2
+  failures with cldr (its `GetHumanTimestamp` hook). Record each Gerrit change and task
+  here and in `sbx/upstream/README.md`. Until each merges, MEDIAWIKI-TESTING.md names it
+  (§0 for (1), §6 item 7 for (2), §2 for (3) and (4)).
+- [ ] **MEDIAWIKI-TESTING.md, stale after the B4 blind run**: besides the four failures
+  above, the Popups `navigator` workaround (§3) is not needed with `mw-node-qunit` 7.11.0;
+  §2's list of `--testsuite=includes` failures from loaded extensions misses 8 classes
+  (`NamespaceInfoTest`, `ActionEntryPointTest::testForceSafeMode`,
   `QueryAllSpecialPagesTest`, `WikiPageDbTest`, `SkinTemplateTest`, `MWDebugTest`,
   `UserBlockedErrorTest`, `ParserOptionsTest`), and `SignatureValidatorTest` failed with cldr
-  loaded too; `integration` (`UndoIntegrationTest::testMcrUndoAction` gives `McrUndoAction` a context with no title,
-  and EventLogging's `JsonSchemaHooks.php:82` calls `inNamespace()` on it)
-  and `maintenance_suite` (`WikiBirthdayTest`: cldr's `GetHumanTimestamp` hook makes the
-  date relative) failures are not named; §3's Translate `UnusedPluginSuppression` example
-  holds only without Elastica. The report: `lima-port/acceptance/` run of 2026-10-14.
+  loaded too; §3's Translate `UnusedPluginSuppression` example holds only without Elastica.
+  The report: `lima-port/acceptance/` run of 2026-10-14.
 - [ ] **Generate the testing section of `~/.claude/CLAUDE.md` per sandbox**: name each repo's real entry points (composer/npm scripts,
   Jest wiring, `tests/` dirs, `QUnitTestModule`, `tests/parser/*.txt`) and say which runners do
   not apply.

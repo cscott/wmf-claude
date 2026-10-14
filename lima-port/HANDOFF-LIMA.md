@@ -1523,8 +1523,8 @@ clonefile option stays open for later. Decided with cananian,
   refresh was not in it; a first attempt in a warm sandbox ran 9 minutes
   the same way before `-p` ended it. Found: the freeze removed the setup
   log from the sandbox that froze (fixed); the rest is the MediaWiki
-  setup and its guide (sbx/NOTES.md), and two upstream bugs
-  (`sbx/upstream/HANDOFF-ABUSEFILTER.md`, `HANDOFF-CORE.md`).
+  setup and its guide (sbx/NOTES.md), and four test failures to fix
+  in core (`sbx/upstream/HANDOFF-CORE.md`).
   Built after B3 (cananian, 2026-10-14): a warm create freezes only
   when its snapshot is older than `images.snapshotInterval` (1 day),
   which saves the stop, the start and a 5 GiB generation per create;

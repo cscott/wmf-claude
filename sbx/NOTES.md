@@ -900,7 +900,10 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   `wmf-sbx exec NAME -- composer config --global preferred-install source` before setup;
   source installs are large (core 5.9 GB, composer cache 4.9 GB).
 - Acceptance runs: in `-p` mode each Monitor event is a new full-context turn (run 2 cost
-  ~$18); allow `Monitor`, `TaskOutput`, `TaskStop` with `--allowedTools`. Sonnet-class agents
+  ~$18); allow `Monitor`, `TaskOutput`, `TaskStop` with `--allowedTools`. A `-p` session
+  ends at the first turn that ends with no Monitor running, even with background Bash jobs
+  still running (RAN 2026-10-14, KVM: the run ended after 9 min, before its report); the
+  prompt in `lima-port/acceptance/README.md` tells the agent so. Sonnet-class agents
   can follow the guide.
 
 ### Method (lessons that still apply)

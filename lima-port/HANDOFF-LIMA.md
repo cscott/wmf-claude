@@ -1516,7 +1516,14 @@ clonefile option stays open for later. Decided with cananian,
   files); two creates at once. The first two RAN in B3 (warm-b3.sh).
   The rebuild and the concurrent creates: `lima-port/checks/b4.sh`,
   RAN 2026-10-14 after the sync with track A, every phase passed
-  (sbx/NOTES.md). Still to do: the blind run, a session.
+  (sbx/NOTES.md). The blind run RAN 2026-10-14 (KVM, 28 min, report
+  in sbx/NOTES.md): the sandbox ran on an overlay on the snapshot that
+  its own create froze, as a warm sandbox does. Its create was cold (a
+  new wmf-claude HEAD means a new golden image), so a warm create's
+  refresh was not in it; a first attempt in a warm sandbox ran 9 minutes
+  the same way before `-p` ended it. Found: the freeze removed the setup
+  log from the sandbox that froze (fixed); the rest is the MediaWiki
+  setup and its guide (sbx/NOTES.md).
   Built after B3 (cananian, 2026-10-14): a warm create freezes only
   when its snapshot is older than `images.snapshotInterval` (1 day),
   which saves the stop, the start and a 5 GiB generation per create;

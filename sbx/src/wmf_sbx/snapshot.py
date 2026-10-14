@@ -38,6 +38,7 @@ import os
 import secrets
 import shutil
 import subprocess
+import sys
 import time
 
 from . import disk as disk_mod
@@ -282,6 +283,43 @@ sync
 """
 
 
+def _kept_paths():
+    """What the seal removes and this sandbox still needs after its freeze:
+    its plan, setup log and status, and timings (the session's CLAUDE.md
+    sends the agent to them). Relative to /."""
+    home = vm_mod.AGENT_HOME.lstrip("/")
+    return [f"{home}/wmf-sbx-plan.json", f"{home}/.wmf-sbx"]
+
+
+def keep_script():
+    """Root, before the seal: the kept files as base64 of a tar.gz on
+    stdout. A missing one is left out."""
+    return ("cd / && tar --numeric-owner --ignore-failed-read -czf - "
+            + " ".join(_kept_paths()) + " 2>/dev/null | base64 -w0\n")
+
+
+RESTORE_SCRIPT = "set -eu\nbase64 -d | tar -C / --numeric-owner -xzpf -\n"
+
+
+def _keep(name, lima, warn):
+    res = vm_mod.shell(name, ["sudo", "bash", "-s"], lima=lima, input=keep_script(),
+                       check=False)
+    if res.returncode != 0 or not (res.stdout or "").strip():
+        warn(f"could not save {name}'s setup log before its snapshot; "
+             f"the sandbox will not have it")
+        return None
+    return res.stdout.strip()
+
+
+def _restore(name, lima, kept, warn):
+    if kept is None:
+        return
+    res = vm_mod.shell(name, ["sudo", "bash", "-c", RESTORE_SCRIPT], lima=lima,
+                       input=kept + "\n", check=False)
+    if res.returncode != 0:
+        warn(f"could not put {name}'s setup log back after its snapshot")
+
+
 def freeze(name, key, golden, meta, lima=None, env=None, run=subprocess.run, log=print,
            warn=None):
     """Freeze the sandbox `name`'s disk as the key's next generation, and
@@ -293,9 +331,12 @@ def freeze(name, key, golden, meta, lima=None, env=None, run=subprocess.run, log
     disk = lima.disk_path(inst, env)
     t0 = time.monotonic()
     log(f"+ snapshot {key}: seal and stop {name}")
+    note = warn or (lambda m: print(f"warning: {m}", file=sys.stderr))
+    kept = _keep(name, lima, note)
     res = vm_mod.shell(name, ["sudo", "bash", "-s"], lima=lima, input=seal_script(),
                        check=False)
     if res.returncode != 0:
+        _restore(name, lima, kept, note)
         raise SnapshotError(f"sealing {name} failed (exit {res.returncode})")
     lima.stop(inst)
     moved = None
@@ -327,10 +368,12 @@ def freeze(name, key, golden, meta, lima=None, env=None, run=subprocess.run, log
                 os.unlink(moved[:-len(".qcow2")] + ".json")
         log(f"+ limactl start {inst} (on its own disk: the snapshot failed)")
         vm_mod.start_instance(name, lima, env=env, vm_type="qemu")
+        _restore(name, lima, kept, note)
         raise SnapshotError(f"snapshot of {name} failed: {e}") from None
     log(f"+ limactl start {inst} (on a new overlay on the snapshot)")
     vm_mod.start_instance(name, lima, env=env, vm_type="qemu")
     vm_mod.check_disk(name, lima=lima, env=env, running=True)
+    _restore(name, lima, kept, note)
     log(f"+ snapshot {key}: frozen in {time.monotonic() - t0:.0f} s "
         f"({os.path.getsize(dest) / 2**30:.1f} GiB)")
     return dest

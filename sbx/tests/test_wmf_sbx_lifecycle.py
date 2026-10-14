@@ -176,6 +176,8 @@ class FakeLima:
             return Done(stdout="/dev/shm/wmf-sbx-cred.Xy12Ab\n")
         if argv[0] == "shell" and any("mktemp -d /tmp/wmf-sbx-cp" in a for a in argv):
             return Done(stdout="/tmp/wmf-sbx-cp.AbC123\n")
+        if argv[0] == "shell" and input and "base64 -w0" in input:
+            return Done(stdout="S0VQVA==\n")   # snapshot.keep_script's output
         if argv[0] == "shell" and argv[-3:-1] == ["test", "-d"]:
             return Done(returncode=1)
         return Done(returncode=self.rc)
@@ -534,6 +536,23 @@ class CreateTests(Env):
     def test_vz_makes_no_snapshot(self):
         self.assertEqual(self.create("--name", "one", "--vm-type", "vz"), 0, self.err)
         self.assertEqual(self.snapshots(), [])
+
+    def test_the_sandbox_that_froze_keeps_its_setup_log(self):
+        # The seal removes the setup log and status (a later create writes
+        # its own); this sandbox gets its own back once it runs on the
+        # snapshot (RAN 2026-10-14: the blind run found ~/.wmf-sbx empty).
+        import wmf_sbx.snapshot as snapshot
+        lima = FakeLima()
+        self.assertEqual(self.create_tracking("--name", "one", lima=lima), 0, self.err)
+        inputs = [i or "" for i in self.lima_inputs]
+        keep_i = inputs.index(snapshot.keep_script())
+        seal_i = max(i for i, x in enumerate(inputs) if "cloud-init clean --logs" in x)
+        restore_i = inputs.index("S0VQVA==\n")
+        self.assertLess(keep_i, seal_i)
+        self.assertLess(seal_i, restore_i)
+        self.assertIn(("shell", "--workdir=" + vm.ENGINEER_HOME, "wmf-sbx-one", "--",
+                       "sudo", "bash", "-c", snapshot.RESTORE_SCRIPT), lima.shells())
+        self.assertNotIn("could not", self.err)
 
     def test_a_failed_freeze_keeps_the_sandbox_on_its_own_disk(self):
         class NoRebase(FakeLima):

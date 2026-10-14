@@ -96,6 +96,34 @@ cananian, 2026-10-14: small changes, to do once the blind run in a warm sandbox 
   (cldr, CommunityConfiguration, Gadgets) outside nono (21 s) and under the session's nono
   (19 s), about 2.7 GB at its peak; with the links moved aside, 42 undeclared-symbol
   findings, all in those three.
+- [ ] **Dependency repos' own `vendor/`** (B4 blind run, 2026-10-14): setup runs `composer
+  update` in every repo, so each dependency has a `vendor/` beside core's merged one. CI
+  installs one only in the repo under test. Two effects: phan reports `PhanRedefined*`
+  (Translate: all 243 of its issues, from `AbuseFilter/vendor/psr/log` and
+  `Elastica/vendor/ruflin/elastica`; 383 across the 24 repos), and EventLogging's
+  `load_composer_autoloader` loads its json-schema 6.13.1 over core's 5.3.4, which fails 2
+  `ArrayDefTest` cases in `core:unit` (they pass with `EventLogging/vendor` moved aside).
+  Choose: `composer update` only in the named repos (a dependency's own `composer test` and
+  phan then need it run by hand), or keep the `vendor/`s and exclude the siblings' `vendor/`
+  from phan and from the autoloader. Then correct MEDIAWIKI-TESTING.md §0 and §3 ("phan
+  should report what CI reports", "Composer libraries are not a cause here").
+- [ ] **AbuseFilter's schema tests fail on the symlinks** (B4 blind run): 11
+  `AbuseFilterSchemaTest` cases expect `-- Source: <absolute path>`, because the extension
+  is a symlink to a clone outside core and `SchemaGenerator` makes the path relative only
+  to `MW_INSTALL_PATH` or `$wgExtensionDirectory`. Fix upstream (resolve both paths), or
+  say so in MEDIAWIKI-TESTING.md §0.
+- [ ] **MEDIAWIKI-TESTING.md, stale after the B4 blind run**: core api-testing now has 18
+  failures, not 17 (`ReparseDependentPages.js`: since core `87bc95497cb` made Parsoid the
+  default parser, red links are `/index.php/Template:X?action=edit&redlink=1`, which the
+  test's regex does not match); the Popups `navigator` workaround (§3) is not needed with
+  `mw-node-qunit` 7.11.0; §2's list of `--testsuite=includes` failures from loaded
+  extensions misses 8 classes (`NamespaceInfoTest`, `ActionEntryPointTest::testForceSafeMode`,
+  `QueryAllSpecialPagesTest`, `WikiPageDbTest`, `SkinTemplateTest`, `MWDebugTest`,
+  `UserBlockedErrorTest`, `ParserOptionsTest`), and `SignatureValidatorTest` failed with cldr
+  loaded too; `integration` (`UndoIntegrationTest`, EventLogging's `JsonSchemaHooks.php:82`)
+  and `maintenance_suite` (`WikiBirthdayTest`) failures are not named; §6 item 11 assumes
+  `/usr/bin/time` (see "Quality of life"); §3's Translate `UnusedPluginSuppression` example
+  holds only without Elastica. The report: `lima-port/acceptance/` run of 2026-10-14.
 - [ ] **Generate the testing section of `~/.claude/CLAUDE.md` per sandbox**: name each repo's real entry points (composer/npm scripts,
   Jest wiring, `tests/` dirs, `QUnitTestModule`, `tests/parser/*.txt`) and say which runners do
   not apply.
@@ -924,7 +952,12 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   ~$18); allow `Monitor`, `TaskOutput`, `TaskStop` with `--allowedTools`. A `-p` session
   ends at the first turn that ends with no Monitor running, even with background Bash jobs
   still running (RAN 2026-10-14, KVM: the run ended after 9 min, before its report); the
-  prompt in `lima-port/acceptance/README.md` tells the agent so. Sonnet-class agents
+  prompt in `lima-port/acceptance/README.md` tells the agent so. Run 3 (RAN 2026-10-14,
+  KVM, Translate, Cite and Parsoid, 24 repos, on the overlay that its own create froze):
+  28 min, 149 suite runs; first green run after 1.5 min; no red result in Translate's code;
+  findings under "Testing and the MediaWiki setup". It found `~/.wmf-sbx/` empty: the
+  freeze's seal removed the setup log and status from the sandbox that froze (now saved on
+  the host and put back, `snapshot.keep_script`). Sonnet-class agents
   can follow the guide.
 
 ### Method (lessons that still apply)

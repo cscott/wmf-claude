@@ -3,6 +3,8 @@
   python3 -m unittest discover -s sbx/tests -v
 """
 
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -817,6 +819,32 @@ class LoadConfigTests(unittest.TestCase):
             "gerrit:analytics/refinery", config_path=EXAMPLE_CONFIG, exists=lambda p: False
         )
         self.assertEqual(path, os.path.expanduser("~/Wikimedia/analytics-refinery"))
+
+
+
+class MainTests(unittest.TestCase):
+
+    def test_settings_resolve_json_and_no_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = os.path.join(tmp, "Cite")
+            os.makedirs(repo)
+            with open(os.path.join(repo, ".gitreview"), "w", encoding="utf-8") as f:
+                f.write("[gerrit]\nproject=mediawiki/extensions/Cite.git\n")
+            config = os.path.join(tmp, "settings.yaml")
+            with open(config, "w", encoding="utf-8") as f:
+                f.write("resolve:\n  json: true\n")
+            for argv, want_json in (([], True), (["--no-json"], False)):
+                with self.subTest(argv=argv):
+                    out = io.StringIO()
+                    with contextlib.redirect_stdout(out):
+                        rc = r.main(["--config", config, "--path", repo] + argv)
+                    self.assertEqual(rc, 0)
+                    if want_json:
+                        self.assertEqual(json.loads(out.getvalue())["canonical"],
+                                         "gerrit:mediawiki/extensions/Cite")
+                    else:
+                        self.assertIn("canonical: gerrit:mediawiki/extensions/Cite",
+                                      out.getvalue())
 
 
 if __name__ == "__main__":

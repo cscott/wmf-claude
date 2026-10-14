@@ -21,6 +21,7 @@ import json
 import os
 import sys
 
+from . import cli as cli_mod
 from . import state as state_mod
 
 
@@ -71,12 +72,12 @@ def main(argv=None):
         "(default: the current directory)",
     )
     parser.add_argument(
-        "--json", action="store_true",
+        "--json", action=argparse.BooleanOptionalAction, default=False,
         help="Print the full matching state entry for each remote "
         "(sandbox/hostDir/remote/url), one JSON object per line, instead "
         "of just the remote name",
     )
-    args = parser.parse_args(argv)
+    args, _config = cli_mod.parse_args(parser, argv, "ls-remotes")
 
     repo_root = find_repo_root(args.path)
     if repo_root is None:

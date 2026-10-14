@@ -40,6 +40,7 @@ try:
 except ImportError:  # pragma: no cover - exercised only when yaml is absent
     yaml = None
 
+from . import cli as cli_mod
 from . import disk as disk_mod
 from . import kit
 from . import lima as lima_mod
@@ -983,30 +984,26 @@ def main(argv=None, env=None, lima=None, run=subprocess.run, out=sys.stdout):
     parser = argparse.ArgumentParser(prog="wmf-sbx image")
     sub = parser.add_subparsers(dest="cmd", required=True)
     b = sub.add_parser("build", help="build the golden image unless it is cached")
-    b.add_argument("--dry-run", action="store_true",
+    b.add_argument("--dry-run", action=argparse.BooleanOptionalAction, default=False,
                    help="print the inputs and the key; build nothing")
-    b.add_argument("--keep-builder", action="store_true",
+    b.add_argument("--keep-builder", action=argparse.BooleanOptionalAction, default=False,
                    help="do not delete the builder VM after a good build")
-    b.add_argument("--config", default=None,
-                   help="the settings file, for its `packages:` (default "
-                        "~/.config/wmf-sbx/settings.yaml)")
     sub.add_parser("ls", help="list the cached images")
     r = sub.add_parser("rm", help="remove one image (refused if a sandbox uses it)")
     r.add_argument("key")
     g = sub.add_parser("gc", help="remove the images that no sandbox uses and that are "
                                   f"older than settings.yaml imageCache.gcAge ({GC_AGE})")
-    g.add_argument("--config", default=None, help="the settings file")
     sub.add_parser("prune", help="remove every image that no sandbox uses (to free "
                                  "disk space)")
-    args = parser.parse_args(argv)
+    # --config on each subcommand: build reads `packages:`, gc
+    # `imageCache.gcAge`.
+    args, config = cli_mod.parse_args(parser, argv, "image")
 
     def say(msg):
         print(msg, file=out, flush=True)
 
     try:
         if args.cmd == "build":
-            from . import resolve as resolve_mod
-            config = resolve_mod.load_config(args.config or resolve_mod.DEFAULT_CONFIG)
             inputs = image_inputs(run=run, env=env, packages=config["packages"])
             inputs, note = choose_inputs(inputs, env=env, config=config)
             if note:
@@ -1069,19 +1066,12 @@ def main(argv=None, env=None, lima=None, run=subprocess.run, out=sys.stdout):
             say(f"removed {args.key}")
         elif args.cmd in ("gc", "prune"):
             if args.cmd == "gc":
-                from . import resolve as resolve_mod
-                config = resolve_mod.load_config(args.config or resolve_mod.DEFAULT_CONFIG)
                 gone = gc_images(env=env, config=config)
             else:
                 gone = prune_all(env=env)
             say("removed: " + (", ".join(f"{k} ({_human(n)})" for k, n in gone)
                                if gone else "nothing"))
     except (ImageError, lima_mod.LimaError, state_mod.StateError) as e:
-        print(f"wmf-sbx image: {e}", file=sys.stderr)
-        return 1
-    except Exception as e:  # resolve.ResolutionError: the settings file
-        if type(e).__name__ != "ResolutionError":
-            raise
         print(f"wmf-sbx image: {e}", file=sys.stderr)
         return 1
     return 0

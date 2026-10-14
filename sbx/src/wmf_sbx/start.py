@@ -15,6 +15,7 @@ Usage:
 import argparse
 import sys
 
+from . import cli as cli_mod
 from . import color as color_mod
 from . import egress as egress_mod
 from . import lima as lima_mod
@@ -43,7 +44,7 @@ def check(name, lima=None, out=None, env=None):
 def main(argv=None, lima=None, env=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("name", help="the sandbox (or a path shortcut such as .)")
-    args = parser.parse_args(argv)
+    args, _config = cli_mod.parse_args(parser, argv, "start")
     try:
         name, _state = vm_mod.resolve(args.name, env=env)
         vm_mod.ensure_running(name, lima=lima,

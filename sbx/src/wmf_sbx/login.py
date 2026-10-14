@@ -26,6 +26,7 @@ import shutil
 import signal
 import sys
 
+from . import cli as cli_mod
 from . import color as color_mod
 from . import credproxy as credproxy_mod
 from . import image as image_mod
@@ -137,7 +138,7 @@ def main(argv=None, lima=None, env=None, ask=getpass.getpass, isatty=None):
     parser = argparse.ArgumentParser(prog="wmf-sbx login", description=__doc__.splitlines()[0])
     parser.add_argument("--image", metavar="KEY",
                         help="the golden image to boot (default: the newest cached one)")
-    args = parser.parse_args(argv)
+    args, _config = cli_mod.parse_args(parser, argv, "login")
     # setup-token waits for a code that you paste; without a terminal it
     # waits for ever (RAN).
     if not (isatty or sys.stdin.isatty)():

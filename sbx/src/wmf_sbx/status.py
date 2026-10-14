@@ -16,6 +16,7 @@ Usage:
 import argparse
 import sys
 
+from . import cli as cli_mod
 from . import color as color_mod
 from . import egress as egress_mod
 from . import image as image_mod
@@ -28,7 +29,7 @@ from . import vm as vm_mod
 def main(argv=None, lima=None, env=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("name", help="the sandbox (or a path shortcut such as .)")
-    args = parser.parse_args(argv)
+    args, _config = cli_mod.parse_args(parser, argv, "status")
     try:
         name, state = vm_mod.resolve(args.name, env=env)
         vm_status = vm_mod.status(name, lima=lima)

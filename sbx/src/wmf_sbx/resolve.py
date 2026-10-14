@@ -596,16 +596,16 @@ def main(argv=None):
         "canonical Gerrit/GitLab project and settings.yaml `repos:` rule it corresponds "
         "to, instead of resolving NAME to a directory"
     )
-    parser.add_argument("--config", default=DEFAULT_CONFIG, help="Path to settings.yaml")
-    parser.add_argument("--json", action="store_true", help="Machine-readable output")
-    args = parser.parse_args(argv)
+    parser.add_argument("--json", action=argparse.BooleanOptionalAction, default=False,
+                        help="Machine-readable output")
+    from . import cli as cli_mod   # cli imports this module
+    args, config = cli_mod.parse_args(parser, argv, "resolve")
 
     if (args.name is None) == (args.path is None):
         parser.error("give exactly one of NAME or --path")
 
     if args.path is not None:
         try:
-            config = load_config(args.config)
             canonical, rule = reverse_resolve(args.path, config["repos"])
         except ResolutionError as e:
             print(f"error: {e}", file=sys.stderr)

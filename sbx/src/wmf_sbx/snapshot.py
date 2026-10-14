@@ -38,6 +38,7 @@ import os
 import secrets
 import shutil
 import subprocess
+import time
 
 from . import disk as disk_mod
 from . import image as image_mod
@@ -209,7 +210,8 @@ def golden_keys_in_use(env=None):
 
 # -- removal ---------------------------------------------------------------
 
-def _created(meta):
+def created(meta):
+    """When the generation was frozen, or None."""
     try:
         return datetime.datetime.fromisoformat(meta.get("created", ""))
     except (TypeError, ValueError):
@@ -240,8 +242,8 @@ def prune(env=None, gc_age=None, now=None, run=subprocess.run, warn=None):
                 if os.path.realpath(path) in used:
                     continue
                 if gc_age is not None:
-                    created = _created(meta)
-                    age = now - created if created else None
+                    made = created(meta)
+                    age = now - made if made else None
                     limit = gc_age if i == len(gens) - 1 else SUPERSEDED_MIN_AGE
                     if age is None or age < limit:
                         continue
@@ -289,6 +291,7 @@ def freeze(name, key, golden, meta, lima=None, env=None, run=subprocess.run, log
     lima = lima or lima_mod.Limactl()
     inst = vm_mod.instance_name(name)
     disk = lima.disk_path(inst, env)
+    t0 = time.monotonic()
     log(f"+ snapshot {key}: seal and stop {name}")
     res = vm_mod.shell(name, ["sudo", "bash", "-s"], lima=lima, input=seal_script(),
                        check=False)
@@ -328,4 +331,6 @@ def freeze(name, key, golden, meta, lima=None, env=None, run=subprocess.run, log
     log(f"+ limactl start {inst} (on a new overlay on the snapshot)")
     vm_mod.start_instance(name, lima, env=env, vm_type="qemu")
     vm_mod.check_disk(name, lima=lima, env=env, running=True)
+    log(f"+ snapshot {key}: frozen in {time.monotonic() - t0:.0f} s "
+        f"({os.path.getsize(dest) / 2**30:.1f} GiB)")
     return dest

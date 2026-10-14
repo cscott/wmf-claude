@@ -53,12 +53,14 @@ packages: []
 # removes the images that no sandbox uses and that are older than gcAge.
 # A golden image older than maxAge is built again at the next `create`
 # (with the Debian updates since); with expire: false it is kept, with a
-# warning (as `create --no-expire` does once). Durations: 14d, 12h, 30m,
-# or a number of days.
+# warning (as `create --no-expire` does once). A warm create freezes a
+# new snapshot only when the one it started from is older than
+# snapshotInterval. Durations: 14d, 12h, 30m, or a number of days.
 images: {}
   # gcAge: 7d
   # maxAge: 14d
   # expire: true
+  # snapshotInterval: 1d
 
 # A dependency in extension.json `requires` that is a display name, not a
 # project ("Abuse Filter"): map it to a project by hand.

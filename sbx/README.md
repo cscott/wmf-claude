@@ -268,11 +268,17 @@ next `create` of the same set of repos (the same host paths, the same
 `:ro`s, the same golden image, `--nested` or not) starts from that
 snapshot: it fetches, checks out and updates only what changed (`git
 fetch`, `composer update`, `npm ci` only where `package-lock.json`
-changed, `update.php`), then freezes the result as the newest snapshot.
+changed, `update.php`). If the snapshot it started from is older than a
+day (settings.yaml `images: {snapshotInterval: 1d}`), it then freezes
+the result as the newest snapshot; within the day it does not, and the
+next create fetches and updates a little more instead.
 How a repo got in (named, or as a dependency) does not matter, so the
 dependency flags change the snapshot only by changing the set.
 
-- The freeze stops and starts the sandbox once, at the end of `create`.
+- The freeze stops and starts the sandbox once, at the end of `create`,
+  and writes a new snapshot of a few GiB; `create` says how long it
+  took. A cold create always freezes; `snapshotInterval: 0m` freezes at
+  every create.
 - `--cold` ignores the snapshot and makes a new one (and builds a new
   golden image first if the current one is old). `--no-snapshot`
   neither uses nor makes one.

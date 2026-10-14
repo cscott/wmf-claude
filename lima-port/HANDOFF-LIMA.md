@@ -1516,10 +1516,10 @@ clonefile option stays open for later. Decided with cananian,
   files); two creates at once. The first two RAN in B3 (warm-b3.sh).
   The rebuild and the concurrent creates: `lima-port/checks/b4.sh`
   (not RAN; after the sync with track A). The blind run is a session.
-  Later, not B4: skip the freeze when a warm create changed nothing (a
-  fingerprint of the repos' HEADs, the lock files and composer's
-  installed.json in the snapshot's metadata), which saves the stop,
-  the start and a 5 GiB generation per create.
+  Built after B3 (cananian, 2026-10-14): a warm create freezes only
+  when its snapshot is older than `images.snapshotInterval` (1 day),
+  which saves the stop, the start and a 5 GiB generation per create;
+  the next create fetches a little more instead.
 
 **Track L: a shared login (D6, after the MVP; first priority)**
 

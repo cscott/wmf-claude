@@ -11,9 +11,10 @@
 #
 # Phases (`all` runs them in order; each can run alone):
 #   base        make sure B4_REPO has a snapshot (a cold create if not)
-#   concurrent  two warm creates of B4_REPO at once: both work, both
-#               freeze (one after the other: the key's lock), each on its
-#               own new generation
+#   concurrent  two warm creates of B4_REPO at once, with
+#               images.snapshotInterval 0: both work, both freeze (one
+#               after the other: the key's lock), each on its own new
+#               generation
 #   rebuild     a sandbox on the current golden image, stopped; then a
 #               create with images.maxAge 0: it builds a new golden image
 #               and is cold on it. The old sandbox still starts and
@@ -90,9 +91,11 @@ phase_concurrent() {
   phase concurrent
   local t0=$SECONDS pa pb ra rb fails=0
   echo "-- b4a and b4b: two creates at once ($LOGS/b4a.log, $LOGS/b4b.log)"
-  create b4a & pa=$!
+  local cfg=$LOGS/settings-interval0.yaml
+  { [ -f "$SETTINGS" ] && grep -v '^images:' "$SETTINGS"; printf 'images:\n  snapshotInterval: 0m\n'; } > "$cfg"
+  create b4a --config "$cfg" & pa=$!
   sleep 2
-  create b4b & pb=$!
+  create b4b --config "$cfg" & pb=$!
   wait "$pa"; ra=$?
   wait "$pb"; rb=$?
   report b4a "$ra" $((SECONDS - t0))
@@ -167,5 +170,5 @@ echo "== $(limactl --version 2>&1), $(qemu-img --version | head -1)"
 case "${1:-}" in
   base|concurrent|rebuild|clean) "phase_$1" ;;
   all) phase_base && phase_concurrent; phase_rebuild; phase_clean ;;
-  *) sed -n '2,31p' "${BASH_SOURCE[0]:-/dev/stdin}"; exit 2 ;;
+  *) sed -n '2,32p' "${BASH_SOURCE[0]:-/dev/stdin}"; exit 2 ;;
 esac

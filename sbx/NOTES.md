@@ -561,8 +561,10 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   snapshot 4.8 GiB; warm 92 s and 94 s, with `composer update` about 15 s in all and every
   `npm ci` skipped; the warm sandbox had the host's new commit, a working wiki
   (`showSiteStats`) and its own machine-id. Each freeze writes a full generation (the
-  rebase onto the golden image copies the snapshot's data: 5 GiB per create); a superseded
-  one goes at the next `image gc` after an hour. The golden image is keyed on the
+  rebase onto the golden image copies the snapshot's data: 5 GiB per create), so a warm
+  create freezes only when its snapshot is older than `images.snapshotInterval` (1 day; the
+  engineer's choice over a fingerprint of what changed); a superseded one goes at the next
+  `image gc` after an hour. The golden image is keyed on the
   wmf-claude HEAD, so in development every new commit makes the next create cold.
 - Host memory (RAN 2026-10-13): QEMU keeps every page a guest touched (Lima's QEMU has no
   balloon), so a 16 GiB nested sandbox that built an image held 15 GB of the host, and the

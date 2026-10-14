@@ -439,6 +439,8 @@ class CreateTests(Env):
                                      text=True).stdout)
 
     def test_the_next_create_of_the_same_repos_is_warm(self):
+        with open(self.config, "w") as f:   # freeze at every create
+            f.write("images:\n  snapshotInterval: 0m\n")
         self.assertEqual(self.create("--name", "one"), 0, self.err)
         (_key, _g1, first, _m), = self.snapshots()
         self.assertEqual(self.create_tracking("--name", "two"), 0, self.err)
@@ -450,6 +452,30 @@ class CreateTests(Env):
         self.assertFalse(any("\nclone_repo " in i for i in self.clone_calls()))
         # and it froze the next generation
         self.assertEqual(len(self.snapshots()), 2)
+
+    def test_a_warm_create_from_a_fresh_snapshot_does_not_freeze(self):
+        self.assertEqual(self.create("--name", "one"), 0, self.err)
+        (_key, _g, first, _m), = self.snapshots()
+        self.assertEqual(self.create("--name", "two"), 0, self.err)
+        self.assertIn("+ no new snapshot:", self.err)
+        self.assertIn("images.snapshotInterval: 1d)", self.err)
+        self.assertEqual(len(self.snapshots()), 1)
+        self.assertNotIn(("stop", "wmf-sbx-two"), self.lima.calls)
+        self.assertEqual(state_mod.load("two", self.env)["snapshot"], first)
+        self.assertEqual(self.lima.backings["wmf-sbx-two"], first)
+
+    def test_an_old_snapshot_is_frozen_again(self):
+        import wmf_sbx.snapshot as snapshot
+        self.assertEqual(self.create("--name", "one"), 0, self.err)
+        (key, gen, _p, meta), = self.snapshots()
+        meta["created"] = "2026-01-01T00:00:00+00:00"
+        snapshot.write_meta(os.path.join(snapshot.key_dir(key, self.env), gen + ".json"), meta)
+        self.assertEqual(self.create("--name", "two"), 0, self.err)
+        self.assertRegex(self.err, r"frozen in \d+ s")
+        self.assertIn(("stop", "wmf-sbx-two"), self.lima.calls)
+        new = state_mod.load("two", self.env)["snapshot"]
+        self.assertNotEqual(new, _p)
+        self.assertTrue(os.path.exists(new))
 
     def test_cold_and_no_snapshot(self):
         self.assertEqual(self.create("--name", "one"), 0, self.err)

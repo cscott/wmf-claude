@@ -534,6 +534,19 @@ def gc_age(config=None):
 # A golden image older than this is rebuilt at the next `create`, with the
 # same inputs (track B3): settings.yaml `images: {maxAge: ..., expire: ...}`.
 MAX_AGE = "14d"
+# A warm create freezes a new snapshot only when the one it started from
+# is older than this (settings.yaml `images.snapshotInterval`): within it,
+# the next create fetches and updates a little more, and a freeze (a stop,
+# a start and a full generation written) is not worth it.
+SNAPSHOT_INTERVAL = "1d"
+
+
+def snapshot_interval(config=None):
+    images = (config or {}).get("images") or {}
+    return parse_duration(images.get("snapshotInterval", SNAPSHOT_INTERVAL),
+                          "settings.yaml images.snapshotInterval")
+
+
 # The input that tells a rebuilt image of the same inputs from the first
 # (a new key, so a new file: a golden file is never rewritten).
 EPOCH = "epoch"

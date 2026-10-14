@@ -155,7 +155,7 @@ class SessionError(Exception):
 # `sudo` is create's default for --sudo/--no-sudo instead.
 PERMISSION_MODES = ("default", "acceptEdits", "plan", "auto", "bypassPermissions")
 THEMES = ("dark", "light", "dark-daltonized", "light-daltonized", "dark-ansi", "light-ansi")
-PREFERENCE_KEYS = ("model", "permission_mode", "theme", "ste", "sudo")
+PREFERENCE_KEYS = ("model", "permission_mode", "theme", "ste", "sudo", "settings")
 
 
 def first_run_marker(env=None):
@@ -182,10 +182,12 @@ def mark_first_run_seen(env=None):
 MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\[\]-]*$")
 
 
-def preference_settings(prefs, quiet=True):
+def preference_settings(prefs, quiet=True, warn=lambda msg: None):
     """The settings.json patch for the `session:` preferences: `model`
-    and `permission_mode`. Raises SessionError for an unknown key or a bad
-    value, so that a typo stops the create before it builds anything.
+    and `permission_mode`. Raises SessionError for a bad value, so that a
+    typo stops the create before it builds anything. An unknown key goes
+    to `warn`, and is ignored: a newer wmf-sbx may read it
+    (lima-port/PLAN-SETTINGS-DEFAULTS.md). `settings` is cli.py's.
 
     bin/claude refuses every command-line spelling of the permission
     bypass; in a sandbox it is the engineer's choice, made here once, in
@@ -197,12 +199,12 @@ def preference_settings(prefs, quiet=True):
         raise SessionError("settings.yaml: `session:` must be a mapping")
     unknown = sorted(set(prefs) - set(PREFERENCE_KEYS))
     if unknown:
-        raise SessionError(f"settings.yaml: unknown `session:` key(s): {', '.join(unknown)} "
-                           f"(want {', '.join(PREFERENCE_KEYS)})")
+        warn(f"warning: settings.yaml: unknown `session:` key(s): {', '.join(unknown)}; "
+             f"ignored (it has: {', '.join(PREFERENCE_KEYS)})")
     theme = prefs.get("theme")
     if theme is not None and theme not in THEMES:
         raise SessionError(f"settings.yaml: session.theme {theme!r}: want one of {', '.join(THEMES)}")
-    for key in ("ste", "sudo"):
+    for key in ("ste", "sudo", "settings"):
         value = prefs.get(key)
         if value is not None and not isinstance(value, bool):
             raise SessionError(f"settings.yaml: session.{key} {value!r}: want true or false")

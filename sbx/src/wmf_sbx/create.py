@@ -694,7 +694,8 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
               file=sys.stderr)
     try:
         preferences = config.get("session") or {}
-        session_mod.preference_settings(preferences)
+        session_mod.preference_settings(
+            preferences, warn=lambda m: print(color_mod.warning(m), file=sys.stderr))
         session_mod.check_environment(config["environment"])
     except session_mod.SessionError as e:
         print(color_mod.error(f"error: {e}"), file=sys.stderr)

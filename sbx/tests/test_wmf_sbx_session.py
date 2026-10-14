@@ -520,11 +520,20 @@ class PreferenceTests(unittest.TestCase):
                          {"theme": "light"})
 
     def test_bad_preferences_are_refused(self):
-        for prefs in ({"modle": "opus"}, {"model": "opus; rm -rf /"}, {"model": 5},
+        for prefs in ({"model": "opus; rm -rf /"}, {"model": 5},
                       {"permission_mode": "yolo"}, {"theme": "solarized"}, {"ste": "no"},
-                      ["model"]):
+                      {"settings": "no"}, ["model"]):
             with self.assertRaises(session.SessionError, msg=prefs):
                 session.preference_settings(prefs)
+
+    def test_an_unknown_key_warns(self):
+        # A typo, or a key that a newer wmf-sbx reads: one settings.yaml
+        # serves both.
+        said = []
+        self.assertEqual(session.preference_settings({"modle": "opus"}, warn=said.append), {})
+        self.assertEqual(len(said), 1)
+        self.assertIn("unknown `session:` key(s): modle; ignored", said[0])
+        self.assertEqual(session.preference_settings({"settings": False}), {})
 
 
 class GitIdentityTests(unittest.TestCase):

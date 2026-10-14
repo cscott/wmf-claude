@@ -25,6 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from . import color as color_mod
 from . import deps as deps_mod
 
 try:
@@ -39,6 +40,7 @@ LEGACY_CONFIG = os.path.expanduser("~/.config/wmf-sbx/repos.yaml")
 LEGACY_KEYS = {"rules": "repos", "extra_environment": "environment",
                "extra_packages": "packages"}
 _LEGACY_NOTED = set()   # say it once per run, not once per repo
+_UNKNOWN_NOTED = set()
 CONFIG_DEFAULTS = {"repos": [], "environment": {}, "packages": [],
                    "dependency_overrides": {}, "link_overrides": {},
                    "extra_dependencies": {}, "imageCache": {}, "create": {}}
@@ -520,7 +522,8 @@ def load_config(path=DEFAULT_CONFIG, warn=lambda msg: print(msg, file=sys.stderr
                 legacy=LEGACY_CONFIG):
     """The settings file as a dict with every key of CONFIG_DEFAULTS (and
     `session` if set). The old name (repos.yaml) and old keys (`rules`,
-    `extra_environment`, `extra_packages`) are still read, with a note."""
+    `extra_environment`, `extra_packages`) are still read, with a note.
+    An unknown top-level section gets a warning, once per run."""
     if not os.path.exists(path) and path == DEFAULT_CONFIG and os.path.exists(legacy):
         if legacy not in _LEGACY_NOTED:
             _LEGACY_NOTED.add(legacy)
@@ -546,6 +549,14 @@ def load_config(path=DEFAULT_CONFIG, warn=lambda msg: print(msg, file=sys.stderr
                 raise ResolutionError(f"{path}: has both `{old}:` and `{new}:`; "
                                       f"`{old}:` is the old name of `{new}:`")
             data[new] = data.pop(old)
+    # A section this wmf-sbx does not know: a typo, or one that a newer
+    # wmf-sbx reads. Warn and carry on, so that one file serves both.
+    from .__main__ import COMMANDS
+    known = set(CONFIG_DEFAULTS) | {"session"} | set(COMMANDS)
+    for key in sorted(set(data) - known, key=str):
+        if (path, key) not in _UNKNOWN_NOTED:
+            _UNKNOWN_NOTED.add((path, key))
+            warn(color_mod.warning(f"warning: {path}: unknown section `{key}:`; ignored"))
     for key, default in CONFIG_DEFAULTS.items():
         if data.get(key) is None:
             data[key] = type(default)()

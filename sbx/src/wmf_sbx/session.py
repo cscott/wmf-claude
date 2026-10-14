@@ -294,7 +294,7 @@ def launcher_argv(state, cred_path=None, launcher_flags=(), claude_args=(),
     if egress_mod.enabled(state):
         # The session-start hook's egress bullet names the sandbox in the
         # `wmf-sbx allow` command that it gives.
-        env["WMF_SBX_EGRESS"] = state.get("name") or "<this sandbox>"
+        env["WMF_CLAUDE_SBX_EGRESS"] = state.get("name") or "<this sandbox>"
     return vm_mod.agent_argv(wrapper, workdir=primary, env=env)
 
 

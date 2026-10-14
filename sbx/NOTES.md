@@ -359,7 +359,7 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   back to the earlier kind with a warning that the guest, not the host, enforces the
   network policy: on `vz`, and on a host without `qemu-system-ARCH`, `nono` or `openssl`
   on its PATH (`egress.missing_tools`). An explicit `--egress-proxy` makes both an error
-  (`create.egress_choice`). The session gets `WMF_SBX_EGRESS=NAME`, and
+  (`create.egress_choice`). The session gets `WMF_CLAUDE_SBX_EGRESS=NAME`, and
   `bin/session-start.sh` then tells Claude to ask the engineer for `wmf-sbx allow NAME
   HOST` when a host is denied.
   RAN on the engineer's host (2026-10-14, after c31fa1b): the dry runs of the default,

@@ -9,7 +9,9 @@ Usage:
 Starts the VM if it is stopped and checks the invariants, then runs
 upstream's bin/claude in the VM as the agent, in the primary clone, under
 nono (session.launcher_argv). LAUNCHER-FLAGs go to bin/claude, e.g.
-`--allow-post=HOST` or `--local-db`; CLAUDE-ARGs go to Claude Code.
+`--allow-post=HOST` or `--local-db`; CLAUDE-ARGs go to Claude Code. A
+`create --sudo` sandbox runs Claude Code with no bin/claude and no nono,
+so it takes no LAUNCHER-FLAGs.
 
 Without CLAUDE-ARGs, a sandbox that has had a conversation gets
 `--continue`.
@@ -105,6 +107,13 @@ def main(argv=None, lima=None, env=None):
     lima = lima or lima_mod.Limactl()
     try:
         name, state = vm_mod.resolve(target, env=env)
+        if state.get("sudo") and launcher_flags:
+            print(color_mod.error(
+                f"error: {launcher_flags[0]}: {name} is a sudo sandbox, which runs Claude "
+                f"Code with no bin/claude and no nono, so it takes no launcher flags. Its "
+                f"network is the host egress proxy's: `wmf-sbx allow {name} HOST` adds a "
+                f"host; local ports need no flag."), file=sys.stderr)
+            return 2
         vm_mod.ensure_running(name, lima=lima, env=env,
                               log=lambda m: print(color_mod.dim(m), file=sys.stderr))
         if not start_mod.check(name, lima=lima, env=env):
@@ -135,7 +144,8 @@ def main(argv=None, lima=None, env=None):
             proxy, cred_path = start_proxy(name, source, lima=lima, env=env,
                                            egress=egress_mod.enabled(state))
             port = egress_mod.CRED_PORT if proxy.port is None else proxy.port
-            launcher_flags = list(launcher_flags) + [f"--open-port={port}"]
+            if not state.get("sudo"):
+                launcher_flags = list(launcher_flags) + [f"--open-port={port}"]
         argv = session_mod.launcher_argv(
             state, cred_path=cred_path, launcher_flags=launcher_flags,
             claude_args=claude_args, proxy=session_mod.upstream_proxy(env, state))

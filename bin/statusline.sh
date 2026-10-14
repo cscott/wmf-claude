@@ -18,6 +18,8 @@ export WMF_CLAUDE_STATUSLINE_NESTED=1
 input=$(cat)
 
 seg="WMF nono sandbox"
+# wmf-sbx's `create --sudo` VM runs Claude Code with no nono.
+[[ "${WMF_CLAUDE_SANDBOX_BACKEND:-}" == lima-sbx-sudo ]] && seg="WMF sandbox VM"
 [[ -n "${WMF_CLAUDE_PROFILE:-}" && "$WMF_CLAUDE_PROFILE" != wmf-engineer ]] && seg+=" ($WMF_CLAUDE_PROFILE)"
 [[ -n "${WMF_CLAUDE_SESSION:-}" ]] && seg+=" · $WMF_CLAUDE_SESSION"
 [[ -n "${WMF_CLAUDE_UPDATE:-}" ]] && seg+=" · update available (${WMF_CLAUDE_UPDATE} behind main)"

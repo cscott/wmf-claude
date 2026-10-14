@@ -138,6 +138,37 @@ class LauncherTests(unittest.TestCase):
         for name in names:
             self.assertTrue(any(fnmatch.fnmatchcase(name, p) for p in allowed), name)
 
+    def test_a_sudo_sandbox_runs_the_launcher_with_no_nono(self):
+        a = session.launcher_argv(dict(STATE, egress="proxy", sudo=True, name="box"),
+                                  cred_path="/dev/shm/c", claude_args=["--continue"],
+                                  proxy="192.168.5.100:3128")
+        self.assertEqual(a[:4], ["sudo", "-H", "-u", "agent"])
+        self.assertEqual(a[a.index("-C") + 1], "/home/me/src/Cite")
+        self.assertNotIn(session.LAUNCHER, a)
+        i = a.index(session.SUDO_LAUNCHER)
+        self.assertEqual(a[i:], [session.SUDO_LAUNCHER, "--plugin-dir", "/opt/wmf-claude",
+                                 "--settings", "/opt/wmf-claude/wiring/settings-merge.json",
+                                 "--continue"])
+        self.assertEqual(a[i - 5:i], ["bash", "-c", session.CREDENTIAL_WRAPPER, "_",
+                                      "/dev/shm/c"])
+        env = dict(x.split("=", 1) for x in a[:a.index("bash")] if "=" in x)
+        self.assertEqual(env["WMF_CLAUDE_SANDBOX_BACKEND"], "lima-sbx-sudo")
+        self.assertEqual(env["WMF_CLAUDE_HOME"], "/opt/wmf-claude")
+        self.assertEqual(env["WMF_CLAUDE_SBX_EGRESS"], "box")
+        self.assertIn("sudo", env["WMF_CLAUDE_SESSION"])
+        # sudo -u agent drops /etc/environment's proxy variables; Node needs
+        # the system's CAs for the egress CA.
+        self.assertEqual(env["https_proxy"], "http://192.168.5.100:3128")
+        self.assertEqual(env["NODE_USE_ENV_PROXY"], "1")
+        self.assertEqual(env["NODE_EXTRA_CA_CERTS"], "/etc/ssl/certs/ca-certificates.crt")
+        self.assertIn("192.168.5.100", env["no_proxy"].split(","))
+        self.assertNotIn("--landlock-only", a)
+
+    def test_a_sudo_sandbox_takes_no_launcher_flags(self):
+        with self.assertRaises(session.SessionError):
+            session.launcher_argv(dict(STATE, egress="proxy", sudo=True, name="box"),
+                                  launcher_flags=["--allow-post=x"])
+
     def test_a_nested_sandbox_gets_the_lima_grants(self):
         argv = session.launcher_argv(dict(STATE, nested=True, nestedSrc="/home/eng/wmf-sbx-src"))
         joined = " ".join(argv)
@@ -746,6 +777,27 @@ class ResumeMainTests(Env):
         self.assertEqual(rc, 1)
         self.assertIn("another session runs in demo", self.err)
         self.assertEqual(self.launches(), [])
+
+    def sudo_resume(self, *argv, env=None):
+        st = state_mod.load("demo", self.env)
+        st["sudo"] = True
+        state_mod.save(st, self.env)
+        return self.egress_resume(*argv, env=env)
+
+    def test_a_sudo_sandbox_launches_with_no_nono_and_no_open_port(self):
+        rc = self.sudo_resume("--", "-p", "hi", env={"ANTHROPIC_API_KEY": SECRET})
+        self.assertEqual(rc, 0, self.err)
+        self.assertEqual(self.launches(), [])
+        (launch,) = [s for s in self.lima.shells() if session.SUDO_LAUNCHER in s]
+        self.assertFalse(any(a.startswith("--open-port") for a in launch))
+        self.assertIn("WMF_CLAUDE_SANDBOX_BACKEND=lima-sbx-sudo", launch)
+        self.assertEqual(launch[-2:], ("-p", "hi"))
+
+    def test_a_sudo_sandbox_refuses_launcher_flags(self):
+        self.assertEqual(self.sudo_resume("--allow-post=en.wikipedia.org"), 2)
+        self.assertIn("sudo sandbox", self.err)
+        self.assertIn("wmf-sbx allow demo HOST", self.err)
+        self.assertFalse([s for s in self.lima.shells() if session.SUDO_LAUNCHER in s])
 
     def test_run_is_an_alias(self):
         rc = self.quiet(resume.run_main, ["--name", "demo", "--", "-p", "x"],

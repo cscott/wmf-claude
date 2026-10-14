@@ -167,7 +167,9 @@ def session_grants(src):
     range, the window the session opens already (--open-port is connect
     and listen)."""
     grants = ["--allow", LIMA_HOME, "--allow-unix-socket-subtree-bind", LIMA_HOME,
-              "--allow-file", "/dev/kvm"]
+              "--allow-file", "/dev/kvm",
+              # The session's phantom, for the inner sandboxes (resume).
+              "--read-file", MARKER]
     # A nested sandbox made before `nestedSrc` existed has no src.
     for d in WMF_SBX_DIRS + ((src,) if src else ()):
         grants += ["--allow", d]

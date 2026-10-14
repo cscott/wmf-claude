@@ -158,11 +158,15 @@ control comes with `--sudo` mode.)
   VM with no repo, no mount and no session, and deletes the VM. A login made in the VM (no host credential) stays in
   the VM until `rm`.
 - **A nested sandbox's credential** is its enclosing session's phantom.
-  In a `--nested` sandbox (root's marker `/etc/wmf-sbx/nested`), the
-  credential proxy forwards to `$ANTHROPIC_BASE_URL`, the enclosing
-  session's proxy, and not to api.anthropic.com. Anywhere else the
-  variable is ignored: a host's real credential goes only to
-  api.anthropic.com, over TLS. The inner proxy puts the outer phantom
+  `resume` writes the session's phantom and proxy address into root's
+  marker `/etc/wmf-sbx/nested` (0640, group `agent`), and a nested
+  session's nono may read that one file. In the sandbox, the credential
+  proxy forwards to that address (or `$ANTHROPIC_BASE_URL`), the
+  enclosing session's proxy, and not to api.anthropic.com. So the agent
+  holds a phantom that it could already spend through its own Claude
+  Code: model requests only, while that session runs. Outside a nested
+  sandbox, `$ANTHROPIC_BASE_URL` is ignored: a host's real credential
+  goes only to api.anthropic.com, over TLS. The inner proxy puts the outer phantom
   in place of the inner one, and the outer proxy the real credential.
   The real credential stays on the outermost host, and the inner
   agent's phantom is worthless once either session ends.
@@ -244,8 +248,9 @@ For work on wmf-sbx itself, a nested sandbox lets the agent run Lima VMs
 of its own. Root installs QEMU, OVMF and Lima at `create` and adds the
 agent to the `kvm` group; the sessions get `/dev/kvm`, `~/.lima` (with
 its sockets), QEMU's and Lima's data, `wmf-sbx-src` in the engineer's home path, wmf-sbx's
-own directories, and the download hosts of an image build
-(`nested.py`). The install also downloads the Debian base image to
+own directories, the download hosts of an image build, and a read of
+the marker `/etc/wmf-sbx/nested`, which holds the session's phantom for
+the inner sandboxes (§4) (`nested.py`). The install also downloads the Debian base image to
 `/var/cache/wmf-sbx/base`, checked against the digest that wmf-sbx
 pins. What changes:
 

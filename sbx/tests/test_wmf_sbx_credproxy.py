@@ -42,6 +42,33 @@ class SourceTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.env = {"HOME": self.tmp.name}
+        # Not this machine's marker, if it runs in a nested sandbox.
+        self.marker = os.path.join(self.tmp.name, "nested")
+        patch = mock.patch.object(cp.image_mod, "NESTED_MARKER", self.marker)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_in_a_nested_sandbox_the_enclosing_sessions_phantom(self):
+        self.write(self.marker, "ANTHROPIC_BASE_URL=http://192.168.5.100:3129\n"
+                                "CLAUDE_CODE_OAUTH_TOKEN=wmfsbx-outer\n", mode=0o640)
+        src = cp.host_source(self.env)
+        self.assertEqual((src.kind, src.value()), ("oauth", "Bearer wmfsbx-outer"))
+        self.assertIn(self.marker, src.describe)
+        self.assertEqual(cp.upstream_url(self.env), ("http", "192.168.5.100", 3129))
+        # The variables win over the marker.
+        env = dict(self.env, CLAUDE_CODE_OAUTH_TOKEN="t2", ANTHROPIC_BASE_URL="http://h:1")
+        self.assertEqual(cp.host_source(env).value(), "Bearer t2")
+        self.assertEqual(cp.upstream_url(env), ("http", "h", 1))
+        # An API key phantom, from a session whose host had one.
+        self.write(self.marker, "ANTHROPIC_API_KEY=wmfsbx-k\n", mode=0o640)
+        src = cp.host_source(self.env)
+        self.assertEqual((src.kind, src.value()), ("api-key", "wmfsbx-k"))
+
+    def test_an_empty_marker_is_no_credential(self):
+        # A nested sandbox before its first session (or made before this).
+        self.write(self.marker, "", mode=0o644)
+        self.assertEqual(cp.nested_credential(), {})
+        self.assertEqual(cp.upstream_url(self.env), ("https", cp.UPSTREAM, 443))
 
     def write(self, path, text, mode=0o600):
         os.makedirs(os.path.dirname(path), exist_ok=True)

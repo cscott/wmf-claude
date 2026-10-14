@@ -11,6 +11,7 @@ import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -164,6 +165,21 @@ class LauncherTests(unittest.TestCase):
         self.assertIn("192.168.5.100", env["no_proxy"].split(","))
         self.assertNotIn("--landlock-only", a)
 
+    def test_the_nested_credential_script_replaces_the_marker(self):
+        import grp
+        with tempfile.TemporaryDirectory() as d:
+            marker = os.path.join(d, "nested")
+            open(marker, "w").close()
+            group = grp.getgrgid(os.getgid()).gr_name
+            res = subprocess.run(["sh", "-c", session.NESTED_CREDENTIAL_SCRIPT, "_", marker,
+                                  group], input="CLAUDE_CODE_OAUTH_TOKEN=wmfsbx-x\n",
+                                 text=True, capture_output=True)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            with open(marker) as f:
+                self.assertEqual(f.read(), "CLAUDE_CODE_OAUTH_TOKEN=wmfsbx-x\n")
+            self.assertEqual(stat.S_IMODE(os.stat(marker).st_mode), 0o640)
+            self.assertEqual(os.listdir(d), ["nested"])
+
     def test_a_nested_sudo_sandbox_uses_the_forwarder(self):
         st = dict(STATE, egress="proxy", sudo=True, nested=True, name="box")
         for forward, url in ((False, "http://192.168.5.100:3128"),
@@ -272,6 +288,8 @@ class LauncherTests(unittest.TestCase):
         self.assertIn('test -e "$1" || cat > "$1"', script)
         grants = " ".join(nested.session_grants("/home/eng/wmf-sbx-src"))
         self.assertIn("--read " + image.LOCAL_BASE_DIR, grants)
+        # The session's phantom, for an inner resume (credproxy).
+        self.assertIn("--read-file " + image.NESTED_MARKER, grants)
         self.assertIn("--allow /home/eng/wmf-sbx-src", grants)
 
     def run_stop_inner(self, list_out, nono_running=False, stop_rc=0):
@@ -688,6 +706,30 @@ class ResumeMainTests(Env):
         self.assertTrue(state_mod.load("demo", self.env)["attached"])
         # a session ran: later sandboxes skip the first-run questions
         self.assertTrue(session.first_run_seen(self.env))
+
+    def marker_writes(self):
+        return [i for i, s in enumerate(self.lima.shells())
+                if session.NESTED_CREDENTIAL_SCRIPT in s]
+
+    def test_a_nested_resume_gives_the_inner_sandboxes_the_phantom(self):
+        st = state_mod.load("demo", self.env)
+        st["nested"] = True
+        state_mod.save(st, self.env)
+        self.assertEqual(self.resume("--", "-p", "hi", env={"ANTHROPIC_API_KEY": SECRET}), 0,
+                         self.err)
+        (i,) = self.marker_writes()
+        shell = self.lima.shells()[i]
+        self.assertEqual(shell[-7:-4], ("sudo", "sh", "-c"))
+        self.assertEqual(shell[-2:], (image.NESTED_MARKER, "agent"))
+        (cred,) = [c for c in self.inputs if c and "ANTHROPIC_BASE_URL" in c][:1]
+        self.assertEqual(self.inputs.count(cred), 2)   # /dev/shm and the marker
+        self.assertNotIn(SECRET, cred)
+        self.assertLess(i, self.lima.shells().index(self.launches()[0]))
+
+    def test_an_ordinary_resume_writes_no_marker(self):
+        self.assertEqual(self.resume("--", "-p", "hi", env={"ANTHROPIC_API_KEY": SECRET}), 0,
+                         self.err)
+        self.assertEqual(self.marker_writes(), [])
 
     def test_the_second_resume_continues(self):
         self.resume()

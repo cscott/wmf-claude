@@ -19,12 +19,15 @@ The real credential (host_source), in this order:
       "Claude Code-credentials"), so the host's refreshes are used;
       WMF_SBX_HOST_LOGIN=0 leaves it out.
 
-In a nested sandbox, the proxy forwards to $ANTHROPIC_BASE_URL, not to
-api.anthropic.com (upstream_url): it is the enclosing session's credential
-proxy, and the credential is that session's phantom. The inner sandbox
-chains to the outer one, and the real credential stays on the outermost
-host. Anywhere else the variable is ignored, so a host's real credential
-goes only to api.anthropic.com.
+In a nested sandbox, the credential is the enclosing session's phantom,
+and the proxy forwards to that session's credential proxy, not to
+api.anthropic.com (upstream_url). `resume` writes both into the nested
+marker for each session (session.put_credential), and nested_credential
+reads them; $CLAUDE_CODE_OAUTH_TOKEN, $ANTHROPIC_API_KEY and
+$ANTHROPIC_BASE_URL override them. The inner sandbox chains to the outer
+one, and the real credential stays on the outermost host. Anywhere else
+$ANTHROPIC_BASE_URL is ignored, so a host's real credential goes only to
+api.anthropic.com.
 
 The proxy forwards only the paths Claude Code uses (L1: /v1/..., and the
 credential-free /api/hello probe). It logs one line per request (method,
@@ -38,6 +41,7 @@ import http.server
 import json
 import os
 import secrets
+import shlex
 import socket
 import socketserver
 import ssl
@@ -161,6 +165,25 @@ def live_login_reader(env=None, run=subprocess.run, platform=sys.platform,
     return read
 
 
+def nested_credential():
+    """The enclosing session's variables (its phantom and
+    ANTHROPIC_BASE_URL) from the nested marker, or {} outside a nested
+    sandbox or before a session."""
+    try:
+        with open(image_mod.NESTED_MARKER, encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return {}
+    out = {}
+    for line in text.splitlines():
+        k, sep, v = line.partition("=")
+        if sep and k in (API_KEY_VAR, TOKEN_VAR, BASE_URL_VAR):
+            words = shlex.split(v)
+            if words:
+                out[k] = words[0]
+    return out
+
+
 def host_source(env=None, run=subprocess.run, platform=sys.platform):
     """The host's credential as a Source, or None when it has none. A token
     file that other users can read is refused."""
@@ -169,6 +192,11 @@ def host_source(env=None, run=subprocess.run, platform=sys.platform):
         return Source("api-key", f"${API_KEY_VAR}", _static(env[API_KEY_VAR]))
     if env.get(TOKEN_VAR):
         return Source("oauth", f"${TOKEN_VAR}", _static(env[TOKEN_VAR]))
+    nested = nested_credential()
+    for var, kind in ((API_KEY_VAR, "api-key"), (TOKEN_VAR, "oauth")):
+        if nested.get(var):
+            return Source(kind, f"the enclosing session's phantom ({image_mod.NESTED_MARKER})",
+                          _static(nested[var]))
     path = token_file(env)
     try:
         st = os.stat(path)
@@ -213,13 +241,15 @@ def check_source(source):
 # -- the proxy ------------------------------------------------------------
 
 def upstream_url(env=None):
-    """(scheme, host, port) the proxy forwards to: $ANTHROPIC_BASE_URL in a
-    nested sandbox (root's marker), else UPSTREAM over HTTPS. A base URL
-    with a path is refused: the proxy forwards the request's path as it
-    is."""
+    """(scheme, host, port) the proxy forwards to: in a nested sandbox
+    (root's marker), $ANTHROPIC_BASE_URL or the enclosing session's (the
+    marker's), else UPSTREAM over HTTPS. A base URL with a path is
+    refused: the proxy forwards the request's path as it is."""
     env = os.environ if env is None else env
-    base = (env.get(BASE_URL_VAR) or "").strip()
-    if not base or not os.path.exists(image_mod.NESTED_MARKER):
+    if not os.path.exists(image_mod.NESTED_MARKER):
+        return ("https", UPSTREAM, 443)
+    base = (env.get(BASE_URL_VAR) or nested_credential().get(BASE_URL_VAR) or "").strip()
+    if not base:
         return ("https", UPSTREAM, 443)
     u = urllib.parse.urlsplit(base)
     if u.scheme not in ("http", "https") or not u.hostname or u.path.strip("/"):

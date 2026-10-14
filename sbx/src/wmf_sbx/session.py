@@ -342,9 +342,19 @@ def launcher_argv(state, cred_path=None, launcher_flags=(), claude_args=(),
     return vm_mod.agent_argv(wrapper, workdir=primary, env=env)
 
 
-def put_credential(name, cred, lima=None):
+# In a nested sandbox, the session's phantom and proxy also go into the
+# nested marker, root's and readable by the agent only, for the inner
+# sandboxes' credential proxies (credproxy.nested_credential). Replaced
+# whole, so the marker is never missing.
+NESTED_CREDENTIAL_SCRIPT = (
+    't=$(mktemp "$1.XXXXXX") && cat > "$t" && chgrp "$2" "$t" && chmod 0640 "$t" '
+    '&& mv -f "$t" "$1"')
+
+
+def put_credential(name, cred, lima=None, nested=False):
     """Write the credential into a new 0600 file in the guest's /dev/shm,
-    owned by the agent; return its path. The value goes on stdin."""
+    owned by the agent; return its path. The value goes on stdin. With
+    `nested`, into the nested marker too."""
     argv = vm_mod.agent_argv(["sh", "-c", "umask 077; f=$(mktemp /dev/shm/wmf-sbx-cred.XXXXXX)"
                               ' && cat > "$f" && echo "$f"'], workdir="/")
     res = vm_mod.shell(name, argv, lima=lima, input=credential_file_contents(cred),
@@ -352,6 +362,13 @@ def put_credential(name, cred, lima=None):
     path = (res.stdout or "").strip()
     if res.returncode != 0 or not path.startswith("/dev/shm/wmf-sbx-cred."):
         raise SessionError(f"could not pass the credential into the VM (exit {res.returncode})")
+    if nested:
+        res = vm_mod.shell(name, ["sudo", "sh", "-c", NESTED_CREDENTIAL_SCRIPT, "_",
+                                  image_mod.NESTED_MARKER, vm_mod.AGENT],
+                           lima=lima, input=credential_file_contents(cred), check=False)
+        if res.returncode != 0:
+            raise SessionError(f"could not pass the credential to the inner sandboxes "
+                               f"(exit {res.returncode})")
     return path
 
 

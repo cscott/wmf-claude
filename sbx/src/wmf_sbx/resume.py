@@ -146,7 +146,8 @@ def main(argv=None, lima=None, env=None):
         cred_path = None
         if source is not None:
             proxy, cred_path = start_proxy(name, source, lima=lima, env=env,
-                                           egress=egress_mod.enabled(state))
+                                           egress=egress_mod.enabled(state),
+                                           nested=bool(state.get("nested")))
             port = egress_mod.CRED_PORT if proxy.port is None else proxy.port
             if not state.get("sudo"):
                 launcher_flags = list(launcher_flags) + [f"--open-port={port}"]
@@ -173,10 +174,11 @@ def proxy_log_path(name, env=None):
     return os.path.join(state_mod.state_dir(env), f"{name}.credproxy.log")
 
 
-def start_proxy(name, source, lima=None, env=None, egress=False):
+def start_proxy(name, source, lima=None, env=None, egress=False, nested=False):
     """Start the session's credential proxy on the host, open the guest's
     host block to its port, and pass the phantom and the proxy's address
-    into the VM. Returns (proxy, the credential file's path in the VM).
+    into the VM (and, `nested`, to its inner sandboxes). Returns (proxy,
+    the credential file's path in the VM).
 
     Behind the egress proxy (`egress`), the guest cannot reach the host's
     loopback (restrict=on): the proxy listens on the sandbox's Unix
@@ -206,7 +208,7 @@ def start_proxy(name, source, lima=None, env=None, egress=False):
         try:
             return proxy, session_mod.put_credential(name, proxy.session_env(
                 base_url=f"http://{egress_mod.EGRESS_ADDR}:{egress_mod.CRED_PORT}"),
-                lima=lima)
+                lima=lima, nested=nested)
         except BaseException:
             proxy.stop()
             raise
@@ -225,7 +227,8 @@ def start_proxy(name, source, lima=None, env=None, egress=False):
             raise session_mod.SessionError(
                 f"could not open the VM's host block to the credential proxy "
                 f"(exit {res.returncode})")
-        return proxy, session_mod.put_credential(name, proxy.session_env(), lima=lima)
+        return proxy, session_mod.put_credential(name, proxy.session_env(), lima=lima,
+                                                 nested=nested)
     except BaseException:
         stop_proxy(name, proxy, lima=lima)
         raise

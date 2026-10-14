@@ -488,6 +488,18 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   `/usr/local/share/ca-certificates/cloud-init-ca-cert-*.crt` (the egress CA and the
   host's extra ones). `resume` does not stop the inner VMs of a `sudo` sandbox: its
   `pgrep nono` cannot see a session there, and no Landlock scope separates sessions.
+  RAN on the host (egsn, 2026-10-14): the forwarder, an inner create and the acceptance
+  run in it, `exec` (its proxy variables, an inner stop/start and an inner curl through
+  the forwarder), and a resume that left the inner VM running.
+- **An inner sandbox's credential (2026-10-14, after egsn).** The inner `resume` found
+  none ("Not logged in"): the VM has only its session's phantom. The credential proxy now
+  chains in a nested sandbox: `resume` of a nested sandbox writes the session's
+  variables (phantom, ANTHROPIC_BASE_URL) into `/etc/wmf-sbx/nested` (root, 0640 group
+  agent, replaced with mv), the nested grants give nono `--read-file` of it (without it,
+  `nono why`: path_not_granted), and the inner credproxy takes them as its source and
+  upstream. The environment variables override them. Outside a nested sandbox
+  ANTHROPIC_BASE_URL is ignored, so the host's real credential never follows it. The
+  marker keeps a dead phantom after the session; it is worth nothing then.
 
 ### Testing in the sandbox
 

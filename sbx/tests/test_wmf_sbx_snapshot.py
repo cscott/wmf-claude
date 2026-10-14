@@ -180,7 +180,8 @@ class StoreTests(unittest.TestCase):
         out = io.StringIO()
         image.main(["ls"], env=self.env, out=out)
         self.assertIn("`wmf-sbx image prune` would free", out.getvalue())
-        self.assertIn("(0 images and 1 snapshot that no sandbox uses)", out.getvalue())
+        # the golden image that only the unused snapshot keeps goes too
+        self.assertIn("(1 image and 1 snapshot that no sandbox needs)", out.getvalue())
 
     def test_rm_scan_keeps_a_snapshots_borrower_entry(self):
         self.generation(datetime.timedelta(hours=1))

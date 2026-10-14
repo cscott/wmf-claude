@@ -569,9 +569,10 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   host's OOM killer took it, twice, on a 60 GiB laptop with other sandboxes up. Now every
   QEMU start goes through the QEMU wrapper in plain mode (`WMF_SBX_QEMU_PLAIN=1`, set by
   `vm.start_instance`), which adds `virtio-balloon-pci,free-page-reporting=on`; the nested
-  default is 10 GiB and a sandbox inside one defaults to 4 GiB. Not RAN:
-  `lima-port/checks/balloon.sh` (the host's RSS of a sandbox's QEMU after the guest frees
-  3 GiB). Page cache is not free memory: a guest that read a lot keeps it until it needs
+  default is 10 GiB and a sandbox inside one defaults to 4 GiB. RAN 2026-10-14
+  (`lima-port/checks/balloon.sh`, the engineer's host, Lima 2.3.0-beta.1): the guest bound
+  the balloon; the QEMU's RSS went 809 MiB, 3873 MiB with 3 GiB touched in the guest, and
+  751 MiB 30 s after the guest freed it. Page cache is not free memory: a guest that read a lot keeps it until it needs
   the memory.
 - Default VM memory is 8 GiB: phan on Translate was OOM-killed at 4 GiB.
 - Timings under TCG are 5–35× slower than a 16-core host (image build 26–41 min, create

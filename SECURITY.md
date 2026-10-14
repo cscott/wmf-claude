@@ -106,7 +106,6 @@ scoped to the session you choose it in unless noted.
 | `--override-deny PATH` + `--read-file PATH` | Lifts a specific deny. Use for one file, not a directory. |
 | `--local-db[=PORT]` | Reach to the dev database — and anything else on that port. Was in the static profile; now only sessions that need it carry it. |
 | `--local-web[=PORTS]` | Reach to **any** local service on 80/443/8080, not just your wiki. External egress does not widen. |
-| `--landlock-only` (Linux) | nono's seccomp network layer, for the session. **UDP to any host** (so DNS tunnelling), and **TCP to any host** on an open port or the proxy's port, bypassing the domain allowlist. Filesystem sandboxing is unchanged. Needed on Linux for any localhost-port flag until [nolabs-ai/nono#1786](https://github.com/nolabs-ai/nono/issues/1786) is fixed; ports 80 and 443 are refused. The launcher warns and asks for a one-time acknowledgment. |
 | `--chrome` | A Chrome running **outside** the sandbox with unrestricted network, driven over an unauthenticated debug port. Implies `--local-web`. **Throwaway dev-wiki accounts only.** |
 | `--ide`, or `CLAUDE_CODE_SSE_PORT` set (a launch by the IDE plugin, or `claude` in the IDE's terminal) | `signal_mode: allow_all` for the session: it can signal or kill your other processes. Plus the plugin's one localhost port: the plugin runs outside the sandbox, and a diff you accept there is written by the IDE, not by the sandboxed session. No new network access. |
 | `--docker=SERVICE` without `--egress` | Code execution in a container whose network nono cannot restrict — an outbound channel. The launcher warns and asks for a one-time acknowledgment. |
@@ -155,7 +154,7 @@ Docker socket out of Claude's reach, since nono does not mediate AF_UNIX
 `connect()` on Linux. Code crosses the boundary only as git bundles, pulled
 back into remote-tracking `vm/*` branches for review. What it does not cover — the token lives in
 the VM, containers are not nono-sandboxed, NAT still reaches the host's LAN
-address, Docker is rootful, `--docker` sessions can tunnel data over DNS — is in [`docs/lima-vm.md`](docs/lima-vm.md).
+address, Docker is rootful — is in [`docs/lima-vm.md`](docs/lima-vm.md).
 `tests/test-lima.sh` asserts the template's shape; `tests/smoke-lima.sh`
 checks a running VM.
 

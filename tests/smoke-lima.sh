@@ -7,9 +7,13 @@
 # throwaway repository, pushes it as workspace smoke-<pid>, and removes the
 # workspace at the end. It does not change your other workspaces or repos.
 #
-# Usage: ./tests/smoke-lima.sh [--claude]
+# Usage: ./tests/smoke-lima.sh [--docker] [--claude]
+#   --docker   also test the Docker broker: a php:8.3-cli container, the
+#              broker as the engineer, mwdocker as the agent inside nono
+#              (pulls the image on first use)
 #   --claude   also run one sandboxed `claude -p` turn in the VM (needs
-#              bin/wmf-claude-vm login first; costs one short model call)
+#              bin/wmf-claude-vm login first; costs one short model call).
+#              With --docker, also one turn that runs mwdocker.
 #
 #   WMF_CLAUDE_VM=<name>   Lima instance name (default: wmf-claude)
 set -uo pipefail
@@ -18,7 +22,14 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VMCMD="$REPO_ROOT/bin/wmf-claude-vm"
 VM="${WMF_CLAUDE_VM:-wmf-claude}"
 WITH_CLAUDE=false
-[[ "${1:-}" == "--claude" ]] && WITH_CLAUDE=true
+WITH_DOCKER=false
+for a in "$@"; do
+  case "$a" in
+    --claude) WITH_CLAUDE=true ;;
+    --docker) WITH_DOCKER=true ;;
+    *) echo "usage: $0 [--docker] [--claude]" >&2; exit 2 ;;
+  esac
+done
 
 PASS=0
 FAIL=0
@@ -134,9 +145,9 @@ if [[ "$r" =~ ^(EPERM|REFUSED)$ ]]; then pass "agent: UDP to a public resolver b
 else fail "agent: UDP to 1.1.1.1:53 gave $r, want EPERM or REFUSED"; fi
 
 echo ""
-echo "--- DNS channel in the nono sandbox (docs/lima-vm.md) ---"
+echo "--- nono network filter: DNS and localhost ports ---"
 # The resolver that the agent's processes use. nono runs as the agent with
-# the real profile; only --sandbox-policy differs.
+# the real profile. A --docker session adds one --open-port for the broker.
 resolver=$(g awk '/^nameserver/ {print $2; exit}' /etc/resolv.conf | tr -d '\r')
 info "resolver in /etc/resolv.conf: $resolver"
 nono_probe() {  # $@ extra nono flags
@@ -150,20 +161,60 @@ r=$(nono_probe)
 if [[ "$r" == ANSWERED ]]; then fail "default sandbox: UDP DNS from inside nono is answered"
 elif [[ "$r" =~ ^(EPERM|EACCES|REFUSED|TIMEOUT)$ ]]; then pass "default sandbox: UDP DNS from inside nono blocked ($r)"
 else fail "default sandbox: probe did not run: $r"; fi
-r=$(nono_probe --sandbox-policy landlock)
-if [[ "$r" == ANSWERED ]]; then info "--landlock-only (as --docker uses): UDP DNS answered. This is the documented DNS channel."
-elif [[ "$r" =~ ^(EPERM|EACCES|REFUSED|TIMEOUT)$ ]]; then info "--landlock-only: UDP DNS blocked ($r). The documented DNS channel did not reproduce; update docs/lima-vm.md."
-else fail "--landlock-only: probe did not run: $r"; fi
+r=$(nono_probe --open-port 8765)
+if [[ "$r" == ANSWERED ]]; then fail "with --open-port (as --docker): UDP DNS from inside nono is answered"
+elif [[ "$r" =~ ^(EPERM|EACCES|REFUSED|TIMEOUT)$ ]]; then pass "with --open-port (as --docker): UDP DNS from inside nono blocked ($r)"
+else fail "with --open-port: probe did not run: $r"; fi
+# A granted localhost port answers; others do not.
+ports=$(ga bash -c '
+  cd /home/agent/work
+  python3 -m http.server 8765 --bind 127.0.0.1 >/dev/null 2>&1 & srv=$!
+  sleep 1
+  n() { nono run --silent --profile /opt/wmf-claude/profiles/wmf-engineer.json --workdir /home/agent/work "$@"; }
+  printf "granted=%s " "$(n --open-port 8765 -- curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8765/ 2>/dev/null)"
+  printf "ungranted=%s\n" "$(n -- curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8765/ 2>/dev/null)"
+  kill "$srv"' | tr -d '\r')
+if [[ "$ports" == "granted=200 ungranted=000" ]]; then pass "localhost ports: a granted port answers, an ungranted one does not"
+else fail "localhost ports: $ports, want granted=200 ungranted=000"; fi
+# An open port is for localhost only. With 443 granted, a direct connect to
+# an outside host on 443 must still fail: nono checks the destination, not
+# only the port. The nft rule lets the agent out on 443, so a deny here comes
+# from nono. Resolve outside the sandbox (it has no DNS), and use a raw
+# socket, which does not use the proxy.
+TCP_PROBE='
+import socket, sys, errno
+try:
+    socket.create_connection((sys.argv[1], 443), timeout=5).close()
+    print("CONNECTED")
+except socket.timeout:
+    print("TIMEOUT")
+except OSError as e:
+    print(errno.errorcode.get(e.errno, str(e.errno)))
+'
+ext_ip=$(g getent ahostsv4 deb.debian.org | awk 'NR==1 {print $1}' | tr -d '\r')
+r=$(ga env -C /home/agent/work PATH=/usr/local/bin:/usr/bin:/bin \
+  nono run --silent --profile /opt/wmf-claude/profiles/wmf-engineer.json --workdir /home/agent/work --open-port 443 \
+  -- python3 -c "$TCP_PROBE" "$ext_ip" 2>&1 | tr -d '\r' | tail -n1)
+if [[ "$r" == CONNECTED ]]; then fail "with --open-port 443: a direct connect to $ext_ip:443 got through"
+elif [[ "$r" =~ ^(EPERM|EACCES|ECONNREFUSED|TIMEOUT)$ ]]; then pass "with --open-port 443: a direct connect to an outside host is blocked ($r)"
+else fail "with --open-port 443: probe did not run: $r"; fi
 
 echo ""
 echo "--- push / pull round trip ---"
 NAME="smoke-$$"
 SRC=$(mktemp -d)
 WS_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/wmf-claude/vm-$VM-workspaces"
+DNAME="smoke-docker-$$"
+DSRC=""
 cleanup() {
+  if [[ -n "$DSRC" ]]; then
+    g bash -c 'cd "$1" 2>/dev/null && docker compose down -t 1 >/dev/null 2>&1' _ "/home/agent/work/$DNAME"
+    ga rm -rf "/home/agent/work/$DNAME" 2>/dev/null
+    rm -rf "$DSRC"
+  fi
   ga rm -rf "/home/agent/work/$NAME" 2>/dev/null
   if [[ -f "$WS_FILE" ]]; then
-    awk -F'\t' -v n="$NAME" '$1 != n' "$WS_FILE" > "$WS_FILE.new" && mv "$WS_FILE.new" "$WS_FILE"
+    awk -F'\t' -v n="$NAME" -v d="$DNAME" '$1 != n && $1 != d' "$WS_FILE" > "$WS_FILE.new" && mv "$WS_FILE.new" "$WS_FILE"
   fi
   rm -rf "$SRC"
 }
@@ -208,19 +259,102 @@ if [[ "$(ga git -C "/home/agent/work/$NAME" log -1 --format=%s smoke-branch | tr
   pass "second push updates host/* and keeps the agent's branch"
 else fail "second push did not update host/main, or changed the agent's branch"; fi
 
+if $WITH_DOCKER; then
+  echo ""
+  echo "--- Docker broker ---"
+  # A throwaway compose project: one PHP container that runs as the agent's
+  # UID and mounts the workspace, as MediaWiki-Docker does.
+  DSRC=$(mktemp -d)
+  git -C "$DSRC" init -q -b main
+  cat > "$DSRC/docker-compose.yml" <<'COMPOSE'
+services:
+  mediawiki:
+    image: php:8.3-cli
+    command: sleep infinity
+    user: "${MW_DOCKER_UID}:${MW_DOCKER_GID}"
+    working_dir: /var/www/html/w
+    volumes:
+      - ./:/var/www/html/w
+COMPOSE
+  git -C "$DSRC" add docker-compose.yml
+  git -C "$DSRC" -c user.name=smoke -c user.email=smoke@invalid commit -q -m "smoke: compose"
+  DW="/home/agent/work/$DNAME"
+  if "$VMCMD" push "$DSRC" "$DNAME" >/dev/null 2>&1; then pass "push the compose project"
+  else fail "push the compose project failed"; fi
+  ga bash -c 'printf "MW_DOCKER_UID=%s\nMW_DOCKER_GID=%s\n" "$(id -u)" "$(id -g)" > "$1/.env"' _ "$DW"
+  if g bash -c 'cd "$1" && docker compose up -d --quiet-pull >/dev/null 2>&1' _ "$DW"; then pass "engineer starts the container"
+  else fail "docker compose up failed in $DW"; fi
+
+  # The broker runs as the engineer, as lima/guest-claude.sh starts it.
+  # mwdocker runs as the agent inside nono with the real profile and the
+  # broker's port open, as bin/claude --docker runs it. Each line of output
+  # is KEY=VALUE.
+  BROKER_CHECKS='
+    W=$1; RUN=/run/wmf-claude; HS=$RUN/smoke.$$.json; LOG=$RUN/smoke.$$.log
+    (umask 077; exec python3 /opt/wmf-claude/bin/launch-docker-broker --service mediawiki \
+      --compose-file "$W/docker-compose.yml" --handshake "$HS" >"$LOG" 2>&1) &
+    bp=$!
+    for _ in $(seq 100); do [ -f "$HS" ] && break; sleep 0.1; done
+    if [ ! -f "$HS" ]; then echo "BROKER=failed: $(tr "\n" " " < "$LOG")"; kill "$bp" 2>/dev/null; rm -f "$LOG"; exit 0; fi
+    echo "BROKER=up"
+    port=$(jq -r .port "$HS"); tok=$(jq -r .token "$HS")
+    agent() { sudo -H -u agent env -C "$W" PATH=/usr/local/bin:/usr/bin:/bin \
+      WMF_DOCKER_BROKER_URL="http://127.0.0.1:$port" WMF_DOCKER_BROKER_TOKEN="$tok" "$@"; }
+    sandboxed() { agent nono run --silent --profile /opt/wmf-claude/profiles/wmf-engineer.json \
+      --workdir "$W" --read /opt/wmf-claude --open-port "$port" -- "$@"; }
+    echo "PHP=$(sandboxed /opt/wmf-claude/bin/mwdocker php -r "echo PHP_VERSION;" 2>&1 | tail -n1)"
+    sandboxed /opt/wmf-claude/bin/mwdocker php -r "file_put_contents(\"from-container.txt\", \"ok\");" >/dev/null 2>&1
+    echo "OWNER=$(stat -c %U "$W/from-container.txt" 2>/dev/null)"
+    echo "BASH=$(sandboxed /opt/wmf-claude/bin/mwdocker bash -c id 2>&1 | tr "\n" " ")"
+    sandboxed curl -s --max-time 5 --unix-socket /var/run/docker.sock http://localhost/version >/dev/null 2>&1
+    echo "SOCKET=$?"
+    echo "NOGRANT=$(agent nono run --silent --profile /opt/wmf-claude/profiles/wmf-engineer.json --workdir "$W" \
+      -- curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$port/health" 2>/dev/null)"
+    kill "$bp" 2>/dev/null; wait "$bp" 2>/dev/null; rm -f "$HS" "$LOG"
+  '
+  out=$(g bash -c "$BROKER_CHECKS" _ "$DW" | tr -d '\r')
+  val() { sed -n "s/^$1=//p" <<<"$out" | head -n1; }
+  if [[ "$(val BROKER)" == up ]]; then pass "broker starts as the engineer"
+  else fail "broker did not start: $(val BROKER)"; fi
+  if [[ "$(val PHP)" =~ ^8\.3\. ]]; then pass "mwdocker php in nono reaches the container (PHP $(val PHP))"
+  else fail "mwdocker php in nono: '$(val PHP)'"; fi
+  if [[ "$(val OWNER)" == agent ]]; then pass "the container writes as the agent's UID"
+  else fail "from-container.txt owner is '$(val OWNER)', want agent"; fi
+  if grep -q 'not allowed' <<<"$(val BASH)"; then pass "mwdocker refuses a bin off the allowlist (bash)"
+  else fail "mwdocker bash: '$(val BASH)'"; fi
+  if [[ "$(val SOCKET)" != 0 ]]; then pass "the agent in nono cannot reach the Docker socket"
+  else fail "the agent in nono reached the Docker socket"; fi
+  if [[ "$(val NOGRANT)" == 000 ]]; then pass "without --open-port, the sandbox cannot reach the broker"
+  else fail "without --open-port, the broker answered: '$(val NOGRANT)'"; fi
+
+  # The broker must refuse a container that mounts the Docker socket.
+  ga sed -i 's#      - ./:/var/www/html/w#      - ./:/var/www/html/w\n      - /var/run/docker.sock:/var/run/docker.sock#' "$DW/docker-compose.yml"
+  g bash -c 'cd "$1" && docker compose up -d --quiet-pull >/dev/null 2>&1' _ "$DW"
+  refusal=$(g bash -c 'timeout 30 python3 /opt/wmf-claude/bin/launch-docker-broker --service mediawiki \
+    --compose-file "$1/docker-compose.yml" --handshake "/run/wmf-claude/smoke-refuse.$$.json" 2>&1; rm -f /run/wmf-claude/smoke-refuse.$$.json' _ "$DW" | tr -d '\r')
+  if grep -q 'refusing to serve' <<<"$refusal"; then pass "broker refuses a container with the Docker socket mounted"
+  else fail "broker did not refuse the socket mount: $(tail -n2 <<<"$refusal")"; fi
+  # Back to the safe compose file for the --claude turn below.
+  ga git -C "$DW" checkout -q -- docker-compose.yml
+  g bash -c 'cd "$1" && docker compose up -d --quiet-pull >/dev/null 2>&1' _ "$DW"
+fi
+
 if $WITH_CLAUDE; then
   echo ""
   echo "--- sandboxed Claude Code session ---"
   out=$("$VMCMD" claude "$NAME" -- -p 'Reply with exactly SMOKE-OK and nothing else.' 2>&1)
   if grep -q 'SMOKE-OK' <<<"$out"; then pass "claude -p in the VM"
   else fail "claude -p in the VM: $(tail -n3 <<<"$out")"; fi
+  if $WITH_DOCKER; then
+    # The full path: lima/guest-claude.sh starts the broker, bin/claude runs
+    # as the agent, and Claude calls mwdocker.
+    out=$("$VMCMD" claude "$DNAME" --docker=mediawiki -- -p \
+      "Run this exact shell command and reply with only its output: mwdocker php -r 'echo \"SMOKE-\", PHP_VERSION;'" \
+      --allowedTools 'Bash(mwdocker:*)' 2>&1)
+    if grep -qE 'SMOKE-8\.3\.' <<<"$out"; then pass "claude --docker in the VM runs mwdocker"
+    else fail "claude --docker in the VM: $(tail -n3 <<<"$out")"; fi
+  fi
 fi
-
-echo ""
-echo "--- not automated ---"
-echo "  --docker: bin/wmf-claude-vm shell; start a compose project in /home/agent/work/<repo>"
-echo "  (docs/lima-vm.md#docker-inside-the-vm), then: bin/wmf-claude-vm claude <repo> --docker=<service>"
-echo "  and ask Claude to run mwdocker php --version."
 
 echo ""
 echo "========================="

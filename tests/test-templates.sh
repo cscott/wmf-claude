@@ -305,6 +305,7 @@ chmod +x "$FAKE_REPO/chrome-devtools-mcp/node_modules/.bin/chrome-devtools-mcp"
 mkdir -p "$FAKE_REPO/gerrit-mcp-server/gerrit_mcp_server" && touch "$FAKE_REPO/gerrit-mcp-server/gerrit_mcp_server/main.py"
 cat > "$FAKE_REPO/bin/nono" <<'STUB'
 #!/bin/bash
+if [[ "$1" == --version && -n "${FAKE_NONO_VERSION:-}" ]]; then echo "nono $FAKE_NONO_VERSION"; exit 0; fi
 printf 'NONO_ARG: %s\n' "$@"
 env | grep -E '^(WMF_CLAUDE_|CLAUDE_CODE_SSE_PORT=)' | sed 's/^/NONO_ENV: /'
 for ((i = 1; i <= $#; i++)); do
@@ -313,8 +314,7 @@ done
 STUB
 chmod +x "$FAKE_REPO/bin/nono"
 # Report Darwin by default, so the arg-routing checks below do not depend on
-# the host. On Linux, bin/claude refuses localhost flags without
-# --landlock-only (nolabs-ai/nono#1786). FAKE_UNAME=Linux tests that path.
+# the host. FAKE_UNAME=Linux tests the Linux path.
 cat > "$FAKE_REPO/bin/uname" <<'STUB'
 #!/bin/sh
 if [ "$1" = "-s" ]; then echo "${FAKE_UNAME:-Darwin}"; else command -p uname "$@"; fi
@@ -364,39 +364,36 @@ if grep -A1 -x "NONO_ARG: --listen-port" <<<"$out" | grep -qx "NONO_ARG: 49152";
 out="$(FAKE_UNAME=Linux run_fake_claude)"
 if ! grep -qx "NONO_ARG: --listen-port" <<<"$out"; then pass "Linux: no --listen-port (per-port Landlock bind would not cover an ephemeral callback)"; else fail "Linux: --listen-port passed"; fi
 
-echo "--- bin/claude --landlock-only (nolabs-ai/nono#1786) ---"
+echo "--- bin/claude localhost ports on Linux ---"
 run_fake_linux_claude() { FAKE_UNAME=Linux run_fake_claude "$@"; }
-has_landlock() { grep -A1 -x 'NONO_ARG: --sandbox-policy' <<<"$1" | grep -qx 'NONO_ARG: landlock'; }
 out="$(run_fake_linux_claude --local-web)"
-if grep -q 'nolabs-ai/nono#1786' <<<"$out" && ! grep -q '^NONO_ARG:' <<<"$out"; then pass "Linux: --local-web without --landlock-only refuses to launch"; else fail "Linux: --local-web without --landlock-only launched"; fi
+if ! grep -qx 'NONO_ARG: --sandbox-policy' <<<"$out" && grep -qx 'NONO_ARG: 443' <<<"$out" && grep -qx 'NONO_ARG: 8080' <<<"$out"; then
+  pass "Linux: --local-web launches with the default policy and opens 80, 443 and 8080"
+else
+  fail "Linux: --local-web did not launch, changed the policy, or did not open the ports"
+fi
 out="$(run_fake_linux_claude --local-db)"
-if ! grep -q '^NONO_ARG:' <<<"$out"; then pass "Linux: --local-db without --landlock-only refuses to launch"; else fail "Linux: --local-db without --landlock-only launched"; fi
+if grep -qx 'NONO_ARG: 3306' <<<"$out" && ! grep -qx 'NONO_ARG: --sandbox-policy' <<<"$out"; then pass "Linux: --local-db launches with the default policy"; else fail "Linux: --local-db did not launch or changed the policy"; fi
 out="$(run_fake_linux_claude --open-port 9000 --)"
-if ! grep -q '^NONO_ARG:' <<<"$out"; then pass "Linux: a user --open-port without --landlock-only refuses to launch"; else fail "Linux: a user --open-port without --landlock-only launched"; fi
+if grep -qx 'NONO_ARG: 9000' <<<"$out" && ! grep -qx 'NONO_ARG: --sandbox-policy' <<<"$out"; then pass "Linux: a user --open-port launches with the default policy"; else fail "Linux: a user --open-port did not launch or changed the policy"; fi
 out="$(run_fake_linux_claude)"
 if grep -q '^NONO_ARG:' <<<"$out" && ! grep -qx 'NONO_ARG: --sandbox-policy' <<<"$out"; then pass "Linux: plain launch keeps the default sandbox policy"; else fail "Linux: plain launch changed the sandbox policy or did not launch"; fi
-out="$(run_fake_linux_claude --local-web --landlock-only)"
-if has_landlock "$out" && grep -A1 -x 'NONO_ARG: --open-port' <<<"$out" | grep -qx 'NONO_ARG: 8080' \
-   && ! grep -qxE 'NONO_ARG: (80|443)' <<<"$out"; then
-  pass "Linux: --local-web --landlock-only passes --sandbox-policy landlock and opens only 8080"
-else
-  fail "Linux: --local-web --landlock-only did not set the policy or opened 80/443"
-fi
-if grep -q -- '--landlock-only (no seccomp net filter)' <<<"$out"; then pass "Linux: --landlock-only shows in WMF_CLAUDE_SESSION"; else fail "Linux: --landlock-only missing from WMF_CLAUDE_SESSION"; fi
-out="$(run_fake_linux_claude --local-web=443 --landlock-only)"
-if grep -q 'refuses port 443' <<<"$out" && ! grep -q '^NONO_ARG:' <<<"$out"; then pass "Linux: --landlock-only refuses --local-web=443"; else fail "Linux: --landlock-only accepted --local-web=443"; fi
-out="$(run_fake_linux_claude --landlock-only --open-port=80 --)"
-if grep -q 'refuses port 80' <<<"$out" && ! grep -q '^NONO_ARG:' <<<"$out"; then pass "Linux: --landlock-only refuses a user --open-port=80"; else fail "Linux: --landlock-only accepted a user --open-port=80"; fi
-out="$(run_fake_linux_claude --landlock-only --sandbox-policy landlock --)"
-if grep -q 'do not pass both' <<<"$out"; then pass "Linux: --landlock-only with a user --sandbox-policy is refused"; else fail "Linux: --landlock-only with a user --sandbox-policy was accepted"; fi
+out="$(FAKE_NONO_VERSION=0.79.0 run_fake_linux_claude --local-web)"
+if grep -q 'nono 0.79.0 cannot open localhost ports' <<<"$out" && ! grep -q '^NONO_ARG:' <<<"$out"; then pass "Linux: nono 0.79 with --local-web refuses to launch"; else fail "Linux: nono 0.79 with --local-web launched"; fi
+out="$(FAKE_NONO_VERSION=0.79.0 run_fake_linux_claude --open-port=9000 --)"
+if grep -q 'cannot open localhost ports' <<<"$out" && ! grep -q '^NONO_ARG:' <<<"$out"; then pass "Linux: nono 0.79 with a user --open-port refuses to launch"; else fail "Linux: nono 0.79 with a user --open-port launched"; fi
+out="$(FAKE_NONO_VERSION=0.79.0 run_fake_linux_claude)"
+if grep -q '^NONO_ARG:' <<<"$out"; then pass "Linux: nono 0.79 without a localhost flag launches"; else fail "Linux: nono 0.79 without a localhost flag was refused"; fi
+out="$(FAKE_NONO_VERSION=0.80.0 run_fake_linux_claude --local-web)"
+if grep -qx 'NONO_ARG: 8080' <<<"$out"; then pass "Linux: nono 0.80 with --local-web launches"; else fail "Linux: nono 0.80 with --local-web was refused"; fi
+out="$(FAKE_NONO_VERSION=0.79.0 run_fake_claude --local-web)"
+if grep -qx 'NONO_ARG: 8080' <<<"$out"; then pass "macOS: nono 0.79 with --local-web launches"; else fail "macOS: nono 0.79 with --local-web was refused"; fi
+for os in Linux Darwin; do
+  out="$(FAKE_UNAME=$os run_fake_claude --local-web --landlock-only)"
+  if grep -q 'landlock-only was removed' <<<"$out" && ! grep -q '^NONO_ARG:' <<<"$out"; then pass "$os: --landlock-only is refused with a clear message"; else fail "$os: --landlock-only was not refused clearly"; fi
+done
 out="$(run_fake_linux_claude --local-web --sandbox-policy landlock --)"
-if grep -q '^NONO_ARG:' <<<"$out" && [[ "$(grep -cx 'NONO_ARG: --sandbox-policy' <<<"$out")" == 1 ]]; then pass "Linux: a user --sandbox-policy launches without a duplicate"; else fail "Linux: a user --sandbox-policy was refused or duplicated"; fi
-out="$(run_fake_linux_claude --landlock-only)"
-if grep -q '^NONO_ARG:' <<<"$out" && ! grep -qx 'NONO_ARG: --sandbox-policy' <<<"$out"; then pass "Linux: --landlock-only alone does not weaken the sandbox"; else fail "Linux: --landlock-only alone changed the policy or did not launch"; fi
-out="$(run_fake_claude --local-web)"
-if ! grep -qx 'NONO_ARG: --sandbox-policy' <<<"$out" && grep -qx 'NONO_ARG: 443' <<<"$out"; then pass "macOS: --local-web keeps the default policy and ports"; else fail "macOS: --local-web changed the policy or ports"; fi
-out="$(run_fake_claude --local-web --landlock-only)"
-if grep -q 'Linux only' <<<"$out" && ! grep -q '^NONO_ARG:' <<<"$out"; then pass "macOS: --landlock-only is refused"; else fail "macOS: --landlock-only was accepted"; fi
+if grep -q '^NONO_ARG:' <<<"$out" && [[ "$(grep -cx 'NONO_ARG: --sandbox-policy' <<<"$out")" == 1 ]]; then pass "Linux: a user --sandbox-policy passes through once"; else fail "Linux: a user --sandbox-policy was refused or duplicated"; fi
 
 echo "--- bin/claude --minimax arg routing ---"
 has_minimax() { grep -qx 'NONO_ARG: --allow-domain' <<<"$1" && grep -qx 'NONO_ARG: api.minimax.io' <<<"$1"; }

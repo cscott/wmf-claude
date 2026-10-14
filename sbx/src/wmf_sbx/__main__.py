@@ -16,6 +16,7 @@ COMMANDS = {
     "exec": "wmf_sbx.exec",
     "image": "wmf_sbx.image",
     "login": "wmf_sbx.login",
+    "logs": "wmf_sbx.logs",
     "ls": "wmf_sbx.ls",
     "ls-remotes": "wmf_sbx.ls_remotes",
     "resolve": "wmf_sbx.resolve",

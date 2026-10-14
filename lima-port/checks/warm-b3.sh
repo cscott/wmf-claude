@@ -11,10 +11,12 @@
 #   cold   `create` of B3_REPO and its dependencies with no snapshot yet
 #          (--cold): its time, and the snapshot it makes
 #   warm   a commit on a new branch in the host repo of B3_REPO, then a
-#          second `create` of the same repos: it must start from the
-#          snapshot, check out that commit, have a working wiki, its own
-#          machine-id, and make the next generation; its time
-#   again  a third `create`, with nothing new: the warm time with no work
+#          second `create` of the same repos, with images.snapshotInterval
+#          0 (so it freezes): it must start from the snapshot, check out
+#          that commit, have a working wiki, its own machine-id, and make
+#          the next generation; its time, and the freeze's
+#   again  a third `create`, with the default snapshotInterval (1 day):
+#          warm, and no freeze, as the snapshot is minutes old; its time
 #   gc     `image gc` keeps the snapshots in use
 #   clean  remove the sandboxes (the snapshots stay; `wmf-sbx image prune`
 #          removes them)
@@ -34,6 +36,7 @@ WMF_SBX=${WMF_SBX:-${HERE:+$HERE/../../sbx/bin/wmf-sbx}}
 REPO=${B3_REPO:-gerrit:mediawiki/extensions/Cite}
 MEMORY=${B3_MEMORY:-4GiB}
 LIMA_HOME=${LIMA_HOME:-$HOME/.lima}
+SETTINGS=${XDG_CONFIG_HOME:-$HOME/.config}/wmf-sbx/settings.yaml
 STATE=${XDG_STATE_HOME:-$HOME/.local/state}/wmf-sbx/sandboxes
 LOGS=/tmp/claude-$(id -u)/warm-b3
 mkdir -p "$LOGS"
@@ -98,7 +101,10 @@ phase_warm() {
     && git -C "$host" -c user.name=b3 -c user.email=b3@example.org \
          commit -q --allow-empty -m "B3 check: a host commit after the snapshot"
   sha=$(git -C "$host" rev-parse HEAD)
-  timed_create b3b || { result "warm: create FAILED"; return 1; }
+  local cfg=$LOGS/settings-interval0.yaml
+  { [ -f "$SETTINGS" ] && grep -v '^images:' "$SETTINGS"; printf 'images:\n  snapshotInterval: 0m\n'; } > "$cfg"
+  timed_create b3b --config "$cfg" || { result "warm: create FAILED"; return 1; }
+  grep -E '^\+ snapshot .*frozen in' "$LOGS/b3b.log" | sed 's/^/   | /'
   grep -q '^+ warm: from snapshot' "$LOGS/b3b.log" || fail "the create was not warm"
   local got; got=$(in_vm b3b "git -C '$host' rev-parse HEAD")
   [ "$got" = "$sha" ] && echo "-- the host's new commit is checked out" || fail "HEAD is $got, not $sha"
@@ -119,7 +125,10 @@ phase_again() {
   phase again
   timed_create b3c || { result "again: create FAILED"; return 1; }
   done_with b3c
-  grep -q '^+ warm: from snapshot' "$LOGS/b3c.log" && result "again: ok" || result "again: not warm FAILED"
+  grep -E '^\+ no new snapshot' "$LOGS/b3c.log" | sed 's/^/   | /'
+  if ! grep -q '^+ warm: from snapshot' "$LOGS/b3c.log"; then result "again: not warm FAILED"
+  elif ! grep -q '^+ no new snapshot' "$LOGS/b3c.log"; then result "again: it froze FAILED"
+  else result "again: ok"; fi
 }
 
 phase_gc() {
@@ -146,5 +155,5 @@ echo "== $(limactl --version 2>&1), $(qemu-img --version | head -1)"
 case "${1:-}" in
   cold|warm|again|gc|clean) "phase_$1" ;;
   all) phase_cold && phase_warm && phase_again; phase_gc; phase_clean ;;
-  *) sed -n '2,29p' "${BASH_SOURCE[0]:-/dev/stdin}"; exit 2 ;;
+  *) sed -n '2,31p' "${BASH_SOURCE[0]:-/dev/stdin}"; exit 2 ;;
 esac

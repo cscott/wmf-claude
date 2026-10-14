@@ -458,6 +458,20 @@ def usable_snapshot(skey, env, run=subprocess.run):
     return found
 
 
+def _ago(delta):
+    minutes = int(delta.total_seconds() // 60)
+    return f"{minutes // 60} h {minutes % 60} min" if minutes >= 60 else f"{minutes} min"
+
+
+def _duration(delta):
+    """As settings.yaml writes it: 1d, 12h, 30m."""
+    s = int(delta.total_seconds())
+    for unit, n in (("d", 86400), ("h", 3600), ("m", 60)):
+        if s and s % n == 0:
+            return f"{s // n}{unit}"
+    return f"{s // 60}m"
+
+
 def gc_old_images(key, env, config, say):
     """At the end of a create: `image gc`, keeping the sandbox's own
     image. A failure is a warning: the sandbox does not depend on it."""
@@ -868,7 +882,17 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
               file=sys.stderr)
         return 1
 
-    if use_snapshots:
+    fresh = None
+    if snap and not args.cold:
+        made = snapshot_mod.created(snap[2])
+        age = (now or datetime.datetime.now(datetime.timezone.utc)) - made if made else None
+        if age is not None and age < image_mod.snapshot_interval(config):
+            fresh = age
+    if fresh is not None:
+        say(f"+ no new snapshot: {skey}/{snap[0]} is {_ago(fresh)} old "
+            f"(settings.yaml images.snapshotInterval: "
+            f"{_duration(image_mod.snapshot_interval(config))}); the sandbox stays on it")
+    elif use_snapshots:
         meta = {"golden": key, "nested": bool(args.nested),
                 "repos": [{"canonical": c, "path": p, "readOnly": ro} for c, p, ro in snap_repos]}
         try:

@@ -658,7 +658,7 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   only when there is none.
 - Golden image key: `WMF_SBX_GIT_HASH_OVERRIDE` replaces the HEAD commit (the engineer's
   choice over keying on tree hashes); the manifest's `commit` is the HEAD that was built.
-  At its end, `create` runs `image gc`: unused images older than `images.gcAge` (7 days).
+  At its end, `create` runs `image gc`: unused images older than `imageCache.gcAge` (7 days).
   `image prune` removes every unused image. An image is in use if a state file names it
   or an instance's disk has it in its backing chain (the qcow2 headers, read without
   `qemu-img`, so no lock on a running disk).
@@ -685,7 +685,7 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   (`refresh_repo`), runs `composer update`, `npm ci` where the lock file changed (a stamp in
   node_modules) and `update.php`. Snapshots borrow the host repos' objects (the engineer's
   choice over dissociating them): the key is a gc borrower, `snapshot-KEY`, and a host repo
-  without the entry makes the create cold. Golden images age (`images.maxAge`, an `epoch`
+  without the entry makes the create cold. Golden images age (`imageCache.maxAge`, an `epoch`
   input); snapshots do not. RAN 2026-10-13, the freeze only: the host's `create --nested
   --no-deps` of wmf-claude (Lima 2.3.0-beta.1) froze its snapshot and restarted on an
   overlay on it, and `status` showed the chain sandbox → snapshot → golden. RAN 2026-10-13
@@ -695,7 +695,7 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   `npm ci` skipped; the warm sandbox had the host's new commit, a working wiki
   (`showSiteStats`) and its own machine-id. Each freeze writes a full generation (the
   rebase onto the golden image copies the snapshot's data: 5 GiB per create), so a warm
-  create freezes only when its snapshot is older than `images.snapshotInterval` (1 day; the
+  create freezes only when its snapshot is older than `imageCache.snapshotInterval` (1 day; the
   engineer's choice over a fingerprint of what changed); a superseded one goes at the next
   `image gc` after an hour. The golden image is keyed on the
   wmf-claude HEAD, so in development every new commit makes the next create cold.

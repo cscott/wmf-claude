@@ -244,14 +244,14 @@ To keep the image you already have, set the override to its commit:
 override has the tree of the HEAD at its build, which `image ls` shows
 in parentheses.
 
-A golden image older than 14 days (settings.yaml `images: {maxAge:
+A golden image older than 14 days (settings.yaml `imageCache: {maxAge:
 14d}`) is built again at the next `create`, with the same inputs, so
 that new sandboxes get the Debian updates since. `--no-expire` (or
-`images: {expire: false}`) keeps the old one with a warning, for a demo
+`imageCache: {expire: false}`) keeps the old one with a warning, for a demo
 that must not wait for a build.
 
 At its end, `create` runs `wmf-sbx image gc`: it deletes the images that
-no sandbox uses and that are older than 7 days (settings.yaml `images:
+no sandbox uses and that are older than 7 days (settings.yaml `imageCache:
 {gcAge: 7d}`). `wmf-sbx image prune` deletes every unused image, to free
 disk space. `wmf-sbx image ls` lists the images and snapshots, and ends
 with what they and the sandboxes' own disks take on disk, and what
@@ -282,7 +282,7 @@ next `create` of the same set of repos (the same host paths, the same
 snapshot: it fetches, checks out and updates only what changed (`git
 fetch`, `composer update`, `npm ci` only where `package-lock.json`
 changed, `update.php`). If the snapshot it started from is older than a
-day (settings.yaml `images: {snapshotInterval: 1d}`), it then freezes
+day (settings.yaml `imageCache: {snapshotInterval: 1d}`), it then freezes
 the result as the newest snapshot; within the day it does not, and the
 next create fetches and updates a little more instead.
 How a repo got in (named, or as a dependency) does not matter, so the
@@ -305,7 +305,7 @@ keeps the snapshots.
   `create` of it is cold.
 - Snapshots are cached images: `image ls` lists them, `image gc`
   removes those that no sandbox uses and that are older than
-  `images.gcAge` (so a set of repos you have not created for a week is
+  `imageCache.gcAge` (so a set of repos you have not created for a week is
   cold again), and `image prune` removes every unused one. A snapshot
   keeps its golden image.
 - A new golden image (every 14 days, or a new wmf-claude) starts new
@@ -514,7 +514,7 @@ wmf-sbx rm NAME            # asks first; refuses if the agent has unfetched comm
 wmf-sbx rm --force NAME
 wmf-sbx rm --prune         # remotes and state of sandboxes whose VM is gone
 wmf-sbx rm --scan DIR      # remotes and gc entries, in the repos under DIR, of sandboxes with no state file
-wmf-sbx image gc           # golden images that no sandbox uses, older than images.gcAge
+wmf-sbx image gc           # golden images that no sandbox uses, older than imageCache.gcAge
 wmf-sbx image prune        # every golden image that no sandbox uses
 ```
 

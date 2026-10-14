@@ -210,7 +210,7 @@ control comes with `--sudo` mode.)
   before any session ran (D1), so no agent wrote to it; but what
   `create` ran (npm and composer install scripts, which also run in
   every cold create) now lives on in later sandboxes of the same repos,
-  until the golden image is 14 days old (`images.maxAge`) and every
+  until the golden image is 14 days old (`imageCache.maxAge`) and every
   snapshot on it goes cold. `--cold` starts over at once. The freeze
   removes the sandbox's identity (machine-id, SSH host keys, cloud-init
   state) and its setup logs. The guest writes its filesystem, not the

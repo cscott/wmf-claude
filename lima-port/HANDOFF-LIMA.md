@@ -1442,7 +1442,7 @@ clonefile option stays open for later. Decided with cananian,
     if an instance's chain names its file. `image rm` refuses an image
     in use.
   - `image gc`: removes the images that are unused **and** older than
-    `images.gcAge` (settings.yaml; default 7 days). `create` runs it
+    `imageCache.gcAge` (settings.yaml; default 7 days). `create` runs it
     after it is done, in place of today's prune of unused images older
     than 1 hour. `image prune` removes **every** unused image (to free
     disk space).
@@ -1488,12 +1488,12 @@ clonefile option stays open for later. Decided with cananian,
     freeze as the next generation.
   - **Age: the golden image's only.** Snapshots have no age of their
     own: a warm create refreshes them, and none is older than its
-    golden image. A golden image older than `images.maxAge`
+    golden image. A golden image older than `imageCache.maxAge`
     (settings.yaml; default 14 days) is rebuilt at the next `create`,
     even with the same inputs (a new generation of the cache entry: a
     golden file is never rewritten), and the snapshots on the old one
     go cold, each once. A cold create on a golden image with less than
-    a day left rebuilds it first. `--no-expire` and `images.expire:
+    a day left rebuilds it first. `--no-expire` and `imageCache.expire:
     false` keep an old golden image, with a warning to run `--cold`
     when convenient (for a demo).
   - **Flags:** `--cold` (ignore the snapshot, make a new one),
@@ -1517,7 +1517,7 @@ clonefile option stays open for later. Decided with cananian,
   The rebuild and the concurrent creates: `lima-port/checks/b4.sh`
   (not RAN; after the sync with track A). The blind run is a session.
   Built after B3 (cananian, 2026-10-14): a warm create freezes only
-  when its snapshot is older than `images.snapshotInterval` (1 day),
+  when its snapshot is older than `imageCache.snapshotInterval` (1 day),
   which saves the stop, the start and a 5 GiB generation per create;
   the next create fetches a little more instead.
 

@@ -63,7 +63,7 @@ packages: []
 # warning (as `create --no-expire` does once). A warm create freezes a
 # new snapshot only when the one it started from is older than
 # snapshotInterval. Durations: 14d, 12h, 30m, or a number of days.
-images: {}
+imageCache: {}
   # gcAge: 7d
   # maxAge: 14d
   # expire: true

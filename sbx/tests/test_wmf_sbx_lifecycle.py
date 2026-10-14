@@ -567,7 +567,7 @@ class CreateTests(Env):
 
     def test_the_next_create_of_the_same_repos_is_warm(self):
         with open(self.config, "w") as f:   # freeze at every create
-            f.write("images:\n  snapshotInterval: 0m\n")
+            f.write("imageCache:\n  snapshotInterval: 0m\n")
         self.assertEqual(self.create("--name", "one"), 0, self.err)
         (_key, _g1, first, _m), = self.snapshots()
         self.assertEqual(self.create_tracking("--name", "two"), 0, self.err)
@@ -585,7 +585,7 @@ class CreateTests(Env):
         (_key, _g, first, _m), = self.snapshots()
         self.assertEqual(self.create("--name", "two"), 0, self.err)
         self.assertIn("+ no new snapshot:", self.err)
-        self.assertIn("images.snapshotInterval: 1d)", self.err)
+        self.assertIn("imageCache.snapshotInterval: 1d)", self.err)
         self.assertEqual(len(self.snapshots()), 1)
         self.assertNotIn(("stop", "wmf-sbx-two"), self.lima.calls)
         self.assertEqual(state_mod.load("two", self.env)["snapshot"], first)
@@ -748,7 +748,7 @@ class CreateTests(Env):
 
     def test_the_gc_age_is_a_setting(self):
         with open(self.config, "w") as f:
-            f.write("images:\n  gcAge: 2d\n")
+            f.write("imageCache:\n  gcAge: 2d\n")
         now = datetime.datetime.now(datetime.timezone.utc)
         self.date_image((now - datetime.timedelta(days=3)).isoformat(timespec="seconds"))
         self.assertEqual(self.create("--name", "demo", inputs=False), 0, self.err)

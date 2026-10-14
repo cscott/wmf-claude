@@ -207,11 +207,11 @@ class GcTests(unittest.TestCase):
         self.assertEqual(image.parse_duration("12h"), datetime.timedelta(hours=12))
         self.assertEqual(image.parse_duration(3), datetime.timedelta(days=3))
         with self.assertRaisesRegex(image.ImageError, "not a duration"):
-            image.gc_age({"images": {"gcAge": "a week"}})
+            image.gc_age({"imageCache": {"gcAge": "a week"}})
 
 
 class GoldenAgeTests(unittest.TestCase):
-    """images.maxAge (track B3): the golden image is rebuilt, with the
+    """imageCache.maxAge (track B3): the golden image is rebuilt, with the
     same inputs and a new epoch, once it is too old."""
 
     INPUTS = {"arch": "x86_64", "k": 1}
@@ -261,7 +261,7 @@ class GoldenAgeTests(unittest.TestCase):
 
     def test_no_expire_keeps_it_with_a_warning_unless_renewed(self):
         old = self.entry(self.INPUTS, 20 * self.day)
-        for kw in ({"expire": False}, {"config": {"images": {"expire": False}}}):
+        for kw in ({"expire": False}, {"config": {"imageCache": {"expire": False}}}):
             key, note = self.choose(**kw)
             self.assertEqual(key, old)
             self.assertIn("--cold", note)
@@ -270,7 +270,7 @@ class GoldenAgeTests(unittest.TestCase):
 
     def test_max_age_is_a_setting(self):
         old = self.entry(self.INPUTS, 3 * self.day)
-        self.assertNotEqual(self.choose(config={"images": {"maxAge": "2d"}})[0], old)
+        self.assertNotEqual(self.choose(config={"imageCache": {"maxAge": "2d"}})[0], old)
 
     def test_min_left_renews_an_image_about_to_expire(self):
         old = self.entry(self.INPUTS, 13 * self.day + datetime_hours(12))

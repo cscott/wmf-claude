@@ -5,16 +5,20 @@
 
 import argparse
 import contextlib
+import importlib
 import io
+import json
 import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import wmf_sbx.cli as cli  # noqa: E402
 import wmf_sbx.resolve as resolve  # noqa: E402
+from wmf_sbx.__main__ import COMMANDS  # noqa: E402
 
 
 def demo_parser():
@@ -231,6 +235,121 @@ class UnknownSectionTests(unittest.TestCase):
             resolve.load_config(path, warn=said.append)
             self.assertEqual(len(said), 1, said)
             self.assertIn(f"{path}: unknown section `images:`; ignored", said[0])
+
+
+
+# The commands that still parse their arguments by hand
+# (lima-port/PLAN-SETTINGS-DEFAULTS.md, "Follow-ups").
+NOT_YET = {"logs", "resume", "run"}
+
+
+class _Captured(Exception):
+    pass
+
+
+def command_parser(verb):
+    """(parser, section) that `wmf-sbx VERB`'s main hands to
+    cli.parse_args, before parse_args touches it."""
+    got = []
+
+    def capture(parser, argv, section, **kw):
+        got.append((parser, section))
+        raise _Captured
+    module = importlib.import_module(COMMANDS[verb])
+    with mock.patch.object(cli, "parse_args", capture), \
+            contextlib.redirect_stderr(io.StringIO()), \
+            contextlib.redirect_stdout(io.StringIO()):
+        try:
+            module.main(["x"])
+        except _Captured:
+            pass
+    assert len(got) == 1, f"{verb}: main called cli.parse_args {len(got)} times"
+    return got[0]
+
+
+def wrong_types(parser):
+    """A settings section that gives every key of `parser` a value of
+    the wrong type."""
+    out = {}
+    for key, action in cli.settable(parser).items():
+        probe = []
+        for value in ("nope", 5, True, ["a"]):
+            try:
+                cli._check(action, value, key)
+            except cli.SettingsError:
+                probe.append(value)
+        out[key] = probe[0]
+    for name, sub in cli.subparsers(parser).items():
+        out[name] = wrong_types(sub)
+    return out
+
+
+def leaf_argvs(parser):
+    """A command line for each leaf of `parser` (each image subcommand),
+    with its positionals filled in and --no-settings, which a REMAINDER
+    positional would swallow if it came last."""
+    subs = cli.subparsers(parser)
+    if subs:
+        return [[name] + argv for name, sub in subs.items() for argv in leaf_argvs(sub)]
+    argv = ["--no-settings"]
+    for action in parser._actions:
+        if not action.option_strings and action.nargs in (None, "+"):
+            argv.append("x")
+    return [argv]
+
+
+class UniformTests(unittest.TestCase):
+    """Every command takes its option defaults from settings.yaml the
+    same way."""
+
+    def test_every_command_but_the_follow_ups_uses_the_helper(self):
+        for verb in COMMANDS:
+            path = importlib.import_module(COMMANDS[verb]).__file__
+            with open(path, encoding="utf-8") as f:
+                uses = "cli_mod.parse_args(" in f.read()
+            with self.subTest(verb=verb):
+                self.assertEqual(uses, verb not in NOT_YET,
+                                 "a command on the helper leaves NOT_YET")
+
+    def test_every_option_has_one_key_and_no_constant_flag(self):
+        for verb in sorted(set(COMMANDS) - NOT_YET):
+            with self.subTest(verb=verb):
+                parser, section = command_parser(verb)
+                self.assertEqual(section, verb)
+                for p in cli.all_parsers(parser):
+                    options = [a for a in p._actions if a.option_strings
+                               and not isinstance(a, argparse._HelpAction)]
+                    for a in options:
+                        self.assertNotIn(a.dest, cli.OWN_DESTS, f"{p.prog} has its own --{a.dest}")
+                    keys = cli.settable(p)   # refuses a store_true
+                    self.assertEqual(len(keys), len(options), f"{p.prog}: two options, one key")
+                    self.assertFalse(set(keys) & set(cli.subparsers(p)), p.prog)
+
+    def test_no_settings_reads_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = os.path.join(tmp, "settings.yaml")
+            missing = os.path.join(tmp, "missing.yaml")
+            for verb in sorted(set(COMMANDS) - NOT_YET):
+                parser, _ = command_parser(verb)
+                bad = wrong_types(parser)
+                with open(config, "w", encoding="utf-8") as f:
+                    json.dump({verb: bad}, f)   # JSON is YAML
+                for argv in leaf_argvs(parser):
+                    with self.subTest(verb=verb, argv=argv):
+                        warned = []
+                        args, _ = cli.parse_args(command_parser(verb)[0], argv, verb,
+                                                 config_default=config, warn=warned.append)
+                        want, _ = cli.parse_args(command_parser(verb)[0], argv, verb,
+                                                 config_default=missing)
+                        self.assertEqual(vars(args), dict(vars(want), config=config))
+                        self.assertEqual(warned, [])
+                        if any(v != {} for v in bad.values()):
+                            # without --no-settings, the same file is an error
+                            with contextlib.redirect_stderr(io.StringIO()), \
+                                    self.assertRaises(SystemExit):
+                                cli.parse_args(command_parser(verb)[0],
+                                               [a for a in argv if a != "--no-settings"],
+                                               verb, config_default=config)
 
 
 if __name__ == "__main__":

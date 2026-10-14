@@ -304,7 +304,31 @@ session runs. The proxy lands before the trusted-VM session.
   working. Options: (a) a second `guestfwd` at a fixed guest address to
   a per-sandbox Unix socket that each `resume` binds; (b) nono proxy's
   `--credential` with the host token, which also starts track L's
-  shared login. Decide after A2.0.
+  shared login. Decide after A2.0. **Decided by A2.3:** (a), on
+  192.168.5.100:3129 (`cred.sock`); nothing more to do here.
+- The session's network is the egress proxy's variables (as `exec` has
+  them, `vm.guest_proxy_env`), with no nono proxy in between. apt's
+  proxy file, the fake DNS and the egress CA are guest configuration and
+  need no change. Root can undo any of them; that only cuts root off,
+  since `restrict=on` and the host proxy decide what leaves. The
+  invariants that matter here exist already ("no route out but the
+  egress proxy", "names resolve only to the fake block").
+- **`--sudo --nested`: a loopback forwarder.** An inner VM's only way out
+  is 192.168.5.2, the outer VM's loopback. In contained mode the
+  session's nono proxy listens there; with `--sudo` nothing does (the
+  same gap `wmf-sbx exec` has today for an inner `create`). Add a
+  forwarder in the outer VM, a root-owned systemd unit on
+  `127.0.0.1:PORT` to 192.168.5.100:3128, and point the session's proxy
+  variables at it, so `image.guest_proxy_env`'s rewrite gives inner VMs
+  `192.168.5.2:PORT`. Do it for every egress sandbox with `nested`
+  (contained mode too): `exec`'s inner creates then work as well.
+- **`--sudo --nested`: the CA for inner VMs.** In contained mode they
+  trust nono's session CA (`image.extra_ca_files` takes
+  `$SSL_CERT_FILE`); without nono that variable is unset. Inner VMs need
+  the egress CA the outer VM trusts (from its `caCerts`), or every TLS
+  request through the forwarder fails.
+- The nested warning's wording: under `--sudo` there are no nono grants
+  to warn about (the agent has root, which is more); say that instead.
 - `exec --engineer` is meaningless with `--sudo`: say so.
 - `sbx/SECURITY.md`: the residuals of D9 (the guest side of every
   channel is hostile; the two-user split is not a boundary).

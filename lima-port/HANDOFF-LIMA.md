@@ -1513,7 +1513,13 @@ clonefile option stays open for later. Decided with cananian,
   dependencies (time, bytes fetched, disk); a warm create after an
   upstream change brings it in; a blind run in a sandbox from a
   snapshot; a golden rebuild (old sandboxes boot, gc keeps their
-  files); two creates at once.
+  files); two creates at once. The first two RAN in B3 (warm-b3.sh).
+  The rebuild and the concurrent creates: `lima-port/checks/b4.sh`
+  (not RAN; after the sync with track A). The blind run is a session.
+  Later, not B4: skip the freeze when a warm create changed nothing (a
+  fingerprint of the repos' HEADs, the lock files and composer's
+  installed.json in the snapshot's metadata), which saves the stop,
+  the start and a 5 GiB generation per create.
 
 **Track L: a shared login (D6, after the MVP; first priority)**
 

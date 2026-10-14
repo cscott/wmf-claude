@@ -196,6 +196,49 @@ warning acknowledged (`SECURITY.md` §3 says why that is safe in a
 sandbox). Delete that file to see them all again. Sessions always skip
 `bin/claude`'s "Press Enter" pause.
 
+## Defaults from settings.yaml
+
+Every option of every command (but `resume`, `run` and `logs`, for now)
+takes its default from `~/.config/wmf-sbx/settings.yaml`. For `--some-flag` of `wmf-sbx VERB`,
+the key is `VERB.someFlag` (the option's name in camelCase). A
+subcommand nests:
+
+```yaml
+create:
+  cpus: 8
+  cloneMissing: true
+  vmType: qemu
+rm:
+  scan: [~/Wikimedia]       # a list option takes a list
+image:
+  build:
+    keepBuilder: true
+```
+
+- The command line wins over settings.yaml, which wins over the code's
+  own default. Each flag is a pair, so a default from settings can be
+  undone: `--no-cold`, `--no-force`, `--no-dry-run`. A list on the
+  command line replaces the list from settings.
+- `null` is the same as no key: wmf-sbx chooses, as it does with nothing
+  set (for `vmType`, `memory`, `egressProxy`...).
+- `--no-settings` (after the verb) ignores these defaults for one
+  command; `session: {settings: false}` ignores them for every command,
+  and `--settings` then turns them on for one. This switch is for option
+  defaults only: `repos:`, `environment:`, `packages:` and `imageCache:`
+  are always read. `--config PATH` reads another file.
+- `--help` shows each option's key, and the value from settings when
+  there is one: `[settings: create.cpus: 8]`.
+- A key that the command does not have, an unknown section, or an
+  unknown `session:` key gets a warning and is ignored, so a stable and
+  a development wmf-sbx can share one file. A value of the wrong type
+  (`cold: yes`, `cpus: four`) is an error.
+- A value in settings.yaml is a request from you, as one on the command
+  line is: wmf-sbx does not second-guess it. `create: {sudo: true}`,
+  `create: {nested: true}`, `exec: {engineer: true}` and
+  `rm: {force: true}` lower safety for every command that does not undo
+  them; `create: {memory: 1GiB}` gets 1 GiB, `--nested` or not. Caveat
+  emptor.
+
 ## Claude Code version
 
 The golden image holds one Claude Code release, and sandboxes do not

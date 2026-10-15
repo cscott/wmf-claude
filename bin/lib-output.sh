@@ -7,6 +7,7 @@ bold()  { printf '\033[1m%s\033[0m' "$*"; }
 dim()   { printf '\033[2m%s\033[0m' "$*"; }
 green() { printf '\033[32m%s\033[0m' "$*"; }
 red()   { printf '\033[31m%s\033[0m' "$*"; }
+yellow(){ printf '\033[33m%s\033[0m' "$*"; }
 
 step() {
   printf '\n  %s %s\n' "$(bold ">")" "$(bold "$1")"

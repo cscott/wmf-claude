@@ -392,6 +392,32 @@ built yet):
   session's shim address, as the credential proxy chains to the outer
   one. Later.
 
+Measurements on the engineer's host (Ubuntu 24.04, GNOME on Wayland,
+GNOME Terminal), RAN 2026-10-15:
+
+- `echo hi | wl-copy`: the text goes to CLIPBOARD (Ctrl+V), not PRIMARY
+  (middle click), as documented; `--primary` sets PRIMARY (not run yet).
+  The command returns at once, and the text still pastes after it: the
+  forked owner serves it. So the listener runs `wl-copy` and does not
+  wait on it.
+- The same from a process with no terminal (`setsid sh -c 'sleep 3;
+  echo bg | wl-copy' </dev/null >/dev/null 2>&1 &`, the focus in another
+  window): works. GNOME 46 has no data-control protocol, and this was
+  the risk for a listener with no window; it holds.
+- `xclip -selection clipboard` works too (the engineer uses it every
+  day): a fallback on the same host, through XWayland.
+
+Still to measure before building (the egress-proxy case first):
+
+- the logging shim in a live session (step 1a), with `WAYLAND_DISPLAY`
+  from the agent's settings `env`: the toast says "copied", and two
+  calls arrive (plain, then `--primary`). If settings `env` comes after
+  Claude Code's probe, the launcher must set the variable;
+- from a child of Claude Code in a contained egress session: a TCP
+  connection to `192.168.5.100:3129` (opened with `--open-port`) works,
+  one to an unopened port is refused, and the round trip through the
+  guestfwd's per-connection `socat` is well inside 2 s.
+
 Open questions:
 
 - Does nono (`--landlock-only` and the proxy mode) let the shim, a

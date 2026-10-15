@@ -33,6 +33,10 @@ puts it into Claude Code's requests; the VM gets a phantom. Without a
 credential, Claude Code asks you to log in, and that login stays in this
 VM.
 
+A sandbox with the auth proxy (authproxy.py) uses none of these: its
+login is the shared one, which `/login` in any such sandbox made; the
+host egress proxy keeps it, and the session syncs the phantoms.
+
 In a sandbox made with native_copy (behind the egress proxy, and no
 `session: {native_copy: false}` in settings.yaml), a mouse selection in
 Claude Code goes to the host's clipboard (clipboard.py): for the length
@@ -46,6 +50,7 @@ import os
 import re
 import sys
 
+from . import authproxy as authproxy_mod
 from . import cli as cli_mod
 from . import clipboard as clipboard_mod
 from . import color as color_mod
@@ -196,13 +201,15 @@ def main(argv=None, lima=None, env=None):
         if state.get("nested") and not state.get("sudo"):
             nested_mod.stop_inner(name, lima=lima,
                                   log=lambda m: print(color_mod.dim(m), file=sys.stderr))
-        source = credproxy_mod.host_source(env)
-        credproxy_mod.upstream_url(env)
+        auth = authproxy_mod.enabled(state)
+        source = None if auth else credproxy_mod.host_source(env)
+        if not auth:
+            credproxy_mod.upstream_url(env)
     except (state_mod.StateError, vm_mod.VmError, lima_mod.LimaError,
             credproxy_mod.CredentialError) as e:
         print(color_mod.error(f"error: {e}"), file=sys.stderr)
         return 1
-    if source is None:
+    if source is None and not auth:
         print(color_mod.dim(
             "note: no Claude credential on the host ($ANTHROPIC_API_KEY, "
             f"$CLAUDE_CODE_OAUTH_TOKEN, {credproxy_mod.token_file(env)}, or a Claude Code "
@@ -213,10 +220,19 @@ def main(argv=None, lima=None, env=None):
         found = has_conversation(name, state["primaryDir"], lima)
         attached = attached if found is None else found
     claude_args = claude_args_for(getattr(args, "continue"), claude_args, attached)
-    proxy = clip = None
+    proxy = clip = syncer = None
     try:
         cred_path = None
-        if source is not None:
+        if auth:
+            syncer = authproxy_mod.Syncer(
+                name, lima=lima, env=env,
+                log=lambda m: print(color_mod.warning(m), file=sys.stderr))
+            syncer.start()
+            if authproxy_mod.read_host(env) is None:
+                print(color_mod.dim(
+                    "note: no shared login yet. Run /login in this session once; the other "
+                    "auth-proxy sandboxes then use it too."), file=sys.stderr)
+        elif source is not None:
             proxy, cred_path = start_proxy(name, source, lima=lima, env=env,
                                            egress=egress_mod.enabled(state),
                                            nested=bool(state.get("nested")))
@@ -243,6 +259,8 @@ def main(argv=None, lima=None, env=None):
             stop_proxy(name, proxy, lima=lima)
         if clip is not None:
             clip.stop()
+        if syncer is not None:
+            syncer.stop()
     if result.returncode == 0 and starts_a_conversation(claude_args):
         set_attached(name, env=env)
         session_mod.mark_first_run_seen(env)

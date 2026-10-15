@@ -16,6 +16,7 @@ Usage:
 import argparse
 import sys
 
+from . import authproxy as authproxy_mod
 from . import cli as cli_mod
 from . import color as color_mod
 from . import egress as egress_mod
@@ -63,6 +64,11 @@ def main(argv=None, lima=None, env=None):
         for text, good in egress_mod.status_lines(name, env, running=vm_status == "Running"):
             print(f"egress    {text}" if good else f"egress    {color_mod.error('PROBLEM')} {text}")
             ok = ok and good
+    if authproxy_mod.enabled(state):
+        print("sign-in   the shared login (auth proxy): "
+              + ("present" if authproxy_mod.read_host(env) else "none yet; /login in a session"))
+    else:
+        print("sign-in   the host's credential, through the credential proxy")
     if vm_status is None:
         ok = False
     elif vm_status == "Running":

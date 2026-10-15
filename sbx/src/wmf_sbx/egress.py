@@ -71,9 +71,9 @@ CLIP_PORT = 3130
 FORWARD_PORT = 3128
 FORWARD_KEY = "egressForward"
 PROFILE = os.path.join(kit.REPO_ROOT, "profiles", "wmf-engineer.json")
-# The host's own variable that replaces PROFILE for the egress proxy: for
-# measurements (track L5: a profile with nono's OAuth capture provider,
-# lima-port/checks/oauth-l5.sh), read when the proxy is started.
+# The host's own variable that replaces the egress proxy's profile (PROFILE,
+# or the auth proxy's): for measurements (lima-port/checks/oauth-l5.sh),
+# read when the proxy is started.
 PROFILE_VAR = "WMF_SBX_EGRESS_PROFILE"
 # The guest's apt sources (/etc/apt/mirrors/debian*.list in the image's
 # Debian 13 cloud base) are all on this host.
@@ -332,7 +332,10 @@ def proxy_argv(name, env=None, nono="nono"):
     # Imported here: session and nested import vm, which imports this module.
     from . import nested as nested_mod
     from . import session as session_mod
-    profile = (os.environ if env is None else env).get(PROFILE_VAR) or PROFILE
+    from . import authproxy as authproxy_mod
+    auth = authproxy_mod.enabled(state_mod.load(name, env))
+    profile = ((os.environ if env is None else env).get(PROFILE_VAR)
+               or (authproxy_mod.write_profile(env) if auth else PROFILE))
     argv = [nono, "proxy", "-v", "--no-auth", "--listen", "127.0.0.1", "--profile", profile]
     domains = (list(session_mod.REGISTRY_DOMAINS) + list(DEBIAN_DOMAINS)
                + list(SETUP_DOMAINS))
@@ -351,10 +354,15 @@ def proxy_argv(name, env=None, nono="nono"):
 def proxy_config(name, env=None, nono="nono"):
     """What the wrapper needs to start the proxy: its argv and the
     variables to set, the upstream (or None), and where to write the port."""
+    from . import authproxy as authproxy_mod
+    # nono writes its state (update check) there; under a session's nono
+    # ~/.local/state/nono is not writable. With the auth proxy, it is
+    # shared: nono's OAuth capture store is in it.
+    state_home = (authproxy_mod.nono_state_dir(env)
+                  if authproxy_mod.enabled(state_mod.load(name, env))
+                  else os.path.join(egress_dir(name, env), "state"))
     return {"argv": proxy_argv(name, env, nono=nono),
-            "env": {# nono writes its state (update check) here; under a
-                    # session's nono ~/.local/state/nono is not writable.
-                    "XDG_STATE_HOME": os.path.join(egress_dir(name, env), "state")},
+            "env": {"XDG_STATE_HOME": state_home},
             "upstream": upstream(env),
             "portFile": port_file(name, env),
             "pidFile": _path(name, "wrapper.pid", env),

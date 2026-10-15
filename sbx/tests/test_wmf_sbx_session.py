@@ -918,6 +918,39 @@ class ResumeMainTests(Env):
         (launch,) = self.launches()
         self.assertFalse(any(a.startswith("--open-port") for a in launch))
 
+    def auth_sandbox(self):
+        import wmf_sbx.authproxy as authproxy
+        st = state_mod.load("demo", self.env)
+        st[authproxy.STATE_KEY] = True
+        state_mod.save(st, self.env)
+        return authproxy
+
+    def test_an_auth_proxy_sandbox_uses_the_shared_login_not_the_credential(self):
+        authproxy = self.auth_sandbox()
+        self.assertEqual(self.resume("--", "-p", "hi", env={"ANTHROPIC_API_KEY": SECRET}), 0,
+                         self.err)
+        self.assertFalse([i for i in self.inputs if i and "ANTHROPIC_BASE_URL" in i])
+        (launch,) = self.launches()
+        self.assertFalse(any(a.startswith("--open-port") for a in launch))
+        self.assertIn("no shared login yet", self.err)
+        reads = [s for s in self.lima.shells() if authproxy.GUEST_CREDENTIALS in s]
+        # synced before the session and after it
+        shells = self.lima.shells()
+        self.assertLess(shells.index(reads[0]), shells.index(launch))
+        self.assertGreater(len(shells) - 1 - shells[::-1].index(reads[-1]),
+                           shells.index(launch))
+
+    def test_an_auth_proxy_sandbox_gets_the_shared_login(self):
+        authproxy = self.auth_sandbox()
+        phantom = {"accessToken": "sk-ant-oat01-p", "refreshToken": "nono_p",
+                   "expiresAt": 5}
+        authproxy.write_host(phantom, self.env)
+        self.assertEqual(self.resume("--", "-p", "hi"), 0, self.err)
+        self.assertNotIn("no shared login yet", self.err)
+        self.assertNotIn("log in", self.err)
+        writes = [i for i in self.inputs if i and "nono_p" in i]
+        self.assertEqual(json.loads(writes[0]), {"claudeAiOauth": phantom})
+
     def test_a_broken_invariant_starts_no_session(self):
         self.lima.invariants = [False] * len(vm.INVARIANTS)
         self.assertEqual(self.resume(), 1)

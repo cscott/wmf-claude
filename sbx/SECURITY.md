@@ -158,6 +158,29 @@ control comes with `--sudo` mode.)
   one-year `setup-token` token for model requests only, in a throwaway
   VM with no repo, no mount and no session, and deletes the VM. A login made in the VM (no host credential) stays in
   the VM until `rm`.
+- **Claude, with the auth proxy** (`create --auth-proxy`, or the default
+  behind the egress proxy when the host has no inference token;
+  `authproxy.py`). The sandbox's egress proxy (`nono proxy`) runs nono's
+  `claude_code` OAuth capture provider: `/login` in the VM goes through
+  it to platform.claude.com, it keeps the real access and refresh tokens
+  in its capture store on the host (owner-only; nono keeps them up to 90
+  days), and the VM gets phantoms. On api.anthropic.com it puts the real
+  token in place of the phantom; it refreshes through the same rewrite.
+  It refuses `/v1/mcp_servers`, `/mcp-registry/**` (claude.ai's
+  connectors, which would reach the engineer's mail and documents) and
+  `/api/event_logging/**`; it allows the rest of api.anthropic.com,
+  Remote Control and sessions included. So **the agent can spend the
+  login while the VM runs (not only during a session), and drive
+  Remote Control and sessions with it, but cannot read the real tokens**
+  (RAN: 0 in the guest's files and process environments). Every
+  auth-proxy sandbox's proxy uses the one store, so the login and its
+  phantoms are shared: an agent in one such sandbox can spend the login
+  that the engineer made in another. `resume` copies the phantoms
+  between the guest and the host (only the `claudeAiOauth` record, only
+  when its refresh token is one of nono's phantoms); an agent can write
+  phantoms of its own there, which reach the other sandboxes, but the
+  store resolves only phantoms it issued. Signing out every sandbox is
+  `rm -r ~/.local/state/wmf-sbx/auth`.
 - **A nested sandbox's credential** is its enclosing session's phantom.
   `resume` writes the session's phantom and proxy address into root's
   marker `/etc/wmf-sbx/nested` (0640, group `agent`), and a nested

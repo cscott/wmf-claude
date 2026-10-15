@@ -85,9 +85,12 @@ primary repo is that directory.
    The same file holds your preferences for every sandbox ("Preferences"),
    extra environment variables and Debian packages.
 
-2. **Sign in once:** `wmf-sbx login` ("Sign-in"). It needs a golden image,
-   so on a new machine make the first sandbox with `create --no-start`,
-   sign in, then `wmf-sbx resume` it.
+2. **Sign in once.** On QEMU (Linux), nothing to do now: run `/login` in
+   your first sandbox's first session, and later sandboxes share that
+   login ("Sign-in"). On vz (macOS), or with `--no-egress-proxy`, run
+   `wmf-sbx login`; it needs a golden image, so on a new machine make the
+   first sandbox with `create --no-start`, sign in, then `wmf-sbx resume`
+   it.
 
 3. **Make a sandbox; `create` then starts Claude Code in it:**
 
@@ -114,7 +117,40 @@ primary repo is that directory.
 
 ## Sign-in
 
-Sign in once, for every sandbox, without Claude Code on the host:
+There are two ways, and each sandbox uses one of them, chosen at
+`create`:
+
+- **The shared login (the auth proxy).** `/login` in a session, as in
+  Claude Code anywhere. The host egress proxy completes the sign-in and
+  keeps the login on the host; Claude Code in the VM gets only stand-ins
+  ("phantoms") that the proxy swaps for the real tokens. Every sandbox
+  with the auth proxy shares the one login: sign in once, in any of
+  them, and the next `resume` of each of the others has it. It is a full
+  login: Remote Control, sessions, `/usage` and your organization's
+  managed settings work; claude.ai's connectors (`/v1/mcp_servers`) and
+  the telemetry stream are refused. It needs the egress proxy (QEMU).
+- **The inference-only token** (`wmf-sbx login`, or a key). Works on
+  every VM type, with or without the egress proxy.
+
+Which one a new sandbox gets: `create --auth-proxy` or `--no-auth-proxy`
+(settings.yaml: `create: {authProxy: true}`), or else the shared login
+when the sandbox is behind the egress proxy and the host has no
+inference token or key (items 1 to 3 below); otherwise the token.
+`--auth-proxy` without the egress proxy is an error. `wmf-sbx status
+NAME` shows which one a sandbox uses.
+
+### The shared login
+
+The real tokens are in nono's capture store under
+`~/.local/state/wmf-sbx/auth/state/`, which every auth-proxy sandbox's
+egress proxy uses, and the current phantoms in
+`~/.local/state/wmf-sbx/auth/credentials.json`. `resume` copies the
+newest phantoms into the sandbox before the session, every minute during
+it, and back to the host after it (only the `claudeAiOauth` record, and
+only when it holds phantoms). `rm -r ~/.local/state/wmf-sbx/auth` signs
+every sandbox out; the next one asks for `/login` again.
+
+### The inference-only token
 
 ```bash
 wmf-sbx login
@@ -142,7 +178,8 @@ stand-in that is good for that session's proxy.
    (Linux: `~/.claude/.credentials.json`; macOS: the keychain). `resume`
    reads it for each request, so it uses the host's refreshed login; but
    it expires when Claude Code has not run on the host for some hours.
-   `WMF_SBX_HOST_LOGIN=0` leaves it out.
+   `WMF_SBX_HOST_LOGIN=0` leaves it out. It does not count when `create`
+   chooses between the two ways.
 
 With none of these, Claude Code asks you to log in, and that login stays
 in the VM: every new sandbox asks again.
@@ -514,6 +551,9 @@ wmf-sbx create PRIMARY[:ro] [EXTRA[:ro] ...] [options]
 - `--no-egress-proxy`: the VM is not behind the host's egress proxy
   ("The egress proxy"). `--egress-proxy` makes `create` fail, not warn,
   when the proxy cannot be used.
+- `--auth-proxy` / `--no-auth-proxy`: sign in with the shared login or
+  the inference-only token ("Sign-in"). `--auth-proxy` needs the egress
+  proxy.
 - `--sudo`: the agent has passwordless sudo ("Two modes"). It needs the
   egress proxy, so QEMU, and cannot be combined with `--no-egress-proxy`.
   `--no-sudo` overrides `create: sudo: true` in `settings.yaml`.

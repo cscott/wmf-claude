@@ -225,12 +225,9 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
 
 ### Session, credentials, Claude Code
 
-- [ ] **Track L5: a full `/login` in the sandbox, captured by the host egress proxy**
-  (HANDOFF-LIMA, track L, L5). Planned with track A, not carried over when it closed.
-  Run `lima-port/checks/oauth-l5.sh` on the host; then choose nono's `oauth_capture`
-  in the host proxy (A1) or our own capture (A2), and build it narrowly. Decision
-  (cananian, 2026-10-15): the host egress path, not the in-guest nono session, so it
-  works in `--sudo`; `setup-token` stays for `--no-egress-proxy`.
+- [ ] **Track L6: measure the shared login** (HANDOFF-LIMA, track L, L6): run
+  `lima-port/checks/oauth-l6.sh` on the host. Rotation and two refreshes at once decide
+  whether the minute's sync is enough or wmf-sbx must be the only refresher.
 - [x] **The "update installed, restart to update" message on the first resume**: gone
   since `wmf-claude-setup` skips `claude update` (`WMF_CLAUDE_SKIP_UPDATE=1`) and the
   version is pinned (cananian, 2026-10-16).
@@ -1217,6 +1214,13 @@ A2.0 results (in the nested `dev` VM, nono 0.78.0, 2026-10-13):
     fail open) and Remote Control, `/feedback` and web fetch stay off; `/usage` shows the
     session and week limits (from the message responses) but "Could not refresh usage
     data". Turns work.
+- L5 `persist`: the login survives a stop and start of the sandbox (the store is on the
+  host's disk; the proxy is restarted with the VM).
+- The wider policy (default allow, `deny` with method `*`), RAN in the cloud container
+  through a standalone `nono proxy` 0.78: `/v1/mcp_servers?limit=1`, `/v1/mcp_servers/x`,
+  `/mcp-registry/v0/servers` and `/api/event_logging/v2/batch` (GET and POST) get nono's
+  403; `/api/hello` and `/api/oauth/profile` reach Anthropic. The query string is not
+  part of the match.
 - A shallow host repo (`git clone --depth`): `git clone --shared` copies the objects and
   writes no alternates file; `sandbox-repos.sh` accepts that (RAN).
 

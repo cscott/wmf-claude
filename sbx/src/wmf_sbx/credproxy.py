@@ -185,7 +185,29 @@ def nested_credential():
 
 
 def host_source(env=None, run=subprocess.run, platform=sys.platform):
-    """The host's credential as a Source, or None when it has none. A token
+    """The host's credential as a Source, or None when it has none: an
+    inference_source, else the host's own Claude Code login."""
+    env = os.environ if env is None else env
+    source = inference_source(env)
+    if source is not None:
+        return source
+    if env.get(HOST_LOGIN_VAR, "").strip() == "0":
+        return None
+    read = live_login_reader(env, run=run, platform=platform)
+    try:
+        if read() is None:
+            return None
+    except CredentialError:
+        pass   # expired: still the source; resume warns, and the proxy says why
+    where = "the keychain" if platform == "darwin" else claude_credentials_file(env)
+    return Source("oauth", f"the host's Claude Code login ({where})",
+                  lambda: _must(read()))
+
+
+def inference_source(env=None):
+    """The host's credential other than its own Claude Code login, as a
+    Source, or None: $ANTHROPIC_API_KEY, $CLAUDE_CODE_OAUTH_TOKEN, the
+    enclosing session's phantom (nested), or the token file. A token
     file that other users can read is refused."""
     env = os.environ if env is None else env
     if env.get(API_KEY_VAR):
@@ -209,17 +231,7 @@ def host_source(env=None, run=subprocess.run, platform=sys.platform):
             token = f.read().strip()
         if token:
             return Source("oauth", path, _static(token))
-    if env.get(HOST_LOGIN_VAR, "").strip() == "0":
-        return None
-    read = live_login_reader(env, run=run, platform=platform)
-    try:
-        if read() is None:
-            return None
-    except CredentialError:
-        pass   # expired: still the source; resume warns, and the proxy says why
-    where = "the keychain" if platform == "darwin" else claude_credentials_file(env)
-    return Source("oauth", f"the host's Claude Code login ({where})",
-                  lambda: _must(read()))
+    return None
 
 
 def _must(token):

@@ -935,6 +935,42 @@ class CreateTests(Env):
                          [False, True])
         self.assertEqual(len(snapshot.list_keys(self.env)), 2)
 
+    def test_the_auth_proxy_is_the_default_behind_the_egress_proxy_without_a_token(self):
+        import wmf_sbx.authproxy as authproxy
+        self.assertEqual(self.egress_create(), 0, self.err)
+        self.assertTrue(state_mod.load("demo", self.env)[authproxy.STATE_KEY])
+        self.assertIn("+ auth proxy", self.err)
+
+    def test_an_inference_token_keeps_the_credential_proxy(self):
+        import wmf_sbx.authproxy as authproxy
+        self.env["ANTHROPIC_API_KEY"] = "x"
+        self.assertEqual(self.egress_create(), 0, self.err)
+        self.assertNotIn(authproxy.STATE_KEY, state_mod.load("demo", self.env))
+        self.assertEqual(self.egress_create("--auth-proxy", name="two"), 0, self.err)
+        self.assertTrue(state_mod.load("two", self.env)[authproxy.STATE_KEY])
+
+    def test_no_auth_proxy_and_no_egress_proxy(self):
+        import wmf_sbx.authproxy as authproxy
+        self.assertEqual(self.egress_create("--no-auth-proxy"), 0, self.err)
+        self.assertNotIn(authproxy.STATE_KEY, state_mod.load("demo", self.env))
+        self.assertEqual(self.egress_create(flag="--no-egress-proxy", name="two"), 0, self.err)
+        self.assertNotIn(authproxy.STATE_KEY, state_mod.load("two", self.env))
+
+    def test_auth_proxy_needs_the_egress_proxy(self):
+        self.assertEqual(self.egress_create("--auth-proxy", flag="--no-egress-proxy"), 1)
+        self.assertIn("--auth-proxy needs the host egress proxy", self.err)
+        self.assertIsNone(state_mod.load("demo", self.env))
+        # nor when the egress proxy falls back (vz)
+        self.assertEqual(self.egress_create("--auth-proxy", "--vm-type", "vz", flag=None), 1)
+        self.assertIn("--auth-proxy needs the host egress proxy", self.err)
+
+    def test_settings_create_auth_proxy(self):
+        settings = os.path.join(self.tmp, "settings.yaml")
+        with open(settings, "w", encoding="utf-8") as f:
+            f.write("create:\n  authProxy: true\n")
+        self.assertEqual(self.egress_create("--config", settings, flag="--no-egress-proxy"), 1)
+        self.assertIn("--auth-proxy needs the host egress proxy", self.err)
+
     def test_no_egress_proxy_is_the_guests_own_route(self):
         self.assertEqual(self.egress_create(flag="--no-egress-proxy"), 0, self.err)
         self.assertNotIn("egress", state_mod.load("demo", self.env))

@@ -21,6 +21,7 @@ import shutil
 import subprocess
 import sys
 
+from . import authproxy as authproxy_mod
 from . import ci_deps as ci_mod
 from . import cli as cli_mod
 from . import color as color_mod
@@ -653,6 +654,13 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
                         "host); the VM has no route and no DNS of its own. "
                         "--no-egress-proxy: the guest's own route, nono in the guest "
                         "the only allowlist, and warm snapshots")
+    parser.add_argument("--auth-proxy", action=argparse.BooleanOptionalAction, default=None,
+                        help="sign in with /login in the sandbox: the host egress proxy "
+                        "keeps the login, shared by every sandbox with --auth-proxy; the "
+                        "VM gets only phantoms. --no-auth-proxy: the inference-only "
+                        "token of `wmf-sbx login` (or $ANTHROPIC_API_KEY). Default: the "
+                        "auth proxy behind the egress proxy when the host has no such "
+                        "token")
     parser.add_argument("--sudo", action=argparse.BooleanOptionalAction, default=False,
                         help="give the agent passwordless sudo, and run Claude Code without "
                         "nono: the VM and the host egress proxy are the boundary (QEMU "
@@ -806,6 +814,10 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
                                         name, env, flag="--sudo" if sudo else "--egress-proxy")
         if warning:
             print(color_mod.warning(warning), file=sys.stderr)
+        auth = authproxy_mod.choose(args.auth_proxy, bool(egress), env)
+        if auth:
+            say("+ auth proxy: /login in the sandbox; the host egress proxy keeps the "
+                "login, shared with the other auth-proxy sandboxes")
         if sudo:
             say("+ sudo: the agent has passwordless sudo; the VM and the host egress "
                 "proxy are its boundary")
@@ -904,7 +916,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
             egress_ca=egress_mod.ca_cert(name, env) if egress else None, sudo=sudo)
     except (state_mod.StateError, vm_mod.VmError, image_mod.ImageError,
             template_mod.TemplateError, lima_mod.LimaError, repos_mod.RepoError,
-            LaunchError, disk_mod.DiskError) as e:
+            LaunchError, disk_mod.DiskError, authproxy_mod.AuthProxyError) as e:
         print(color_mod.error(f"error: {e}"), file=sys.stderr)
         return 1
 
@@ -935,6 +947,8 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         state["sudo"] = True
     if session_mod.native_copy(preferences, egress):
         state["nativeCopy"] = True
+    if auth:
+        state[authproxy_mod.STATE_KEY] = True
     state_mod.save(state, env)
     try:
         if egress:

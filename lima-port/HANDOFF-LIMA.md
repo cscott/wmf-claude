@@ -1673,12 +1673,41 @@ Candidates (L1 measures them):
   login"): A1 works in standalone `nono proxy` (items 1, 2, 3 and 6
   pass); item 4: a login is per sandbox; item 5: the narrow policy
   denies the profile, settings, policy and feature-flag endpoints, so
-  remote managed settings are not applied. Still to measure: does the
-  login survive a stop and start (`oauth-l5.sh persist`)?
-  Exit: results in `sbx/NOTES.md`; a choice between A1 and A2; then
-  build it (the profile in `egress.py`, the session without the
-  credential proxy's variables when the sandbox has the egress proxy
-  and a login, the README's "Sign-in").
+  remote managed settings are not applied. The login survives a stop
+  and start (`persist`). **A1 chosen.**
+  Built (cananian's decisions, 2026-10-15; `authproxy.py`):
+  - `create --[no-]auth-proxy`, settings `create.authProxy`. True needs
+    the egress proxy (an error otherwise). Unset: the auth proxy behind
+    the egress proxy when the host has no inference token
+    (`$ANTHROPIC_API_KEY`, `$CLAUDE_CODE_OAUTH_TOKEN`, the `wmf-sbx
+    login` file; not the host's own login); otherwise the token. Kept
+    in the state (`authProxy`), shown by `status`.
+  - The wider policy: allow api.anthropic.com except claude.ai's
+    connectors (`/v1/mcp_servers`, `/mcp-registry/**`) and telemetry
+    (`/api/event_logging/**`), so profile, settings, policy limits,
+    feature flags, Remote Control and sessions work. (Remote Control may
+    need the telemetry stream: docker/sbx-releases#12 links
+    `SBX_NO_TELEMETRY` to Remote Control in Docker sbx. L6 checks.)
+  - The shared login: one nono state directory for every auth-proxy
+    sandbox's proxy (`~/.local/state/wmf-sbx/auth/state`), and `resume`
+    copies the newest phantoms (by `expiresAt`) between the guest and
+    the host (`auth/credentials.json`) before, every minute during, and
+    after a session.
+  - The session gets no credential proxy and no `ANTHROPIC_*`.
+- **L6. Measure the shared login** (`lima-port/checks/oauth-l6.sh`):
+  1. A second sandbox, and a `--sudo` one, work with no `/login`.
+  2. Rotation: after a refresh in one sandbox, does the other's old
+     refresh phantom still work? If not, the minute's sync is what keeps
+     sandboxes working, and two sessions that refresh at once (`race`,
+     `long`) can lose one; then wmf-sbx must make one refresher (push the
+     new phantoms into running sessions; push `expiresAt` ahead so that
+     the guests do not refresh themselves), or serialize refreshes.
+  3. Concurrent writes to the one capture store (`race`).
+  4. Remote Control, `/status`, `/usage` under the wider policy; which
+     paths and hosts Remote Control needs (telemetry?).
+  5. `scan`: no real token in any guest.
+  6. `long`: two sessions for 9 hours, across an 8-hour access token's
+     refresh.
 
 **Track C: develop wmf-sbx inside a sandbox (nested Lima)**
 

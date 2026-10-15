@@ -67,6 +67,7 @@ create: {}
   # nested: true                 # --nested (LOWER SECURITY)
   # image: KEY                   # --image
   # egressProxy: true            # --egress-proxy (null: where the host can)
+  # authProxy: true              # --auth-proxy: the shared /login (null: when no token)
   # sudo: true                   # --sudo (LOWER SECURITY)
   # dryRun: true                 # --dry-run
 

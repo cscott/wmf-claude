@@ -2,8 +2,9 @@
 
 Open to-do items, and the decisions and findings that the code depends on
 or that future work needs. No history: `git log` has it. The design is in
-`README.md` (Architecture) and `../lima-port/HANDOFF-LIMA.md` (decisions D1
-to D12, and tracks A and B, which are not repeated here).
+`README.md` (Architecture), `../lima-port/HANDOFF-LIMA.md` (decisions D1
+to D12, and tracks A and B, which are not repeated here) and `../lima-port/PLAN-SUDO.md`
+(track A's plan).
 
 ## To do
 
@@ -218,10 +219,176 @@ cananian, 2026-10-14: small changes, to do once the blind run in a warm sandbox 
   write-only under nono, and Lima builds its cloud-init ISO in TMPDIR.
 - In a nested session a new pty is not a terminal; `test_real_pty_*` skips.
 
-### `--sudo` egress (track A)
+### The egress proxy and `--sudo` (after track A)
 
-Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, nono 0.78.0,
-2026-10-13):
+Track A is done (2026-10-14); its findings are under "Decisions and findings".
+
+- [ ] **Run the nested acceptance test again**, after the upstream bugs that the egsn run
+  found are fixed (its report: `lima-port/acceptance/runs/2026-10-14-nested-egsn/REPORT.md`
+  on the egsn branch, not on `lima-port`). Use the commands in `lima-port/acceptance/
+  README.md`, which give the outer and the inner sandbox explicit sizes. It checks too that
+  Translate's phan passes in an 8 GiB inner VM.
+- [ ] **The egress proxy on macOS** (QEMU with HVF, `--vm-type qemu`): A2.0 item 7,
+  `lima-port/TESTING-MACOS.md` step 9, for someone with a Mac. Without
+  `PR_SET_PDEATHSIG`, a killed wrapper leaves its proxy and QEMU behind there.
+- [ ] **If `vz` gets an equivalent of QEMU's `restrict=on`**, then every sandbox can be
+  behind the egress proxy, and `--no-egress-proxy`, the fallback and the guest's network
+  filtering go. The main cost is in the launcher: nono with `--allow-net` drops the proxy
+  variables, so it must export them again inside the sandbox. Until then, doing it for
+  QEMU alone adds a branch and removes no code (the "Local ports" bookmark). For an engineer
+  with a Mac.
+- [ ] **Propose upstream:**
+  - Lima: a native `restrict`/egress-proxy option for QEMU, to drop the wrapper;
+  - nono: backdate the leaf certificates' `notBefore` (mitmproxy does), for the up to
+    100 ms that the guest's clock can be behind after Lima's sync ("The guest's clock");
+  - nono: a live allowlist change for `nono proxy` (today `wmf-sbx allow` replaces the
+    proxy), and credentials for `--upstream-proxy` (today `egress.AuthShim` adds them).
+
+### Testing in the sandbox
+
+- The manual-test skill (upstream) takes the base URL from a "Manual testing" section in
+  CLAUDE.md: the sandbox's `~/.claude/CLAUDE.md` has one (`session.RUNNING_TESTS_MD`;
+  docroot install, no `/w`). The skill's own `/w` wording: upstream !134.
+
+### Session, credentials, Claude Code
+
+- [ ] **Check the "update installed, restart to update" message on the first resume** in a
+  new sandbox. Its likely cause, `claude update` in `wmf-claude-setup` at create time (an
+  agent-owned 2.1.296 beside the image's pinned version), is now skipped
+  (`WMF_CLAUDE_SKIP_UPDATE=1`); close this if the message is gone.
+- [ ] **Upstream: grant the Linux system paths the tools read**. Propose `read`
+  entries for `/opt/claude-code`, `/etc/php`, `/etc/gitconfig`, `/etc/bash.bashrc`,
+  `/opt/node`, `/etc/fonts` in `profiles/wmf-engineer.json` (today the lima-sbx launcher
+  grants them per session).
+- [ ] **Upstream: Gerrit MCP write-tool denies** (HANDOFF §12). Gerrit's MCP server has
+  20 tools; the skills use 5 read-only ones; 15 write under the engineer's credential.
+- [ ] **Upstream topic: Claude Code's hooks tell the agent to offer profile changes after any
+  nono denial, even a harmless `ls ~`**.
+- [ ] To investigate: the original 'sbx' port ran the MCP on the *host
+      side* of the sandbox, which allowed MCP services to have safe
+      access to user secrets.  I think we've reverted to *guest side*
+      MCP in the lima port.  If so, we should create a plan to
+      transition back to host-side MCP in both sudo and nono modes.
+
+### From the design documents
+
+- [ ] **Dependency walk, open questions:** a manifest `name` that is not the directory: an
+  override table (`dependency_overrides`, today) or a fallback to the `name` field? Do
+  `dev-requires` repos need another policy (`:ro` by default)?
+- [ ] **Claude memory across sandboxes:** `~/.claude` (memory, projects) lives on the VM
+  disk and goes with `rm`. Design: a host store (`global/` and `repos/<canonical>/`), seeded
+  at create with `wmf-sbx cp`, extracted and merged at `rm`. Open: extract at `stop` too?
+  How to merge two sandboxes' memories?
+- [ ] **In-VM GitLab access with a token**, if wanted: needs a credential design (nono
+  `--credential`, or the host proxy of track A); the old sbx secret-swap design does not
+  apply. (note from the engineer: probably requires host-side MCP, see above.)
+
+- [ ] **Broaden `WMF_CLAUDE_STE=0`** to the other places that ask for ASD-STE100: the
+  `write-commit-msg` skill, the `mediawiki-dev` agent, and the `templates/CLAUDE.md` and
+  `templates/mediawiki/CLAUDE.md` starters. Today it drops only the SessionStart bullet
+  (enough for now, cananian 2026-10-11). Skills and agents are static text: they could say
+  "unless the SessionStart context says not to", or the hook could add a line that overrides
+  them.
+
+### Quality-of-life issues
+- [ ] Streamline the process for copying commits from the sandbox to
+      the host.  Right now on the host we do something like `git
+      safe-reset` (to ensure that there is no unsaved work on the
+      local branch which hasn't been pushed to gerrit, and reset to
+      the master/main branch), followed by `git reset --hard <sandbox
+      name>/<arbitrary branch name>`.  `git-review` is very sensitive
+      to the 'remote' recorded for the current working branch and
+      wants it to point to gerrit (check this assumption against the
+      source).  A naive tracking branch points the remote to the
+      sandbox remote, and so we can't `git review` directly from the
+      tracking branch.  I think ideally we'd want to be able to `git
+      safe-reset <sandbox name>/<branch name>` and have it (a)
+      autocomplete the <branch name> once we'd typed the <sandbox
+      name>, (b) do the safety checks for unsaved work on the branch
+      we're about to leave, (c) leave us in a branch tracking the
+      sandbox remote so that `git pull` will pull down the most recent
+      changes, and (d) still have `git review` work to push the
+      changes to gerrit. We might not be able to have all those things
+      at once, and maybe that behavior isn't compatible with the
+	  present behavior of `git safe-reset` and we should choose a
+	  different command name -- or use something other than `git pull`
+	  to get the latest work from the remote? Needs a plan with options.
+
+### Upstream work and repo hygiene
+
+- [ ] **Follow MRs !131, !132 and !134**: `lima-port` is rebased on upstream `main` 70712f6
+  (!130 and !133 merged) and carries their commits. Check their state with:
+  ```bash
+  P='https://gitlab.wikimedia.org/api/v4/projects/repos%2Fproduct-safety-and-integrity%2Fwmf-claude'
+  for m in 131 132 134; do curl -s "$P/merge_requests/$m" \
+    | jq -r '"!\(.iid) \(.state) \(.merge_commit_sha // .squash_commit_sha // "-") \(.title)"'; done
+  ```
+  When one merges, rebase onto upstream `main` (`git rebase wmf/main`; on a conflict
+  in a file the MR changed, take the branch commit's own version, then check that the
+  tip's tree did not change) and take upstream's version of its files (!132:
+  `bin/session-start.sh`, `hooks/context/nono/`, the seam tests; !131:
+  `bin/wmf-claude-setup`). Keep `hooks/context/lima-sbx/`. A reviewer's change goes to
+  the MR branch.
+- [ ] **Shared-file edits must be upstreamable**. Outside `sbx/` and
+  `lima-port/`, the branch now changes `bin/claude` (`--local-web=LO-HI` ranges),
+  `hooks/context/lima-sbx/*`, `package.json`, `tests/test-templates.sh`, `SECURITY.md`,
+  `.gitignore` (checked: `git diff --stat wmf/main..HEAD -- ':!sbx' ':!lima-port'`). Split them into
+  self-contained commits justified without sbx, or patch them at build time.
+- [ ] **File the tasks in `sbx/upstream/`**: (1) core REST
+  header-case lookup; (2) `wdio-mediawiki` empty `MW_SCRIPT_PATH`; (3) Popups
+  `mw-node-qunit` false green on Node ≥21; (4) wmf-claude "Linux glob caveat" — re-measure
+  first. cananian files; add T-numbers to the
+  README; delete a pair when upstream takes the fix.
+- [ ] **Upstream: `tests/test-profile.sh` fails on Linux**: nono refuses the
+  profile ("Landlock deny-overlap is not enforceable on Linux") because the
+  `~/.cargo/credentials(.toml)` deny sits under `group:rust_runtime`'s `~/.cargo` allow.
+  A #WMF-Claude task, if not filed yet.
+- [ ] **Seam 2 (optional, upstream): make `bin/wmf-claude-setup` fully non-interactive**. It still `read -rp`s the Phabricator username (line 208); `setup.sh`
+  has a "Press Enter" gate. Proposed: `WMF_CLAUDE_PHAB_USER`, `WMF_CLAUDE_NONINTERACTIVE=1`
+  that turns any prompt into an error. Lima feeds the answer through `config.json` today, so
+  this is a nicety, not a blocker.
+
+## Decisions and findings
+
+### Project rules
+
+- Do not fork `skills/` or `agents/`; fix the environment or propose an upstream change. Do not
+  edit `profiles/wmf-engineer.json` from this project. Do not weaken
+  `bin/wmf-claude-build`'s supply-chain checks (`npm ci --ignore-scripts`,
+  `--require-hashes`, chrome-devtools-mcp one-package rule).
+- Never commit `responses*.txt` (host transcripts, gitignored); distil what matters into NOTES.
+- Variable names: the reader decides the prefix. `WMF_SBX_*` is read by wmf-sbx itself: the
+  engineer's configuration on the host (`WMF_SBX_CA_CERTS`, `WMF_SBX_GIT_HASH_OVERRIDE`),
+  and the QEMU wrapper's (`WMF_SBX_EGRESS_CONFIG`). `WMF_CLAUDE_*` is read by wmf-claude
+  (bin/claude, the hooks), also when wmf-sbx sets it for a session in the VM
+  (`WMF_CLAUDE_SANDBOX_BACKEND`, `WMF_CLAUDE_NO_PAUSE`, `WMF_CLAUDE_SBX_EGRESS`). nono gives
+  the session only the profile's `allow_vars`, which has `WMF_CLAUDE_*` and not
+  `WMF_SBX_*`; a `WMF_SBX_*` variable for the session is dropped with no error (RAN, egdef,
+  2026-10-14; a test now checks `launcher_argv`'s variables against `allow_vars`).
+- Python code: `sbx/src/wmf_sbx/`, on `sys.path` only (no pip packaging); thin wrappers in
+  `sbx/bin/`; tests in `sbx/tests/`; `python3 -m wmf_sbx <cmd>` via `__main__.COMMANDS`.
+  PyYAML is the only runtime dependency. Verb lists in `bin/wmf-sbx`, `COMMANDS` and
+  `bin/wmf-sbx-<verb>` must agree (a test checks).
+- `git-safe-reset` and `git-review-check` are intended to be
+  used/useful on the host as well as the guest; don't hardcode any
+  assumption that is only true on the sandbox or behavior that only
+  makes sense inside the sandbox unless guarded by a check that
+  $SANDBOX_NAME exists.
+- Tests never see the machine's own state: every test module calls `isolation.isolate()`
+  from its setUpModule (a test checks), which gives it an empty HOME and XDG directories,
+  no credential or `WMF_SBX_*` variables, no nested marker, and failing `claude` and
+  `security` stubs on PATH. A failing assertion must not print a real credential (one in
+  egsn printed the session's phantom), and a test must not start the real Claude Code
+  (create's `claude mcp get phabricator` did, 70 times a run, two thirds of its time).
+  Code that reads a path the tests patch reads the module attribute at call time, not a
+  copy made at import (`nested.inside()`).
+- `setup.py` must stay import-free: it runs in the VM as `python3 - --lima PLAN` from stdin, so
+  a change to it needs no new image.
+
+### The egress proxy and `--sudo` (track A)
+
+Plan and design: `lima-port/PLAN-SUDO.md` (done 2026-10-14). A2.0 results (in the nested
+`dev` VM, nono 0.78.0, 2026-10-13):
 
 - `nono proxy --profile profiles/wmf-engineer.json` (password by `NONO_PROXY_PASS`) loads the
   profile and intercepts TLS for its 48 endpoint routes: through it, GET
@@ -394,7 +561,6 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   `profiles/wmf-engineer.json` either, so nono on the host denies them too;
   `wmf-sbx-check.invalid` (2) is the `status`/create invariant that a host off the list
   gets 403.
-- Not yet: 7 on macOS (TESTING-MACOS step 9).
 - **The default is flipped** (the engineer, 2026-10-13): `create` makes egress-proxy
   sandboxes by default, and `--no-egress-proxy` gives the earlier kind (the guest's own
   route, the per-port credential proxy). Where the proxy cannot run, the default falls
@@ -490,147 +656,6 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   upstream. The environment variables override them. Outside a nested sandbox
   ANTHROPIC_BASE_URL is ignored, so the host's real credential never follows it. The
   marker keeps a dead phantom after the session; it is worth nothing then.
-
-### Testing in the sandbox
-
-- The manual-test skill (upstream) takes the base URL from a "Manual testing" section in
-  CLAUDE.md: the sandbox's `~/.claude/CLAUDE.md` has one (`session.RUNNING_TESTS_MD`;
-  docroot install, no `/w`). The skill's own `/w` wording: upstream !134.
-
-### Session, credentials, Claude Code
-
-- [ ] **Check the "update installed, restart to update" message on the first resume** in a
-  new sandbox. Its likely cause, `claude update` in `wmf-claude-setup` at create time (an
-  agent-owned 2.1.296 beside the image's pinned version), is now skipped
-  (`WMF_CLAUDE_SKIP_UPDATE=1`); close this if the message is gone.
-- [ ] **Upstream: grant the Linux system paths the tools read**. Propose `read`
-  entries for `/opt/claude-code`, `/etc/php`, `/etc/gitconfig`, `/etc/bash.bashrc`,
-  `/opt/node`, `/etc/fonts` in `profiles/wmf-engineer.json` (today the lima-sbx launcher
-  grants them per session).
-- [ ] **Upstream: Gerrit MCP write-tool denies** (HANDOFF §12). Gerrit's MCP server has
-  20 tools; the skills use 5 read-only ones; 15 write under the engineer's credential.
-- [ ] **Upstream topic: Claude Code's hooks tell the agent to offer profile changes after any
-  nono denial, even a harmless `ls ~`**.
-- [ ] To investigate: the original 'sbx' port ran the MCP on the *host
-      side* of the sandbox, which allowed MCP services to have safe
-      access to user secrets.  I think we've reverted to *guest side*
-      MCP in the lima port.  If so, we should create a plan to
-      transition back to host-side MCP in both sudo and nono modes.
-
-### From the design documents
-
-- [ ] **Dependency walk, open questions:** a manifest `name` that is not the directory: an
-  override table (`dependency_overrides`, today) or a fallback to the `name` field? Do
-  `dev-requires` repos need another policy (`:ro` by default)?
-- [ ] **Claude memory across sandboxes:** `~/.claude` (memory, projects) lives on the VM
-  disk and goes with `rm`. Design: a host store (`global/` and `repos/<canonical>/`), seeded
-  at create with `wmf-sbx cp`, extracted and merged at `rm`. Open: extract at `stop` too?
-  How to merge two sandboxes' memories?
-- [ ] **In-VM GitLab access with a token**, if wanted: needs a credential design (nono
-  `--credential`, or the host proxy of track A); the old sbx secret-swap design does not
-  apply. (note from the engineer: probably requires host-side MCP, see above.)
-
-- [ ] **Broaden `WMF_CLAUDE_STE=0`** to the other places that ask for ASD-STE100: the
-  `write-commit-msg` skill, the `mediawiki-dev` agent, and the `templates/CLAUDE.md` and
-  `templates/mediawiki/CLAUDE.md` starters. Today it drops only the SessionStart bullet
-  (enough for now, cananian 2026-10-11). Skills and agents are static text: they could say
-  "unless the SessionStart context says not to", or the hook could add a line that overrides
-  them.
-
-### Quality-of-life issues
-- [ ] Streamline the process for copying commits from the sandbox to
-      the host.  Right now on the host we do something like `git
-      safe-reset` (to ensure that there is no unsaved work on the
-      local branch which hasn't been pushed to gerrit, and reset to
-      the master/main branch), followed by `git reset --hard <sandbox
-      name>/<arbitrary branch name>`.  `git-review` is very sensitive
-      to the 'remote' recorded for the current working branch and
-      wants it to point to gerrit (check this assumption against the
-      source).  A naive tracking branch points the remote to the
-      sandbox remote, and so we can't `git review` directly from the
-      tracking branch.  I think ideally we'd want to be able to `git
-      safe-reset <sandbox name>/<branch name>` and have it (a)
-      autocomplete the <branch name> once we'd typed the <sandbox
-      name>, (b) do the safety checks for unsaved work on the branch
-      we're about to leave, (c) leave us in a branch tracking the
-      sandbox remote so that `git pull` will pull down the most recent
-      changes, and (d) still have `git review` work to push the
-      changes to gerrit. We might not be able to have all those things
-      at once, and maybe that behavior isn't compatible with the
-	  present behavior of `git safe-reset` and we should choose a
-	  different command name -- or use something other than `git pull`
-	  to get the latest work from the remote? Needs a plan with options.
-
-### Upstream work and repo hygiene
-
-- [ ] **Follow MRs !131, !132 and !134**: `lima-port` is rebased on upstream `main` 70712f6
-  (!130 and !133 merged) and carries their commits. Check their state with:
-  ```bash
-  P='https://gitlab.wikimedia.org/api/v4/projects/repos%2Fproduct-safety-and-integrity%2Fwmf-claude'
-  for m in 131 132 134; do curl -s "$P/merge_requests/$m" \
-    | jq -r '"!\(.iid) \(.state) \(.merge_commit_sha // .squash_commit_sha // "-") \(.title)"'; done
-  ```
-  When one merges, rebase onto upstream `main` (`git rebase wmf/main`; on a conflict
-  in a file the MR changed, take the branch commit's own version, then check that the
-  tip's tree did not change) and take upstream's version of its files (!132:
-  `bin/session-start.sh`, `hooks/context/nono/`, the seam tests; !131:
-  `bin/wmf-claude-setup`). Keep `hooks/context/lima-sbx/`. A reviewer's change goes to
-  the MR branch.
-- [ ] **Shared-file edits must be upstreamable**. Outside `sbx/` and
-  `lima-port/`, the branch now changes `bin/claude` (`--local-web=LO-HI` ranges),
-  `hooks/context/lima-sbx/*`, `package.json`, `tests/test-templates.sh`, `SECURITY.md`,
-  `.gitignore` (checked: `git diff --stat wmf/main..HEAD -- ':!sbx' ':!lima-port'`). Split them into
-  self-contained commits justified without sbx, or patch them at build time.
-- [ ] **File the tasks in `sbx/upstream/`**: (1) core REST
-  header-case lookup; (2) `wdio-mediawiki` empty `MW_SCRIPT_PATH`; (3) Popups
-  `mw-node-qunit` false green on Node ≥21; (4) wmf-claude "Linux glob caveat" — re-measure
-  first. cananian files; add T-numbers to the
-  README; delete a pair when upstream takes the fix.
-- [ ] **Upstream: `tests/test-profile.sh` fails on Linux**: nono refuses the
-  profile ("Landlock deny-overlap is not enforceable on Linux") because the
-  `~/.cargo/credentials(.toml)` deny sits under `group:rust_runtime`'s `~/.cargo` allow.
-  A #WMF-Claude task, if not filed yet.
-- [ ] **Seam 2 (optional, upstream): make `bin/wmf-claude-setup` fully non-interactive**. It still `read -rp`s the Phabricator username (line 208); `setup.sh`
-  has a "Press Enter" gate. Proposed: `WMF_CLAUDE_PHAB_USER`, `WMF_CLAUDE_NONINTERACTIVE=1`
-  that turns any prompt into an error. Lima feeds the answer through `config.json` today, so
-  this is a nicety, not a blocker.
-
-## Decisions and findings
-
-### Project rules
-
-- Do not fork `skills/` or `agents/`; fix the environment or propose an upstream change. Do not
-  edit `profiles/wmf-engineer.json` from this project. Do not weaken
-  `bin/wmf-claude-build`'s supply-chain checks (`npm ci --ignore-scripts`,
-  `--require-hashes`, chrome-devtools-mcp one-package rule).
-- Never commit `responses*.txt` (host transcripts, gitignored); distil what matters into NOTES.
-- Variable names: the reader decides the prefix. `WMF_SBX_*` is read by wmf-sbx itself: the
-  engineer's configuration on the host (`WMF_SBX_CA_CERTS`, `WMF_SBX_GIT_HASH_OVERRIDE`),
-  and the QEMU wrapper's (`WMF_SBX_EGRESS_CONFIG`). `WMF_CLAUDE_*` is read by wmf-claude
-  (bin/claude, the hooks), also when wmf-sbx sets it for a session in the VM
-  (`WMF_CLAUDE_SANDBOX_BACKEND`, `WMF_CLAUDE_NO_PAUSE`, `WMF_CLAUDE_SBX_EGRESS`). nono gives
-  the session only the profile's `allow_vars`, which has `WMF_CLAUDE_*` and not
-  `WMF_SBX_*`; a `WMF_SBX_*` variable for the session is dropped with no error (RAN, egdef,
-  2026-10-14; a test now checks `launcher_argv`'s variables against `allow_vars`).
-- Python code: `sbx/src/wmf_sbx/`, on `sys.path` only (no pip packaging); thin wrappers in
-  `sbx/bin/`; tests in `sbx/tests/`; `python3 -m wmf_sbx <cmd>` via `__main__.COMMANDS`.
-  PyYAML is the only runtime dependency. Verb lists in `bin/wmf-sbx`, `COMMANDS` and
-  `bin/wmf-sbx-<verb>` must agree (a test checks).
-- `git-safe-reset` and `git-review-check` are intended to be
-  used/useful on the host as well as the guest; don't hardcode any
-  assumption that is only true on the sandbox or behavior that only
-  makes sense inside the sandbox unless guarded by a check that
-  $SANDBOX_NAME exists.
-- Tests never see the machine's own state: every test module calls `isolation.isolate()`
-  from its setUpModule (a test checks), which gives it an empty HOME and XDG directories,
-  no credential or `WMF_SBX_*` variables, no nested marker, and failing `claude` and
-  `security` stubs on PATH. A failing assertion must not print a real credential (one in
-  egsn printed the session's phantom), and a test must not start the real Claude Code
-  (create's `claude mcp get phabricator` did, 70 times a run, two thirds of its time).
-  Code that reads a path the tests patch reads the module attribute at call time, not a
-  copy made at import (`nested.inside()`).
-- `setup.py` must stay import-free: it runs in the VM as `python3 - --lima PLAN` from stdin, so
-  a change to it needs no new image.
 
 ### Repo resolution and the dependency walk
 

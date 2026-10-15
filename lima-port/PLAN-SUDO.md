@@ -1,5 +1,10 @@
 # PLAN: `--sudo` mode (track A), egress proxy first
 
+**Done (2026-10-14).** Every step below landed and RAN on the engineer's Linux host;
+A2.0 item 7 on macOS is still to run. This file is the design record that the code refers to (A2.1 to A3); a "not yet" in it
+is as of when that part was written. What is open is in `sbx/NOTES.md`, "The egress
+proxy and `--sudo` (after track A)"; the findings are in its "Decisions and findings".
+
 Written 2026-10-13. Builds on HANDOFF-LIMA.md D9 (two whole modes) and D11
 (QEMU `restrict=on` + `guestfwd` + a host proxy), whose A1 measurements
 are mostly RAN. This plan changes one thing in D11: **the host proxy is
@@ -433,16 +438,3 @@ RAN on the engineer's host, after step 6 (2026-10-14, `create --sudo --nested
   `nested.INNER_MEMORY`). The defaults are now 14 GiB and 8 GiB inside, and
   `acceptance/README.md` gives both creates explicit sizes. The report is on
   the egsn branch, not on `lima-port`.
-
-## Later, not in this track
-
-- If `vz` gets an equivalent of QEMU's `restrict=on` (for an engineer
-  with a Mac), then every sandbox can be behind the egress proxy, and
-  `--no-egress-proxy`, the fallback and the guest's network filtering go:
-  nft, nono's network half, `--landlock-only`, the local-port window. The
-  main cost is in the launcher: nono with `--allow-net` drops the proxy
-  variables, so it must export them again inside the sandbox. Until
-  then, doing it for QEMU only adds a branch and removes no code (NOTES
-  "Local ports" bookmark).
-- A Lima feature request for a native `restrict`/egress-proxy option, to
-  drop the wrapper.

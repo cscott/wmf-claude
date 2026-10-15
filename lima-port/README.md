@@ -16,11 +16,9 @@ sandbox. Delete it, or move its content into `sbx/`, when the port lands.
   QEMU) and B (qcow2 copy-on-write disks) come after it). Read this first.
 - [`PLAN-SUDO.md`](PLAN-SUDO.md) — the plan for track A (`--sudo`),
   egress proxy first: `nono proxy` on the host, owned by the QEMU wrapper.
-  The egress proxy is done, and the default on QEMU (`--no-egress-proxy`
-  opts out). `--sudo` (the "A3 steps") RAN on the host, step 6
-  (`--sudo --nested`) and its acceptance test included.
-- [`HANDOFF-TRACK-A.md`](HANDOFF-TRACK-A.md) — where track A stands, what
-  is open, and how to work on it. Start there for track A.
+  Done (2026-10-14): the egress proxy is the default on QEMU
+  (`--no-egress-proxy` opts out), and `--sudo` RAN on the host,
+  `--sudo --nested` included. What is open is in `sbx/NOTES.md`.
 - [`PLAN-SETTINGS-DEFAULTS.md`](PLAN-SETTINGS-DEFAULTS.md) — defaults
   for command-line options from settings.yaml (`create.cloneMissing` and
   every other option of every command): one helper, every flag a
@@ -131,6 +129,19 @@ helper in `sbx/tests/test_wmf_sbx_create.py`, and commits `8c76233` and
   plugin overlay. But the plain `bin/claude` (nono, no VM) must not
   break, and the default nono SessionStart output stays byte-identical
   to upstream's; the suites test both.
+- Host checks are the engineer's: write the exact commands for them to
+  run, and record what they report as RAN in `sbx/NOTES.md`. On the
+  engineer's host `example.com` does not resolve: use `www.kernel.org`.
+- The engineer fetches `lima-port` from the sandbox and cherry-picks it
+  onto GitHub `https://github.com/cscott/wmf-claude.git` `lima-port`,
+  the rebase base (`origin` is GitLab and has no `lima-port`). To move
+  onto it: `git fetch https://github.com/cscott/wmf-claude.git
+  lima-port:refs/remotes/github/lima-port`, then `git switch -C
+  lima-port github/lima-port` (never `reset --hard`).
+- Untracked files in the checkout are the engineer's (session exports,
+  `responses*.txt`, `eg*-*.txt`, `sudo-egress-m7-logs/`): stage explicit
+  paths only.
+- Never print a phantom or a real credential.
 - Comments and commit messages in ASD-STE100, with an
   `Assisted-by: Claude Opus 5.5` trailer and no Co-Authored-By.
 - Commit on a branch before you end each turn, and report the branch,

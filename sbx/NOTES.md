@@ -602,7 +602,13 @@ A2.0 results (in the nested `dev` VM, nono 0.78.0, 2026-10-13):
     host. Both now get GERRITUA for Gerrit's URL (`deps.gerrit_git_config`): in the
     VM as `export` lines at the top of the clone script, on stdin, and on the host in
     git's environment, never in an argv (`ps` shows an argv). The image build clones
-    only php-ast, from GitHub.
+    only php-ast, from GitHub. And `git safe-reset origin` said "Could not reach Gerrit"
+    (RAN): `git-review-check`'s `curl -sf` got the same 403, with stderr discarded.
+    It now sends GERRITUA to gerrit.wikimedia.org only, as a header on curl's stdin
+    (`-H @-`), and on a status other than 200 says the status (and, for a 403 with no
+    GERRITUA, names it). `git sbx-pull`'s Gerrit query (host and guest) sends it to
+    gerrit.wikimedia.org only, not to another `.gitreview` host or a redirect. Both
+    helpers are in the image: a new image and a re-create.
 - Claude Code through `HTTPS_PROXY` reaches `api.anthropic.com` (a turn fails only with
   "Invalid API key": no credentials given); its telemetry host is denied, harmlessly (RAN).
 - **Opening a host under a running VM works** (item 8, RAN): the guestfwd reads

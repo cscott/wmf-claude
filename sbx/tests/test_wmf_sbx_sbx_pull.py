@@ -391,15 +391,18 @@ class GerritTests(unittest.TestCase):
         self.root = tmp.name
         self.urls = []
 
-    def gitreview(self):
+    def gitreview(self, host="gerrit.wikimedia.org"):
         with open(os.path.join(self.root, ".gitreview"), "w", encoding="utf-8") as f:
-            f.write("[gerrit]\nhost=gerrit.wikimedia.org\nport=29418\ntrack=1\n")
+            f.write(f"[gerrit]\nhost={host}\nport=29418\ntrack=1\n")
 
     def urlopen(self, body):
         import io
 
         def fake(req, timeout):
-            self.urls.append((req.full_url, req.headers))
+            if isinstance(req, str):
+                self.urls.append((req, {}))
+            else:
+                self.urls.append((req.full_url, req.header_items()))
             return io.BytesIO(body)
         return fake
 
@@ -410,6 +413,21 @@ class GerritTests(unittest.TestCase):
             urlopen=self.urlopen(b')]}\'\n[{"change_id":"I123"}]\n')))
         ((url, headers),) = self.urls
         self.assertEqual(url, "https://gerrit.wikimedia.org/r/changes/?q=commit%3Aabc&n=1")
+        self.assertEqual(headers, {})
+
+    def test_gerritua_goes_to_gerrit(self):
+        self.gitreview()
+        sbx_pull.gerrit_has(self.root, "abc", env={"GERRITUA": "secret-ua"},
+                            urlopen=self.urlopen(b")]}'\n[]\n"))
+        ((_, headers),) = self.urls
+        self.assertEqual(dict(headers), {"User-agent": "secret-ua"})
+
+    def test_no_other_host_gets_gerritua(self):
+        self.gitreview("gerrit.example.invalid")
+        sbx_pull.gerrit_has(self.root, "abc", env={"GERRITUA": "secret-ua"},
+                            urlopen=self.urlopen(b")]}'\n[]\n"))
+        ((url, headers),) = self.urls
+        self.assertTrue(url.startswith("https://gerrit.example.invalid/"))
         self.assertEqual(headers, {})
 
     def test_no_change(self):

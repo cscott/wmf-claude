@@ -320,5 +320,90 @@ class SafeResetAgainstSandboxRemoteTests(unittest.TestCase):
                                  .stdout.strip(), "mw-cite")
 
 
+
+# A curl that records its argv and stdin, and answers $FAKE_CODE with
+# $FAKE_BODY, the way `-w '\n%{http_code}'` makes the real one.
+FAKE_CURL = """#!/bin/bash
+printf '%s\\n' "$@" > "$FAKE_LOG.argv"
+if [[ " $* " == *" -H @- "* ]]; then cat > "$FAKE_LOG.stdin"; fi
+printf '%s\\n%s' "$FAKE_BODY" "$FAKE_CODE"
+"""
+
+
+@unittest.skipUnless(HAVE_GIT and HAVE_BASH, "git and bash required")
+class GerritQueryTests(unittest.TestCase):
+    """The Gerrit check, with a fake curl: Gerrit's edge refuses curl's
+    own user agent (RAN 2026-10-15: 403, "Could not reach Gerrit"), so
+    GERRITUA goes to gerrit.wikimedia.org, and only there."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.repo = os.path.join(tmp.name, "repo")
+        subprocess.run(["git", "init", "-q", "-b", "master", self.repo],
+                       check=True, capture_output=True, text=True)
+        git(self.repo, "config", "user.email", "test@example.invalid")
+        git(self.repo, "config", "user.name", "Test")
+        commit(self.repo, "README", "first")
+        bindir = os.path.join(tmp.name, "bin")
+        os.mkdir(bindir)
+        with open(os.path.join(bindir, "curl"), "w", encoding="utf-8") as f:
+            f.write(FAKE_CURL)
+        os.chmod(os.path.join(bindir, "curl"), 0o755)
+        self.log = os.path.join(tmp.name, "curl")
+        self.env = dict(os.environ, PATH=bindir + os.pathsep + os.environ["PATH"],
+                        FAKE_LOG=self.log, XDG_STATE_HOME=os.path.join(tmp.name, "state"))
+        for name in ("SANDBOX_NAME", "GERRITUA"):
+            self.env.pop(name, None)
+
+    def gitreview(self, host="gerrit.wikimedia.org"):
+        with open(os.path.join(self.repo, ".gitreview"), "w", encoding="utf-8") as f:
+            f.write(f"[gerrit]\nhost={host}\nport=29418\n")
+
+    def run_script(self, code="200", body=")]}'\n[]", **env):
+        return subprocess.run(["bash", SCRIPT], cwd=self.repo, capture_output=True,
+                              text=True, env=dict(self.env, FAKE_CODE=code,
+                                                  FAKE_BODY=body, **env))
+
+    def sent(self):
+        with open(self.log + ".argv", encoding="utf-8") as f:
+            argv = f.read()
+        try:
+            with open(self.log + ".stdin", encoding="utf-8") as f:
+                stdin = f.read()
+        except FileNotFoundError:
+            stdin = None
+        return argv, stdin
+
+    def test_gerritua_goes_to_gerrit_on_stdin(self):
+        self.gitreview()
+        res = self.run_script(body=")]}'\n[{\"change_id\":\"I1\"}]", GERRITUA="secret-ua")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("All changes uploaded", res.stdout)
+        argv, stdin = self.sent()
+        self.assertNotIn("secret-ua", argv)
+        self.assertEqual(stdin, "User-Agent: secret-ua\n")
+
+    def test_no_other_host_gets_gerritua(self):
+        self.gitreview("gerrit.example.invalid")
+        self.run_script(GERRITUA="secret-ua")
+        argv, stdin = self.sent()
+        self.assertNotIn("secret-ua", argv)
+        self.assertIsNone(stdin)
+
+    def test_not_uploaded(self):
+        self.gitreview()
+        res = self.run_script(GERRITUA="secret-ua")
+        self.assertEqual(res.returncode, 1)
+        self.assertIn("Not uploaded to Gerrit", res.stderr)
+
+    def test_a_refusal_says_the_status_and_names_gerritua(self):
+        self.gitreview()
+        res = self.run_script(code="403", body="<html>403</html>")
+        self.assertEqual(res.returncode, 1)
+        self.assertIn("answered HTTP 403", res.stderr)
+        self.assertIn("set GERRITUA", res.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

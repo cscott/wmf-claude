@@ -120,9 +120,27 @@ fi
 
 read -r HASH SUBJECT <<< "$(git log -1 --format="%H %s")"
 
-RESPONSE=$(curl -sf "https://${GERRIT_HOST}/r/changes/?q=commit:${HASH}&n=1" 2>/dev/null)
-if [ $? -ne 0 ]; then
+# Gerrit's edge refuses curl's own user agent (403). GERRITUA goes to
+# gerrit.wikimedia.org only, and from stdin (-H @-), not in the argv,
+# which `ps` shows: the value is a secret.
+gerrit_get() {
+    if [ "$GERRIT_HOST" = gerrit.wikimedia.org ] && [ -n "${GERRITUA:-}" ]; then
+        printf 'User-Agent: %s\n' "$GERRITUA" | curl -sS -H @- -w '\n%{http_code}' "$1"
+    else
+        curl -sS -w '\n%{http_code}' "$1"
+    fi
+}
+if ! OUT=$(gerrit_get "https://${GERRIT_HOST}/r/changes/?q=commit:${HASH}&n=1" 2>/dev/null); then
     echo "Could not reach Gerrit at $GERRIT_HOST." >&2
+    exit 1
+fi
+CODE=${OUT##*$'\n'}
+RESPONSE=${OUT%$'\n'*}
+if [ "$CODE" != 200 ]; then
+    echo "Gerrit at $GERRIT_HOST answered HTTP $CODE." >&2
+    if [ "$CODE" = 403 ] && [ -z "${GERRITUA:-}" ]; then
+        echo "Gerrit refuses some user agents; set GERRITUA (see sbx/README.md)." >&2
+    fi
     exit 1
 fi
 

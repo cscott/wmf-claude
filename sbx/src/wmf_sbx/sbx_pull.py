@@ -37,6 +37,7 @@ import sys
 import urllib.parse
 import urllib.request
 
+from . import deps as deps_mod
 from . import ls_remotes as ls_remotes_mod
 from . import remotes as remotes_mod
 
@@ -181,10 +182,11 @@ def gerrit_has(root, sha, env=None, urlopen=urllib.request.urlopen):
     env = os.environ if env is None else env
     url = (f"https://{host}/r/changes/?" +
            urllib.parse.urlencode({"q": f"commit:{sha}", "n": "1"}))
-    headers = {"User-Agent": env["GERRITUA"]} if env.get("GERRITUA") else {}
+    # GERRITUA to gerrit.wikimedia.org only, not to another .gitreview
+    # host or a redirect's: the value is a secret.
+    opener = deps_mod.gerrit_opener(env.get("GERRITUA"), urlopen)
     try:
-        with urlopen(urllib.request.Request(url, headers=headers),
-                     timeout=GERRIT_TIMEOUT) as resp:
+        with opener(url, timeout=GERRIT_TIMEOUT) as resp:
             body = resp.read().decode("utf-8", "replace")
     except OSError:
         return False

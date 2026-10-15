@@ -202,5 +202,33 @@ class GuestPullTests(unittest.TestCase):
         self.assertIn("$SANDBOX_NAME is not set", self.stderr)
 
 
+class GerritUserAgentTests(unittest.TestCase):
+    """GERRITUA goes to gerrit.wikimedia.org only: it is a secret."""
+
+    def ask(self, host):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        with open(os.path.join(tmp.name, ".gitreview"), "w", encoding="utf-8") as f:
+            f.write(f"[gerrit]\nhost={host}\nport=29418\n")
+        sent = []
+
+        def fake(req, timeout):
+            sent.append(req)
+            return io.BytesIO(b")]}'\n[]\n")
+        with mock.patch.object(guest_mod.urllib.request, "urlopen", fake):
+            guest_mod.gerrit_has(tmp.name, "abc", {"GERRITUA": "secret-ua"})
+        (req,) = sent
+        return req
+
+    def test_gerrit_gets_it_unredirected(self):
+        req = self.ask("gerrit.wikimedia.org")
+        self.assertEqual(req.unredirected_hdrs, {"User-agent": "secret-ua"})
+        self.assertEqual(req.headers, {})
+
+    def test_another_host_does_not(self):
+        req = self.ask("gerrit.example.invalid")
+        self.assertEqual(req.header_items(), [])
+
+
 if __name__ == "__main__":
     unittest.main()

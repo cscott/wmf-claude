@@ -183,6 +183,15 @@ ports=$(ga bash -c '
   kill "$srv"' | tr -d '\r')
 if [[ "$ports" == "granted=200 ungranted=000" ]]; then pass "localhost ports: a granted port answers, an ungranted one does not"
 else fail "localhost ports: $ports, want granted=200 ungranted=000"; fi
+# The other direction: a process inside nono binds a granted port (the VM
+# serves the wiki from the session this way) and the engineer reaches it.
+bound=$(g bash -c '
+  sudo -H -u agent -- bash -c "cd /home/agent/work && exec nono run --silent --profile /opt/wmf-claude/profiles/wmf-engineer.json --workdir /home/agent/work --open-port 8767 -- python3 -m http.server 8767 --bind 127.0.0.1" >/dev/null 2>&1 & srv=$!
+  for _ in $(seq 50); do curl -s -o /dev/null http://127.0.0.1:8767/ && break; sleep 0.1; done
+  curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8767/
+  sudo -n pkill -u agent -f "http.server 8767" 2>/dev/null; wait "$srv" 2>/dev/null' 2>/dev/null | tr -d '\r' | tail -n1)
+if [[ "$bound" == 200 ]]; then pass "in nono: a granted port can be bound and served"
+else fail "in nono: binding a granted port failed (curl got '$bound')"; fi
 # An open port is for localhost only. With 443 granted, a direct connect to
 # an outside host on 443 must still fail: nono checks the destination, not
 # only the port. The nft rule lets the agent out on 443, so a deny here comes
@@ -256,6 +265,56 @@ client=$(ga bash -c '
   echo "rc=$?"' | tr -d '\r' | tail -n2 | tr '\n' ' ')
 if [[ "$client" == "42 rc="* ]]; then pass "in nono: the mariadb client reaches wikidb with the grant (nono ${client#42 })"
 else fail "in nono: the mariadb client with the grant said: '$client'"; fi
+
+echo ""
+echo "--- headless Chromium: loopback only ---"
+cv=$(g chromium --version 2>/dev/null | tr -d '\r')
+if [[ "$cv" == Chromium* ]]; then pass "$cv"
+else fail "chromium missing in the guest: '${cv:-nothing}'"; fi
+cg=$(g id -nG wmfchrome 2>/dev/null | tr -d '\r')
+if [[ "$cg" == wmfchrome ]]; then pass "browser user wmfchrome is in no other group"
+else fail "browser user groups: '${cg:-missing}', want wmfchrome only"; fi
+if g sudo -n nft list table inet wmf_claude_chrome >/dev/null 2>&1; then pass "browser firewall table loaded"
+else fail "nft table wmf_claude_chrome missing"; fi
+# A local server as the agent: the browser must reach it, and only it.
+# The firewall check drops the proxy and resolver flags, so the rule
+# alone has to refuse the outside address (resolved outside the browser).
+# As the engineer (sudo to the browser user); the server serves an empty
+# temporary directory.
+cd_out=$(g bash -c '
+  d=$(mktemp -d) && cd "$d" || exit 1
+  python3 -m http.server 8766 --bind 127.0.0.1 >/dev/null 2>&1 & srv=$!
+  sleep 1
+  sudo -n -u wmfchrome /opt/wmf-claude/lima/guest-chrome.sh dump-dom http://127.0.0.1:8766/ 2>&1
+  kill "$srv"; rmdir "$d"' 2>/dev/null | tr -d '\r')
+if grep -q "Directory listing" <<<"$cd_out"; then pass "browser reaches a loopback server"
+else fail "browser did not render the loopback server; last lines: $(tail -n 3 <<<"$cd_out" | tr '\n' ' ' | head -c 300)"; fi
+# A failed navigation prints no DOM at all (Chromium's stderr is kept, so a
+# browser that does not start says why). The outside name must not render
+# the index. The firewall is proven by its counter: without the proxy and
+# resolver flags, the packets to an outside address hit the reject rule.
+chrome_counter() { g sudo -n nft list table inet wmf_claude_chrome 2>/dev/null | tr -d '\r' | grep -oE 'counter packets [0-9]+' | awk '{print $3; exit}'; }
+ext_dom=$(g sudo -n -u wmfchrome /opt/wmf-claude/lima/guest-chrome.sh dump-dom http://deb.debian.org/debian/ 2>&1 | tr -d '\r')
+if ! grep -q 'Index of' <<<"$ext_dom"; then pass "browser: an outside name does not render"
+else fail "browser rendered deb.debian.org through the proxy and resolver flags"; fi
+if [[ -n "$ext_ip" ]]; then
+  before=$(chrome_counter)
+  g sudo -n -u wmfchrome /opt/wmf-claude/lima/guest-chrome.sh dump-dom-unproxied "http://$ext_ip/" >/dev/null 2>&1
+  after=$(chrome_counter)
+  if [[ "$before" =~ ^[0-9]+$ && "$after" =~ ^[0-9]+$ ]] && (( after > before )); then
+    pass "browser firewall alone rejected the packets to $ext_ip ($((after - before)) counted)"
+  else fail "browser firewall counter did not move for $ext_ip (before '${before:-?}', after '${after:-?}')"; fi
+else
+  fail "browser firewall check skipped: no outside address resolved"
+fi
+# CDP from inside nono, with the grant --chrome makes.
+cdp=$(g bash -c '
+  sudo -n -u wmfchrome /opt/wmf-claude/lima/guest-chrome.sh cdp >/dev/null 2>&1 & b=$!
+  for _ in $(seq 100); do curl -s -o /dev/null http://127.0.0.1:9222/json/version && break; sleep 0.1; done
+  sudo -H -u agent -- bash -c "cd /home/agent/work && nono run --silent --profile /opt/wmf-claude/profiles/wmf-engineer.json --workdir /home/agent/work --open-port 9222 -- curl -s http://127.0.0.1:9222/json/version" | grep -c Browser
+  kill "$b"; wait "$b" 2>/dev/null' 2>/dev/null | tr -d '\r' | tail -n1)
+if [[ "$cdp" == 1 ]]; then pass "in nono: CDP answers on 127.0.0.1:9222 with the --chrome grant"
+else fail "in nono: CDP did not answer (grep count '$cdp')"; fi
 
 echo ""
 echo "--- push / pull round trip ---"

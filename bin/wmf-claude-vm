@@ -22,7 +22,8 @@
 #   bin/wmf-claude-vm status | start | stop
 #   bin/wmf-claude-vm delete | reset                 # remove the VM (reset: then create it again)
 #
-#   WMF_CLAUDE_VM=<name>   Lima instance name (default: wmf-claude)
+#   WMF_CLAUDE_VM=<name>         Lima instance name (default: wmf-claude)
+#   WMF_CLAUDE_PHAB_USER=<name>  create/update: the Phabricator username, no prompt
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -335,8 +336,9 @@ cmd_update() {
   rm -f "$tarball"
   ok "uploaded"
   # Extract next to the tarball and run the guest installer from the
-  # uploaded tree itself. Interactive: it asks for the Phabricator username.
-  guest bash -c '
+  # uploaded tree itself. It asks for the Phabricator username the first
+  # time only; WMF_CLAUDE_PHAB_USER on the host command answers it.
+  guest env ${WMF_CLAUDE_PHAB_USER:+WMF_CLAUDE_PHAB_USER="$WMF_CLAUDE_PHAB_USER"} bash -c '
     set -e
     mkdir "$1/tree"
     tar -xzf "$1/tree.tgz" -C "$1/tree"

@@ -15,9 +15,24 @@ You are running inside the wmf-claude environment for Wikimedia Foundation engin
 - The local MariaDB port is closed unless the session was launched with `bin/claude --local-db`. A `DBConnectionError` or "database overloaded" in a plain session means exactly that: ask the engineer to relaunch with `--local-db`; do not debug LocalSettings or the wiki.
 - chrome-devtools MCP is opt-in per session. The points below only apply when the engineer launched with `bin/claude --chrome` (mcp__chrome-devtools__* tools present); plain `bin/claude` sessions can ignore them.
   - Prefer the chrome-devtools MCP tools over Bash(playwright)/Bash(agent-browser) when they're present.
+CONTEXT
+# Where the browser runs: on the host, Chrome started by the engineer; in a
+# Lima VM, a headless Chromium that bin/wmf-claude-vm started for the session
+# (lima/guest-claude.sh sets WMF_CLAUDE_CHROME_IN_VM), kept to loopback.
+if [[ -n "${WMF_CLAUDE_CHROME_IN_VM:-}" ]]; then
+  cat <<'CONTEXT'
+  - The MCP attaches to a headless Chromium that `bin/wmf-claude-vm claude NAME --chrome` started inside the VM for this session, as its own user; it stops with the session. If the MCP cannot connect, tell the engineer to restart the session with `--chrome` and read the browser log it prints.
+  - CDP on 127.0.0.1:9222 is unauthenticated. Any credentials submitted via fill_form / evaluate_script are exposed to other local processes — use throwaway dev-wiki accounts only.
+  - The browser reaches loopback only: the guest firewall rejects everything else, so it shows the local wiki and nothing outside the VM. An external URL fails by design; do not retry it or look for a way around it.
+CONTEXT
+else
+  cat <<'CONTEXT'
   - The MCP attaches to a Chrome started outside the sandbox by `bin/launch-test-chrome` (Chrome can't run inside — IOKit denied). If the engineer hasn't started it, the MCP will fail to connect — tell them to run `bin/launch-test-chrome` in another terminal.
   - CDP on 127.0.0.1:9222 is unauthenticated. Any credentials submitted via fill_form / evaluate_script are exposed to other local processes — use throwaway dev-wiki accounts only.
   - The attached Chrome's network is NOT restricted by nono. Only navigate to URLs the engineer has explicitly authorized (their local wiki, Wikimedia domains) — never arbitrary external sites, and don't issue outbound fetch() calls via evaluate_script either.
+CONTEXT
+fi
+cat <<'CONTEXT'
 - `git add -p` and other interactive git commands cannot work as the Bash tool has no TTY on stdin, so their hunk loops read EOF and abort having staged nothing. To reorganise code into atomic commits, never use destructive commands like `git reset --hard` or `git clean`, and never re-type changes from memory to rebuild them as that discards reviewed, tested work. Stage arbitrary hunks non-destructively with a `git diff` → edit the patch → `git apply --cached` round-trip, to only touch the index and leave the working tree intact. See /wmf-claude:stage-hunks for the full recipe.
 - Wikimedia commit-message convention: subject is "component: Subject"; trailers in order are Assisted-by:, Bug:, Change-Id: (added by the Gerrit commit-msg hook). The Assisted-by: trailer uses Linux-kernel short form — just the model name, e.g. "Assisted-by: Claude Opus 4.7". No email angle brackets, no "(1M context)" or other parentheticals. Do not use Co-Authored-By: in commit bodies for Wikimedia repos.
 CONTEXT
@@ -49,4 +64,14 @@ if [[ -n "${WMF_DOCKER_BROKER_URL:-}" ]]; then
 
 - This wiki runs inside Docker: PHP, composer, npm, and vendor/bin/* are NOT on the host — they live in a container reached through a broker. ALWAYS run those commands by prefixing them with `mwdocker`, whether or not you go through a skill. Examples: `mwdocker composer phpcs`, `mwdocker vendor/bin/phpunit <path>`, `mwdocker php maintenance/run.php update.php`, `mwdocker npm run lint`. Running them without the prefix hits the host, where they are absent and will fail. git, file reads/edits, grep, and other host-side work stay unprefixed as usual. Only the allowlisted binaries (composer, php, npm, vendor/bin/phpunit|phpcs|phpcbf|phan) are permitted through the broker.
 DOCKER
+fi
+
+# In a Lima VM (lima/guest-claude.sh sets WMF_CLAUDE_IN_VM) nothing serves the
+# wiki unless Docker runs it. nono lets the session bind a port it opened,
+# so PHP's built-in server runs inside the sandbox and stops with the session.
+if [[ -n "${WMF_CLAUDE_IN_VM:-}" ]]; then
+  cat <<'VM'
+
+- This session runs in the wmf-claude Lima VM. No web server runs unless Docker provides one or you start one. With `--local-web` (ports 80, 443 and 8080; `--local-web=PORT` for another) the sandbox can bind those ports as well as connect to them, so when a task needs HTTP, start the project's own dev server in the background inside this session; it stops with the session. For a MediaWiki checkout, from the workspace root: `PHP_CLI_SERVER_WORKERS=4 php -S 127.0.0.1:8080 -t . > "$TMPDIR/php-server.log" 2>&1 &`, then `curl -sI http://127.0.0.1:8080/index.php?title=Main_Page`; the installed wiki expects that address (`$wgServer`, empty `$wgScriptPath`). A refused connection on a port before you start a server is just that, not a sandbox denial. PHP, Composer, MariaDB (127.0.0.1:3306, `wikiuser`/`wikipass`, database `wikidb`) and a headless Chromium are native in this VM; a project that needs none of them can ignore them.
+VM
 fi

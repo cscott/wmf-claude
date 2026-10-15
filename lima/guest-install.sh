@@ -7,12 +7,13 @@
 #   1. nono: the .deb that .nono-version pins, checked against the release's
 #      SHA256SUMS.txt before dpkg installs it.
 #   2. The tree: /opt/wmf-claude.<rev>, owned by the engineer, built with
-#      bin/wmf-claude-build (WMF_CLAUDE_SKIP_CHROME=1: Chrome runs on the
-#      host, which the VM cannot reach). /opt/wmf-claude is a symlink to it,
+#      bin/wmf-claude-build, the chrome-devtools MCP included (the guest
+#      runs a headless Chromium). /opt/wmf-claude is a symlink to it,
 #      swapped after the build. The agent reads the tree and writes one file
 #      in it: gerrit-mcp-server/server.log.
-#   3. PHP, Composer and MariaDB (lima/guest-dev-stack.sh, as root), so
-#      PHPUnit and the maintenance scripts run in the VM as on the host.
+#   3. PHP, Composer, MariaDB and Chromium (lima/guest-dev-stack.sh, as
+#      root), so PHPUnit, the maintenance scripts and --chrome work in the
+#      VM as on the host.
 #   4. The agent: Claude Code from the official installer, then
 #      bin/wmf-claude-setup with WMF_CLAUDE_SKIP_BUILD=1. That pulls the nono
 #      base pack, asks for the Phabricator username and registers the MCP
@@ -78,12 +79,28 @@ else
   sudo rm -rf "$NEW"
   sudo install -d -m 0755 -o "$(id -un)" -g "$(id -gn)" "$NEW"
   cp -a "$STAGE"/. "$NEW"/
+  # The previous revision's vendored dependencies, when their lockfile is
+  # unchanged: the build then finds them installed and downloads nothing.
+  # A copy, not hardlinks: the build may rewrite files, and the previous
+  # tree stays whole until the swap.
+  if [[ -n "$CURRENT" && -d "$CURRENT" ]]; then
+    for spec in mcp-phabricator:package-lock.json:node_modules \
+                gerrit-mcp-server:requirements.txt:.venv \
+                gitlab-mcp-server:requirements.txt:.venv \
+                chrome-devtools-mcp:package-lock.json:node_modules; do
+      IFS=: read -r sub lock vend <<<"$spec"
+      if [[ -d "$CURRENT/$sub/$vend" ]] && cmp -s "$CURRENT/$sub/$lock" "$NEW/$sub/$lock"; then
+        cp -a "$CURRENT/$sub/$vend" "$NEW/$sub/$vend"
+        ok "$sub: dependencies reused from $(basename "$CURRENT")"
+      fi
+    done
+  fi
   # World-readable, owner-writable. The agent reads the tree through nono's
   # --read grant and must never write it.
   chmod -R u+rwX,go+rX,go-w "$NEW"
   ok "copied HEAD $REV to $NEW"
 fi
-WMF_CLAUDE_SKIP_CHROME=1 "$NEW/bin/wmf-claude-build"
+"$NEW/bin/wmf-claude-build"
 # The Gerrit MCP appends to this file from inside the sandbox (bin/claude
 # grants it with --allow-file), so the agent owns it.
 # A rerun at the same revision finds it owned by the agent already.
@@ -118,7 +135,7 @@ fi
 
 # PHP, Composer and MariaDB, for PHPUnit without Docker. Root runs the
 # script from the new tree, which the agent cannot write.
-step "PHP, Composer and MariaDB"
+step "PHP, Composer, MariaDB and Chromium"
 dev_stack=$(sudo bash "$NEW/lima/guest-dev-stack.sh" | tail -n1)
 ok "$dev_stack"
 
@@ -171,14 +188,16 @@ else
 fi
 
 # WMF_CLAUDE_SKIP_BUILD: the tree belongs to the engineer, and step 2 built
-# it. Interactive: it asks for the Phabricator username, as ./setup.sh does
-# on the host, and recalls the previous answer.
+# it. It asks for the Phabricator username once; an update keeps the
+# answer, and WMF_CLAUDE_PHAB_USER (from the host command) sets it.
 step "Per-user setup for $AGENT"
 # A contained VM (root-owned marker, written by bin/wmf-claude-vm create --contained)
 # gets no MCP servers: it has no egress for them.
 CONTAINED_ENV=()
 [[ -f /etc/wmf-claude/contained ]] && CONTAINED_ENV=(WMF_CLAUDE_CONTAINED=1)
-as_agent WMF_CLAUDE_SKIP_BUILD=1 WMF_CLAUDE_IN_VM=1 "${CONTAINED_ENV[@]}" "$INSTALL/bin/wmf-claude-setup"
+PHAB_ENV=()
+[[ -n "${WMF_CLAUDE_PHAB_USER:-}" ]] && PHAB_ENV=("WMF_CLAUDE_PHAB_USER=$WMF_CLAUDE_PHAB_USER")
+as_agent WMF_CLAUDE_SKIP_BUILD=1 WMF_CLAUDE_IN_VM=1 "${CONTAINED_ENV[@]}" "${PHAB_ENV[@]}" "$INSTALL/bin/wmf-claude-setup"
 as_agent mkdir -p "$AGENT_HOME/work"
 
 echo ""

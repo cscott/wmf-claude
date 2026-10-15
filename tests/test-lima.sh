@@ -24,7 +24,9 @@ Y="$REPO_ROOT/lima/wmf-claude.yaml"
 VM="$REPO_ROOT/bin/wmf-claude-vm"
 GI="$REPO_ROOT/lima/guest-install.sh"
 GC="$REPO_ROOT/lima/guest-claude.sh"
+VM_CLAUDE="$REPO_ROOT/bin/claude"
 GD="$REPO_ROOT/lima/guest-dev-stack.sh"
+GB="$REPO_ROOT/lima/guest-chrome.sh"
 
 # `-e`: several patterns start with `--`.
 check()  { if grep -qE -e "$3" "$2"; then pass "$1"; else fail "$1"; fi; }   # $1 desc  $2 file  $3 must match
@@ -92,7 +94,7 @@ check  "nftables enabled at boot"                   "$Y" 'systemctl enable nftab
 
 echo ""
 echo "--- no permissive profile ---"
-for f in "$Y" "$GI" "$GC" "$GD" "$VM"; do
+for f in "$Y" "$GI" "$GC" "$GD" "$GB" "$VM"; do
   n="${f#"$REPO_ROOT"/}"
   absent "$n: no api.minimax.io"                    "$f" 'minimax'
   absent "$n: no network_profile"                   "$f" 'network_profile'
@@ -118,7 +120,9 @@ if [[ "$n_pipe" == 1 && "$n_off" == 1 ]]; then
 else
   fail "curl|bash: $n_pipe uses, $n_off of them the official Claude Code installer"
 fi
-check  "chrome MCP build skipped in the guest"      "$GI" 'WMF_CLAUDE_SKIP_CHROME=1'
+absent "chrome MCP built in the guest (no SKIP_CHROME)" "$GI" 'WMF_CLAUDE_SKIP_CHROME'
+check  "build writes mcp-config.json (the tree owner)" "$REPO_ROOT/bin/wmf-claude-build" "> \"\\\$CDP_DIR/mcp-config.json\""
+absent "setup no longer writes mcp-config.json"      "$REPO_ROOT/bin/wmf-claude-setup" "> \"\\\$CDP_DIR/mcp-config.json\""
 check  "per-user setup as agent, build skipped"     "$GI" 'WMF_CLAUDE_SKIP_BUILD=1'
 check  "agent runs bin/wmf-claude-setup itself"     "$GI" 'as_agent WMF_CLAUDE_SKIP_BUILD=1 .*wmf-claude-setup'
 absent "no agent login shell (dotfiles run outside nono)" "$GI" 'bash -lc'
@@ -142,7 +146,7 @@ check  "restart only when the config changed"            "$GD" 'cmp -s "\$NEWCNF
 check  "rights on the wiki database only"                "$GD" 'GRANT ALL PRIVILEGES ON \\`\$DB_NAME\\`\.\* TO'
 absent "no grant on *.*"                                 "$GD" 'ON \*\.\*'
 absent "root keeps unix_socket authentication"           "$GD" "'root'|ALTER USER"
-absent "agent joins no group"                            "$GD" 'usermod|gpasswd|adduser'
+absent "the agent user is never touched"                 "$GD" '(usermod|gpasswd|adduser).*(^| )agent( |$)'
 check  "docs: PHPUnit in the VM"                         "$REPO_ROOT/docs/lima-vm.md" '^## PHPUnit in the VM$'
 
 echo ""
@@ -163,6 +167,11 @@ check  "push records the workspace's host repo"     "$VM" 'ws_save "\$name" "\$t
 check  "update ships HEAD via git archive"          "$VM" 'git -C "\$ROOT" archive'
 check  "update includes the submodules at HEAD's commits" "$VM" 'done < <\(git -C "\$ROOT" ls-tree -r HEAD\)'
 check  "update stops on a missing submodule commit" "$VM" 'cat-file -e "\$sha\^\{commit\}"'
+check  "update reuses vendored deps when the lockfile is unchanged" "$GI" 'cmp -s "\$CURRENT/\$sub/\$lock" "\$NEW/\$sub/\$lock"'
+check  "update copies them, no hardlinks"            "$GI" 'cp -a "\$CURRENT/\$sub/\$vend" "\$NEW/\$sub/\$vend"'
+check  "update passes WMF_CLAUDE_PHAB_USER to the guest" "$VM" 'guest env \$\{WMF_CLAUDE_PHAB_USER:\+WMF_CLAUDE_PHAB_USER="\$WMF_CLAUDE_PHAB_USER"\}'
+check  "guest-install passes it to setup"             "$GI" 'PHAB_ENV=\("WMF_CLAUDE_PHAB_USER=\$WMF_CLAUDE_PHAB_USER"\)'
+check  "setup keeps the recalled username in the VM"  "$REPO_ROOT/bin/wmf-claude-setup" '-n "\$DEFAULT_PHAB_USER" && \( -n "\$\{WMF_CLAUDE_IN_VM:-\}" \|\| ! -t 0 \)'
 
 echo ""
 echo "--- bin/wmf-claude-vm: what a session left in the VM ---"
@@ -205,7 +214,7 @@ fi
 
 echo ""
 echo "--- scripts parse ---"
-for f in "$VM" "$GI" "$GC" "$GD"; do
+for f in "$VM" "$GI" "$GC" "$GD" "$GB"; do
   if bash -n "$f" 2>/dev/null; then pass "bash -n ${f#"$REPO_ROOT"/}"; else fail "bash -n ${f#"$REPO_ROOT"/}"; fi
   if [[ -x "$f" ]]; then pass "executable: ${f#"$REPO_ROOT"/}"; else fail "not executable: ${f#"$REPO_ROOT"/}"; fi
 done
@@ -220,7 +229,7 @@ else
 fi
 rm -f "$PROV"
 if command -v shellcheck >/dev/null 2>&1; then
-  for f in "$VM" "$GI" "$GC" "$GD"; do
+  for f in "$VM" "$GI" "$GC" "$GD" "$GB"; do
     if shellcheck -x "$f" >/dev/null 2>&1; then pass "shellcheck ${f#"$REPO_ROOT"/}"; else fail "shellcheck ${f#"$REPO_ROOT"/}"; shellcheck -x "$f" | sed 's/^/        /'; fi
   done
 else
@@ -238,7 +247,33 @@ fi
 
 echo ""
 echo "--- lima/guest-claude.sh: agent launch ---"
-check  "--chrome and --ide are refused"             "$GC" '--chrome\|--ide\)'
+check  "--ide is refused"                           "$GC" '^[[:space:]]*--ide\)$'
+check  "--chrome starts the browser as the browser user" "$GC" 'exec sudo -n -u "\$CHROME_USER" "\$INSTALL/lima/guest-chrome.sh" cdp'
+check  "--chrome waits for CDP before the session"  "$GC" 'curl -s -o /dev/null http://127.0.0.1:9222/json/version'
+check  "--chrome tells the session it is in the VM" "$GC" 'WMF_CLAUDE_CHROME_IN_VM=1'
+check  "every VM session is told so"                "$GC" '^ENV_ARGS=\(WMF_CLAUDE_IN_VM=1\)$'
+check  "hook: how to serve the wiki in the VM"      "$REPO_ROOT/bin/session-start.sh" 'php -S 127\.0\.0\.1:8080 -t \.'
+check  "docs: serving the wiki"                     "$REPO_ROOT/docs/lima-vm.md" 'Serving the wiki'
+check  "the browser stops with the session"         "$GC" 'if \[\[ -n "\$CHROME_PID" \]\]; then kill "\$CHROME_PID"'
+absent "bin/claude: contained mode no longer refuses --chrome" "$VM_CLAUDE" 'contained_refused\+=" --chrome"'
+
+echo ""
+echo "--- lima/guest-chrome.sh: headless, loopback only ---"
+check  "headless"                                   "$GB" '^  --headless=new$'
+check  "CDP pinned to loopback"                     "$GB" '--remote-debugging-address=127\.0\.0\.1'
+check  "default context: closed proxy"              "$GB" '^  --proxy-server=127\.0\.0\.1:9$'
+check  "no name resolution but loopback"            "$GB" 'MAP \* ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127\.0\.0\.1'
+check  "proxy bypass names loopback"                "$GB" '--proxy-bypass-list="127\.0\.0\.1;localhost;\[::1\]"'
+check  "fresh data dir per run"                     "$GB" 'DATA_DIR=\$\(mktemp -d /tmp/wmf-claude-chrome\.XXXXXX\)'
+check  "data dir removed on exit"                   "$GB" 'rm -rf "\$DATA_DIR"'
+check  "HOME is the data dir"                       "$GB" '^export HOME="\$DATA_DIR"$'
+absent "Chromium's own sandbox stays on"            "$GB" 'no-sandbox'
+check  "dev stack: browser user is a system account, no login" "$GD" 'adduser --system --group --home "/var/lib/\$CHROME_USER" --shell /usr/sbin/nologin'
+check  "dev stack: browser user leaves sudo/docker"  "$GD" 'gpasswd -d "\$CHROME_USER" "\$g"'
+check  "dev stack: firewall rejects the browser uid off loopback" "$GD" 'meta skuid \$CHROME_UID oifname != "lo" counter reject'
+check  "dev stack: firewall unit follows nftables.service" "$GD" '^PartOf=nftables\.service$'
+check  "dev stack: Chromium without recommends (no setuid sandbox)" "$GD" ' chromium fonts-liberation\)$'
+check  "docs: a browser in the VM"                  "$REPO_ROOT/docs/lima-vm.md" '^## A browser in the VM$'
 check  "only --docker=SERVICE is accepted"          "$GC" '--docker=\*:\*\|--docker=auto\|--docker\|--docker=\|--egress=\*\)'
 check  "the broker runs as the engineer"            "$GC" 'python3 "\$INSTALL/bin/launch-docker-broker"'
 check  "handshake is group-readable (0640)"         "$GC" 'chmod 0640 "\$HS"'

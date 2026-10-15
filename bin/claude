@@ -260,7 +260,8 @@ if [[ -n "$PROXY_PORT" ]]; then
   # Managed mode would start the broker as the agent, which cannot reach the
   # Docker socket in the VM.
   [[ -n "$DOCKER_SERVICE" ]] && contained_refused+=" --docker=$DOCKER_SERVICE (use bin/wmf-claude-vm claude NAME --docker=SERVICE)"
-  $WANT_CHROME && contained_refused+=" --chrome"
+  # --chrome is not refused: in the VM, lima/guest-claude.sh runs the browser
+  # headless under the lock, and the flag only opens 9222 and loads the MCP.
   { $WANT_IDE || [[ -n "${CLAUDE_CODE_SSE_PORT:-}" ]]; } && contained_refused+=" --ide"
   # nono flags: an allowlist of path grants. Anything else (a localhost
   # port, a credential route, a new nono flag) could add egress.
@@ -419,12 +420,17 @@ if $WANT_CHROME; then
     echo "       run ./setup.sh with WMF_CLAUDE_SKIP_CHROME unset" >&2
     exit 1
   fi
-  # Soft warning if Chrome doesn't appear to be running yet — the MCP will
-  # still launch, the engineer just needs to start Chrome before driving it.
-  if command -v lsof >/dev/null 2>&1 \
-     && ! lsof -nP -iTCP:9222 -sTCP:LISTEN >/dev/null 2>&1; then
-    note "nothing listening on 127.0.0.1:9222 yet — start Chrome with"
-    echo "      bin/launch-test-chrome in another terminal before driving it" >&2
+  # Soft warning if Chrome doesn't answer yet — the MCP will still launch,
+  # the engineer just needs to start Chrome before driving it. An HTTP
+  # probe, not lsof: in the Lima guest the browser belongs to another user,
+  # whose sockets lsof does not show to the agent.
+  if ! curl -s --max-time 2 -o /dev/null http://127.0.0.1:9222/json/version; then
+    if [[ -n "${WMF_CLAUDE_CHROME_IN_VM:-}" ]]; then
+      note "the guest's headless Chromium does not answer on 127.0.0.1:9222; read the browser log"
+    else
+      note "nothing listening on 127.0.0.1:9222 yet — start Chrome with"
+      echo "      bin/launch-test-chrome in another terminal before driving it" >&2
+    fi
   fi
   CHROME_DEVTOOLS_ALLOWS+=(--allow "$CDP_DIR")
   CHROME_DEVTOOLS_NONO_ARGS+=(--open-port 9222)

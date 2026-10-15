@@ -26,9 +26,9 @@ REPO_ROOT = os.path.dirname(SBX_ROOT)
 
 
 # The image build installs these into /usr/local/bin (image.helper_files),
-# so they are on PATH for every user. These are bash scripts, not part of
-# this python package, and they come from two directories, so each name
-# names its own source:
+# so they are on PATH for every user. Each is one file, not part of this
+# python package (bash, or python that imports only the standard library),
+# and they come from two directories, so each name names its own source:
 #
 #  - sbx/bin/ holds the git helpers, because engineers run them on the host
 #    too. Both names are needed: `git-safe-reset` so `git safe-reset`
@@ -36,7 +36,9 @@ REPO_ROOT = os.path.dirname(SBX_ROOT)
 #    git-safe-reset invokes it by bare name.
 #  - sbx/helpers/ holds the scripts that only run inside a sandbox.
 #    `mw-install-browser` installs Chrome for the karma and selenium suites;
-#    `mw-install-cypress` installs a repo's Cypress binary.
+#    `mw-install-cypress` installs a repo's Cypress binary. `git-sbx-pull`
+#    is the guest half of sbx/bin/git-sbx-pull (same name, so the agent and
+#    the engineer type the same command): it takes a hand-off from the host.
 HELPER_SCRIPT_DIR = os.path.join(SBX_ROOT, "bin")
 SANDBOX_HELPER_DIR = os.path.join(SBX_ROOT, "helpers")
 HELPER_SCRIPTS = {
@@ -44,6 +46,7 @@ HELPER_SCRIPTS = {
     "git-review-check": HELPER_SCRIPT_DIR,
     "mw-install-browser": SANDBOX_HELPER_DIR,
     "mw-install-cypress": SANDBOX_HELPER_DIR,
+    "git-sbx-pull": SANDBOX_HELPER_DIR,
 }
 
 # The in-sandbox testing guide, shipped to ~/MEDIAWIKI-TESTING.md. It goes

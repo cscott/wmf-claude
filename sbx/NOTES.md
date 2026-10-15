@@ -417,6 +417,7 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
     macOS (Homebrew `bash-completion@2`; zsh is the default shell there, and zsh's git
     completion is another mechanism).
   - Open: whether Claude Code takes `/sbx-pull` for the plugin's `/wmf-claude:sbx-pull`.
+    Moot: the skill is a user skill (below).
   - Built (2026-10-15): the host side, `sbx/src/wmf_sbx/sbx_pull.py` (tests:
     `test_wmf_sbx_sbx_pull.py`, real repos), and `wmf-sbx rm`'s clean-up
     (`remotes.forget_pulls`: the records and `refs/remotes/NAME-seen/*`). Differences
@@ -427,8 +428,15 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
     query as `git-review-check`). A host branch's upstream on a sandbox remote is
     never passed on. Then `git-review-check` (HEAD in `refs/remotes/NAME/*` or
     `NAME-seen/*`) and `git safe-reset NAME/BRANCH` (or `NAME BRANCH`; a bare `NAME`
-    still resets to its master). Still to build: guest mode and the skill, the
-    completion and the README.
+    still resets to its master). Then guest mode, `sbx/helpers/git-sbx-pull`: one
+    stdlib-only file, which the image copies to `/usr/local/bin` (a new image; a
+    sandbox made before it has neither the command nor the skill). The guest reads
+    the host's copy of its branches (`refs/remotes/$SANDBOX_NAME/*` there) into
+    `refs/sbx/host-has/*`. The skill is a *user* skill, written at create to
+    `~/.claude/skills/sbx-pull/SKILL.md` (source `sbx/templates/skills/sbx-pull/`),
+    not the plugin's: it is wmf-sbx's alone, it stays out of the shared `skills/`,
+    and a user skill's command is `/sbx-pull` (to RAN in a session). The agent's
+    CLAUDE.md names it. Still to build: the completion and the README.
   - READ 2026-10-15, why upstreams to a sandbox seemed to vanish: `wmf-sbx rm` runs
     `git remote remove NAME` (remotes.py), which deletes `refs/remotes/NAME/*` and
     unsets `branch.*.remote`/`merge` for every branch that tracked NAME. The local

@@ -435,6 +435,12 @@ waiting for instructions to commit" is not a stopping point: it leaves
 the engineer unable to see, run, or review any of it. A commit is cheap
 to take back -- `git commit --amend`, or `git reset --soft HEAD^` -- on
 your next turn.
+
+The engineer takes your branch with `git sbx-pull` on their machine. When
+they hand work back to you (they type `/sbx-pull`, or say they edited
+your branch or left work for you on theirs), use the `/sbx-pull` skill:
+it takes their branch, shows what they changed, and keeps you on the
+same branch name.
 """
 
 
@@ -598,6 +604,19 @@ def clipboard_env():
             clipboard_mod.ADDRESS_VAR: f"{egress_mod.EGRESS_ADDR}:{egress_mod.CLIP_PORT}"}
 
 
+# The skill for a hand-off from the host (`git sbx-pull` in the guest,
+# sbx/helpers/git-sbx-pull). A user skill, not the plugin's: it is wmf-sbx's,
+# and its command is `/sbx-pull`.
+SBX_PULL_SKILL_SOURCE = os.path.join(kit_mod.SBX_ROOT, "templates", "skills", "sbx-pull",
+                                     "SKILL.md")
+SBX_PULL_SKILL_PATH = "~/.claude/skills/sbx-pull/SKILL.md"
+
+
+def sbx_pull_skill():
+    with open(SBX_PULL_SKILL_SOURCE, encoding="utf-8") as f:
+        return f.read()
+
+
 def session_plan(name, resolved_for_kit, readonly=(), identity=None, preferences=None,
                  claude_version=None, quiet=True, environment=None, sudo=False,
                  copy=False):
@@ -615,6 +634,7 @@ def session_plan(name, resolved_for_kit, readonly=(), identity=None, preferences
     files = [
         {"path": "~/.claude/CLAUDE.md", "content": home_claude_md(name, sudo=sudo)},
         {"path": f"~/{kit_mod.TESTING_GUIDE}", "content": guide},
+        {"path": SBX_PULL_SKILL_PATH, "content": sbx_pull_skill()},
     ]
     if copy:
         env.update(clipboard_env())

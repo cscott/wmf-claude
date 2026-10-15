@@ -5,6 +5,7 @@
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -143,11 +144,27 @@ class HelperScriptTests(unittest.TestCase):
             self.assertTrue(os.path.exists(os.path.join(source_dir, name)),
                             f"{name} is not in {source_dir}")
 
-    def test_the_helpers_are_valid_bash(self):
+    def test_the_helpers_are_valid_bash_or_python(self):
         for name, source_dir in k.HELPER_SCRIPTS.items():
-            done = subprocess.run(["bash", "-n", os.path.join(source_dir, name)],
-                                  capture_output=True, text=True)
+            path = os.path.join(source_dir, name)
+            with open(path, encoding="utf-8") as f:
+                shebang = f.readline()
+            if "python3" in shebang:
+                with open(path, encoding="utf-8") as f:
+                    compile(f.read(), path, "exec")
+                continue
+            self.assertRegex(shebang, r"\bbash\b", name)
+            done = subprocess.run(["bash", "-n", path], capture_output=True, text=True)
             self.assertEqual(done.returncode, 0, f"{name}: {done.stderr}")
+
+    def test_the_guest_git_sbx_pull_imports_only_the_standard_library(self):
+        # The image copies it to /usr/local/bin alone.
+        path = os.path.join(k.SANDBOX_HELPER_DIR, "git-sbx-pull")
+        with open(path, encoding="utf-8") as f:
+            imports = re.findall(r"^(?:import|from) (\S+)", f.read(), re.M)
+        self.assertTrue(imports)
+        for mod in imports:
+            self.assertIn(mod.split(".")[0], sys.stdlib_module_names, mod)
 
 
 class TestingGuideTests(unittest.TestCase):

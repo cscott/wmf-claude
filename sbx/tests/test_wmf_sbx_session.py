@@ -614,6 +614,19 @@ class GitIdentityTests(unittest.TestCase):
         plan = session.session_plan("demo", [], preferences={"ste": False})
         self.assertEqual(plan["env"]["SANDBOX_NAME"], "demo")
 
+    def test_the_plan_ships_the_sbx_pull_skill(self):
+        # A user skill, so its command is /sbx-pull; CLAUDE.md names it.
+        plan = session.session_plan("demo", [])
+        (skill,) = [f for f in plan["files"]
+                    if f["path"] == "~/.claude/skills/sbx-pull/SKILL.md"]
+        front = skill["content"].split("---\n")[1]
+        meta = session.image_mod.yaml.safe_load(front)
+        self.assertIn("git sbx-pull", meta["description"])
+        self.assertIn("Bash(git sbx-pull*)", meta["allowed-tools"])
+        self.assertIn("git sbx-pull --as NAME", skill["content"])
+        claude_md = [f for f in plan["files"] if f["path"] == "~/.claude/CLAUDE.md"][0]
+        self.assertIn("use the `/sbx-pull` skill", claude_md["content"])
+
     def test_bad_or_reserved_environment_is_refused(self):
         for bad, why in (({"1X": "a"}, "not a variable name"),
                          ({"NO_PROXY": "x"}, "credential proxy"),

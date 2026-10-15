@@ -320,6 +320,13 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
   BRANCH`, which git's DWIM turns into a new branch that tracks `NAME/BRANCH` when only
   one remote has it: the setup that breaks `git review`. And the agent amends, so a pull
   from a sandbox is often not a fast-forward.
+  `track=1` is there for release branches (cananian 2026-10-15): a local branch that
+  tracks `origin/REL1_46` makes `git review` send to `REL1_46`. So turning `track` off
+  is not an option, and a branch fetched from a sandbox must track the Gerrit branch
+  the work is for, which the host cannot read from the sandbox. Proposed: the `origin/*`
+  branch with the fewest commits to the sandbox branch (`git rev-list --count
+  origin/X..NAME/BRANCH`), master on a tie, said aloud, with an option (`--onto
+  REL1_46`) to name it.
 
 ### Upstream work and repo hygiene
 

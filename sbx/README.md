@@ -215,9 +215,13 @@ with the size and never the text, is
 - Only behind the egress proxy, for now (not `vz` or
   `--no-egress-proxy`). A sandbox made before this gets it when made
   again.
-- Copy only. Paste from the keyboard (Ctrl+Shift+V) and Shift+middle
-  click work as they do in any terminal; middle click, right click and
-  Ctrl+V in Claude Code read the clipboard, and still paste nothing.
+- Copy only. To paste into Claude Code, use Ctrl+V, Ctrl+Shift+V or
+  Shift+middle click: the terminal sends the text. A plain middle click
+  pastes nothing, because Claude Code takes the click and reads the
+  clipboard itself, which the sandbox cannot see. There is no paste
+  channel on purpose: it would let the VM read your clipboard (your
+  passwords too), and a step to approve each read would be more work
+  than the Shift key.
 - With no display on the host (an SSH login), `resume` says so and the
   session starts without it.
 - The agent can set your clipboard while a session runs (`SECURITY.md`
@@ -476,7 +480,8 @@ wmf-sbx create PRIMARY[:ro] [EXTRA[:ro] ...] [options]
 - `--no-remotes`: add no host remote, and leave host gc as it is.
 - `--start/--no-start`: start Claude Code in the new sandbox at the end,
   as `wmf-sbx resume` does. By default `create` starts it when stdin and
-  stdout are a terminal, and not in a script or a pipe.
+  stdout are a terminal, and not in a script or a pipe. The list of
+  `wmf-sbx` commands for the sandbox comes after the session ends.
 - `--clone-missing`: clone the repos that are not on the host yet without
   asking ("Naming a repo", above).
 - `--cold`, `--no-snapshot`, `--no-expire`: see "Warm snapshots" and

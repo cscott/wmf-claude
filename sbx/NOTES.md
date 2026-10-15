@@ -255,6 +255,17 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
   and a new package changes the image's cache key, so every host rebuilds the image. It
   may be worth it for paste (`session.native_paste`) or for the no-egress case.
 
+- [ ] **Copy without the egress proxy** (a task for someone else; cananian 2026-10-15
+  will not work on it). Today copy needs the egress proxy's guestfwd to `clip.sock`.
+  Without the proxy the shim would connect to `192.168.5.2:PORT`, the host's loopback,
+  so the listener would need a TCP port there, which other local users and processes
+  can reach too. The plan is to remove `--no-egress-proxy` once the macOS question is
+  settled (the egress proxy is the more secure design), which would make this moot.
+- **Paste: not built, on purpose** (cananian 2026-10-15). A paste channel lets the VM
+  read the host's clipboard, and a step to approve each read would be more intrusive
+  than the workaround: Ctrl+V, Ctrl+Shift+V and Shift+middle click paste through the
+  terminal; only a plain middle click does not (README "Copy").
+
 ### From the design documents
 
 - [ ] **Dependency walk, open questions:** a manifest `name` that is not the directory: an
@@ -276,12 +287,6 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
   them.
 
 ### Quality-of-life issues
-- [ ] **`create`'s auto-start hides the "Sandbox NAME is ready" block.** `wmf-sbx create`
-  prints the block (the sandbox name, how to resume it, `wmf-sbx rm NAME`), then runs
-  `wmf-sbx resume`. The block scrolls away under the session, and the last line on the
-  terminal is Claude Code's own `Resume this session with: claude --resume UUID`, which is
-  not how to resume a sandbox. Fix: run the auto-start first, and print the block after
-  the auto-started `wmf-sbx resume` exits (cananian 2026-10-15).
 - [ ] Streamline the process for copying commits from the sandbox to
       the host.  Right now on the host we do something like `git
       safe-reset` (to ensure that there is no unsaved work on the

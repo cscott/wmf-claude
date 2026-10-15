@@ -512,7 +512,8 @@ Nothing is still to RAN for copy.
 
 Open questions:
 
-- Without the egress proxy (not built), the shim would connect to `192.168.5.2:PORT`
+- Without the egress proxy (not built; left for someone else, sbx/NOTES.md,
+  and moot if `--no-egress-proxy` is removed), the shim would connect to `192.168.5.2:PORT`
   (loopback on the host). The nono measurement above was on
   `192.168.5.100`; the same port-only Landlock rule applies, but it is
   not RAN.
@@ -520,9 +521,11 @@ Open questions:
   (READ 2026-10-15, last updated 2026-09-25; the API lists comments
   only with a login). If VTE implements it, GNOME Terminal fixes the
   copy with no code.
-- Paste with the mouse, and Ctrl+V, need a clipboard read (above).
-  Keep them broken (keyboard paste and Shift+middle click work), or
-  add a read channel that the engineer controls?
+- Paste: DECIDED (cananian 2026-10-15): not built. A read channel lets
+  the VM read the host's clipboard, and an approval step for each read
+  would be more intrusive than pressing Shift. Ctrl+V, Ctrl+Shift+V and
+  Shift+middle click paste through the terminal (RAN by the engineer);
+  only a plain middle click does not. sbx/README.md "Copy" says so.
 - The pastejacking note in "Security notes" applies as written. A
   per-write desktop notification would also show a write that the
   engineer did not make.

@@ -18,12 +18,20 @@ With both sides NAME:PATH, the copy goes out of the first sandbox into a
 temporary directory on the host, and from there into the second; the
 temporary directory is removed afterwards, also on failure.
 
+More than one SRC, as with cp: DST must then be a directory that exists.
+The sources are all on one side: the host, or one sandbox. A wildcard
+(`*`, `?`, `[...]`) in a NAME:PATH source is expanded in the sandbox, as
+the agent, so quote it on the host (`'NAME:logs/*.txt'`); a host wildcard
+is the host shell's (and is expanded here if it reaches us quoted). A
+pattern that matches nothing is an error.
+
 Usage:
-  wmf-sbx cp [-r] SRC DST   # one or both of them NAME:PATH; a directory
-                            # is copied whole, -r or not
+  wmf-sbx cp [-r] SRC... DST   # NAME:PATH on one side or both; a
+                               # directory is copied whole, -r or not
 """
 
 import argparse
+import glob
 import os
 import shutil
 import sys
@@ -136,6 +144,43 @@ def _guest_path(resolved_arg):
     return guest
 
 
+GLOB_CHARS = "*?["
+
+
+def is_pattern(path):
+    return any(c in path for c in GLOB_CHARS)
+
+
+# Expands $1 as the agent: IFS empty, so the unquoted $1 is globbed but not
+# split; nullglob, so no match gives nothing. NUL-separated.
+GUEST_GLOB = 'shopt -s nullglob; IFS=; set -- $1; [ $# -gt 0 ] && printf "%s\\0" "$@"'
+
+
+def expand_guest(name, pattern, lima):
+    """The agent's paths that `pattern` (absolute) matches in the sandbox,
+    sorted; VmError when none does."""
+    res = vm_mod.shell(name, vm_mod.agent_argv(["bash", "-c", GUEST_GLOB, "_", pattern],
+                                               workdir="/tmp"), lima=lima, check=False)
+    found = sorted(p for p in (res.stdout or "").split("\0") if p)
+    if not found:
+        raise vm_mod.VmError(f"no match in {name}: {pattern}")
+    return found
+
+
+def expand_host(path):
+    if not is_pattern(path) or os.path.exists(path):
+        return [path]
+    found = sorted(glob.glob(path))
+    if not found:
+        raise vm_mod.VmError(f"no match: {path}")
+    return found
+
+
+def guest_is_dir(name, path, lima):
+    return vm_mod.shell(name, vm_mod.agent_argv(["test", "-d", path], workdir="/tmp"),
+                        lima=lima, check=False).returncode == 0
+
+
 def main(argv=None, lima=None, env=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     # A directory is copied whole either way; -r is accepted for the
@@ -143,35 +188,54 @@ def main(argv=None, lima=None, env=None):
     parser.add_argument("-r", "-R", "--recursive", action=argparse.BooleanOptionalAction,
                         default=False,
                         help="accepted and ignored: directories are always copied whole")
-    parser.add_argument("src")
-    parser.add_argument("dst")
+    parser.add_argument("paths", nargs="+", metavar="SRC... DST",
+                        help="the sources, then the destination")
     args, _config = cli_mod.parse_args(parser, argv, "cp")
+    if len(args.paths) < 2:
+        parser.error("give at least one SRC and a DST")
     lima = lima or lima_mod.Limactl()
     try:
-        src = resolve_cp_arg(args.src, env=env)
-        dst = resolve_cp_arg(args.dst, env=env)
-        names = [_sandbox_name_in(a) for a in (src, dst)]
-        if names == [None, None]:
+        srcs = [resolve_cp_arg(a, env=env) for a in args.paths[:-1]]
+        dst = resolve_cp_arg(args.paths[-1], env=env)
+        src_names = {_sandbox_name_in(s) for s in srcs}
+        if len(src_names) > 1:
+            raise vm_mod.VmError("the sources must all be on the host, or all in one "
+                                 "sandbox: run one cp for each")
+        src_name, dst_name = src_names.pop(), _sandbox_name_in(dst)
+        if src_name is None and dst_name is None:
             raise vm_mod.VmError("write SRC or DST (or both) as NAME:PATH")
-        for name in dict.fromkeys(n for n in names if n):
+        for name in dict.fromkeys(n for n in (src_name, dst_name) if n):
             vm_mod.resolve(name, env=env)
             vm_mod.ensure_running(name, lima=lima,
                                   log=lambda m: print(color_mod.dim(m), file=sys.stderr))
-        if names[0] and names[1]:
-            src_guest, dst_guest = _guest_path(src), _guest_path(dst)
-            tmp = tempfile.mkdtemp(prefix="wmf-sbx-cp.")
-            print(color_mod.dim(f"+ {names[0]}:{src_guest} -> {tmp} -> {names[1]}:{dst_guest}"),
-                  file=sys.stderr)
-            try:
-                staged = os.path.join(tmp, os.path.basename(os.path.normpath(src_guest)))
-                copy_out(names[0], src_guest, staged, lima)
-                copy_in(names[1], staged, dst_guest, lima)
-            finally:
-                shutil.rmtree(tmp, ignore_errors=True)
-        elif names[1]:
-            copy_in(names[1], os.path.expanduser(src), _guest_path(dst), lima)
+        # The sources, with their wildcards expanded on their own side.
+        if src_name:
+            sources = []
+            for s in srcs:
+                path = _guest_path(s)
+                sources += expand_guest(src_name, path, lima) if is_pattern(path) else [path]
         else:
-            copy_out(names[0], _guest_path(src), os.path.expanduser(dst), lima)
+            sources = [p for s in srcs for p in expand_host(os.path.expanduser(s))]
+        dst_path = _guest_path(dst) if dst_name else os.path.expanduser(dst)
+        if len(sources) > 1 and not (guest_is_dir(dst_name, dst_path, lima) if dst_name
+                                     else os.path.isdir(dst_path)):
+            raise vm_mod.VmError(f"{len(sources)} sources, so {args.paths[-1]} must be a "
+                                 f"directory that exists")
+        for source in sources:
+            if src_name and dst_name:
+                tmp = tempfile.mkdtemp(prefix="wmf-sbx-cp.")
+                print(color_mod.dim(f"+ {src_name}:{source} -> {tmp} -> "
+                                    f"{dst_name}:{dst_path}"), file=sys.stderr)
+                try:
+                    staged = os.path.join(tmp, os.path.basename(os.path.normpath(source)))
+                    copy_out(src_name, source, staged, lima)
+                    copy_in(dst_name, staged, dst_path, lima)
+                finally:
+                    shutil.rmtree(tmp, ignore_errors=True)
+            elif dst_name:
+                copy_in(dst_name, source, dst_path, lima)
+            else:
+                copy_out(src_name, source, dst_path, lima)
     except (state_mod.StateError, vm_mod.VmError, lima_mod.LimaError) as e:
         print(color_mod.error(f"error: {e}"), file=sys.stderr)
         return 1

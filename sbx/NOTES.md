@@ -62,15 +62,6 @@ Development scaffolding:
 - [ ] **`sbx/upstream/`**: drop what upstream took (!130 and !133, the STE switch, are
   merged), file the rest, and remove the directory when it is empty.
 
-### Quality of life (after the B4 acceptance run)
-
-cananian, 2026-10-14: small changes, to do once the blind run in a warm sandbox passes.
-
-- [ ] **`wmf-sbx cp` with more than one source and with wildcards**: take `SRC... DST`
-  as `cp` does (DST must then be a directory), and expand wildcards in a source on the side
-  it names: the host shell expands host paths, so expand `NAME:PATH` patterns in the guest
-  (quoted on the command line). Refuse sources on both sides in one command.
-
 ### Testing and the MediaWiki setup
 
 - [ ] **A cheap class of clone for CI-only dependencies** (shallow, no host remote, no

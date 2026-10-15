@@ -43,7 +43,7 @@ Every command is `wmf-sbx VERB ...`, or `wmf-sbx-VERB ...`:
 | `resume NAME` | start Claude Code in the sandbox |
 | `exec NAME -- CMD` | run a command in the VM as the agent, outside nono, with a session's variables (`$MW_INSTALL_PATH`, ...) |
 | `allow NAME HOST...`, `logs NAME` | let a sandbox behind the egress proxy reach more hosts; show what the proxy allowed and denied ("The egress proxy") |
-| `cp [-r] SRC DST` | copy a file or a directory between the host and a sandbox, or between two sandboxes (`NAME:PATH`); `-r` is optional |
+| `cp [-r] SRC... DST` | copy files or directories between the host and a sandbox, or between two sandboxes (`NAME:PATH`); `-r` is optional. Several sources need a directory DST; a quoted `'NAME:*.txt'` is expanded in the sandbox |
 | `ls`, `status NAME` | list sandboxes; check one (VM, image, security invariants) |
 | `start NAME`, `stop NAME` | boot or stop the VM; nothing is lost |
 | `rm NAME` | remove the VM, its state and its host remotes |

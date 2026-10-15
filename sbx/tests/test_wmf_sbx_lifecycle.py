@@ -1481,6 +1481,84 @@ class CpTests(Env):
         self.assertEqual(rc, 1)
         self.assertFalse(os.path.exists(os.path.dirname(staged[0])))
 
+    # -- several sources, and wildcards --
+
+    def files(self, *names):
+        paths = []
+        for n in names:
+            paths.append(os.path.join(self.tmp, n))
+            open(paths[-1], "w").close()
+        return paths
+
+    def test_several_host_sources_go_into_a_sandbox_directory(self):
+        lima = self.sandbox()
+        a, b = self.files("a.txt", "b.txt")
+        with mock.patch.object(cp, "guest_is_dir", return_value=True):
+            self.assertEqual(self.quiet(cp.main, [a, b, "sbx-demo:notes"], lima=lima,
+                                        env=self.env), 0, self.err)
+        self.assertEqual([c[1] for c in lima.calls if c[0] == "copy"], [a, b])
+
+    def test_several_sources_need_a_directory(self):
+        lima = self.sandbox()
+        a, b = self.files("a.txt", "b.txt")
+        self.assertEqual(self.quiet(cp.main, [a, b, "sbx-demo:notes"], lima=lima,
+                                    env=self.env), 1)
+        self.assertIn("must be a directory that exists", self.err)
+        self.assertEqual(self.quiet(cp.main, ["sbx-demo:/a", "sbx-demo:/b",
+                                              os.path.join(self.tmp, "a.txt")],
+                                    lima=lima, env=self.env), 1)
+
+    def test_the_sources_are_on_one_side(self):
+        lima = self.sandbox()
+        a, = self.files("a.txt")
+        self.assertEqual(self.quiet(cp.main, [a, "sbx-demo:/b", "sbx-demo:/c"], lima=lima,
+                                    env=self.env), 1)
+        self.assertIn("all be on the host, or all in one sandbox", self.err)
+
+    def test_a_quoted_host_wildcard_is_expanded(self):
+        lima = self.sandbox()
+        a, b = self.files("a.txt", "b.txt")
+        self.files("c.log")
+        with mock.patch.object(cp, "guest_is_dir", return_value=True):
+            self.assertEqual(self.quiet(cp.main, [os.path.join(self.tmp, "*.txt"),
+                                                  "sbx-demo:notes"], lima=lima,
+                                        env=self.env), 0, self.err)
+        self.assertEqual([c[1] for c in lima.calls if c[0] == "copy"], [a, b])
+        self.assertEqual(self.quiet(cp.main, [os.path.join(self.tmp, "*.none"),
+                                              "sbx-demo:notes"], lima=lima, env=self.env), 1)
+        self.assertIn("no match", self.err)
+
+    def test_a_sandbox_wildcard_is_expanded_in_the_sandbox(self):
+        lima = self.sandbox()
+        out = []
+        with mock.patch.object(cp, "expand_guest",
+                               return_value=["/home/me/src/demo/a.txt",
+                                             "/home/me/src/demo/b.txt"]) as expand, \
+                mock.patch.object(cp, "copy_out",
+                                  lambda name, src, dest, lima: out.append((src, dest))):
+            self.assertEqual(self.quiet(cp.main, ["sbx-demo:*.txt", self.tmp], lima=lima,
+                                        env=self.env), 0, self.err)
+        expand.assert_called_once()
+        self.assertEqual(expand.call_args.args[1], "/home/me/src/demo/*.txt")
+        self.assertEqual(out, [("/home/me/src/demo/a.txt", self.tmp),
+                               ("/home/me/src/demo/b.txt", self.tmp)])
+
+    def test_expand_guest_reads_the_agents_nul_separated_matches(self):
+        lima = self.sandbox()
+        orig = lima.call
+
+        def call(*args, **kw):
+            if args[0] == "shell" and cp.GUEST_GLOB in args:
+                lima.calls.append(("call",) + args)
+                return Done(stdout="/x/b c.txt\0/x/a.txt\0")
+            return orig(*args, **kw)
+        lima.call = call
+        self.assertEqual(cp.expand_guest("sbx-demo", "/x/*.txt", lima),
+                         ["/x/a.txt", "/x/b c.txt"])
+        glob_call = [c for c in lima.calls if cp.GUEST_GLOB in c][0]
+        self.assertIn("agent", glob_call)
+        self.assertEqual(glob_call[-1], "/x/*.txt")
+
     def test_a_relative_path_without_a_workspace_is_in_the_agents_home(self):
         lima = self.sandbox(primary=None)
         src = os.path.join(self.tmp, "f.txt")

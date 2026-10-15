@@ -152,7 +152,7 @@ network is locked during sessions. It needs a token from
 the host.
 
 Which mode to use, and how: [`docs/lima-vm.md`](docs/lima-vm.md). `./setup.sh`
-offers a `claude-vm` alias for `bin/wmf-claude-vm`.
+installs a `claude-vm` alias for `bin/wmf-claude-vm`.
 
 ## Bugs and questions
 

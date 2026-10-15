@@ -1,7 +1,7 @@
 #!/bin/bash
 # Per-user config, invoked by ./setup.sh: build deps, pull the base nono pack,
-# register MCP servers, write the chrome config, install the `claude` alias
-# (and, if wanted, `claude-vm`).
+# register MCP servers, write the chrome config, install the `claude` and
+# `claude-vm` aliases.
 # The profile loads by path, so it is not copied anywhere.
 #
 #   WMF_CLAUDE_SKIP_UPDATE=1   skip the `claude update` step
@@ -264,7 +264,7 @@ dim "      Apply with: docker compose -f docker-compose.yml -f $EGRESS_DST/egres
 dim "      Then launch: claude --docker=mediawiki --egress=none"; echo ""
 
 # Shell aliases pointing at this checkout: `claude` (the sandboxed launcher)
-# always, `claude-vm` (bin/wmf-claude-vm) if the engineer wants it.
+# and `claude-vm` (bin/wmf-claude-vm), both unless this runs inside the VM.
 SHELL_NAME="$(basename "${SHELL:-}")"
 case "$SHELL_NAME" in
   zsh)  RC_PATH="$HOME/.zshrc"  ; RC_DISPLAY="~/.zshrc" ;;
@@ -294,13 +294,10 @@ install_alias() {  # $1 NAME  $2 TARGET  $3 comment line
 step "Installing shell aliases"
 install_alias claude "$ROOT/bin/claude" \
   'wmf-claude: sandbox claude by default (bypass with \claude or `command claude`)'
-# Lima VM mode is opt-in, so ask. Not inside the VM itself (lima/guest-install.sh
-# sets WMF_CLAUDE_IN_VM), and not without a terminal to ask on.
-if [[ -z "${WMF_CLAUDE_IN_VM:-}" && -t 0 ]]; then
-  read -rp "    Add a 'claude-vm' alias for Lima VM mode (docs/lima-vm.md)? [y/N] " WANT_VM_ALIAS
-  if [[ "$WANT_VM_ALIAS" == [yY]* ]]; then
-    install_alias claude-vm "$ROOT/bin/wmf-claude-vm" 'wmf-claude: Lima VM mode (docs/lima-vm.md)'
-  fi
+# The Lima VM launcher, aliased like `claude`. Not inside the VM itself
+# (lima/guest-install.sh sets WMF_CLAUDE_IN_VM; the alias is meaningless there).
+if [[ -z "${WMF_CLAUDE_IN_VM:-}" ]]; then
+  install_alias claude-vm "$ROOT/bin/wmf-claude-vm" 'wmf-claude: Lima VM mode (docs/lima-vm.md)'
 fi
 
 # A self-update that was interrupted after its merge leaves this marker so
@@ -313,6 +310,6 @@ echo ""
 echo "  $(dim "The 'claude' alias shadows the system binary so it's sandboxed by default.")"
 echo "  $(dim "Bypass with \\claude or 'command claude' for the unsandboxed binary.")"
 echo "  $(dim "Inside Claude, run") $(bold "/wmf-claude:init-project") $(dim "to bootstrap a repo.")"
-VM_CMD="bin/wmf-claude-vm"; [[ "${WANT_VM_ALIAS:-}" == [yY]* ]] && VM_CMD="claude-vm"
+VM_CMD="claude-vm"; [[ -n "${WMF_CLAUDE_IN_VM:-}" ]] && VM_CMD="bin/wmf-claude-vm"
 echo "  $(dim "SRE or security work that needs a VM around the sandbox:") $(bold "$VM_CMD create") $(dim "(docs/lima-vm.md)")"
 echo ""

@@ -668,7 +668,8 @@ How `bin/wmf-claude-vm` builds its boundary. The user guide is
   `claude setup-token` token in a 0600 file under `~/.config/wmf-claude/` on
   the host — not the login keychain, which a host `bin/claude` session is
   granted (`security -w` reads an item there with no prompt); the profiles also
-  deny `~/.config/wmf-claude` to the sandbox. `login` never runs
+  deny `~/.config/wmf-claude` and `~/.local/state/wmf-claude` (the request log
+  and the transcripts) to the sandbox. `login` never runs
   `claude auth login`. The session holds a placeholder OAuth token.
 - **The model proxy.** `bin/wmf-claude-vm claude` starts
   `bin/wmf-claude-model-proxy` on the host for each session, on a 0600 Unix
@@ -689,7 +690,23 @@ How `bin/wmf-claude-vm` builds its boundary. The user guide is
   - TLS to `api.anthropic.com` verified; every request logged, allowed or
     refused, to `~/.local/state/wmf-claude/model-proxy-<vm>.log`.
 
-  `tests/test-model-proxy.py` checks this policy.
+  It also writes a per-session transcript beside the log,
+  `transcript-<vm>-<time>-<pid>.jsonl.gz`: a request record before each call
+  reaches the API and a response record after, linked by an id (calls can run
+  in parallel). It records what the agent sent and received, never the
+  outbound headers, so the injected token never lands in it, and it forces
+  `Accept-Encoding: identity` upstream so a response is never stored as
+  compressed bytes. Every request the proxy refuses on its policy, and a turn
+  the API saw that then errored or the client aborted, are recorded too; an
+  incomplete connection that never forms a request is in the log only. The
+  file is on the host and the profiles deny its directory, so the agent cannot
+  alter its own record. Fail closed: a path it cannot open or write stops the
+  proxy before the socket binds (so the launcher sees the failure), a request
+  it cannot record is not forwarded, and the session stops at a write error or
+  the per-session byte budget (`WMF_CLAUDE_CAPTURE_MAX_BYTES`). A refused body
+  is kept as a prefix plus a digest, so a stream of refusals cannot fill the
+  host disk. `delete` and `reset` leave it in place.
+  `tests/test-model-proxy.py` checks the policy and the transcript.
 - **The session** runs in `bin/claude`'s contained mode
   (`WMF_CLAUDE_MODEL_PROXY_PORT`, set by `lima/guest-claude.sh`):
   `profiles/wmf-contained.json`, which copies `wmf-engineer`'s filesystem and

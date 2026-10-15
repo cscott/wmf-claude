@@ -208,9 +208,115 @@ echo "--- bin/wmf-claude-model-proxy: request policy ---"
 # -B: loading the proxy as a module must not write bin/__pycache__.
 if out=$(python3 -B "$REPO_ROOT/tests/test-model-proxy.py" 2>&1); then
   pass "test-model-proxy.py ($(grep -c '^PASS' <<<"$out") checks)"
+  MP="$REPO_ROOT/bin/wmf-claude-model-proxy"
+  check  "proxy: request and response records, one gzip member each" "$MP" 'member = gzip\.compress\($'
+  check  "proxy: request and response share an id"            "$MP" 'id=self\.rid, kind="response"'
+  check  "proxy: a request it cannot record is not forwarded" "$MP" 'return self\._session_stopped\(\)'
+  check  "proxy: a per-session byte budget stops the session" "$MP" 'self\.written \+ n > self\.budget'
+  check  "proxy: a bad transcript path refuses to start"      "$MP" 'cannot open the transcript file'
+  check  "vm: the contained session captures the transcript"  "$VM" 'transcript-\$VM-\$\(date -u \+%Y%m%dT%H%M%SZ\)-\$\$\.jsonl\.gz'
+  check  "vm: the proxy is given --capture"                   "$VM" 'model-proxy" --socket "\$sock" --log "\$log" --capture "\$capture"'
+  check  "vm: delete keeps the host transcripts"              "$VM" 'are on the host and are kept'
+  for prof in wmf-engineer wmf-contained; do
+    if jq -e '.filesystem.deny | index("~/.local/state/wmf-claude")' "$REPO_ROOT/profiles/$prof.json" >/dev/null; then
+      pass "$prof denies ~/.local/state/wmf-claude (the host transcript dir)"
+    else fail "$prof does not deny ~/.local/state/wmf-claude"; fi
+  done
 else
   fail "test-model-proxy.py"; grep -v '^PASS' <<<"$out" | sed 's/^/        /'
 fi
+
+echo ""
+echo "--- bin/wmf-claude-vm logs: reads the host artifacts ---"
+# logs reads host files only: it must never need a VM (retention outlives it).
+logs_src="$(awk '/^logs_request\(\) \{/,/^\}/' "$VM")
+$(awk '/^logs_transcript\(\) \{/,/^\}/' "$VM")
+$(awk '/^cmd_logs\(\) \{/,/^\}/' "$VM")"
+if grep -qE 'limactl|vm_exists|is_contained' <<<"$logs_src"; then
+  fail "logs: must read host files only, never a VM"
+else pass "logs reads host files only (never needs a VM)"; fi
+
+LG=$(mktemp -d); LST="$LG/wmf-claude"; mkdir -p "$LST"
+# A request log: two sessions, and a torn final line to drop.
+{
+  printf '%s\n' '{"ts":"2026-01-01T00:00:00Z","decision":"start","pid":1}'
+  printf '%s\n' '{"ts":"2026-01-01T00:00:01Z","decision":"deny","status":403,"method":"POST","path":"/v1/x","reason":"OLD_SESSION"}'
+  printf '%s\n' '{"ts":"2026-01-01T00:00:02Z","decision":"stop","pid":1}'
+  printf '%s\n' '{"ts":"2026-01-01T01:00:00Z","decision":"start","pid":2}'
+  printf '%s\n' '{"ts":"2026-01-01T01:00:01Z","decision":"allow","status":200,"method":"POST","path":"/v1/messages","req_bytes":9,"resp_bytes":9}'
+  printf '{"torn line with no close\n'
+} > "$LST/model-proxy-wmf-claude.log"
+# Two transcripts for this VM; a decoy for the contained VM it must not match.
+printf '%s\n' '{"id":"aaaa1111","kind":"request","decision":"request","ts":"t","request":"OLDTX"}'   | gzip > "$LST/transcript-wmf-claude-20260101T000000Z-1.jsonl.gz"
+printf '%s\n' '{"id":"bbbb2222","kind":"request","decision":"request","ts":"t","request":"NEWTX"}'   | gzip > "$LST/transcript-wmf-claude-20260101T010000Z-2.jsonl.gz"
+printf '%s\n' '{"id":"cccc3333","kind":"request","decision":"request","ts":"t","request":"DECOYTX"}' | gzip > "$LST/transcript-wmf-claude-contained-20260101T020000Z-3.jsonl.gz"
+# Append half of a valid member to the newest: a truncated final member.
+TZ=$(mktemp); printf '%s\n' '{"id":"dddd4444","kind":"response"}' | gzip > "$TZ"
+head -c "$(( $(wc -c < "$TZ") / 2 ))" "$TZ" >> "$LST/transcript-wmf-claude-20260101T010000Z-2.jsonl.gz"; rm -f "$TZ"
+
+lg() { XDG_STATE_HOME="$LG" WMF_CLAUDE_VM="$1" bash "$VM" "${@:2}" 2>/dev/null; }
+
+out=$(lg wmf-claude logs)
+if grep -q OLD_SESSION <<<"$out"; then fail "logs: default shows only the newest session"; else pass "logs: default shows only the newest session"; fi
+if grep -q 'v1/messages' <<<"$out"; then pass "logs: default shows the newest session's records"; else fail "logs: default missing the newest records"; fi
+if grep -q "$(printf '\033')" <<<"$out"; then fail "logs: piped output must be plain"; else pass "logs: piped output is plain (no ANSI)"; fi
+if grep -q OLD_SESSION <<<"$(lg wmf-claude logs --all)"; then pass "logs --all shows every session"; else fail "logs --all must show every session"; fi
+
+tx=$(lg wmf-claude logs --transcript)
+if grep -q DECOYTX <<<"$tx"; then fail "logs --transcript: the VM-name glob matched '*-contained-*'"; else pass "logs --transcript: the VM-name glob is anchored"; fi
+if grep -q bbbb2222 <<<"$tx"; then pass "logs --transcript reads the newest transcript"; else fail "logs --transcript did not read the newest"; fi
+if grep -q NEWTX <<<"$(lg wmf-claude logs --transcript --raw)"; then pass "logs --transcript --raw prints the decoded JSON"; else fail "logs --transcript --raw did not decode"; fi
+if lg wmf-claude logs --transcript >/dev/null; then pass "logs --transcript tolerates a truncated final member"; else fail "logs --transcript aborted on a truncated member"; fi
+if lg nope logs >/dev/null 2>&1; then fail "logs: a missing request log must exit non-zero"; else pass "logs: a missing request log exits non-zero"; fi
+
+# --text reconstructs the readable message, and labels the agent's tool calls
+# (commands) instead of dumping the raw SSE deltas.
+TT="$LST/transcript-wmf-claude-20260101T040000Z-7.jsonl.gz"
+python3 - "$TT" <<'PYEOF'
+import gzip, json, sys
+def ev(t, d): return f"event: {t}\ndata: {json.dumps(d)}\n\n"
+sse  = ev("message_start", {"type":"message_start","message":{"model":"m1"}})
+sse += ev("content_block_start", {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}})
+sse += ev("content_block_delta", {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Listing now."}})
+sse += ev("content_block_start", {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","name":"Bash","id":"t1"}})
+sse += ev("content_block_delta", {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":'{"command":"ls -la /tmp"}'}})
+sse += ev("message_delta", {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":5}})
+rec = {"id":"tool0007","kind":"response","decision":"allow","status":200,"ts":"t","response":sse}
+open(sys.argv[1],"wb").write(gzip.compress((json.dumps(rec)+"\n").encode()))
+PYEOF
+tt=$(lg wmf-claude logs --transcript --text "$TT")
+if grep -q 'Listing now.' <<<"$tt"; then pass "logs --text reconstructs the assistant text"; else fail "logs --text missing the assistant text"; fi
+if grep -q 'Bash: ls -la /tmp' <<<"$tt"; then pass "logs --text labels the agent's tool calls (commands)"; else fail "logs --text did not label the Bash command"; fi
+if grep -q 'partial_json\|input_json_delta\|event: message_start' <<<"$tt"; then fail "logs --text leaked raw SSE instead of reconstructing"; else pass "logs --text reconstructs, not dumps, the stream"; fi
+if lg wmf-claude logs --text >/dev/null 2>&1; then fail "logs: --text must require --transcript"; else pass "logs: --text requires --transcript"; fi
+
+# --text display correctness: a non-SSE error body (not a false stream footer),
+# a part-captured body flagged, a failed tool_result marked, and a record that
+# would throw isolated so later records still render.
+EB="$LST/transcript-wmf-claude-20260101T050000Z-8.jsonl.gz"
+python3 - "$EB" <<'PYEOF'
+import gzip, json, sys
+recs = [
+  {"id":"e1","kind":"response","decision":"error","status":529,"ts":"t","response_truncated":True,
+   "response":json.dumps({"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}})},
+  {"id":"ie","kind":"request","decision":"request","ts":"t",
+   "request":json.dumps({"model":"m","messages":[{"role":"user","content":[
+       {"type":"tool_result","is_error":True,"content":"permission denied"}]}]})},
+  {"id":"bad","kind":"response","decision":"allow","status":200,"ts":"t",
+   "response":json.dumps({"type":"message","content":"not-an-array"})},   # .content a string -> map throws
+  {"id":"ok","kind":"response","decision":"allow","status":200,"ts":"t",
+   "response":"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"SURVIVED\"}}\n\nevent: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":1}}\n\n"},
+]
+with open(sys.argv[1],"wb") as f:
+    for r in recs: f.write(gzip.compress((json.dumps(r)+"\n").encode()))
+PYEOF
+eb=$(lg wmf-claude logs --transcript --text "$EB")
+if grep -q 'overloaded_error' <<<"$eb"; then pass "logs --text renders a non-SSE error body"; else fail "logs --text did not render the error body"; fi
+if grep -q 'stream ended without message_stop' <<<"$eb"; then fail "logs --text showed a false stream footer on a JSON body"; else pass "logs --text: no false stream footer on a JSON body"; fi
+if grep -q 'capture truncated' <<<"$eb"; then pass "logs --text flags a part-captured body"; else fail "logs --text did not flag response_truncated"; fi
+if grep -q 'result error' <<<"$eb"; then pass "logs --text marks a failed tool_result"; else fail "logs --text did not mark is_error"; fi
+if grep -q 'unrenderable record bad' <<<"$eb" && grep -q 'SURVIVED' <<<"$eb"; then pass "logs --text isolates a bad record; later records still render"; else fail "logs --text: a bad record blanked the rest"; fi
+rm -rf "$LG"
 
 echo ""
 echo "--- scripts parse ---"

@@ -20,6 +20,8 @@
 #   bin/wmf-claude-vm discard NAME BRANCH            # delete vm/BRANCH
 #   bin/wmf-claude-vm shell [--agent] [-- CMD...]    # engineer shell in the VM (or as the agent); or run CMD
 #   bin/wmf-claude-vm status | start | stop
+#   bin/wmf-claude-vm logs [--all | -f]              # contained VM: the host request log (newest session; --all or -f for more)
+#   bin/wmf-claude-vm logs --transcript [--text|--raw] [F]  # contained VM: a transcript (newest, or F): summary, --text (readable), or --raw JSON
 #   bin/wmf-claude-vm delete | reset                 # remove the VM (reset: then create it again)
 #
 #   WMF_CLAUDE_VM=<name>         Lima instance name (default: wmf-claude)
@@ -525,17 +527,20 @@ contained_session() {
       read -rp "  Press Enter to start the session anyway, or Ctrl-C to stop: " _ </dev/tty
     fi
   fi
-  local dir sock log errf sshlog port i src
+  local dir sock log capture errf sshlog port i src
   dir=$(limactl list --format '{{.Dir}}' "$VM")
   sock="$dir/sock/model-$$.sock"
   log="${XDG_STATE_HOME:-$HOME/.local/state}/wmf-claude/model-proxy-$VM.log"
+  # A per-session transcript on the host, out of the VM's reach: the proxy
+  # writes the agent's requests and the responses here. Kept until deleted.
+  capture="${XDG_STATE_HOME:-$HOME/.local/state}/wmf-claude/transcript-$VM-$(date -u +%Y%m%dT%H%M%SZ)-$$.jsonl.gz"
   MODEL_PROXY_PID=""; MODEL_SSH_PID=""
   errf=$(mktemp); sshlog=$(mktemp)
   MODEL_TMP=("$errf" "$sshlog")
   src=(--token-file "$MODEL_TOKEN_FILE")
   trap 'model_proxy_stop' EXIT
   trap 'exit 130' INT TERM
-  python3 -B "$ROOT/bin/wmf-claude-model-proxy" --socket "$sock" --log "$log" "${src[@]}" </dev/null 2>"$errf" &
+  python3 -B "$ROOT/bin/wmf-claude-model-proxy" --socket "$sock" --log "$log" --capture "$capture" "${src[@]}" </dev/null 2>"$errf" &
   MODEL_PROXY_PID=$!
   # No fixed limit while the proxy lives (it only reads a local 0600 file).
   while [[ ! -S "$sock" ]] && kill -0 "$MODEL_PROXY_PID" 2>/dev/null; do sleep 0.1; done
@@ -554,6 +559,10 @@ contained_session() {
   [[ -n "$port" ]] || die "the SSH forward to the guest did not start: $(cat "$sshlog")"
   dim "    model API: host proxy -> guest 127.0.0.1:$port; log: $log"; echo ""
   limactl shell --workdir "$ENGINEER_HOME" "$VM" -- "$INSTALL/lima/guest-claude.sh" --model-proxy-port "$port" "$name" "$@" || SESSION_RC=$?
+  # After the session: Claude Code's redraw wipes anything printed before it.
+  # A plain if, not `[[ ]] &&`: a false test as the last command would make
+  # contained_session return 1 under errexit and skip the caller's report.
+  if [[ -f "$capture" ]]; then echo ""; dim "    transcript (host, kept until deleted): $capture"; dim "    view it: bin/wmf-claude-vm logs --transcript \"$capture\""; echo ""; fi
 }
 # The EXIT trap. Stop the processes first: nothing after them may keep them
 # alive. The ${a[@]+...} form: macOS /bin/bash 3.2 with set -u treats an
@@ -800,6 +809,244 @@ cmd_status() {
   fi
 }
 
+# logs: read a contained session's host-side audit artifacts. The request log
+# and the transcripts are on the host, out of the VM's reach, and are kept after
+# the VM is deleted (see cmd_delete). So this reads files only: it needs jq, not
+# limactl or a running VM. The default shows the most recent session of the
+# request log; --all shows every session; -f follows it live. --transcript shows
+# a session transcript (the newest, or FILE): a summary line per record, or the
+# decoded JSON with --raw.
+logs_request() {  # $1 state-dir  $2 all  $3 follow  $4 dim  $5 green  $6 red  $7 reset
+  local state="$1" all="$2" follow="$3" d="$4" g="$5" r="$6" z="$7"
+  local log="$state/model-proxy-$VM.log"
+  if [[ ! -f "$log" ]]; then
+    echo "no request log for VM '$VM' at $log" >&2
+    # Point at any VM that does have one: the usual mistake is the default name.
+    local other n found=false
+    shopt -s nullglob
+    for other in "$state"/model-proxy-*.log; do
+      $found || { echo "  request logs exist for:" >&2; found=true; }
+      n="${other##*/model-proxy-}"; n="${n%.log}"
+      echo "    WMF_CLAUDE_VM=$n bin/wmf-claude-vm logs" >&2
+    done
+    shopt -u nullglob
+    return 1
+  fi
+
+  # One line per record: time, decision (coloured), status, method, path, extra.
+  local defs='
+    def rpad($n): . + (" " * ([$n-(length),0]|max));
+    def lpad($n): (" " * ([$n-(length),0]|max)) + .;
+    def deccol: if .=="allow" then $g elif (.=="deny" or .=="error") then $r else $d end;
+    def fmt:
+      ((.decision) // "?") as $dec
+      | (.reason // (if (.req_bytes!=null or .resp_bytes!=null)
+                     then "req=\(.req_bytes // 0) resp=\(.resp_bytes // 0)" else "" end)) as $x
+      | "\($d)\(.ts // "")\($z) \($dec|deccol)\($dec|rpad(6))\($z) \((.status//""|tostring)|lpad(3)) \((.method//"")|rpad(4)) \((.path//"")|rpad(16)) \($x)"
+      | sub(" +$";"");
+  '
+
+  if $follow; then
+    # Stream the live file; each line is one record. -R + fromjson? tolerates a
+    # torn final line while the proxy writes.
+    tail -n 0 -f "$log" \
+      | jq -Rr --unbuffered --arg d "$d" --arg g "$g" --arg r "$r" --arg z "$z" \
+          "$defs"'fromjson? // empty | fmt'
+    return 0
+  fi
+
+  # The log accumulates across sessions. Show the most recent one (from the last
+  # "start"); --all shows every session. fromjson? drops a torn final line.
+  jq -Rrn --argjson all "$all" --arg d "$d" --arg g "$g" --arg r "$r" --arg z "$z" \
+    "$defs"'
+    [inputs | fromjson? // empty] as $recs
+    | ($recs | (reduce range(0;length) as $i (0; if $recs[$i].decision=="start" then $i else . end))) as $s
+    | (if $all then $recs else $recs[$s:] end)
+    | .[] | fmt' "$log"
+}
+
+logs_transcript() {  # $1 state-dir  $2 file  $3 mode(summary|raw|text)  $4 dim  $5 green  $6 red  $7 reset
+  local state="$1" file="$2" mode="$3" d="$4" g="$5" r="$6" z="$7"
+  local f="$file"
+  if [[ -z "$f" ]]; then
+    # The newest transcript for this VM. Anchor on the timestamp, so VM
+    # 'wmf-claude' does not also match 'wmf-claude-contained-*'.
+    shopt -s nullglob
+    local m=( "$state"/transcript-"$VM"-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9]*Z-[0-9]*.jsonl.gz )
+    shopt -u nullglob
+    if [[ ${#m[@]} -eq 0 ]]; then
+      echo "no transcripts for VM '$VM' in $state" >&2
+      # Point at any VM that does have one, as the request-log path does.
+      local base rest othervm; local -a names=()
+      shopt -s nullglob
+      local gg
+      for gg in "$state"/transcript-*-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T*Z-*.jsonl.gz; do
+        base="${gg##*/}"; rest="${base#transcript-}"
+        othervm="${rest%-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T*Z-*.jsonl.gz}"
+        names+=("$othervm")
+      done
+      shopt -u nullglob
+      if [[ ${#names[@]} -gt 0 ]]; then
+        echo "  transcripts exist for:" >&2
+        printf '%s\n' "${names[@]}" | sort -u | while read -r othervm; do
+          echo "    WMF_CLAUDE_VM=$othervm bin/wmf-claude-vm logs --transcript" >&2
+        done
+      fi
+      return 1
+    fi
+    # Globs sort up and the UTC stamp sorts in time order: the last is newest.
+    f="${m[${#m[@]}-1]}"
+    [[ ${#m[@]} -gt 1 ]] && { dim "showing the newest of ${#m[@]} transcripts; pass a path to view another"; echo; } >&2
+  else
+    [[ -f "$f" ]] || die "logs: no such transcript '$f'"
+  fi
+  { dim "$f"; echo; } >&2
+
+  # Reconstruct each turn as readable text. A response is usually an SSE stream
+  # of content blocks (text, extended thinking, and tool_use — the tool calls
+  # the model requested; their results arrive in the next request). It can also
+  # be a plain JSON body: an error, or a count_tokens reply. A request shows its
+  # last turn. A header and a footer frame each record; a cut-off stream or a
+  # part-captured body is flagged. A tool_use is a request to run a command, not
+  # proof it ran: the outcome is the next request's tool_result.
+  local textprog='
+    # Parse JSON, or give null. Collect the try in an array: in jq 1.6, a
+    # bare fromjson? also catches the errors of the code that comes after
+    # it, and drops the rest of the record without a marker.
+    def parse: [fromjson?] | .[0];
+    def events($s): ($s // "") | split("\n\n")
+      | map((split("\n") | map(select(startswith("data:"))) | first // "") | sub("^data: ?";"") | fromjson?)
+      | map(select(. != null));
+    def id8: (.id // "-")[0:8];
+    def hdr: $d + "[\(.kind // "?") \(id8) \(.decision // "?")\(if .status then " " + (.status|tostring) else "" end)\(if .reason then " — " + .reason else "" end)]" + $z;
+    def truncnote: if (.response_truncated == true) or (.request_truncated == true)
+                   then $d + "[capture truncated: body stored only in part]" + $z else empty end;
+    def toolline($name; $args):   # $args is a string (streamed JSON) or an object
+      ($args | if type=="string" then parse else . end) as $i
+      | (if ($i|type)=="object" then ($i.command // $i.file_path // $i.path // $i.url // ($i|tojson))
+         elif ($args|type)=="string" then $args else ($args|tojson) end) as $v
+      | "→ " + ($name // "tool") + ": " + ($v | tostring);
+    # Reassemble streamed content blocks (text / thinking / tool_use) by index.
+    def blocks($e):
+      reduce $e[] as $ev ({};
+        if $ev.type=="content_block_start" then
+          .[$ev.index|tostring] = {type: $ev.content_block.type, name: $ev.content_block.name, text: ""}
+        elif $ev.type=="content_block_delta" then
+          .[$ev.index|tostring] = ((.[$ev.index|tostring] // {type:"text", text:""})
+            | .text += ($ev.delta.text // $ev.delta.thinking // $ev.delta.partial_json // ""))
+        else . end)
+      | to_entries | sort_by(.key|tonumber) | map(.value);
+    def renderblock:
+      if .type=="tool_use" then toolline(.name; .text)
+      elif .type=="thinking" then $d + "[thinking]" + $z + " " + .text
+      else .text end;
+    fromjson? // empty
+    | . as $rec
+    # Collect the lines of a record in an array, so a record that throws
+    # prints only the marker.
+    | (try [
+        if .response != null then
+          (.response | parse) as $j
+          | if ($j|type)=="object" then
+              # A plain JSON body: an error, a count_tokens reply, or a non-stream message.
+              ( hdr, truncnote,
+                (if $j.type=="error" then $r + "error: \($j.error.type // "?") — \($j.error.message // "")" + $z
+                 elif ($j.input_tokens != null) then $d + "count_tokens: input_tokens \($j.input_tokens)" + $z
+                 elif ($j.content != null) then ($j.content | map(if .type=="text" then .text elif .type=="tool_use" then toolline(.name; (.input // {})) else "[\(.type)]" end) | join("\n"))
+                 else ($j | tojson) end),
+                "" )
+            else
+              (events(.response)) as $e
+              | ( hdr, truncnote,
+                  (($e | map(select(.type=="message_start") | .message.model) | first) as $m
+                   | if $m then $d + "model: \($m)" + $z else empty end),
+                  "",
+                  (blocks($e) | map(renderblock) | join("\n")),
+                  "",
+                  $d + ($e | map(select(.type=="message_delta")) | last
+                        | if . then "[stop: \(.delta.stop_reason // "none") · output_tokens \(.usage.output_tokens // "?")]"
+                          else "[stream ended without message_stop]" end) + $z,
+                  "" )
+            end
+        elif .request != null then
+          (.request | parse) as $req
+          | ( hdr, truncnote,
+              (if $req != null then $d + "model: \($req.model // "?")  ·  \(($req.messages // []) | length) messages" + $z
+               else $d + "(request body not JSON)" + $z end),
+              (if ($req != null) and (($req.messages // []) | length) > 0 then
+                 (($req.messages // []) | last) as $last
+                 | ("last turn — \($last.role // "?"):"),
+                   ( $last.content
+                     | if type=="string" then "  " + .
+                       elif type=="array" then
+                         (map(if .type=="text" then "  " + .text
+                              elif .type=="tool_use" then "  " + toolline(.name; (.input // {}))
+                              elif .type=="tool_result" then "  [result" + (if .is_error==true then " error" else "" end) + "] "
+                                + (( .content | if type=="string" then . elif type=="array" then (map(.text // "") | join(" ")) else "" end) | .[0:200])
+                              else "  [\(.type)]" end) | join("\n"))
+                       else "" end )
+               else empty end),
+              "" )
+        else hdr end
+      ]
+      catch [$d + "[unrenderable record \($rec.id // "?")]" + $z]) | .[]
+  '
+  local summaryprog='
+    def rpad($n): . + (" " * ([$n-(length),0]|max));
+    def deccol: if .=="allow" then $g elif (.=="deny" or .=="error") then $r else $d end;
+    fromjson? // empty
+    | ((.decision) // "?") as $dec
+    | (if .request then "req=\(.request|length)" elif .response then "resp=\(.response|length)" else "" end) as $sz
+    | "\($d)\(.ts // "")\($z) \((.id // "-")[0:8]) \((.kind//"?")|rpad(8)) \($dec|deccol)\($dec|rpad(7))\($z) \((.status//""|tostring)) \($sz)"
+  '
+
+  # One gzip member per record. A crash truncates only the last member, so
+  # tolerate a non-zero gzip exit (the good records already printed) and note it.
+  # pipefail and errexit off here, so a partial last member cannot abort: the
+  # exit status is gzip's, read from PIPESTATUS.
+  local rc jqc=-M; [[ -t 1 ]] && jqc=-C
+  set +o pipefail; set +e
+  case "$mode" in
+    raw)  gzip -dc "$f" 2>/dev/null | jq "$jqc" . ;;
+    text) gzip -dc "$f" 2>/dev/null | jq -Rr --arg d "$d" --arg g "$g" --arg r "$r" --arg z "$z" "$textprog" ;;
+    *)    gzip -dc "$f" 2>/dev/null | jq -Rr --arg d "$d" --arg g "$g" --arg r "$r" --arg z "$z" "$summaryprog" ;;
+  esac
+  rc=${PIPESTATUS[0]}
+  set -e; set -o pipefail
+  [[ "$rc" -eq 0 ]] || { dim "(the last record is truncated: the session is still live, or it crashed)"; echo; } >&2
+}
+
+cmd_logs() {
+  need jq
+  local mode=log all=false follow=false tview=summary file=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --transcript) mode=transcript ;;
+      --all)        all=true ;;
+      -f|--follow)  follow=true ;;
+      --raw)        tview=raw ;;
+      --text)       tview=text ;;
+      -*)           die "logs: unknown option '$1' (see bin/wmf-claude-vm --help)" ;;
+      *)            [[ -z "$file" ]] || die "logs: give at most one transcript path"; file="$1" ;;
+    esac
+    shift
+  done
+  local state="${XDG_STATE_HOME:-$HOME/.local/state}/wmf-claude"
+  # Colour only on a terminal, so a pipe or a redirect stays plain.
+  local d="" g="" r="" z=""
+  if [[ -t 1 ]]; then d=$'\033[2m'; g=$'\033[32m'; r=$'\033[31m'; z=$'\033[0m'; fi
+
+  if [[ "$mode" == transcript ]]; then
+    $follow && die "logs: -f applies to the request log, not --transcript"
+    logs_transcript "$state" "$file" "$tview" "$d" "$g" "$r" "$z"
+  else
+    [[ -z "$file" ]] || die "logs: a FILE is only for --transcript"
+    [[ "$tview" == summary ]] || die "logs: --raw and --text apply to --transcript, not the request log"
+    $follow && $all && die "logs: -f and --all do not combine"
+    logs_request "$state" "$all" "$follow" "$d" "$g" "$r" "$z"
+  fi
+}
+
 cmd_delete() {
   need limactl
   if ! vm_exists; then
@@ -815,6 +1062,9 @@ cmd_delete() {
   if is_contained; then
     rm -f "$CONTAINED_RECORD"
     echo "The model token stays in $MODEL_TOKEN_FILE; delete it if you are done."
+    echo "The request log and transcripts in ${XDG_STATE_HOME:-$HOME/.local/state}/wmf-claude"
+    echo "are on the host and are kept; delete them when you no longer need the audit trail."
+    echo "View them with: bin/wmf-claude-vm logs [--transcript] (keep WMF_CLAUDE_VM=$VM)."
   fi
 }
 
@@ -832,6 +1082,7 @@ case "$cmd" in
   claude) cmd_claude "$@" ;;
   shell)  cmd_shell "$@" ;;
   status) cmd_status ;;
+  logs)   cmd_logs "$@" ;;
   start)  need limactl; vm_exists || die "VM '$VM' does not exist; create it: bin/wmf-claude-vm create"; limactl start --tty=false "$VM" ;;
   stop)   need limactl; limactl stop "$VM" ;;
   delete) cmd_delete ;;

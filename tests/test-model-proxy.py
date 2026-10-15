@@ -16,7 +16,8 @@ class FakeLog:
     def write(self, **e): self.events.append(e)
 
 class FakeServer:
-    token = "dummy-token"; log = FakeLog(); tls = ssl.create_default_context()
+    token = "dummy-token"; log = FakeLog(); tls = ssl.create_default_context(); capture = None
+    trip_lock = threading.Lock(); trip_logged = False
 m.REQUEST_TIMEOUT = 5
 
 # Record what would go upstream instead of connecting.
@@ -50,7 +51,12 @@ def run(raw):
         pass
     data = b""
     while True:
-        c = a.recv(65536)
+        # On Linux, the proxy can close with our request unread; the reply
+        # arrives first, then a reset in place of EOF.
+        try:
+            c = a.recv(65536)
+        except ConnectionResetError:
+            break
         if not c: break
         data += c
     t.join(5); a.close()
@@ -145,6 +151,165 @@ sent.clear()
 out = run(req("POST", "/v1/messages", MSG, CL) + req("GET", "/v1/files", b"", [("x-api-key", "k")]))
 n = out.count(b"HTTP/1.1 ")
 fails += n != 1; print(f"{'PASS' if n == 1 else 'FAIL'}: pipelined second request ignored ({n} response)")
+# ---- Transcript capture ----
+import gzip, tempfile, subprocess, shutil
+BIG = 1 << 31  # a budget no test reaches
+
+def run_on(raw, server):
+    a, b = socket.socketpair()
+    t = threading.Thread(target=lambda: (m.Handler(b, "t", server), b.close()))
+    t.start()
+    try:
+        a.sendall(raw); a.shutdown(socket.SHUT_WR)
+    except OSError:
+        pass
+    data = b""
+    while True:
+        # On Linux, the proxy can close with our request unread; the reply
+        # arrives first, then a reset in place of EOF.
+        try:
+            c = a.recv(65536)
+        except ConnectionResetError:
+            break
+        if not c: break
+        data += c
+    t.join(5); a.close()
+    return data
+
+def fresh_server(path, budget=BIG):
+    srv = FakeServer(); srv.log = FakeLog()
+    srv.capture = m.Capture(path, budget)
+    srv.trip_lock = threading.Lock(); srv.trip_logged = False
+    return srv
+
+def records(path):
+    with gzip.open(path, "rt") as f:
+        recs = [json.loads(line) for line in f if line.strip()]
+    os.unlink(path)
+    return recs
+
+allow_body = json.dumps({"model": "m", "max_tokens": 1,
+    "messages": [{"role": "user", "content": "hello-SECRET-prompt"}],
+    "tools": [{"name": "Bash", "input_schema": {}}]}).encode()
+allow_req = req("POST", "/v1/messages", allow_body, [("Content-Length", str(len(allow_body)))])
+
+# An allowed turn writes a request record and a response record sharing an id;
+# policy and path refusals are captured; the token is in none.
+cf = tempfile.NamedTemporaryFile(suffix=".jsonl.gz", delete=False); cf.close()
+srv = fresh_server(cf.name)
+run_on(req("POST", "/v1/messages", allow_body, [("Content-Length", str(len(allow_body))),
+    ("Authorization", "Bearer dummy-token")]), srv)
+deny_body = json.dumps({"model": "m", "max_tokens": 1, "messages": [],
+    "mcp_servers": [{"type": "url", "url": "https://e"}]}).encode()
+run_on(req("POST", "/v1/messages", deny_body, [("Content-Length", str(len(deny_body)))]), srv)
+run_on(req("POST", "/v1/files", b"", []), srv)
+recs = records(cf.name)
+reqr = [r for r in recs if r.get("decision") == "request"]
+resp = [r for r in recs if r.get("decision") == "allow"]
+deny = [r for r in recs if r.get("decision") == "deny"]
+cap_ok = (len(reqr) == 1 and "hello-SECRET-prompt" in reqr[0].get("request", "")
+          and len(resp) == 1 and "event: a" in resp[0].get("response", "")
+          and reqr[0].get("id") and reqr[0]["id"] == resp[0].get("id")
+          and any("mcp_servers" in d.get("request", "") for d in deny)
+          and any(d.get("path") == "/v1/files" for d in deny))
+fails += not cap_ok; print(f"{'PASS' if cap_ok else 'FAIL'}: request+response records share an id; policy and path refusals captured")
+no_token = all("dummy-token" not in json.dumps(r) for r in recs)
+fails += not no_token; print(f"{'PASS' if no_token else 'FAIL'}: the token never appears in the transcript")
+
+# A client Accept-Encoding is forced to identity upstream, so a captured
+# response is never compressed bytes.
+sent.clear()
+run(req("POST", "/v1/messages", allow_body, [("Content-Length", str(len(allow_body))), ("Accept-Encoding", "gzip, br")]))
+hh = {n.lower(): v for n, v in sent.get("headers", [])}
+enc_ok = hh.get("accept-encoding") == "identity"
+fails += not enc_ok; print(f"{'PASS' if enc_ok else 'FAIL'}: the client Accept-Encoding is forced to identity upstream")
+
+# A large refused body is captured as a bounded prefix plus a digest.
+big_bad = json.dumps({"model": "m", "max_tokens": 1, "messages": [],
+    "mcp_servers": [{"type": "url", "url": "https://e"}], "pad": "A" * 100000}).encode()
+bf = tempfile.NamedTemporaryFile(suffix=".jsonl.gz", delete=False); bf.close()
+srv = fresh_server(bf.name)
+run_on(req("POST", "/v1/messages", big_bad, [("Content-Length", str(len(big_bad)))]), srv)
+bd = [r for r in records(bf.name) if r.get("decision") == "deny"]
+big_ok = (len(bd) == 1 and len(bd[0].get("request", "")) <= m.CAPTURE_DENY_REQ_MAX
+          and bd[0].get("request_truncated") and len(bd[0].get("request_sha256", "")) == 64)
+fails += not big_ok; print(f"{'PASS' if big_ok else 'FAIL'}: a large refused body is captured as a prefix plus sha256")
+
+# An interrupted turn: the request record is there and the response record is
+# decision=error; capture.failed stays False.
+class FakeConnErr(FakeConn):
+    def getresponse(self):
+        class R:
+            status, reason = 200, "OK"
+            def getheaders(self): return [("Content-Type", "text/event-stream")]
+            def __init__(self): self.n = 0
+            def read1(self, n):
+                self.n += 1
+                if self.n == 1: return b"event: a\n\n"
+                raise ConnectionResetError("peer reset")
+        return R()
+m.http.client.HTTPSConnection = FakeConnErr
+ef = tempfile.NamedTemporaryFile(suffix=".jsonl.gz", delete=False); ef.close()
+srv = fresh_server(ef.name)
+err_body = json.dumps({"model": "m", "max_tokens": 1,
+    "messages": [{"role": "user", "content": "ERR-case"}]}).encode()
+run_on(req("POST", "/v1/messages", err_body, [("Content-Length", str(len(err_body)))]), srv)
+failed_flag = srv.capture.failed
+m.http.client.HTTPSConnection = FakeConn
+erecs = records(ef.name)
+ereq = [r for r in erecs if r.get("decision") == "request"]
+eerr = [r for r in erecs if r.get("decision") == "error"]
+err_ok = (len(ereq) == 1 and "ERR-case" in ereq[0].get("request", "")
+          and len(eerr) == 1 and "event: a" in eerr[0].get("response", "")
+          and ereq[0].get("id") == eerr[0].get("id") and not failed_flag)
+fails += not err_ok; print(f"{'PASS' if err_ok else 'FAIL'}: interrupted turn: request record + error response record, not failed")
+
+# F2: a request that cannot be recorded is not forwarded (503, no upstream call).
+g2 = tempfile.NamedTemporaryFile(suffix=".jsonl.gz", delete=False); g2.close()
+srv = fresh_server(g2.name); os.close(srv.capture.fd)
+sent.clear()
+out2 = run_on(allow_req, srv); os.unlink(g2.name)
+f2_ok = (out2.split(b" ", 2)[1] == b"503" and "line" not in sent and srv.capture.failed)
+fails += not f2_ok; print(f"{'PASS' if f2_ok else 'FAIL'}: a request that cannot be recorded is refused and never forwarded")
+
+# F5: a compression failure on the response record makes no second response;
+# it stops the session and the one streamed response stands.
+_orig = m.gzip.compress; _cc = {"n": 0}
+def _flaky(*a, **k):
+    _cc["n"] += 1
+    if _cc["n"] >= 2:  # 1st = request record (ok); 2nd = response record (fails)
+        raise MemoryError("boom")
+    return _orig(*a, **k)
+m.gzip.compress = _flaky
+g5 = tempfile.NamedTemporaryFile(suffix=".jsonl.gz", delete=False); g5.close()
+srv = fresh_server(g5.name)
+out5 = run_on(allow_req, srv)
+m.gzip.compress = _orig; os.unlink(g5.name)
+f5_ok = (out5.count(b"HTTP/1.1 ") == 1 and srv.capture.failed)
+fails += not f5_ok; print(f"{'PASS' if f5_ok else 'FAIL'}: a capture compression failure makes no second response and stops the session")
+
+# Budget: a tiny budget trips, every request 503s, and the trip is logged once.
+g3 = tempfile.NamedTemporaryFile(suffix=".jsonl.gz", delete=False); g3.close()
+srv = fresh_server(g3.name, budget=10)
+sent.clear(); n0 = len(srv.log.events)
+outs = [run_on(allow_req, srv) for _ in range(3)]
+os.unlink(g3.name)
+bud_ok = (all(o.split(b" ", 2)[1] == b"503" for o in outs) and srv.capture.failed
+          and (len(srv.log.events) - n0) == 1 and "line" not in sent)
+fails += not bud_ok; print(f"{'PASS' if bud_ok else 'FAIL'}: the byte budget stops the session, 503s, and logs the trip once")
+
+# Fail closed on open: a transcript path that cannot be opened stops the
+# proxy before it binds the socket (run the real script as a subprocess).
+tok = tempfile.NamedTemporaryFile(delete=False); tok.write(b"sk-ant-test\n"); tok.close(); os.chmod(tok.name, 0o600)
+sdir = tempfile.mkdtemp(); sockp = os.path.join(sdir, "s.sock")
+r = subprocess.run([sys.executable, "-B", PROXY, "--socket", sockp,
+    "--log", os.path.join(sdir, "l.log"), "--capture", "/dev/null/x.jsonl.gz",
+    "--token-file", tok.name], capture_output=True, text=True, timeout=10)
+os.unlink(tok.name)
+bad_ok = (r.returncode != 0 and "/dev/null/x.jsonl.gz" in r.stderr and not os.path.exists(sockp))
+shutil.rmtree(sdir, ignore_errors=True)
+fails += not bad_ok; print(f"{'PASS' if bad_ok else 'FAIL'}: a transcript path that cannot be opened stops the proxy before the socket")
+
 print("log decisions:", [e.get("decision") for e in FakeServer.log.events])
 print("RESULT:", "ok" if not fails else f"{fails} failed")
 sys.exit(1 if fails else 0)

@@ -396,7 +396,9 @@ Measurements on the engineer's host (Ubuntu 24.04, GNOME on Wayland,
 GNOME Terminal), RAN 2026-10-15:
 
 - `echo hi | wl-copy`: the text goes to CLIPBOARD (Ctrl+V), not PRIMARY
-  (middle click), as documented; `--primary` sets PRIMARY (not run yet).
+  (middle click), as documented; `echo hi | wl-copy --primary` sets
+  PRIMARY. So the host can do both of Claude Code's calls: the shim
+  tells it which one each connection is.
   The command returns at once, and the text still pastes after it: the
   forked owner serves it. So the listener runs `wl-copy` and does not
   wait on it.

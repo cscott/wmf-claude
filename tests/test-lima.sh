@@ -157,13 +157,13 @@ absent "no --port-forward flag to limactl"          "$VM" '--port-forward'
 check  "limactl runs non-interactively"             "$VM" '--tty=false'
 check  "vm_exists reads the whole list (no grep -q: SIGPIPE under pipefail)" "$VM" '^vm_exists\(\) \{ limactl list [^|]*\| grep -Fx "\$VM" >/dev/null; \}$'
 absent "no limactl output piped into grep -q"       "$VM" 'limactl [^|]*\| *grep -q'
-check  "push uses git bundle"                       "$VM" 'git -C "\$top" bundle create'
+check  "push uses git bundle"                       "$VM" 'git -C "\$repo" bundle create'
 check  "pull exports with hooks and fsmonitor off"  "$VM" 'core\.hooksPath=/dev/null -c core\.fsmonitor=false'
 check  "pull fetches into remote-tracking vm/*"     "$VM" '\+refs/heads/\*:refs/remotes/vm/\*'
 check  "pull verifies the bundle first"             "$VM" 'bundle verify "\$bundle"'
 absent "pull never checks out, merges or resets"    "$VM" 'git -C "\$dest" (checkout|merge|reset|pull)'
 check  "checkout never overwrites a local branch"     "$VM" 'die "\$2 exists in'
-check  "push records the workspace's host repo"     "$VM" 'ws_save "\$name" "\$top"'
+check  "push records the workspace's host repo"     "$VM" 'ws_save "\$\{wss\[i\]\}" "\$top'
 check  "update ships HEAD via git archive"          "$VM" 'git -C "\$ROOT" archive'
 check  "update includes the submodules at HEAD's commits" "$VM" 'done < <\(git -C "\$ROOT" ls-tree -r HEAD\)'
 check  "update stops on a missing submodule commit" "$VM" 'cat-file -e "\$sha\^\{commit\}"'
@@ -398,6 +398,101 @@ out=$(vmr x --vm nonesuch reset)
 if grep -q 'does not exist' <<<"$out" && ! called delete && ! called create; then pass "reset: no VM and no mode refuses"; else fail "reset of a missing VM went on"; fi
 
 rm -rf "$MD"
+
+echo ""
+echo "--- bin/claude-vm: push and pull, nested repositories (fake guest) ---"
+# A fake limactl that runs guest commands here: `shell ... -- CMD` runs CMD,
+# with HOME set to a fake agent home for `sudo -H -u agent --`, and `copy`
+# is cp. So the git plumbing of push and pull runs for real.
+RT=$(mktemp -d); mkdir -p "$RT/bin" "$RT/agent/work" "$RT/cfg"
+cat > "$RT/bin/limactl" <<'FAKE'
+#!/bin/bash
+case "$1" in
+  list)
+    if [[ "$*" == *Status* ]]; then echo Running; else echo wmf-claude; fi ;;
+  copy)
+    cp "${2#wmf-claude:}" "${3#wmf-claude:}" ;;
+  shell)
+    while [[ "$1" != -- ]]; do shift; done; shift
+    if [[ "$1 $2 $3 $5" == "sudo -H -u --" ]]; then shift 5; HOME="$FAKE_AGENT_HOME" exec "$@"; fi
+    exec "$@" ;;
+esac
+FAKE
+chmod +x "$RT/bin/limactl"
+export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.org GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.org
+mkrepo() { git init -q -b main "$1" && git -C "$1" commit -q --allow-empty -m "${2:-init}"; }
+H="$RT/host/core"
+mkrepo "$H"; printf 'extensions/*\nvendor/\n' > "$H/.gitignore"; git -C "$H" add .gitignore; git -C "$H" commit -q -m ignore
+mkrepo "$H/extensions/A"; mkrepo "$H/extensions/B"; mkrepo "$H/vendor/dep"; mkrepo "$H/extensions/bad name"
+# A submodule: the clone of core leaves an empty directory at its path.
+mkrepo "$RT/subsrc"
+git -C "$H" -c protocol.file.allow=always submodule add -q "$RT/subsrc" lib/sub >/dev/null 2>&1
+git -C "$H" commit -q -m submodule
+rt() { env -u WMF_CLAUDE_VM XDG_CONFIG_HOME="$RT/cfg" WMF_CLAUDE_GUEST_AGENT_HOME="$RT/agent" FAKE_AGENT_HOME="$RT/agent" \
+  PATH="$RT/bin:$PATH" bash "$VM" "$@" 2>&1; }
+W="$RT/agent/work"
+WS="$RT/cfg/wmf-claude/vm-wmf-claude-workspaces"
+ag() { git -C "$W/$1" "${@:2}"; }
+
+out=$(rt push --nested "$H")
+if [[ -d "$W/core/.git" && -d "$W/core/extensions/A/.git" && -d "$W/core/extensions/B/.git" ]]; then pass "push --nested: the top repo and its nested repos arrive"
+else fail "push --nested: missing workspaces: $out"; fi
+if [[ ! -e "$W/core/vendor/dep" ]]; then pass "push --nested: dependency trees (vendor) stay out"; else fail "push --nested pushed vendor/dep"; fi
+if grep -q 'skipped extensions/bad name' <<<"$out" && [[ ! -e "$W/core/extensions/bad name" ]]; then pass "push --nested: an invalid workspace name is skipped"; else fail "push --nested: the invalid name was not skipped"; fi
+if [[ -e "$W/core/lib/sub/.git" ]]; then pass "push --nested: a submodule path (empty in the top clone) gets its repo"
+else fail "push --nested: the submodule did not arrive: $out"; fi
+if [[ "$(cut -f1 "$WS" | sort | tr '\n' ' ')" == "core core/extensions/A core/extensions/B core/lib/sub " ]]; then pass "push --nested records each workspace"
+else fail "push --nested recorded: $(cut -f1 "$WS" | tr '\n' ' ')"; fi
+
+out=$(rt push --nested "$H")
+if grep -q 'nothing to send' <<<"$out"; then pass "push --nested again: nothing to send"; else fail "push --nested again sent bundles: $out"; fi
+git -C "$H/extensions/A" commit -q --allow-empty -m host-change
+out=$(rt push --nested=A "$H")
+if grep -q '1 bundle' <<<"$out" && grep -q '1 up to date' <<<"$out" \
+   && [[ "$(ag core/extensions/A rev-parse host/main 2>/dev/null)" == "$(git -C "$H/extensions/A" rev-parse main)" ]]; then
+  pass "push --nested=A: sends only A's new commits; the top repo is up to date"
+else fail "push --nested=A: $out"; fi
+
+# One bad entry does not stop the others.
+mkrepo "$H/extensions/C"; mkdir -p "$W/core/extensions/C"; echo x > "$W/core/extensions/C/file"
+git -C "$H/extensions/B" commit -q --allow-empty -m host-change-b
+out=$(rt push --nested "$H"); prc=$?
+if [[ "$prc" -ne 0 ]] && grep -q '! core/extensions/C' <<<"$out" \
+   && [[ "$(ag core/extensions/B rev-parse host/main 2>/dev/null)" == "$(git -C "$H/extensions/B" rev-parse main)" ]]; then
+  pass "push --nested: a failed entry is reported, and the others still arrive"
+else fail "push --nested with a bad entry (rc $prc): $out"; fi
+rm -rf "$W/core/extensions/C" "$H/extensions/C"
+
+# The agent works in B and in the top repo; pull --nested brings both back.
+ag core/extensions/B switch -q -c fix && ag core/extensions/B commit -q --allow-empty -m agent-b
+ag core switch -q -c topfix && ag core commit -q --allow-empty -m agent-top
+out=$(rt pull --nested core)
+got=$(git -C "$H/extensions/B" rev-parse -q --verify vm/fix); want=$(ag core/extensions/B rev-parse fix)
+if [[ -n "$want" && "$got" == "$want" ]]; then pass "pull --nested: a nested branch lands in vm/* of its own repo"
+else fail "pull --nested: no vm/fix in B: $out"; fi
+if git -C "$H" rev-parse -q --verify vm/topfix >/dev/null; then pass "pull --nested: the top repo is pulled too"; else fail "pull --nested: no vm/topfix in core"; fi
+if ! git -C "$H/extensions/A" rev-parse -q --verify vm/main >/dev/null; then pass "pull --nested: a nested repo with no new commits is left alone"
+else fail "pull --nested fetched A, which has no new commits"; fi
+if [[ -d "$W/.pull" ]] && ! ls "$W/.pull" | grep -q nested; then pass "pull --nested removes its bundles in the guest"; else fail "pull --nested left bundles in the guest, or made none"; fi
+out=$(rt pull --nested core somewhere)
+if grep -q 'takes no DEST' <<<"$out"; then pass "pull --nested refuses a DEST"; else fail "pull --nested took a DEST"; fi
+
+# The end-of-session report suggests one pull --nested, not one per repo.
+ag core/extensions/A switch -q -c more && ag core/extensions/A commit -q --allow-empty -m agent-a
+ag core/extensions/B commit -q --allow-empty -m agent-b2
+rpt=$(env XDG_CONFIG_HOME="$RT/cfg" FAKE_AGENT_HOME="$RT/agent" PATH="$RT/bin:$PATH" bash -c '
+  VM=wmf-claude; ENGINEER_HOME=/; AGENT=agent; WS_FILE="$1"
+  '"$(grep -E '^guest(_agent)?\(\)' "$VM")"'
+  '"$(awk '/^unpulled_report\(\) \{/,/^\}/' "$VM")"'
+  unpulled_report' _ "$WS" 2>&1)
+if grep -q 'Pull with: claude-vm pull --nested core$' <<<"$rpt"; then pass "the report groups nested workspaces into one pull --nested"
+else fail "the report did not group the nested workspaces: $rpt"; fi
+# A guest that reports an index out of range, or not a number, gets nothing.
+pn=$(awk '/^pull_nested\(\) \{/,/^\}/' "$VM")
+if grep -qF 'if [[ ! "$i" =~ ^[0-9]+$ ]] || (( i >= ${#wss[@]} )); then continue; fi' <<<"$pn"; then pass "pull --nested takes only indices in range from the guest"
+else fail "pull --nested does not check the guest's indices"; fi
+rm -rf "$RT"
+unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
 
 echo ""
 echo "--- bin/wmf-claude-vm: the old name still works ---"

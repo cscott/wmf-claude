@@ -163,8 +163,10 @@ shows `locked`, `open`, or `broken` (sessions refused).
 
 ```bash
 claude-vm push DIR [NAME]        # git bundle of HEAD, branches and tags -> /home/agent/work/NAME
+claude-vm push --nested DIR      # the same, and every repo inside DIR (core: extensions/*, skins/*)
 claude-vm claude NAME [args]     # bin/claude in that workspace, as agent, sandboxed; on exit: what is not pulled yet
 claude-vm pull NAME [DEST]       # agent's branches -> vm/* in the repo NAME came from
+claude-vm pull --nested NAME     # the same, and the new commits of the repos pushed with --nested
 claude-vm review NAME BRANCH     # git log -p HEAD..vm/BRANCH
 claude-vm checkout NAME BRANCH   # git switch -c BRANCH vm/BRANCH
 claude-vm discard NAME BRANCH    # git branch -rd vm/BRANCH
@@ -172,20 +174,36 @@ claude-vm discard NAME BRANCH    # git branch -rd vm/BRANCH
 
 - `push` moves commits and refs only: never `.git/config`, hooks or
   untracked files. A second push updates `host/*` in the workspace and never
-  overwrites the agent's work. Nested repos are separate workspaces:
-  `push ~/src/mediawiki/extensions/Foo core/extensions/Foo`.
+  overwrites the agent's work. A push sends only the commits the workspace
+  does not have yet, so the first push of a large repo is the slow one.
+- `push --nested` also sends the repos inside DIR, up to three levels down
+  (`vendor` and `node_modules` are not searched): for MediaWiki core,
+  `extensions/*` and `skins/*`. Each one is a workspace of its own, named
+  after its path (`core/extensions/Foo`), and lands inside the checkout, as
+  on the host. `--nested=Foo,Bar` sends only those. One copy carries all the
+  bundles; a repo that fails to import is reported, and the others still
+  arrive. Submodules inside DIR are found too, as nested repos. core with
+  about a hundred extensions is roughly 2 GB the first time, and the host
+  and the guest each need about twice that free while it moves. A repo more
+  than three levels down, such as VisualEditor's `lib/ve` submodule, does
+  not travel: push it by hand
+  (`push ~/src/mediawiki/core/extensions/VisualEditor/lib/ve core/extensions/VisualEditor/lib/ve`).
 - `pull` fetches the agent's branches into remote-tracking `vm/<branch>`
   refs; your branches, HEAD and working tree stay as they are. **Review
   before you take a branch**: the commits are untrusted, and a diff can add
   files that run on build or commit. The workspace remembers which repo it
   came from, so `pull`, `review`, `checkout` and `discard` need only its
   name; `pull NAME DEST` sends it elsewhere and remembers that instead.
+  `pull --nested NAME` also brings back the new commits of the workspaces
+  pushed with `--nested`, each into its own repo, in one pass. It skips a
+  repo with no new commits and does not prune `vm/*`: `pull` a workspace by
+  its name for a full sync of its branches.
 - `claude` takes `bin/claude`'s flags, except `--ide` (it needs the host).
   `--chrome` starts a browser in the VM: [A browser in the VM](#a-browser-in-the-vm).
 - A session is granted its own workspace. For core plus extensions, push
-  each one with a nested name and start the session in `core`: it sees them
-  all. For sibling workspaces, pass nono's grant through, with guest paths
-  and the `--`: `claude-vm claude core --allow /home/agent/work --`
+  with `--nested` and start the session in `core`: it sees them all. For
+  sibling workspaces, pass nono's grant through, with guest paths and the
+  `--`: `claude-vm claude core --allow /home/agent/work --`
   (`--read DIR --` for read-only). Only what you pushed is in reach, so this
   is a smaller step than `--allow ~/src` on the host.
 - Notes, or any directory that is not a repository: `git init` it on the

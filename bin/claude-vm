@@ -16,9 +16,11 @@
 #                                            # contained VM: store a setup-token token on the host
 #   claude-vm lock | unlock                  # contained VM: no egress (sessions run) | egress (setup)
 #   claude-vm check-host-block               # contained VM: prove the host blocks it without its lock
-#   claude-vm push DIR [NAME]                # copy a git repo into the agent's workspace (git bundle)
+#   claude-vm push [--nested[=A,B]] DIR [NAME]  # copy a git repo into the agent's workspace (git bundle);
+#                                            # --nested: the repos inside it too (extensions/*, skins/*), or only A,B
 #   claude-vm claude NAME [bin/claude args]  # run sandboxed Claude Code in workspace NAME; on exit, list what is not pulled yet
-#   claude-vm pull NAME [DEST]               # fetch the agent's branches into vm/* of the repo NAME was pushed from (or DEST)
+#   claude-vm pull [--nested] NAME [DEST]    # fetch the agent's branches into vm/* of the repo NAME was pushed from (or DEST);
+#                                            # --nested: also the new commits of the workspaces pushed with it
 #   claude-vm review NAME BRANCH             # show what vm/BRANCH adds (git log -p)
 #   claude-vm checkout NAME BRANCH           # create local BRANCH from vm/BRANCH, switch to it
 #   claude-vm discard NAME BRANCH            # delete vm/BRANCH
@@ -54,7 +56,8 @@ TEMPLATE="$ROOT/lima/wmf-claude.yaml"
 INSTALL=/opt/wmf-claude
 ENGINEER_HOME=/home/engineer
 AGENT=agent
-AGENT_HOME=/home/agent
+# WMF_CLAUDE_GUEST_AGENT_HOME exists for tests/test-lima.sh only.
+AGENT_HOME="${WMF_CLAUDE_GUEST_AGENT_HOME:-/home/agent}"
 
 usage() {
   sed -n '2,/^set -euo/{/^set -euo/d;s/^# \{0,1\}//;p;}' "$0"
@@ -219,14 +222,18 @@ unpulled_report() {
         [[ -n "$dest" ]] && have=$(git -C "$dest" rev-parse -q --verify "refs/remotes/vm/$branch" 2>/dev/null || true)
         [[ "$have" != "$sha" ]] || continue
         out+=$(printf '    %-20s %-20s %s commit%s not pulled' "$name" "$branch" "$ahead" "$([[ "$ahead" == 1 ]] || echo s)")$'\n'
-        case " $pull " in *" $name "*) ;; *) pull+="${pull:+ }$name" ;; esac
+        # A workspace inside a recorded one (push --nested) is pulled with it.
+        local root="${name%%/*}" target="$name"
+        [[ "$name" == */* ]] && awk -F'\t' -v n="$root" '$1 == n { f = 1 } END { exit !f }' "$WS_FILE" 2>/dev/null \
+          && target="--nested $root"
+        case "|$pull|" in *"|$target|"*) ;; *) pull+="${pull:+|}$target" ;; esac
         ;;
     esac
   done <<< "$lines"
   [[ -n "$out" ]] || return 0
   printf '%s' "$out"
   if [[ -n "$pull" ]]; then
-    printf '  Pull with: claude-vm pull %s\n' "${pull// /; claude-vm pull }"
+    printf '  Pull with: claude-vm pull %s\n' "${pull//|/; claude-vm pull }"
   fi
   $uncommitted && echo "  Uncommitted files do not travel: commit them in the VM first."
   return 0
@@ -433,58 +440,230 @@ cmd_update() {
   ' _ "$updir"
 }
 
+# The git repositories inside $1, as paths relative to it, sorted: the
+# nested repos that push --nested sends (MediaWiki: extensions/*, skins/*).
+# Three levels at most; dependency trees are not searched.
+nested_repos() {  # $1 top level
+  (cd "$1" && find . -maxdepth 4 -path ./.git -prune -o \( -name node_modules -o -name vendor \) -prune \
+    -o -name .git -print) | sed -e 's|^\./||' -e 's|/\.git$||' | LC_ALL=C sort
+}
+# True when the relative path $1 is named in the comma list $2, by path or
+# by its last part.
+in_list() { case ",$2," in *",$1,"*|*",${1##*/},"*) return 0 ;; esac; return 1; }
+
 cmd_push() {
-  need limactl git
-  local dir="${1:-}" name="${2:-}" top bundle updir remote
-  [[ -n "$dir" ]] || die "usage: claude-vm push DIR [NAME]"
+  need limactl git tar
+  local dir="" name="" nested=false only="" top rel i ws sha line stage updir rc=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --nested)   nested=true ;;
+      --nested=*) nested=true; only="${1#--nested=}"; [[ -n "$only" ]] || die "push: --nested= needs a list" ;;
+      -*)         die "push: unknown option '$1'" ;;
+      *) if [[ -z "$dir" ]]; then dir="$1"; elif [[ -z "$name" ]]; then name="$1"
+         else die "usage: claude-vm push [--nested[=A,B]] DIR [NAME]"; fi ;;
+    esac
+    shift
+  done
+  [[ -n "$dir" ]] || die "usage: claude-vm push [--nested[=A,B]] DIR [NAME]"
   top=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null) || die "$dir is not a git repository"
   [[ -n "$name" ]] || name=$(basename "$top")
   valid_name "$name" || die "invalid NAME '$name' (letters, digits, . _ - and / only)"
+  # The repos to send: the top one first (a nested clone goes inside its
+  # checkout), then the nested ones. rels[i] is relative to top; wss[i] is
+  # the workspace name.
+  local -a rels=("") wss=("$name")
+  if $nested; then
+    while IFS= read -r rel; do
+      [[ -z "$only" ]] || in_list "$rel" "$only" || continue
+      if ! valid_name "$name/$rel"; then
+        echo "    $(dim "skipped $rel: not a valid workspace name")"
+        continue
+      fi
+      rels+=("$rel"); wss+=("$name/$rel")
+    done < <(nested_repos "$top")
+    [[ ${#rels[@]} -gt 1 ]] || die "no nested repositories in $top${only:+ match '$only'}"
+  fi
   require_running
+
+  # What each existing workspace already has: its host/* tips. A bundle then
+  # leaves out what the workspace has, so a second push sends only new
+  # commits. The agent reports these, so take only full hashes that this
+  # repository has; a false report can only make that import fail.
+  local have
+  have=$(guest_agent bash -c '
+    i=0
+    for w in "$@"; do
+      [ -d "$HOME/work/$w/.git" ] && git -c core.hooksPath=/dev/null -C "$HOME/work/$w" \
+        for-each-ref --format="$i %(objectname)" refs/remotes/host/ 2>/dev/null
+      i=$((i + 1))
+    done
+  ' _ "${wss[@]}" | tr -d '\r')
+
   step "Bundling $top"
+  $nested && echo "    $(( ${#rels[@]} - 1 )) nested repositories"
   # A bundle carries commits and refs only: no .git/config, hooks or untracked files.
-  bundle=$(mktemp)
-  git -C "$top" bundle create "$bundle" --branches --tags HEAD >/dev/null 2>&1 \
-    || { rm -f "$bundle"; die "git bundle failed in $top (no commits?)"; }
-  ok "$(du -h "$bundle" | cut -f1) bundle of $(git -C "$top" rev-parse --abbrev-ref HEAD) @ $(git -C "$top" rev-parse --short HEAD)"
-  # A new directory (mktemp -d), readable by the agent, writable only by the
-  # engineer. A fixed /tmp path could be a symlink that the agent made.
-  updir=$(guest_mktemp /tmp/wmf-claude-push.XXXXXX)
-  guest chmod 0755 "$updir"
-  remote="$updir/push.bundle"
-  limactl copy "$bundle" "$VM:$remote"
-  rm -f "$bundle"
-  step "Importing into $AGENT_HOME/work/$name (as $AGENT)"
-  # Runs as the agent, in the agent's own repository. An existing workspace
-  # gets the refs under the `host` remote; nothing is checked out over the
-  # agent's work.
-  guest_agent bash -c '
-    set -e
-    b="$1"; dest="$HOME/work/$2"
-    g() { git -c core.hooksPath=/dev/null -c core.fsmonitor=false -c init.defaultBranch=main -c advice.defaultBranchName=false "$@"; }
-    if [ -e "$dest" ]; then
-      [ -d "$dest/.git" ] || { echo "error: $dest exists and is not a git repository" >&2; exit 1; }
-      g -C "$dest" bundle verify "$b" >/dev/null
-      g -C "$dest" fetch --quiet --no-tags "$b" "+refs/heads/*:refs/remotes/host/*"
-      echo "    + updated remote host/* in $dest; in the VM: git checkout -B <branch> host/<branch>"
+  stage=$(mktemp -d)
+  : > "$stage/manifest"
+  local repo n=0 same=0
+  local -a nots
+  for (( i = 0; i < ${#rels[@]}; i++ )); do
+    repo="$top${rels[i]:+/${rels[i]}}"
+    nots=()
+    while read -r line sha; do
+      [[ "$line" == "$i" && "$sha" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] || continue
+      git -C "$repo" cat-file -e "$sha^{commit}" 2>/dev/null && nots+=("$sha")
+    done <<< "$have"
+    # Count first: git's "empty bundle" message is translated, so do not
+    # match on it.
+    if [[ ${#nots[@]} -gt 0 ]] \
+       && [[ "$(git -C "$repo" rev-list --count --branches --tags HEAD --not "${nots[@]}" 2>/dev/null)" == 0 ]]; then
+      same=$((same + 1))
+    elif git -C "$repo" bundle create "$stage/$i.bundle" --branches --tags HEAD \
+           ${nots[@]+--not "${nots[@]}"} >/dev/null 2>&1; then
+      printf '%s\t%s\n' "$i" "${wss[i]}" >> "$stage/manifest"
+      n=$((n + 1))
     else
-      mkdir -p "$(dirname "$dest")"
-      g clone --quiet --origin host "$b" "$dest"
-      echo "    + cloned into $dest"
+      echo "    $(red "!") ${wss[i]}: git bundle failed (no commits?)"
+      rc=1
     fi
-  ' _ "$remote" "$name"
-  guest rm -rf "$updir"
-  ws_save "$name" "$top"
+  done
+  if [[ "$n" -eq 0 ]]; then
+    rm -rf "$stage"
+    ok "nothing to send: the VM has every commit"
+  else
+    ok "$n bundle$([[ $n -eq 1 ]] || echo s), $(du -sh "$stage" | cut -f1)$([[ $same -eq 0 ]] || echo "; $same up to date")"
+    # One copy for every bundle. The engineer unpacks it into a new
+    # directory (mktemp -d), readable by the agent, writable only by the
+    # engineer. A fixed /tmp path could be a symlink that the agent made.
+    # No extended attributes, as in make_tree_tarball: GNU tar in the guest
+    # warns about the headers that macOS tar writes for them.
+    COPYFILE_DISABLE=1 tar --no-xattrs -cf "$stage.tar" -C "$stage" .
+    rm -rf "$stage"
+    updir=$(guest_mktemp /tmp/wmf-claude-push.XXXXXX)
+    limactl copy "$stage.tar" "$VM:$updir/push.tar"
+    rm -f "$stage.tar"
+    guest bash -c 'cd "$1" && tar -xf push.tar && rm -f push.tar && chmod -R a+rX .' _ "$updir"
+    step "Importing into $AGENT_HOME/work/$name (as $AGENT)"
+    # Runs as the agent, in the agent's own repositories. An existing
+    # workspace gets the refs under the `host` remote; nothing is checked
+    # out over the agent's work. One failed entry does not stop the others.
+    guest_agent bash -c '
+      dir="$1"; rc=0; updated=false
+      g() { git -c core.hooksPath=/dev/null -c core.fsmonitor=false -c init.defaultBranch=main -c advice.defaultBranchName=false "$@"; }
+      tab=$(printf "\t")
+      while IFS="$tab" read -r i w; do
+        b="$dir/$i.bundle"; dest="$HOME/work/$w"
+        # An empty directory is a submodule path that the clone of the top
+        # repo left: clone into it.
+        if [ -e "$dest" ] && [ -n "$(ls -A "$dest" 2>/dev/null)" ]; then
+          if [ ! -e "$dest/.git" ]; then
+            echo "    ! $w: $dest exists and is not a git repository"; rc=1
+          elif g -C "$dest" bundle verify "$b" >/dev/null 2>&1 \
+               && g -C "$dest" fetch --quiet --no-tags "$b" "+refs/heads/*:refs/remotes/host/*"; then
+            echo "    + $w: updated host/*"; updated=true
+          else
+            echo "    ! $w: the fetch failed"; rc=1
+          fi
+        elif mkdir -p "$(dirname "$dest")" && g clone --quiet --origin host "$b" "$dest"; then
+          echo "    + $w: cloned"
+        else
+          echo "    ! $w: the clone failed"; rc=1
+        fi
+      done < "$dir/manifest"
+      $updated && echo "    In the VM, take an update with: git checkout -B <branch> host/<branch>"
+      exit "$rc"
+    ' _ "$updir" || rc=1
+    guest rm -rf "$updir"
+  fi
+  # Record the host's own list, not what the guest reported.
+  for (( i = 0; i < ${#rels[@]}; i++ )); do
+    ws_save "${wss[i]}" "$top${rels[i]:+/${rels[i]}}"
+  done
+  [[ "$rc" -eq 0 ]] || die "some repositories did not arrive; see the lines marked !"
   echo "  Next: $(bold "claude-vm claude $name")"
+}
+
+# pull --nested: the workspaces recorded under NAME/ (from push --nested),
+# in one guest call. The host chooses every name: it sends its own list, the
+# agent writes nested-<index>.bundle for each workspace with commits no remote
+# has, and reports the indices. The host takes only indices in range, and
+# fetches each into the repository it recorded for that index. A bundle holds
+# only the agent's new commits, and the fetch does not prune: pull one
+# workspace by name for a full sync of its vm/* branches.
+pull_nested() {  # $1 NAME
+  local name="$1" n p i made bundle remote ws dest got=0 rc=0
+  local -a wss=() dests=()
+  while IFS=$'\t' read -r n p; do
+    [[ "$n" == "$name"/* ]] || continue
+    wss+=("$n"); dests+=("$p")
+  done < <(cat "$WS_FILE" 2>/dev/null)
+  if [[ ${#wss[@]} -eq 0 ]]; then
+    echo "  No nested workspaces recorded under $name (push them with: claude-vm push --nested DIR $name)"
+    return 0
+  fi
+  step "Exporting the new commits of ${#wss[@]} nested workspaces (as $AGENT, hooks off)"
+  made=$(guest_agent bash -c '
+    mkdir -p "$HOME/work/.pull"; i=0
+    g() { git -c core.hooksPath=/dev/null -c core.fsmonitor=false -c core.pager=cat -C "$HOME/work/$1" "${@:2}"; }
+    for w in "$@"; do
+      out="$HOME/work/.pull/nested-$i.bundle"; rm -f "$out"
+      if [ -d "$HOME/work/$w/.git" ] \
+         && [ "$(g "$w" rev-list --count --branches --not --remotes 2>/dev/null || echo 0)" != 0 ] \
+         && g "$w" bundle create -q "$out" --branches --not --remotes 2>/dev/null; then
+        chmod 0644 "$out"; echo "$i"
+      fi
+      i=$((i + 1))
+    done
+  ' _ "${wss[@]}" | tr -d '\r')
+  for i in $made; do
+    if [[ ! "$i" =~ ^[0-9]+$ ]] || (( i >= ${#wss[@]} )); then continue; fi
+    ws="${wss[i]}"; dest="${dests[i]}"
+    remote="$AGENT_HOME/work/.pull/nested-$i.bundle"
+    if ! git -C "$dest" rev-parse --git-dir >/dev/null 2>&1; then
+      echo "    $(red "!") $ws: $dest (recorded for it) is not a git repository"; rc=1; continue
+    fi
+    bundle=$(mktemp)
+    if ! limactl copy "$VM:$remote" "$bundle" 2>/dev/null; then
+      echo "    $(red "!") $ws: could not copy its bundle out of the VM"; rc=1
+      rm -f "$bundle"; continue
+    fi
+    guest_agent rm -f "$remote"
+    if git -C "$dest" bundle verify "$bundle" >/dev/null 2>&1 \
+       && git -C "$dest" fetch --quiet --no-tags "$bundle" "+refs/heads/*:refs/remotes/vm/*"; then
+      echo "    + $ws -> vm/* of $dest"; got=$((got + 1))
+    else
+      echo "    $(red "!") $ws: the bundle does not verify against $dest (try: claude-vm pull $ws)"; rc=1
+    fi
+    rm -f "$bundle"
+  done
+  if [[ "$got" -eq 0 && "$rc" -eq 0 ]]; then
+    ok "no nested workspace has new commits"
+  elif [[ "$got" -gt 0 ]]; then
+    ok "fetched $got nested workspace$([[ $got -eq 1 ]] || echo s); nothing was checked out or merged"
+    dim "    The agent wrote these commits. Treat them as untrusted: review the diff"; echo ""
+    dim "    before you merge, and look for files that run on build or commit."; echo ""
+  fi
+  return "$rc"
 }
 
 cmd_pull() {
   need limactl git
-  local name="${1:-}" dest="${2:-}" flat remote bundle
-  [[ -n "$name" ]] || die "usage: claude-vm pull NAME [DEST]"
+  local name="" dest="" nested=false flat remote bundle arg
+  for arg in "$@"; do
+    case "$arg" in
+      --nested) nested=true ;;
+      -*) die "pull: unknown option '$arg'" ;;
+      *) if [[ -z "$name" ]]; then name="$arg"; elif [[ -z "$dest" ]]; then dest="$arg"
+         else die "usage: claude-vm pull [--nested] NAME [DEST]"; fi ;;
+    esac
+  done
+  [[ -n "$name" ]] || die "usage: claude-vm pull [--nested] NAME [DEST]"
   valid_name "$name" || die "invalid NAME '$name'"
+  # Nested workspaces go back to the repositories push recorded for them.
+  [[ -z "$dest" ]] || ! $nested || die "pull: --nested takes no DEST"
   if [[ -n "$dest" ]]; then
-    dest=$(git -C "$dest" rev-parse --show-toplevel 2>/dev/null) || die "$2 is not a git repository"
+    local given="$dest"
+    dest=$(git -C "$dest" rev-parse --show-toplevel 2>/dev/null) || die "$given is not a git repository"
     ws_save "$name" "$dest"
   else
     dest=$(ws_dest "$name")
@@ -530,6 +709,7 @@ cmd_pull() {
   dim "    before you merge, and look for files that run on build or commit."; echo ""
   echo ""
   dim "    claude-vm review|checkout|discard $name <branch>"; echo ""
+  if $nested; then pull_nested "$name"; fi
 }
 
 # review, checkout and discard: thin wrappers over git in the workspace's host

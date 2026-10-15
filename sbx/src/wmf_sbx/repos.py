@@ -29,6 +29,7 @@ import os
 import shlex
 import subprocess
 
+from . import deps as deps_mod
 from . import template as template_mod
 from . import vm as vm_mod
 
@@ -162,11 +163,22 @@ def guest_scripts(repos, upstreams, keep, readonly, refresh=False):
     return "\n".join(root) + "\n", {o: "\n".join(s) + "\n" for o, s in clones.items()}
 
 
+def git_config_exports(user_agent):
+    """Shell lines that give each git in a clone script Gerrit's user agent
+    (deps.gerrit_git_config), or "". In the script, which goes to the VM
+    on stdin, and not in its argv: the value is a secret, and `ps` shows
+    an argv."""
+    pairs = deps_mod.git_config_env(deps_mod.gerrit_git_config(user_agent))
+    return "".join(f"export {k}={shlex.quote(v)}\n" for k, v in sorted(pairs.items()))
+
+
 def clone_in_vm(name, repos, upstreams, keep, readonly=(), lima=None, env=None,
-                refresh=False):
+                refresh=False, user_agent=None):
     """Make the clones in the VM, or bring a warm snapshot's up to date
-    (`refresh`). Raises RepoError if one fails."""
+    (`refresh`). `user_agent`: GERRITUA, for the fetch from Gerrit. Raises
+    RepoError if one fails."""
     root, clones = guest_scripts(repos, upstreams, keep, set(readonly), refresh=refresh)
+    exports = git_config_exports(user_agent)
     res = vm_mod.shell(name, ["sudo", "bash", "-s"], lima=lima, input=root,
                        check=False, capture=False)
     if res.returncode != 0:
@@ -178,7 +190,7 @@ def clone_in_vm(name, repos, upstreams, keep, readonly=(), lima=None, env=None,
             argv = vm_mod.agent_argv(["bash", "-s"], env=proxy)
         else:
             argv = ["env"] + [f"{k}={v}" for k, v in sorted(proxy.items())] + ["bash", "-s"]
-        res = vm_mod.shell(name, argv, lima=lima, input=script, check=False,
+        res = vm_mod.shell(name, argv, lima=lima, input=exports + script, check=False,
                            capture=False)
         if res.returncode != 0:
             raise RepoError(f"cloning in the VM failed (exit {res.returncode})")

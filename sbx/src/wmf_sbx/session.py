@@ -29,6 +29,7 @@ import subprocess
 
 from . import clipboard as clipboard_mod
 from . import credproxy as credproxy_mod
+from . import deps as deps_mod
 from . import egress as egress_mod
 from . import image as image_mod
 from . import kit as kit_mod
@@ -597,9 +598,6 @@ def check_environment(environment):
     return out
 
 
-GERRIT_URL = "https://gerrit.wikimedia.org/"
-
-
 def git_config_env(env):
     """GIT_CONFIG_COUNT/KEY_n/VALUE_n that `env` gets, after any that
     settings.yaml `environment:` sets, so that git reaches Gerrit from a
@@ -607,22 +605,14 @@ def git_config_env(env):
     - http.proxyAuthMethod=basic: nono's proxy URL has credentials, and
       git aborts the CONNECT unless it sends them at once (RAN). A proxy
       with none (the egress proxy) is not changed.
-    - Gerrit's user agent, GERRITUA, when it is set: Gerrit refuses
-      git's own (RAN 2026-10-15: 403, "Please set a user-agent"). Only
-      for Gerrit's URL, so that no other host gets it."""
+    - Gerrit's user agent, GERRITUA, when it is set
+      (deps.gerrit_git_config)."""
+    pairs = [("http.proxyAuthMethod", "basic")] + deps_mod.gerrit_git_config(
+        env.get("GERRITUA"))
     try:
-        count = int(env.get("GIT_CONFIG_COUNT") or 0)
+        return deps_mod.git_config_env(pairs, env)
     except ValueError:
         raise SessionError("settings.yaml: `environment:` GIT_CONFIG_COUNT: want a number")
-    pairs = [("http.proxyAuthMethod", "basic")]
-    if env.get("GERRITUA"):
-        pairs.append((f"http.{GERRIT_URL}.userAgent", env["GERRITUA"]))
-    out = {}
-    for i, (key, value) in enumerate(pairs, start=count):
-        out[f"GIT_CONFIG_KEY_{i}"] = key
-        out[f"GIT_CONFIG_VALUE_{i}"] = value
-    out["GIT_CONFIG_COUNT"] = str(count + len(pairs))
-    return out
 
 
 def clipboard_env():

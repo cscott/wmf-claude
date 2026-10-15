@@ -257,15 +257,22 @@ def resolve_repo(spec, config_path):
     return canonical, os.path.realpath(os.path.expanduser(path)), needs_clone
 
 
-def do_clone(canonical, path, run=subprocess.run, which=shutil.which):
+def do_clone(canonical, path, run=subprocess.run, which=shutil.which, user_agent=None):
     """Clone `canonical` at `path` on the host. A Gerrit clone then gets
     `git review -s` (the `gerrit` remote and the commit-msg hook), as the
     engineer's own checkouts have; if that fails the clone is still good,
-    so it is a warning."""
+    so it is a warning. `user_agent`: GERRITUA, which git sends to Gerrit
+    only (deps.gerrit_git_config), in the environment and not the argv."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     url = clone_url(canonical)
     print(color_mod.dim(f"+ git clone {url} {path}"), file=sys.stderr)
-    result = run(["git", "clone", url, path])
+    try:
+        git_env = deps_mod.git_config_env(deps_mod.gerrit_git_config(user_agent),
+                                          os.environ)
+    except ValueError:
+        git_env = {}  # the engineer's own GIT_CONFIG_COUNT is wrong; git says so
+    env = dict(os.environ, **git_env) if git_env else None
+    result = run(["git", "clone", url, path], env=env)
     if result.returncode != 0:
         raise LaunchError(f"git clone {url} {path} failed (exit {result.returncode}).")
     if resolve_mod.split_scheme(canonical)[0] != "gerrit":
@@ -275,7 +282,7 @@ def do_clone(canonical, path, run=subprocess.run, which=shutil.which):
               f"remote or commit-msg hook; install it and run `git review -s` there.")
         return
     print(color_mod.dim(f"+ git -C {path} review -s"), file=sys.stderr)
-    result = run(["git", "-C", path, "review", "-s"])
+    result = run(["git", "-C", path, "review", "-s"], env=env)
     if result.returncode != 0:
         _warn(f"{path}: `git review -s` failed (exit {result.returncode}); run it "
               f"there before you send a patch.")
@@ -881,7 +888,8 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         if not args.dry_run:
             for canonical, path, needs_clone in resolved:
                 if needs_clone:
-                    do_clone(canonical, path)
+                    do_clone(canonical, path,
+                             user_agent=deps_mod.gerrit_user_agent(config))
         repos = [repos_mod.host_repo(path, run=run, predicted=args.dry_run and needs_clone)
                  for _c, path, needs_clone in resolved]
 
@@ -996,7 +1004,8 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
     try:
         upstreams = upstream_plan(resolved_for_kit, run=run)
         repos_mod.clone_in_vm(name, repos, upstreams, keep, readonly=readonly,
-                              lima=lima, env=env, refresh=snap is not None)
+                              lima=lima, env=env, refresh=snap is not None,
+                              user_agent=deps_mod.gerrit_user_agent(config))
     except (repos_mod.RepoError, lima_mod.LimaError) as e:
         print(color_mod.error(f"error: {e}"), file=sys.stderr)
         print(f"  `wmf-sbx rm {name}` removes what was made.", file=sys.stderr)

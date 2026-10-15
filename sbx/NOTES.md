@@ -596,7 +596,13 @@ A2.0 results (in the nested `dev` VM, nono 0.78.0, 2026-10-13):
     the session's `env` gives git `http.proxyAuthMethod=basic` and, with GERRITUA,
     `http.https://gerrit.wikimedia.org/.userAgent` (GIT_CONFIG_COUNT/KEY/VALUE, after
     any from settings.yaml; `wmf-sbx exec` gets them too). Both are written at create:
-    a sandbox made before needs a re-create. Not yet RAN in a new sandbox.
+    a sandbox made before needs a re-create. Not yet RAN in a new sandbox. The same
+    403 hit create: each clone's `git fetch origin` in the VM (sandbox-repos.sh; it
+    then warns and falls back to `local`), and `--clone-missing`'s `git clone` on the
+    host. Both now get GERRITUA for Gerrit's URL (`deps.gerrit_git_config`): in the
+    VM as `export` lines at the top of the clone script, on stdin, and on the host in
+    git's environment, never in an argv (`ps` shows an argv). The image build clones
+    only php-ast, from GitHub.
 - Claude Code through `HTTPS_PROXY` reaches `api.anthropic.com` (a turn fails only with
   "Invalid API key": no credentials given); its telemetry host is denied, harmlessly (RAN).
 - **Opening a host under a running VM works** (item 8, RAN): the guestfwd reads

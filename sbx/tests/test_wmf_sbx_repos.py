@@ -180,6 +180,32 @@ class GuestScriptTests(unittest.TestCase):
             subprocess.run(["bash", "-n"], input=script, text=True, check=True)
         self.assertIn("""'/home/me/it'"'"'s'""", clones["agent"])
 
+    def test_the_clones_fetch_from_gerrit_with_gerritua_on_stdin(self):
+        # Gerrit refuses git's own user agent. The value is a secret: in the
+        # script, never in an argv.
+        calls = []
+
+        def shell(name, argv, lima=None, input=None, **kw):
+            calls.append((argv, input))
+            return subprocess.CompletedProcess(argv, 0)
+
+        with mock.patch.object(vm, "shell", shell), \
+                mock.patch.object(vm, "guest_proxy_env", lambda name, env=None: {}):
+            repos.clone_in_vm("demo", self.REPOS, {}, set(), readonly={"/home/me/Cite"},
+                              user_agent="it's-secret")
+        root_argv, root_script = calls[0]
+        self.assertNotIn("it's-secret", root_script)
+        for argv, script in calls[1:]:
+            self.assertNotIn("it's-secret", " ".join(argv))
+            self.assertTrue(script.startswith(
+                "export GIT_CONFIG_COUNT=1\n"
+                "export GIT_CONFIG_KEY_0=http.https://gerrit.wikimedia.org/.userAgent\n"
+                "export GIT_CONFIG_VALUE_0='it'\"'\"'s-secret'\n"))
+        self.assertEqual(len(calls), 3)
+
+    def test_without_gerritua_the_clone_scripts_are_as_they_were(self):
+        self.assertEqual(repos.git_config_exports(None), "")
+
     def test_remote_candidates(self):
         cands = repos.remote_candidates("sbx-core", self.REPOS[:1])
         self.assertEqual(cands, [{"hostDir": "/home/me/core", "remote": "sbx-core",

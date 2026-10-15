@@ -593,7 +593,7 @@ class DoCloneTests(unittest.TestCase):
             target = os.path.join(tmp, "nested", "Cite")
             calls = []
 
-            def fake_run(argv):
+            def fake_run(argv, **_kw):
                 calls.append(argv)
                 return FakeCompletedProcess(0)
 
@@ -606,12 +606,42 @@ class DoCloneTests(unittest.TestCase):
                  ["git", "-C", target, "review", "-s"]],
             )
 
+    def test_git_gets_gerritua_in_its_environment_not_its_argv(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = os.path.join(tmp, "Cite")
+            calls = []
+
+            def fake_run(argv, env=None):
+                calls.append((argv, env))
+                return FakeCompletedProcess(0)
+
+            with mock.patch.dict(os.environ, {"GIT_CONFIG_COUNT": "1",
+                                              "GIT_CONFIG_KEY_0": "core.pager",
+                                              "GIT_CONFIG_VALUE_0": "cat"}):
+                c.do_clone("gerrit:mediawiki/extensions/Cite", target, run=fake_run,
+                           which=lambda n: "/usr/bin/" + n, user_agent="secret-ua")
+            for argv, env in calls:
+                self.assertNotIn("secret-ua", " ".join(argv))
+                self.assertEqual(env["GIT_CONFIG_COUNT"], "2")
+                self.assertEqual(env["GIT_CONFIG_KEY_0"], "core.pager")
+                self.assertEqual(env["GIT_CONFIG_KEY_1"],
+                                 "http.https://gerrit.wikimedia.org/.userAgent")
+                self.assertEqual(env["GIT_CONFIG_VALUE_1"], "secret-ua")
+
+    def test_without_gerritua_git_gets_the_environment_as_it_is(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            envs = []
+            c.do_clone("gerrit:mediawiki/extensions/Cite", os.path.join(tmp, "Cite"),
+                       run=lambda argv, env=None: envs.append(env) or FakeCompletedProcess(0),
+                       which=lambda n: None)
+            self.assertEqual(envs, [None])
+
     def test_a_gitlab_clone_gets_no_git_review(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = os.path.join(tmp, "Thing")
             calls = []
 
-            def fake_run(argv):
+            def fake_run(argv, **_kw):
                 calls.append(argv)
                 return FakeCompletedProcess(0)
 
@@ -625,14 +655,14 @@ class DoCloneTests(unittest.TestCase):
             calls = []
             with mock.patch("sys.stderr") as err:
                 c.do_clone("gerrit:mediawiki/extensions/Cite", target,
-                           run=lambda argv: calls.append(argv) or FakeCompletedProcess(0),
+                           run=lambda argv, **_kw: calls.append(argv) or FakeCompletedProcess(0),
                            which=lambda n: None)
                 self.assertEqual(len(calls), 1)
                 self.assertIn("git-review is not installed",
                               "".join(str(a) for call in err.write.call_args_list
                                       for a in call.args))
 
-                def fails_review(argv):
+                def fails_review(argv, **_kw):
                     calls.append(argv)
                     return FakeCompletedProcess(1 if "review" in argv else 0)
 
@@ -648,7 +678,7 @@ class DoCloneTests(unittest.TestCase):
             target = os.path.join(tmp, "Cite")
             with self.assertRaises(c.LaunchError):
                 c.do_clone(
-                    "gerrit:mediawiki/extensions/Cite", target, run=lambda argv: FakeCompletedProcess(1)
+                    "gerrit:mediawiki/extensions/Cite", target, run=lambda argv, **_kw: FakeCompletedProcess(1)
                 )
 
 

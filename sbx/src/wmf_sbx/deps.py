@@ -80,6 +80,29 @@ def gerrit_opener(user_agent=None, urlopen=None):
     return opener
 
 
+def gerrit_git_config(user_agent):
+    """git config pairs that give git `user_agent` for Gerrit's URL only
+    (http.<url>.userAgent: the scheme must be in the URL). Gerrit refuses
+    git's own user agent (RAN 2026-10-15: 403, "Please set a
+    user-agent"). [] without one."""
+    return [(f"http.https://{GERRIT_HOST}/.userAgent", user_agent)] if user_agent else []
+
+
+def git_config_env(pairs, env=None):
+    """GIT_CONFIG_COUNT/KEY_n/VALUE_n for git config `pairs`, after the
+    ones that `env` has already. {} for no pairs. Raises ValueError for a
+    GIT_CONFIG_COUNT that is not a number."""
+    if not pairs:
+        return {}
+    count = int((env or {}).get("GIT_CONFIG_COUNT") or 0)
+    out = {}
+    for i, (key, value) in enumerate(pairs, start=count):
+        out[f"GIT_CONFIG_KEY_{i}"] = key
+        out[f"GIT_CONFIG_VALUE_{i}"] = value
+    out["GIT_CONFIG_COUNT"] = str(count + len(pairs))
+    return out
+
+
 def gerrit_user_agent(config=None):
     """GERRITUA from the environment, or else the one settings.yaml
     `environment:` gives the sessions (wmf-sbx runs on the host, whose

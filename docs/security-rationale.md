@@ -582,7 +582,7 @@ container. Keep secrets out of dev checkouts.
 
 ## Lima VM mode
 
-How `bin/wmf-claude-vm` builds its boundary. The user guide is
+How `claude-vm` builds its boundary. The user guide is
 [`lima-vm.md`](lima-vm.md).
 
 ### The VM
@@ -604,7 +604,7 @@ How `bin/wmf-claude-vm` builds its boundary. The user guide is
   layer does not catch a raced `--open-port` connect: nono's seccomp
   destination check approves with `SECCOMP_USER_NOTIF_FLAG_CONTINUE` and a
   second thread can rewrite the address to an outside host on 80 or 443 (a
-  known nono limitation). A normal VM already permits public egress from the
+  known nono limitation). An isolated VM already permits public egress from the
   guest, so the residual risk is the model token in that guest; contained
   mode's lock, which drops every non-loopback packet, is the real control, and
   the token is not in the VM there.
@@ -640,7 +640,7 @@ How `bin/wmf-claude-vm` builds its boundary. The user guide is
   it alone. That rule is the control: a CDP client can create a browser
   context with its own proxy settings, so the `--proxy-server` and
   `--host-resolver-rules` flags are hygiene, not the boundary. The browser
-  can show the VM's own services and nothing else, in a normal VM and
+  can show the VM's own services and nothing else, in an isolated VM and
   under the contained lock alike.
 - **`--docker`.** `lima/guest-claude.sh` starts `bin/launch-docker-broker` as
   `engineer` for the workspace's `docker-compose.yml`, publishes the
@@ -671,7 +671,7 @@ How `bin/wmf-claude-vm` builds its boundary. The user guide is
   deny `~/.config/wmf-claude` and `~/.local/state/wmf-claude` (the request log
   and the transcripts) to the sandbox. `login` never runs
   `claude auth login`. The session holds a placeholder OAuth token.
-- **The model proxy.** `bin/wmf-claude-vm claude` starts
+- **The model proxy.** `claude-vm claude` starts
   `bin/wmf-claude-model-proxy` on the host for each session, on a 0600 Unix
   socket in the instance directory, and forwards it into the guest with
   `ssh -n -R 127.0.0.1:0:SOCK` (sshd picks a free port), off Lima's shared

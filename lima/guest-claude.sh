@@ -1,16 +1,16 @@
 #!/bin/bash
 # Start a sandboxed Claude Code session as `agent`, from the engineer side of
-# the Lima guest. bin/wmf-claude-vm claude runs this over limactl shell.
+# the Lima guest. bin/claude-vm claude runs this over limactl shell.
 #
 #   guest-claude.sh [--model-proxy-port PORT] NAME [bin/claude args...]
 #
-# NAME is a workspace under /home/agent/work (see bin/wmf-claude-vm push).
+# NAME is a workspace under /home/agent/work (see bin/claude-vm push).
 #
-# In a contained VM (root-owned marker /etc/wmf-claude/contained), bin/wmf-claude-vm runs
+# In a contained VM (root-owned marker /etc/wmf-claude/contained), bin/claude-vm runs
 # the model API proxy on the host and forwards it to 127.0.0.1:PORT here; the
 # session then runs in bin/claude's contained mode (WMF_CLAUDE_MODEL_PROXY_PORT). The marker
 # and the flag must agree: a contained VM never starts a session without the proxy,
-# and a normal VM never starts one in contained mode.
+# and an isolated VM never starts one in contained mode.
 #
 # --chrome is handled here too: the browser must run outside nono, and it
 # runs as the browser user (lima/guest-chrome.sh), which the engineer can
@@ -44,7 +44,7 @@ if [[ "${1:-}" == --model-proxy-port ]]; then
   shift 2
 fi
 if [[ -f "$CONTAINED_MARKER" && -z "$PROXY_PORT" ]]; then
-  die "this is a contained VM; start sessions with bin/wmf-claude-vm claude, which runs the model API proxy"
+  die "this is a contained VM; start sessions with claude-vm claude, which runs the model API proxy"
 fi
 if [[ ! -f "$CONTAINED_MARKER" && -n "$PROXY_PORT" ]]; then
   die "--model-proxy-port given, but this VM is not a contained VM ($CONTAINED_MARKER is missing)"
@@ -57,7 +57,7 @@ shift
   || die "invalid workspace name '$NAME'"
 WORK="$AGENT_HOME/work/$NAME"
 [[ -d "$WORK" ]] \
-  || die "no workspace $WORK; push it first: bin/wmf-claude-vm push <dir> $NAME"
+  || die "no workspace $WORK; push it first: claude-vm push <dir> $NAME"
 
 # Take --docker=SERVICE out of the arguments, note --chrome, and pass
 # everything else through. bin/claude reads its own flags before `--`, so
@@ -100,7 +100,7 @@ if [[ -n "$PROXY_PORT" ]]; then
   # The host checked this too; check again here, just before the session.
   # The lock also keeps the containers and the broker from reaching out.
   net=$(sudo -n /usr/local/sbin/wmf-claude-contained-net status 2>/dev/null || echo missing)
-  [[ "$net" == locked ]] || die "the VM's network is not locked ($net); run: bin/wmf-claude-vm lock"
+  [[ "$net" == locked ]] || die "the VM's network is not locked ($net); run: claude-vm lock"
   ENV_ARGS+=("WMF_CLAUDE_MODEL_PROXY_PORT=$PROXY_PORT")
 fi
 if [[ -n "$DOCKER_SERVICE" ]]; then
@@ -132,7 +132,7 @@ if [[ -n "$DOCKER_SERVICE" ]]; then
   note "Docker broker for '$DOCKER_SERVICE' runs as $(id -un); it stops with the session."
 fi
 if $WANT_CHROME; then
-  id -u "$CHROME_USER" >/dev/null 2>&1 || die "no user $CHROME_USER; run bin/wmf-claude-vm update"
+  id -u "$CHROME_USER" >/dev/null 2>&1 || die "no user $CHROME_USER; run claude-vm update"
   [[ -d "$RUN_DIR" && -w "$RUN_DIR" ]] \
     || die "$RUN_DIR is missing or not writable; the VM provisioning did not finish"
   CHROME_LOG="$RUN_DIR/chrome.$$.log"

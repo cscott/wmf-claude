@@ -1,4 +1,4 @@
-# Lima template for wmf-claude VM mode (bin/wmf-claude-vm). Read docs/lima-vm.md.
+# Lima template for wmf-claude VM mode (bin/claude-vm). Read docs/lima-vm.md.
 #
 # The VM is a second boundary around the nono sandbox, not a replacement for
 # it. Keep it closed: no host mounts, no port forwards, no agent or X11
@@ -23,13 +23,13 @@ images:
   digest: "sha512:8543d795f2fde630eb66c492f245a8c1da19dedc636e0a8e7b3d0f95920e1a05aa911ef2d82d177d41cc53ced5fccbd2a3945d07fa5e15018914c4d864bb07ed"
 
 # Image builds are the reason Docker is in the VM; give them room. Override
-# at create time: bin/wmf-claude-vm create --cpus 8 --memory 16 --disk 100
+# at create time: bin/claude-vm create --cpus 8 --memory 16 --disk 100
 cpus: 4
 memory: "8GiB"
 disk: "60GiB"
 
 # No host directory enters the VM. Code moves by explicit copy
-# (bin/wmf-claude-vm push / pull). Lima's default is to mount ~ read-only.
+# (bin/claude-vm push / pull). Lima's default is to mount ~ read-only.
 mounts: []
 
 # Docker runs its own containerd.

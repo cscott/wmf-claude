@@ -32,7 +32,7 @@ case "$MODE" in
   dump-dom|dump-dom-unproxied) [[ -n "$URL" ]] || { echo "usage: guest-chrome.sh $MODE URL" >&2; exit 2; } ;;
   *) echo "usage: guest-chrome.sh cdp | dump-dom URL | dump-dom-unproxied URL" >&2; exit 2 ;;
 esac
-[[ -x "$CHROME" ]] || { echo "error: $CHROME is missing; run bin/wmf-claude-vm update" >&2; exit 1; }
+[[ -x "$CHROME" ]] || { echo "error: $CHROME is missing; run claude-vm update" >&2; exit 1; }
 
 DATA_DIR=$(mktemp -d /tmp/wmf-claude-chrome.XXXXXX)
 CHROME_PID=""

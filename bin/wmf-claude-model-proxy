@@ -2,7 +2,7 @@
 """Model API proxy for a contained Lima VM (runs on the HOST, outside the VM).
 
 The contained VM has no egress. Its only path out is this proxy, which
-bin/wmf-claude-vm forwards into the guest as a localhost port (ssh -R). The
+bin/claude-vm forwards into the guest as a localhost port (ssh -R). The
 Claude OAuth token stays here, on the host: the VM, and everything in it,
 never sees it.
 
@@ -523,7 +523,7 @@ def main():
     server.trip_lock = threading.Lock()
     server.trip_logged = False
     server.tls = tls_context()
-    # SIGTERM (bin/wmf-claude-vm stops the proxy with it) exits through the
+    # SIGTERM (bin/claude-vm stops the proxy with it) exits through the
     # finally below, which removes the socket.
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     server.log.write(decision="start", socket=args.socket, pid=os.getpid())

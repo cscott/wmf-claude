@@ -83,7 +83,7 @@ case "${1:-}" in
     set_phase locked
     # Connections opened before the lock stay up until they close. Flushing
     # conntrack would also cut the host's SSH sessions, this one included,
-    # so lock when no session runs (bin/wmf-claude-vm does).
+    # so lock when no session runs (bin/claude-vm does).
     echo locked ;;
   open)
     set_phase open

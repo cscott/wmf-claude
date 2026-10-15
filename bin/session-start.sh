@@ -17,11 +17,11 @@ You are running inside the wmf-claude environment for Wikimedia Foundation engin
   - Prefer the chrome-devtools MCP tools over Bash(playwright)/Bash(agent-browser) when they're present.
 CONTEXT
 # Where the browser runs: on the host, Chrome started by the engineer; in a
-# Lima VM, a headless Chromium that bin/wmf-claude-vm started for the session
+# Lima VM, a headless Chromium that bin/claude-vm started for the session
 # (lima/guest-claude.sh sets WMF_CLAUDE_CHROME_IN_VM), kept to loopback.
 if [[ -n "${WMF_CLAUDE_CHROME_IN_VM:-}" ]]; then
   cat <<'CONTEXT'
-  - The MCP attaches to a headless Chromium that `bin/wmf-claude-vm claude NAME --chrome` started inside the VM for this session, as its own user; it stops with the session. If the MCP cannot connect, tell the engineer to restart the session with `--chrome` and read the browser log it prints.
+  - The MCP attaches to a headless Chromium that `claude-vm claude NAME --chrome` started inside the VM for this session, as its own user; it stops with the session. If the MCP cannot connect, tell the engineer to restart the session with `--chrome` and read the browser log it prints.
   - CDP on 127.0.0.1:9222 is unauthenticated. Any credentials submitted via fill_form / evaluate_script are exposed to other local processes — use throwaway dev-wiki accounts only.
   - The browser reaches loopback only: the guest firewall rejects everything else, so it shows the local wiki and nothing outside the VM. An external URL fails by design; do not retry it or look for a way around it.
 CONTEXT
@@ -74,4 +74,14 @@ if [[ -n "${WMF_CLAUDE_IN_VM:-}" ]]; then
 
 - This session runs in the wmf-claude Lima VM. No web server runs unless Docker provides one or you start one. With `--local-web` (ports 80, 443 and 8080; `--local-web=PORT` for another) the sandbox can bind those ports as well as connect to them, so when a task needs HTTP, start the project's own dev server in the background inside this session; it stops with the session. For a MediaWiki checkout, from the workspace root: `PHP_CLI_SERVER_WORKERS=4 php -S 127.0.0.1:8080 -t . > "$TMPDIR/php-server.log" 2>&1 &`, then `curl -sI http://127.0.0.1:8080/index.php?title=Main_Page`; the installed wiki expects that address (`$wgServer`, empty `$wgScriptPath`). A refused connection on a port before you start a server is just that, not a sandbox denial. PHP, Composer, MariaDB (127.0.0.1:3306, `wikiuser`/`wikipass`, database `wikidb`) and a headless Chromium are native in this VM; a project that needs none of them can ignore them.
 VM
+  # The mode: lima/guest-claude.sh sets the proxy port only in a contained VM.
+  if [[ -n "${WMF_CLAUDE_MODEL_PROXY_PORT:-}" ]]; then
+    cat <<'CONTAINED'
+- This is a contained VM. The only network path is the model API, through a proxy on the engineer's machine. The web access and the Phabricator, Gerrit and GitLab MCP servers described above do not apply here, and neither `git fetch` nor package installs work. That is by design, not a fault: do not try to work around it. When a task needs outside data, ask the engineer to push it in as files (`claude-vm push`).
+CONTAINED
+  else
+    cat <<'ISOLATED'
+- This is an isolated VM. The network allowlist is the same as on the engineer's machine, and the MCP servers work.
+ISOLATED
+  fi
 fi

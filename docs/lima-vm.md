@@ -1,13 +1,14 @@
 # Lima VM mode
 
-`bin/wmf-claude-vm` runs the whole of wmf-claude (nono, Claude Code, the MCP
+`claude-vm` runs the whole of wmf-claude (nono, Claude Code, the MCP
 servers, the Docker exec broker) inside one persistent
 [Lima](https://lima-vm.io) VM (Debian 13). It is opt-in: plain `bin/claude`
-stays the default, and nothing here changes it.
+stays the default, and nothing here changes it. A VM is one of two kinds,
+chosen at `create`: **isolated** or **contained**.
 
 ## Which mode do I need?
 
-| | `bin/claude` on the host | Lima VM | Contained Lima VM |
+| | `bin/claude` on the host | Isolated VM | Contained VM |
 |---|---|---|---|
 | Around the agent | nono | nono, in a VM | nono, in a VM |
 | The agent's network | the profile's allowlist: Wikimedia sites (mostly read-only), Phabricator, Gerrit, GitLab, docs, the Anthropic API | the same | the model API only, through a proxy on the host |
@@ -17,10 +18,11 @@ stays the default, and nothing here changes it.
 | MCP servers | yes | yes | no |
 | Docker broker | yes | yes | yes; images and dependencies prepared while open |
 | Model requests logged | no | no | each one, on the host |
+| If the agent gets root in the VM | — | it has the internet and the token | the in-VM lock can go; only the host firewall rule on `limactl`, if on, still blocks the VM (maybe not DNS) |
 
 - **`bin/claude` on the host**: everyday work. Nothing to set up.
-- **Lima VM**: an escape from nono must land somewhere other than your
-  machine. A bypass lands in a throwaway Debian guest that holds the repos you
+- **Isolated VM**: an escape from nono must land somewhere other than your
+  machine. It does not limit egress: the work in the VM is not contained. A bypass lands in a throwaway Debian guest that holds the repos you
   pushed, the login token and Docker images, not your home directory,
   keychain, SSH keys or browser profiles.
 - **Contained VM**: the agent must reach nothing but the model API and never
@@ -28,7 +30,14 @@ stays the default, and nothing here changes it.
   Program (CVP) agent-containment guidance asks for: a VM whose only egress is
   the model API, through a local proxy, with the credential injected from
   outside. The cost: a token from `claude setup-token`, an open/locked cycle
-  for setup, and a firewall rule on the host.
+  for setup, a firewall rule on the host, and no MCP servers.
+
+Two layers stop a contained VM's egress. The in-VM lock, a root-owned
+nftables table, blocks it in every session; the agent is not root, so it
+cannot remove it. The host firewall rule (LuLu, below) blocks the VM's
+traffic on the host, and is the layer that still holds if something gets
+root in the VM. Without the rule, a contained VM is contained while VM root
+holds.
 
 How it works, and why: [`security-rationale.md`](security-rationale.md#lima-vm-mode).
 
@@ -39,23 +48,28 @@ Lima 2.0 or newer (`brew install lima`), git, tar, python3. macOS uses the
 image, Docker and the tree. nono and Claude Code are installed in the guest;
 on the host, a contained VM needs Claude Code once, for `claude setup-token`.
 
-`./setup.sh` offers to add a `claude-vm` alias for `bin/wmf-claude-vm`. The
-examples here use the full path. `WMF_CLAUDE_VM=<name>` selects the VM
-(default `wmf-claude`); a contained VM is a separate VM, so give it its own
-name.
+`./setup.sh` offers to add a `claude-vm` alias for `bin/claude-vm`, and the
+examples here use it; without the alias, run `bin/claude-vm`. The old name,
+`bin/wmf-claude-vm`, still works. `--vm NAME` before the command (or
+`WMF_CLAUDE_VM=<name>`) selects the VM; the default is `wmf-claude`. A
+contained VM is a separate VM, so `create --contained` refuses the default
+name: give it its own, such as `wmf-claude-contained`. `claude-vm
+list` shows the VMs on this machine and the mode of each, and `status`
+shows what the mode protects.
 
-## Lima VM: quick start
+## Isolated VM: quick start
 
 ```bash
-bin/wmf-claude-vm create                    # once; asks for your Phabricator username
-bin/wmf-claude-vm login                     # once: open the printed URL on the host, paste the code
-bin/wmf-claude-vm push ~/src/mediawiki/core
-bin/wmf-claude-vm claude core               # Claude Code in that workspace, sandboxed
-bin/wmf-claude-vm pull core                 # the agent's branches land in vm/* of your checkout
-bin/wmf-claude-vm review core <branch>      # then checkout or discard it
+claude-vm create --isolated         # once; asks for your Phabricator username
+claude-vm login                     # once: open the printed URL on the host, paste the code
+claude-vm push ~/src/mediawiki/core
+claude-vm claude core               # Claude Code in that workspace, sandboxed
+claude-vm pull core                 # the agent's branches land in vm/* of your checkout
+claude-vm review core <branch>      # then checkout or discard it
 ```
 
-`create` takes `limactl create` flags (`--cpus 8 --memory 16`; the defaults
+`create` needs `--isolated` or `--contained`; on a terminal it asks when
+neither is given. It also takes `limactl create` flags (`--cpus 8 --memory 16`; the defaults
 are 4 CPUs, 8 GiB and a 60 GiB disk). It installs this checkout's **HEAD**
 (submodules included, uncommitted changes not) into the VM, so commit first.
 `login` signs Claude Code in as the VM's `agent` user; do it once per VM,
@@ -82,23 +96,23 @@ A contained VM is created contained and stays so. Set it up once:
 
    ```bash
    export WMF_CLAUDE_VM=wmf-claude-contained
-   bin/wmf-claude-vm create --contained   # ends with the network locked
+   claude-vm create --contained   # ends with the network locked
    command claude setup-token             # on the host, outside the sandbox: a long-lived token
-   bin/wmf-claude-vm login                # paste it; it goes into a 0600 host file, never the VM
+   claude-vm login                # paste it; it goes into a 0600 host file, never the VM
    ```
 3. **Turn the LuLu rule on and prove it works:**
 
    ```bash
-   bin/wmf-claude-vm check-host-block     # removes the VM's lock for one request; it must still fail
-   bin/wmf-claude-vm status               # network: locked; host firewall: verified (date)
+   claude-vm check-host-block     # removes the VM's lock for one request; it must still fail
+   claude-vm status               # network: locked; host firewall: verified (date)
    ```
 
 Then the daily cycle:
 
 | | VM | Host firewall rule | You |
 |---|---|---|---|
-| **Set up** | `bin/wmf-claude-vm unlock` | off | `update`, clone or push repos, pull images, `composer install` |
-| **Work** | `bin/wmf-claude-vm lock` | on | `bin/wmf-claude-vm claude NAME` |
+| **Set up** | `claude-vm unlock` | off | `update`, clone or push repos, pull images, `composer install` |
+| **Work** | `claude-vm lock` | on | `claude-vm claude NAME` |
 
 `claude` starts only when the VM is locked; `lock` and `unlock` refuse while
 a session runs; `update` refuses while locked. After a Lima upgrade the
@@ -121,7 +135,7 @@ error or the byte budget (`WMF_CLAUDE_CAPTURE_MAX_BYTES`, 2 GiB by default).
 `delete` and `reset` keep the files, so remove them yourself when the audit
 trail is no longer needed.
 
-To read these host-side artifacts, run `bin/wmf-claude-vm logs`. It reads the
+To read these host-side artifacts, run `claude-vm logs`. It reads the
 files only, so it needs neither a running VM nor the host that ran the session.
 With no argument it prints the most recent session of the request log, one line
 per request (colour on a terminal, plain in a pipe); `--all` prints every
@@ -142,18 +156,18 @@ servers except chrome-devtools, whose browser runs in the VM.
 leaves the VM, for any user or container. The forwarded model proxy still
 works; so do Docker containers among themselves and with the VM. **Open**:
 normal egress, for setup. A VM that boots, or reboots, comes up in the
-phase it had, and an unknown phase is locked. `bin/wmf-claude-vm status`
+phase it had, and an unknown phase is locked. `claude-vm status`
 shows `locked`, `open`, or `broken` (sessions refused).
 
 ## The work loop
 
 ```bash
-bin/wmf-claude-vm push DIR [NAME]        # git bundle of HEAD, branches and tags -> /home/agent/work/NAME
-bin/wmf-claude-vm claude NAME [args]     # bin/claude in that workspace, as agent, sandboxed; on exit: what is not pulled yet
-bin/wmf-claude-vm pull NAME [DEST]       # agent's branches -> vm/* in the repo NAME came from
-bin/wmf-claude-vm review NAME BRANCH     # git log -p HEAD..vm/BRANCH
-bin/wmf-claude-vm checkout NAME BRANCH   # git switch -c BRANCH vm/BRANCH
-bin/wmf-claude-vm discard NAME BRANCH    # git branch -rd vm/BRANCH
+claude-vm push DIR [NAME]        # git bundle of HEAD, branches and tags -> /home/agent/work/NAME
+claude-vm claude NAME [args]     # bin/claude in that workspace, as agent, sandboxed; on exit: what is not pulled yet
+claude-vm pull NAME [DEST]       # agent's branches -> vm/* in the repo NAME came from
+claude-vm review NAME BRANCH     # git log -p HEAD..vm/BRANCH
+claude-vm checkout NAME BRANCH   # git switch -c BRANCH vm/BRANCH
+claude-vm discard NAME BRANCH    # git branch -rd vm/BRANCH
 ```
 
 - `push` moves commits and refs only: never `.git/config`, hooks or
@@ -171,7 +185,7 @@ bin/wmf-claude-vm discard NAME BRANCH    # git branch -rd vm/BRANCH
 - A session is granted its own workspace. For core plus extensions, push
   each one with a nested name and start the session in `core`: it sees them
   all. For sibling workspaces, pass nono's grant through, with guest paths
-  and the `--`: `bin/wmf-claude-vm claude core --allow /home/agent/work --`
+  and the `--`: `claude-vm claude core --allow /home/agent/work --`
   (`--read DIR --` for read-only). Only what you pushed is in reach, so this
   is a smaller step than `--allow ~/src` on the host.
 - Notes, or any directory that is not a repository: `git init` it on the
@@ -183,7 +197,7 @@ bin/wmf-claude-vm discard NAME BRANCH    # git branch -rd vm/BRANCH
   the agent to commit, or commit yourself with `shell --agent`.
 - A large repository can be cloned shallow in the VM instead of pushed
   (in a contained VM, while open):
-  `bin/wmf-claude-vm shell --agent -- git clone --depth 1 URL /home/agent/work/NAME`.
+  `claude-vm shell --agent -- git clone --depth 1 URL /home/agent/work/NAME`.
   The first `pull NAME DEST` then sends only the agent's new commits; DEST
   must have the commit the clone starts at (`git fetch` it first).
 
@@ -198,12 +212,12 @@ MariaDB listens on 127.0.0.1 only; `wikiuser` (password `wikipass`) owns the
 database `wikidb`.
 
 ```bash
-bin/wmf-claude-vm shell --agent -- composer install -d /home/agent/work/core   # needs the network: a contained VM while open
-bin/wmf-claude-vm shell --agent -- php /home/agent/work/core/maintenance/install.php \
+claude-vm shell --agent -- composer install -d /home/agent/work/core   # needs the network: a contained VM while open
+claude-vm shell --agent -- php /home/agent/work/core/maintenance/install.php \
   --dbserver 127.0.0.1 --dbname wikidb --dbuser wikiuser --dbpass wikipass \
   --server http://127.0.0.1:8080 --scriptpath '' \
   --pass 'change-me-adminpass' DevWiki admin
-bin/wmf-claude-vm claude core --local-db
+claude-vm claude core --local-db
 ```
 
 - `composer install` needs packagist, which nono's allowlist does not
@@ -230,7 +244,7 @@ bin/wmf-claude-vm claude core --local-db
 
 ## A browser in the VM
 
-`bin/wmf-claude-vm claude NAME --chrome` starts a headless Chromium in the
+`claude-vm claude NAME --chrome` starts a headless Chromium in the
 guest for the session, as the `wmfchrome` user, and stops it with the
 session; there is nothing to run in another terminal. The chrome-devtools
 MCP attaches to it as on the host, and screenshots work headless.
@@ -244,7 +258,7 @@ server, or any dev server the session starts on an opened port, and not
 Wikimedia sites. The firewall is the layer that holds: a CDP client can open
 a browser context with its own proxy, so the flags alone would not.
 `update` adds Chromium to an existing VM. If the browser does not start,
-`bin/wmf-claude-vm claude` prints its log; "No usable sandbox" means user
+`claude-vm claude` prints its log; "No usable sandbox" means user
 namespaces are off in the guest. The `dbus` errors in that log are noise:
 a headless system has no session bus.
 
@@ -255,15 +269,15 @@ broker, with `mwdocker`, as on the host. The checkout belongs to `agent`, so
 run the containers as the agent's UID:
 
 ```bash
-bin/wmf-claude-vm unlock                  # contained VM only, with the host firewall rule off
-bin/wmf-claude-vm shell
+claude-vm unlock                  # contained VM only, with the host firewall rule off
+claude-vm shell
 cd /home/agent/work/core
 printf 'MW_DOCKER_UID=%s\nMW_DOCKER_GID=%s\n' "$(id -u agent)" "$(id -g agent)" | sudo -u agent tee .env
 docker compose up -d                      # pulls the images
 docker compose exec mediawiki composer install
 exit
-bin/wmf-claude-vm lock                    # contained VM only, with the rule back on
-bin/wmf-claude-vm claude core --docker=mediawiki --local-web
+claude-vm lock                    # contained VM only, with the rule back on
+claude-vm claude core --docker=mediawiki --local-web
 ```
 
 - The compose file in the agent's workspace is the agent's to edit, and
@@ -271,7 +285,7 @@ bin/wmf-claude-vm claude core --docker=mediawiki --local-web
   reviewed copy outside `/home/agent`. The broker refuses privileged and
   socket-mounting containers.
 - `--docker` takes a service name only (no `auto`, `:WORKDIR` or
-  `--egress`). In a normal VM, restrict a container's network with an
+  `--egress`). In an isolated VM, restrict a container's network with an
   override from `/opt/wmf-claude/templates/docker-egress/`, which the agent
   cannot write:
   `docker compose -f docker-compose.yml -f /opt/wmf-claude/templates/docker-egress/egress-none.yml up -d`.
@@ -282,11 +296,12 @@ bin/wmf-claude-vm claude core --docker=mediawiki --local-web
 ## Updating, stopping, resetting
 
 ```bash
-bin/wmf-claude-vm update    # re-upload this checkout's HEAD, re-pin nono, update Claude Code (contained: unlock first)
-bin/wmf-claude-vm status    # VM state, installed revision vs host HEAD, invariants; contained: phase, host firewall
-bin/wmf-claude-vm stop      # free the RAM; login state and workspaces persist
-bin/wmf-claude-vm start
-bin/wmf-claude-vm reset     # delete (confirmed by name) and create again: drops the token and every workspace
+claude-vm list      # the wmf-claude VMs on this machine: state, mode, workspaces
+claude-vm update    # re-upload this checkout's HEAD, re-pin nono, update Claude Code (contained: unlock first)
+claude-vm status    # VM state, mode and what it protects, installed revision vs host HEAD, invariants; contained: phase, host firewall
+claude-vm stop      # free the RAM; login state and workspaces persist
+claude-vm start
+claude-vm reset     # delete (confirmed by name) and create again, same mode: drops the token and every workspace
 ```
 
 A failed `update` leaves the previous install in place. The VM's copy has no
@@ -299,7 +314,7 @@ check.
 
 ## Known limitations
 
-- **Lima VM: the model token is in the VM,** in reach of the sandbox, as on
+- **Isolated VM: the model token is in the VM,** in reach of the sandbox, as on
   the host. `reset` drops it; revoke it at claude.ai if in doubt.
   → Contained mode keeps it on the host.
 - **Host files follow `$XDG_*`, the profile denies are literal.** The token
@@ -310,10 +325,10 @@ check.
   from under the denies, so a host `bin/claude` session launched from that
   location could read them. Leave `XDG_CONFIG_HOME`/`XDG_STATE_HOME` at their
   defaults, or add the real paths to both profiles' `deny`.
-- **Lima VM: egress.** Inside the VM, nono's allowlist binds Claude exactly
+- **Isolated VM: egress.** Inside the VM, nono's allowlist binds Claude exactly
   as on the host, and containers you start are not sandboxed by nono.
   → Contained mode locks the VM's network.
-- **Lima VM: a localhost-port grant is not race-proof on Linux.** nono's
+- **Isolated VM: a localhost-port grant is not race-proof on Linux.** nono's
   per-connection destination check (the seccomp layer that keeps `--open-port`
   to loopback) approves a `connect()` with `SECCOMP_USER_NOTIF_FLAG_CONTINUE`,
   which re-runs the syscall from the child's own memory, so a second thread can
@@ -321,7 +336,7 @@ check.
   `--local-web`, `--local-db`, `--docker` or `--chrome` session could in
   principle use this to reach an outside host, and the VM's host-and-LAN block
   still lets the `agent` user out on 80/443. The exposure is bounded to the
-  throwaway guest, but in a plain Lima VM that includes the model token.
+  throwaway guest, but in an isolated VM that includes the model token.
   → Contained mode closes it: the lock drops every non-loopback packet, and the
   token is not in the VM.
 - **Apple Silicon: the WMF dev images do not run.** The VM is arm64 and the
@@ -360,7 +375,7 @@ the host and outside nono:
 By hand, in a Lima VM:
 
 ```bash
-bin/wmf-claude-vm shell
+claude-vm shell
 findmnt -t virtiofs,9p,fuse.sshfs                # nothing: no host mounts
 id agent; sudo -u agent sudo -n true             # no docker group; sudo refused
 sudo -u agent curl -sS --unix-socket /var/run/docker.sock http://localhost/version   # Permission denied

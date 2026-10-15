@@ -237,7 +237,7 @@ if [[ -x "$CDP_BIN" ]]; then
 
   ok "$CDP_DIR/mcp-config.json (written by the build)"
   if [[ -n "${WMF_CLAUDE_IN_VM:-}" ]]; then
-    dim "      Launch with 'bin/wmf-claude-vm claude NAME --chrome'; the VM starts a headless Chromium."; echo ""
+    dim "      Launch with 'claude-vm claude NAME --chrome'; the VM starts a headless Chromium."; echo ""
   else
     dim "      Launch with 'bin/claude --chrome'; run 'bin/launch-test-chrome' first."; echo ""
   fi
@@ -264,7 +264,7 @@ dim "      Apply with: docker compose -f docker-compose.yml -f $EGRESS_DST/egres
 dim "      Then launch: claude --docker=mediawiki --egress=none"; echo ""
 
 # Shell aliases pointing at this checkout: `claude` (the sandboxed launcher)
-# and `claude-vm` (bin/wmf-claude-vm), both unless this runs inside the VM.
+# and `claude-vm` (bin/claude-vm), both unless this runs inside the VM.
 SHELL_NAME="$(basename "${SHELL:-}")"
 case "$SHELL_NAME" in
   zsh)  RC_PATH="$HOME/.zshrc"  ; RC_DISPLAY="~/.zshrc" ;;
@@ -272,14 +272,19 @@ case "$SHELL_NAME" in
   fish) RC_PATH="$HOME/.config/fish/conf.d/wmf-claude.fish" ; RC_DISPLAY="~/.config/fish/conf.d/wmf-claude.fish" ;;
   *)    RC_PATH=""              ; RC_DISPLAY="your shell config" ;;
 esac
-install_alias() {  # $1 NAME  $2 TARGET  $3 comment line
-  local line
+install_alias() {  # $1 NAME  $2 TARGET  $3 comment line  [$4 OLD TARGET, still valid]
+  local line old=""
   if [[ "$SHELL_NAME" == fish ]]; then line="abbr -a $1 $2"; else line="alias $1='$2'"; fi
+  if [[ -n "${4:-}" ]]; then
+    if [[ "$SHELL_NAME" == fish ]]; then old="abbr -a $1 $4"; else old="alias $1='$4'"; fi
+  fi
   if [[ -z "$RC_PATH" ]]; then
     fail "Unsupported shell ($SHELL_NAME). Add this to $RC_DISPLAY:"
     echo "      $line"
   elif [[ -f "$RC_PATH" ]] && grep -Fxq "$line" "$RC_PATH"; then
     ok "'$1' alias already present in $RC_DISPLAY"
+  elif [[ -n "$old" && -f "$RC_PATH" ]] && grep -Fxq "$old" "$RC_PATH"; then
+    ok "'$1' alias already present in $RC_DISPLAY $(dim "(old path; it still works, or change it to $2)")"
   elif [[ -f "$RC_PATH" ]] && grep -Eq "^[[:space:]]*(alias[[:space:]]+$1=|abbr[[:space:]]+-a[[:space:]]+$1([[:space:]]|\$))" "$RC_PATH"; then
     fail "A different '$1' alias is already in $RC_DISPLAY — leaving it alone."
     fail "Replace it manually with:"
@@ -297,7 +302,7 @@ install_alias claude "$ROOT/bin/claude" \
 # The Lima VM launcher, aliased like `claude`. Not inside the VM itself
 # (lima/guest-install.sh sets WMF_CLAUDE_IN_VM; the alias is meaningless there).
 if [[ -z "${WMF_CLAUDE_IN_VM:-}" ]]; then
-  install_alias claude-vm "$ROOT/bin/wmf-claude-vm" 'wmf-claude: Lima VM mode (docs/lima-vm.md)'
+  install_alias claude-vm "$ROOT/bin/claude-vm" 'wmf-claude: Lima VM mode (docs/lima-vm.md)' "$ROOT/bin/wmf-claude-vm"
 fi
 
 # A self-update that was interrupted after its merge leaves this marker so
@@ -310,6 +315,6 @@ echo ""
 echo "  $(dim "The 'claude' alias shadows the system binary so it's sandboxed by default.")"
 echo "  $(dim "Bypass with \\claude or 'command claude' for the unsandboxed binary.")"
 echo "  $(dim "Inside Claude, run") $(bold "/wmf-claude:init-project") $(dim "to bootstrap a repo.")"
-VM_CMD="claude-vm"; [[ -n "${WMF_CLAUDE_IN_VM:-}" ]] && VM_CMD="bin/wmf-claude-vm"
-echo "  $(dim "SRE or security work that needs a VM around the sandbox:") $(bold "$VM_CMD create") $(dim "(docs/lima-vm.md)")"
+VM_CMD="claude-vm"; [[ -n "${WMF_CLAUDE_IN_VM:-}" ]] && VM_CMD="bin/claude-vm"
+echo "  $(dim "SRE or security work that needs a VM around the sandbox:") $(bold "$VM_CMD create --isolated") $(dim "or") $(bold "--contained") $(dim "(docs/lima-vm.md)")"
 echo ""

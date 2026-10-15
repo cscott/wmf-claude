@@ -54,7 +54,7 @@ golden_of() { st "$1" .image; }
 # $LOGS/NAME.log.
 create() {
   local name=$1; shift
-  "$WMF_SBX" create --name "$name" --memory "$MEMORY" "$@" "$REPO" > "$LOGS/$name.log" 2>&1
+  "$WMF_SBX" create --no-start --name "$name" --memory "$MEMORY" "$@" "$REPO" > "$LOGS/$name.log" 2>&1
 }
 
 report() {

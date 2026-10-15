@@ -555,7 +555,7 @@ def gc_old_images(key, env, config, say):
 
 
 def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
-         inputs_fn=None, prompt=input, now=None, isatty=None):
+         inputs_fn=None, prompt=input, now=None, isatty=None, stdout_isatty=None):
     """`wmf-sbx create` on Lima (lima-port/HANDOFF-LIMA.md §4, phase 3).
 
     1. resolve the repos and walk the dependencies (unchanged);
@@ -604,6 +604,10 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
                         help="clone the repos that are not on this machine yet, at the "
                         "settings.yaml path, without asking. Default: ask, and with no "
                         "terminal fail")
+    parser.add_argument("--start", action=argparse.BooleanOptionalAction, default=None,
+                        help="start Claude Code in the new sandbox, as `wmf-sbx resume NAME` "
+                        "does. Default: start when stdin and stdout are a terminal; "
+                        "--no-start never does")
     parser.add_argument("--reset-all", action=argparse.BooleanOptionalAction, default=False,
                         help="Reset every clone to upstream master, the repos "
                         "named on the command line too")
@@ -1073,7 +1077,16 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
           + ("" if not args.remotes else
              f"  git fetch {name}               (on the host, in a repo) the agent's work\n"),
           file=sys.stderr, end="")
-    return 0
+    start = args.start if args.start is not None else (
+        interactive and (stdout_isatty or sys.stdout.isatty)())
+    if not start:
+        return 0
+    # The name is the sandbox's now; the session can be long.
+    if reservation is not None:
+        reservation.close()
+    from . import resume as resume_mod
+    say(f"\n+ wmf-sbx resume {name}   (--no-start: do not)")
+    return resume_mod.main([name], lima=lima, env=env)
 
 
 if __name__ == "__main__":

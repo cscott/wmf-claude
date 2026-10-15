@@ -6,7 +6,7 @@ this task list, and its report. Every step it had to invent is a
 documentation bug. On the host:
 
 ```bash
-wmf-sbx create --reset-all --name sbx-testverify --memory 8GiB --disk 60GiB \
+wmf-sbx create --no-start --reset-all --name sbx-testverify --memory 8GiB --disk 60GiB \
   gerrit:mediawiki/extensions/Translate \
   gerrit:mediawiki/extensions/Cite \
   gerrit:mediawiki/services/parsoid
@@ -34,7 +34,7 @@ copy. Make the outer sandbox big enough for the session and the inner
 8 GiB VM, also with explicit sizes:
 
 ```bash
-wmf-sbx create --sudo --nested --name egsn --memory 14GiB --disk 120GiB \
+wmf-sbx create --no-start --sudo --nested --name egsn --memory 14GiB --disk 120GiB \
   ~/Projects/Wikimedia/wmf-claude
 ```
 

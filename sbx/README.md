@@ -86,14 +86,14 @@ primary repo is that directory.
    extra environment variables and Debian packages.
 
 2. **Sign in once:** `wmf-sbx login` ("Sign-in"). It needs a golden image,
-   so on a new machine run step 3 first and sign in before the first
-   `resume`.
+   so on a new machine make the first sandbox with `create --no-start`,
+   sign in, then `wmf-sbx resume` it.
 
-3. **Make a sandbox and start Claude Code in it:**
+3. **Make a sandbox; `create` then starts Claude Code in it:**
 
    ```bash
    wmf-sbx create Cite        # 10-20 minutes the first time (the golden image)
-   wmf-sbx resume sbx-cite
+   wmf-sbx resume sbx-cite    # later sessions
    ```
 
 ## Sign-in
@@ -372,8 +372,8 @@ the freeze removes the one that made the snapshot.
 ## Quick start
 
 ```bash
-wmf-sbx create Cite          # 10-20 min the first time; the image is cached
-wmf-sbx resume sbx-cite      # Claude Code, in the primary clone
+wmf-sbx create Cite          # 10-20 min the first time; then Claude Code starts in it
+wmf-sbx resume sbx-cite      # Claude Code again later, in the primary clone
 git -C ~/Wikimedia/Extensions/Cite fetch sbx-cite   # the agent's commits
 wmf-sbx rm sbx-cite
 ```
@@ -446,6 +446,9 @@ wmf-sbx create PRIMARY[:ro] [EXTRA[:ro] ...] [options]
   a second `create` of the same name, while the first runs, stops at once
   (a default name gets a suffix instead).
 - `--no-remotes`: add no host remote, and leave host gc as it is.
+- `--start/--no-start`: start Claude Code in the new sandbox at the end,
+  as `wmf-sbx resume` does. By default `create` starts it when stdin and
+  stdout are a terminal, and not in a script or a pipe.
 - `--clone-missing`: clone the repos that are not on the host yet without
   asking ("Naming a repo", above).
 - `--cold`, `--no-snapshot`, `--no-expire`: see "Warm snapshots" and
@@ -562,7 +565,7 @@ wmf-sbx create --sudo ~/src/Cite
 
 ## Working with Gerrit
 
-1. `wmf-sbx create Cite`, then `wmf-sbx resume sbx-cite`.
+1. `wmf-sbx create Cite` (it starts a session; `wmf-sbx resume sbx-cite` later).
 2. In the sandbox, the remote `local` is your host checkout (read-only,
    current as of your last fetch). To give the agent your newer work,
    tell it (or run `! git safe-reset local`).

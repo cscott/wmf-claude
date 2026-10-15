@@ -1052,6 +1052,36 @@ class CreateTests(Env):
         self.assertEqual(self.create("--name", "demo", lima=FakeLima({"wmf-sbx-demo": "Stopped"})), 1)
         self.assertIn("exists already", self.err)
 
+    def start_create(self, *extra, ttys=False, name="demo"):
+        """create, with resume.main stubbed: (exit status, its calls)."""
+        import wmf_sbx.resume as resume_mod
+        calls = []
+        lima = FakeLima()
+        argv = ["--no-deps", "--config", self.config, "--image", self.KEY, self.repo,
+                "--name", name] + list(extra)
+        with mock.patch.object(resume_mod, "main",
+                               side_effect=lambda a, lima=None, env=None: calls.append(a) or 5):
+            rc = self.quiet(create.main, argv, lima=lima, env=self.env, build=self.fake_build,
+                            inputs_fn=self.fake_inputs, prompt=lambda q: "",
+                            isatty=lambda: ttys, stdout_isatty=lambda: ttys)
+        return rc, calls
+
+    def test_create_starts_the_session_on_a_terminal(self):
+        self.assertEqual(self.start_create(ttys=True), (5, [["demo"]]))
+        self.assertIn("+ wmf-sbx resume demo", self.err)
+        # the name is free for the session's time
+        self.assertNotIn("demo", state_mod.reserved_names(self.env))
+
+    def test_create_does_not_start_one_in_a_script(self):
+        self.assertEqual(self.start_create(), (0, []))
+
+    def test_start_and_no_start_win(self):
+        self.assertEqual(self.start_create("--no-start", ttys=True), (0, []))
+        self.assertEqual(self.start_create("--start", name="two")[1], [["two"]])
+
+    def test_a_dry_run_starts_nothing(self):
+        self.assertEqual(self.start_create("--dry-run", "--start"), (0, []))
+
     def test_a_name_another_create_is_making_is_refused_at_once(self):
         # RAN 2026-10-14: two creates of one --name both went on, and the
         # second would have failed only at `limactl create`.

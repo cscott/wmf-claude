@@ -64,7 +64,7 @@ golden() {
 timed_create() {
   local name=$1; shift
   local t0=$SECONDS
-  if sbx create --no-deps --name "$name" "$@" "$(repo)" > "/tmp/claude-$(id -u)/b2-$name.log" 2>&1 \
+  if sbx create --no-start --no-deps --name "$name" "$@" "$(repo)" > "/tmp/claude-$(id -u)/b2-$name.log" 2>&1 \
        || { tail -30 "/tmp/claude-$(id -u)/b2-$name.log"; false; }; then
     echo "-- $name: create in $((SECONDS - t0)) s; disk $(kib "$(disk_of "$name")") KiB" \
          "(apparent $(du -k --apparent-size "$(disk_of "$name")" | cut -f1) KiB)"

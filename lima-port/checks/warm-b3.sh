@@ -52,7 +52,7 @@ timed_create() {
   local name=$1; shift
   local t0=$SECONDS
   echo "-- $name: create (its output: $LOGS/$name.log)"
-  if sbx create --name "$name" --memory "$MEMORY" "$@" "$REPO" > "$LOGS/$name.log" 2>&1; then
+  if sbx create --no-start --name "$name" --memory "$MEMORY" "$@" "$REPO" > "$LOGS/$name.log" 2>&1; then
     echo "-- $name: create in $((SECONDS - t0)) s"
     grep -E '^\+ (warm|cold)|^\+ golden image|npm ci|skipping it|update\.php|composer update' \
       "$LOGS/$name.log" | sed 's/^/   | /' | head -40

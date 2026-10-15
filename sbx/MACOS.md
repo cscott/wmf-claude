@@ -104,7 +104,7 @@ commands or Python; they are useful on their own.
 ### 3. Make a sandbox (30 to 60 minutes the first time)
 
 ```bash
-time wmf-sbx create --name mac1 gerrit:mediawiki/extensions/Cite
+time wmf-sbx create --no-start --name mac1 gerrit:mediawiki/extensions/Cite
 wmf-sbx status mac1
 wmf-sbx ls
 ```
@@ -200,7 +200,7 @@ mv ~/.config/wmf-sbx/claude-oauth-token{.away,}
 
 ```bash
 brew install qemu
-time wmf-sbx create --vm-type qemu --name mac-qemu gerrit:mediawiki/extensions/Cite
+time wmf-sbx create --no-start --vm-type qemu --name mac-qemu gerrit:mediawiki/extensions/Cite
 du -sh ~/.lima/wmf-sbx-mac-qemu
 wmf-sbx status mac-qemu
 wmf-sbx exec mac-qemu -- curl -sS -o /dev/null -w '%{http_code}\n' https://www.kernel.org/

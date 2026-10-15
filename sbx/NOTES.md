@@ -66,12 +66,6 @@ Development scaffolding:
 
 cananian, 2026-10-14: small changes, to do once the blind run in a warm sandbox passes.
 
-- [ ] **`create` starts the session**: after a create, go into Claude Code in the new
-  sandbox as `wmf-sbx resume NAME` does, unless `--no-start` is given (`--start/--no-start`,
-  settings `create.start`, by the `--X/--no-X` rule of `lima-port/PLAN-SETTINGS-DEFAULTS.md`).
-  The checks and scripts that create sandboxes (`lima-port/checks/*.sh`, the acceptance
-  README, the test harnesses) then pass `--no-start`; a create that is not on a terminal
-  does not start one either. Update the "ready" message and the README.
 - [ ] **The sandbox name first in the status line**: in a sandbox session the status line
   starts with `WMF nono sandbox`, and a narrow terminal cuts off what comes later. Show the
   sandbox name as the leftmost item (`bin/statusline.sh` today puts `WMF_CLAUDE_SESSION`

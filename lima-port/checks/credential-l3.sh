@@ -44,7 +44,7 @@ session() {  # NAME LOG PROMPT
 case "${1:-}" in
   create)
     for n in "${SANDBOXES[@]}"; do
-      "$WMF_SBX" create ${IMAGE_ARGS[@]+"${IMAGE_ARGS[@]}"} --no-deps --no-remotes --name "$n" "$REPO" ||
+      "$WMF_SBX" create --no-start ${IMAGE_ARGS[@]+"${IMAGE_ARGS[@]}"} --no-deps --no-remotes --name "$n" "$REPO" ||
         exit 1
     done
     ;;

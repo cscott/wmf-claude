@@ -84,7 +84,7 @@ A contained VM is created contained and stays so. Set it up once:
    export WMF_CLAUDE_VM=wmf-claude-contained
    bin/wmf-claude-vm create --contained   # ends with the network locked
    command claude setup-token             # on the host, outside the sandbox: a long-lived token
-   bin/wmf-claude-vm login                # paste it; it goes into the host keychain, never the VM
+   bin/wmf-claude-vm login                # paste it; it goes into a 0600 host file, never the VM
    ```
 3. **Turn the LuLu rule on and prove it works:**
 
@@ -206,6 +206,17 @@ update path.
 - **Lima VM: egress.** Inside the VM, nono's allowlist binds Claude exactly
   as on the host, and containers you start are not sandboxed by nono.
   → Contained mode locks the VM's network.
+- **Lima VM: a localhost-port grant is not race-proof on Linux.** nono's
+  per-connection destination check (the seccomp layer that keeps `--open-port`
+  to loopback) approves a `connect()` with `SECCOMP_USER_NOTIF_FLAG_CONTINUE`,
+  which re-runs the syscall from the child's own memory, so a second thread can
+  rewrite the address after the check — a known nono limitation. A
+  `--local-web`, `--local-db`, `--docker` or `--chrome` session could in
+  principle use this to reach an outside host, and the VM's host-and-LAN block
+  still lets the `agent` user out on 80/443. The exposure is bounded to the
+  throwaway guest, but in a plain Lima VM that includes the model token.
+  → Contained mode closes it: the lock drops every non-loopback packet, and the
+  token is not in the VM.
 - **Apple Silicon: the WMF dev images do not run.** The VM is arm64 and the
   images (`docker-registry.wikimedia.org/dev/...`) are amd64 only. QEMU
   emulation crashes their `php-fpm`; Rosetta would run them but needs a host
@@ -218,10 +229,11 @@ update path.
   the host needs a VM with no network at all, which Lima does not offer yet.
 - **Contained: not done yet.** Transcript and log retention outside the
   agent's reach, and a per-engagement scope prompt.
-- **Linux hosts: contained mode is untested.** The code has a Linux path
-  (the token in a 0600 file instead of the keychain), but it has not run,
-  `tests/smoke-contained.sh` uses macOS commands, and no host firewall setup
-  has been tried; `check-host-block` tells you whether yours works.
+- **Linux hosts: contained mode is untested.** The token store (a 0600 file
+  under `~/.config/wmf-claude/`) is the same on Linux and macOS, but the Linux
+  path has not run, `tests/smoke-contained.sh` uses some macOS commands, and no
+  host firewall setup has been tried; `check-host-block` tells you whether
+  yours works.
 - **Claude Code** is installed in the VM by the official installer, neither
   pinned nor checksummed. nono is pinned and checked.
 - **Lima itself** runs on the host with your privileges, and the SSH key in

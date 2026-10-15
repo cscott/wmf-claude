@@ -53,7 +53,7 @@ info() { printf 'INFO: %s\n' "$*"; }
 P=/opt/wmf-claude/profiles/wmf-contained.json
 W=/home/agent/work/smoke-contained
 AGENT_PATH="/usr/local/bin:/usr/bin:/bin:/home/agent/.local/bin"
-KC_SERVICE=wmf-claude-model
+MODEL_TOKEN_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/wmf-claude/vm-$VM-model-token"
 
 g()  { limactl shell --workdir /home/engineer "$VM" -- "$@"; }
 ga() { g sudo -H -u agent env -C /home/agent PATH="$AGENT_PATH" "$@"; }
@@ -102,8 +102,9 @@ if [[ -f "$CONTAINED_RECORD" ]]; then pass "the host records $VM as a contained 
 else fail "$VM is not a contained VM on this host. Recreate it: WMF_CLAUDE_VM=$VM bin/wmf-claude-vm reset --contained"; exit 1; fi
 if g test -f /etc/wmf-claude/contained && [[ "$(g stat -c %U /etc/wmf-claude/contained | tr -d '\r')" == root ]]; then pass "the guest marker exists and belongs to root"
 else fail "no root-owned /etc/wmf-claude/contained in the guest"; fi
-if security find-generic-password -s "$KC_SERVICE" -a "$VM" >/dev/null 2>&1; then pass "token is in the host keychain"
-else fail "no token in the host keychain. Store one: WMF_CLAUDE_VM=$VM bin/wmf-claude-vm login"; exit 1; fi
+if [[ -s "$MODEL_TOKEN_FILE" && "$(stat -f '%Lp' "$MODEL_TOKEN_FILE" 2>/dev/null || stat -c '%a' "$MODEL_TOKEN_FILE" 2>/dev/null)" == 600 ]]; then
+  pass "token is in a 0600 host file ($MODEL_TOKEN_FILE), not the keychain"
+else fail "no 0600 token file at $MODEL_TOKEN_FILE. Store one: WMF_CLAUDE_VM=$VM bin/wmf-claude-vm login"; exit 1; fi
 bad=$(ga bash -c 'ls -d /home/agent/.config/wmf-claude/claude-oauth-token /home/agent/.claude/.credentials.json 2>/dev/null;
   grep -rIl "sk-ant-o" /home/agent/.config /home/agent/.claude 2>/dev/null | grep -v projects/ |
     while read -r f; do grep -v -q "sk-ant-oat01-wmf-claude-placeholder" "$f" && echo "$f"; done' | tr -d '\r')
@@ -196,7 +197,7 @@ cleanup() {
 }
 trap cleanup EXIT
 python3 -B "$REPO_ROOT/bin/wmf-claude-model-proxy" --socket "$SOCK" --log "$LOG" \
-  --keychain-service "$KC_SERVICE" --keychain-account "$VM" </dev/null &
+  --token-file "$MODEL_TOKEN_FILE" </dev/null &
 PROXY_PID=$!
 for _ in $(seq 50); do [[ -S "$SOCK" ]] && break; sleep 0.1; done
 if [[ -S "$SOCK" && "$(stat -f %Lp "$SOCK")" == 600 ]]; then pass "proxy socket is up, mode 0600"

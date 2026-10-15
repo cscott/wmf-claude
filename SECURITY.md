@@ -33,7 +33,7 @@ machine-wide, which is what per-launch replaced.
 | Filesystem denies, network deny-by-default, env allowlist, SSH blocked, Spotlight blocked | The kernel, via nono | **High.** The process cannot opt out, and `tests/test-profile.sh` asserts the behaviour. |
 | Read-only (GET/HEAD) wiki, docs, and codesearch domains | nono's TLS-intercepting proxy | **High** for in-sandbox traffic; does not apply to `WebFetch`, which egresses from Anthropic. |
 | `WebFetch` gated, `.claude/` unwritable, credential globs, `find -exec` denied | Claude Code | **Medium.** In-process, not an OS boundary; applied per launch by `bin/claude`, so a session started any other way has none of these. On **Linux the glob rules are ignored entirely**, so workdir secrets are unprotected there. |
-| Docker broker refusing unsafe containers | `bin/launch-docker-broker` | **Best-effort.** A denylist, not an allowlist; it can't inspect a container that isn't running, and a container recreated after the check is a TOCTOU gap. |
+| Docker broker refusing unsafe containers | `bin/launch-docker-broker` | **Best-effort.** Host-path binds are allowlisted to the checkout; the privileged/caps/network checks are a denylist. It can't inspect a container that isn't running, and a container recreated after the check is a TOCTOU gap. |
 | Only navigating `--chrome` to authorized URLs | Prompt instructions in the `manual-test` skill | **Not enforced.** Guidance only. The attached Chrome has unrestricted network. |
 
 A control being "High" means the mechanism is sound and tested, not that the

@@ -263,6 +263,10 @@ def check_container_safety(cfg):
     DANGEROUS_CAPS = {
         "ALL", "SYS_ADMIN", "SYS_PTRACE", "SYS_MODULE", "SYS_RAWIO",
         "SYS_BOOT", "DAC_READ_SEARCH", "DAC_OVERRIDE", "MKNOD",
+        # NET_ADMIN reconfigures networking (and in the VM could help undo the
+        # contained lock); NET_RAW allows raw/packet sockets for spoofing and
+        # sniffing on the shared network.
+        "NET_ADMIN", "NET_RAW",
     }
     # Host paths that, bind-mounted in, give the container the Docker socket or
     # the host filesystem. Compared after os.path.normpath.
@@ -277,18 +281,14 @@ def check_container_safety(cfg):
         return norm.endswith("/docker.sock") or os.path.basename(norm) == "docker.sock"
 
     # A dev container must bind-mount only the checkout (the directory that holds
-    # the compose file). A mount of a $HOME dotfile or dot-directory (~/.ssh,
-    # ~/.aws, ~/.config/*, ~/.gitconfig) gives the agent host credentials. The
-    # forwarded SSH agent socket does the same. Code in the container reads these
-    # files and sends them out through the container network.
-    #
-    # This is a denylist, not an allowlist. A secret path without a dot prefix,
-    # mounted by name, still gets through. The check also sees only a container
-    # that is already up. The check adds refusals; it never permits more.
-    home = os.path.realpath(os.path.expanduser("~"))
+    # the compose file). Anything else a host-path bind can reach -- a $HOME
+    # dotfile (~/.ssh, ~/.aws, ~/.gitconfig), the forwarded SSH agent socket,
+    # but also /etc, /opt/wmf-claude or /usr/local/sbin (the contained lock
+    # script) in the VM -- is refused. This is an allowlist: a host-path bind
+    # outside the checkout is unsafe by default, so a secret or control path
+    # without a dot prefix no longer slips through. The check still sees only a
+    # container that is already up, and it only ever adds refusals.
     checkout = os.path.realpath(os.path.dirname(cfg["compose_file"]))
-    ssh_sock = os.environ.get("SSH_AUTH_SOCK")
-    ssh_sock = os.path.realpath(ssh_sock) if ssh_sock else None
 
     def within(child, parent):
         # True when child is parent or is below parent. Both are real paths.
@@ -299,20 +299,11 @@ def check_container_safety(cfg):
         except ValueError:  # different drives, or mixed absolute and relative
             return False
 
-    def secret_source(source):
+    def bind_outside_checkout(source):
         norm = os.path.realpath(source or "")
         if not norm or norm == os.sep:
             return False  # source_unsafe() handles host root
-        if within(norm, checkout):
-            return False  # the checkout and its contents are allowed
-        if ssh_sock and norm == ssh_sock:
-            return True   # the forwarded SSH agent socket
-        if within(norm, home):
-            if norm == home:
-                return True  # the full home directory
-            first = os.path.relpath(norm, home).split(os.sep, 1)[0]
-            return first.startswith(".")  # a dotfile or dot-directory: ~/.ssh
-        return False
+        return not within(norm, checkout)
 
     reasons = []
     for cid in cids:
@@ -340,21 +331,27 @@ def check_container_safety(cfg):
         for key in ("PidMode", "IpcMode"):
             if (hc.get(key) or "") == "host":
                 reasons.append(f"{short}: {key}=host")
+        # Host (or another container's) network namespace: the container shares
+        # the host's interfaces and loopback, so an egress override cannot
+        # isolate it and, in the VM, it reaches host-local services directly.
+        netmode = hc.get("NetworkMode") or ""
+        if netmode == "host" or netmode.startswith("container:"):
+            reasons.append(f"{short}: NetworkMode={netmode} (shares the host or another container's network)")
         for m in info.get("Mounts") or []:
             src = m.get("Source")
             if source_unsafe(src):
                 reasons.append(f"{short}: mounts host path {src}")
-            elif m.get("Type", "bind") == "bind" and secret_source(src):
-                reasons.append(f"{short}: mounts host secret path {src}")
+            elif m.get("Type", "bind") == "bind" and bind_outside_checkout(src):
+                reasons.append(f"{short}: bind-mounts host path {src}, outside the checkout")
         for b in hc.get("Binds") or []:  # "src:dst[:opts]"
             src = b.split(":", 1)[0]
             if source_unsafe(src):
                 reasons.append(f"{short}: binds host path {b}")
-            elif src.startswith("/") and secret_source(src):
+            elif src.startswith("/") and bind_outside_checkout(src):
                 # The startswith guard skips named volumes ("myvol:/data"):
                 # their source is a volume name, not a host path, and realpath
                 # would wrongly resolve it against the broker's own directory.
-                reasons.append(f"{short}: binds host secret path {b}")
+                reasons.append(f"{short}: binds host path {b}, outside the checkout")
     return reasons
 
 

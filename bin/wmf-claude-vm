@@ -79,14 +79,16 @@ host_rev() { git -C "$ROOT" rev-parse --short=12 HEAD; }
 WS_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/wmf-claude/vm-$VM-workspaces"
 
 # Contained mode (docs/lima-vm.md#contained-mode). The host record says which VMs are contained
-# VMs; it is the authority, as the guest's marker is in reach of VM root. The
-# token stays on the host: in the login keychain on macOS, else in a 0600 file.
+# VMs; it is the authority, as the guest's marker is in reach of VM root.
 CONTAINED_RECORD="${XDG_CONFIG_HOME:-$HOME/.config}/wmf-claude/vm-$VM-contained"
+# The token stays on the host in a 0600 file, never in the login keychain: a
+# host bin/claude session is granted ~/Library/Keychains (and `security -w`
+# reads a generic-password item with no prompt), so the keychain would be in
+# the sandbox's reach. ~/.config/wmf-claude is not in any sandbox grant, and
+# the profiles deny it as well. The directory is 0700 (login/create).
 MODEL_TOKEN_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/wmf-claude/vm-$VM-model-token"
-MODEL_KEYCHAIN_SERVICE=wmf-claude-model
 CONTAINED_GUEST_MARKER=/etc/wmf-claude/contained
 is_contained() { [[ -f "$CONTAINED_RECORD" ]]; }
-use_keychain() { [[ "$(uname -s)" == Darwin ]]; }
 contained_check_guest() {
   guest test -f "$CONTAINED_GUEST_MARKER" \
     || die "the host records '$VM' as a contained VM, but $CONTAINED_GUEST_MARKER is missing in the guest. Recreate it: bin/wmf-claude-vm reset"
@@ -133,14 +135,8 @@ host_block_warning() {
     echo ""
   } >&2
 }
-contained_session_running() { pgrep -f "wmf-claude-model-proxy.*--keychain-account $VM\$|wmf-claude-model-proxy.*vm-$VM-model-token" >/dev/null 2>&1; }
-model_have_token() {
-  if use_keychain; then
-    security find-generic-password -s "$MODEL_KEYCHAIN_SERVICE" -a "$VM" >/dev/null 2>&1
-  else
-    [[ -s "$MODEL_TOKEN_FILE" ]]
-  fi
-}
+contained_session_running() { pgrep -f "wmf-claude-model-proxy.*vm-$VM-model-token" >/dev/null 2>&1; }
+model_have_token() { [[ -s "$MODEL_TOKEN_FILE" ]]; }
 ws_save() {  # $1 NAME  $2 host repository (top level)
   [[ "$2" != *$'\t'* && "$2" != *$'\n'* ]] || die "cannot record a path with a tab or newline: $2"
   mkdir -p "$(dirname "$WS_FILE")"
@@ -187,7 +183,7 @@ print_next_steps() {
   echo ""
   if is_contained; then
     echo "    $(bold "command claude setup-token")                    $(dim "on the host, outside the sandbox: a long-lived token")"
-    echo "    $(bold "bin/wmf-claude-vm login")                       $(dim "store it in the host keychain; the VM never holds it")"
+    echo "    $(bold "bin/wmf-claude-vm login")                       $(dim "store it on the host (0600 file); the VM never holds it")"
     echo "    $(bold "bin/wmf-claude-vm push ~/src/some-repo")        $(dim "copy a repo in (git bundle)")"
     echo "    $(bold "bin/wmf-claude-vm claude some-repo")            $(dim "Claude Code there; the model API via the host proxy only")"
     echo ""
@@ -314,7 +310,7 @@ cmd_push() {
   guest_agent bash -c '
     set -e
     b="$1"; dest="$HOME/work/$2"
-    g() { git -c core.hooksPath=/dev/null -c core.fsmonitor=false -c advice.defaultBranchName=false "$@"; }
+    g() { git -c core.hooksPath=/dev/null -c core.fsmonitor=false -c init.defaultBranch=main -c advice.defaultBranchName=false "$@"; }
     if [ -e "$dest" ]; then
       [ -d "$dest/.git" ] || { echo "error: $dest exists and is not a git repository" >&2; exit 1; }
       g -C "$dest" bundle verify "$b" >/dev/null
@@ -328,6 +324,7 @@ cmd_push() {
   ' _ "$remote" "$name"
   guest rm -rf "$updir"
   ws_save "$name" "$top"
+  echo "  Next: $(bold "bin/wmf-claude-vm claude $name")"
 }
 
 cmd_pull() {
@@ -462,16 +459,12 @@ contained_session() {
   MODEL_PROXY_PID=""; MODEL_SSH_PID=""
   errf=$(mktemp); sshlog=$(mktemp)
   MODEL_TMP=("$errf" "$sshlog")
-  if use_keychain; then
-    src=(--keychain-service "$MODEL_KEYCHAIN_SERVICE" --keychain-account "$VM")
-  else
-    src=(--token-file "$MODEL_TOKEN_FILE")
-  fi
+  src=(--token-file "$MODEL_TOKEN_FILE")
   trap 'model_proxy_stop' EXIT
   trap 'exit 130' INT TERM
   python3 -B "$ROOT/bin/wmf-claude-model-proxy" --socket "$sock" --log "$log" "${src[@]}" </dev/null 2>"$errf" &
   MODEL_PROXY_PID=$!
-  # No fixed limit while the proxy lives: a locked keychain asks to unlock.
+  # No fixed limit while the proxy lives (it only reads a local 0600 file).
   while [[ ! -S "$sock" ]] && kill -0 "$MODEL_PROXY_PID" 2>/dev/null; do sleep 0.1; done
   [[ -S "$sock" ]] || die "the model proxy did not start: $(cat "$errf")"
   # -n: stdin from /dev/null, so the forward never reads the session's terminal.
@@ -552,8 +545,19 @@ cmd_unlock() {
   contained_check_guest
   ! contained_session_running || die "a contained session for '$VM' is running; unlock after it ends"
   [[ "$(contained_net open)" == open ]] || die "could not open the VM's network"
+  # Unlock is the setup phase, when the host firewall rule is typically turned
+  # off (docs/lima-vm.md#contained-mode). A host-block verification recorded
+  # while the rule was on no longer reflects reality, so drop it: the next
+  # session shows the "not verified" warning until check-host-block runs again.
+  # Without this, "host firewall: verified" survives an unlock and a session
+  # could start believing a backstop that is currently off.
+  if [[ -f "$HOST_BLOCK_RECORD" ]]; then
+    rm -f "$HOST_BLOCK_RECORD"
+    echo "  Cleared the host-firewall verification (unlock changes the host rule)."
+  fi
   ok "network open: the VM has egress, and contained sessions are refused until: bin/wmf-claude-vm lock"
-  echo "  If a host firewall blocks limactl (docs/lima-vm.md#contained-mode), allow it for the setup."
+  echo "  If a host firewall blocks limactl (docs/lima-vm.md#contained-mode), allow it for the setup,"
+  echo "  then after you re-enable the rule and lock: bin/wmf-claude-vm check-host-block."
 }
 
 # Remove the VM's own lock for one request, as root, and check that the
@@ -611,17 +615,12 @@ cmd_login_contained() {
   contained_check_guest
   echo "Create a long-lived token on the host, outside the wmf-claude sandbox:"
   echo "    command claude setup-token"
-  if use_keychain; then
-    echo "Paste it at the keychain prompt (twice). It goes only into your login keychain."
-    security add-generic-password -U -s "$MODEL_KEYCHAIN_SERVICE" -a "$VM" \
-      -l "wmf-claude model token ($VM)" -w || die "could not store the token in the keychain"
-  else
-    local token
-    read -rsp "Token (not echoed): " token; echo ""
-    [[ -n "$token" ]] || die "no token given"
-    mkdir -p "$(dirname "$MODEL_TOKEN_FILE")"
-    (umask 077; printf '%s' "$token" > "$MODEL_TOKEN_FILE")
-  fi
+  local token
+  read -rsp "Token (not echoed): " token; echo ""
+  [[ -n "$token" ]] || die "no token given"
+  mkdir -p "$(dirname "$MODEL_TOKEN_FILE")"
+  chmod 0700 "$(dirname "$MODEL_TOKEN_FILE")" 2>/dev/null || true
+  (umask 077; printf '%s' "$token" > "$MODEL_TOKEN_FILE")
   guest_agent bash -c '
     set -e
     umask 077
@@ -632,7 +631,7 @@ cmd_login_contained() {
     chmod 0600 "$f.new"
     mv "$f.new" "$f"
   '
-  ok "token stored on the host; the VM holds none"
+  ok "token stored on the host ($MODEL_TOKEN_FILE, 0600); the VM holds none"
 }
 
 # shell [--agent] [-- CMD...]: an interactive shell, or one command, in the
@@ -699,12 +698,7 @@ cmd_delete() {
   limactl delete --force "$VM"
   if is_contained; then
     rm -f "$CONTAINED_RECORD"
-    if use_keychain; then
-      echo "The model token stays in your keychain. To remove it:"
-      echo "    security delete-generic-password -s $MODEL_KEYCHAIN_SERVICE -a $VM"
-    else
-      echo "The model token stays in $MODEL_TOKEN_FILE; delete it if you are done."
-    fi
+    echo "The model token stays in $MODEL_TOKEN_FILE; delete it if you are done."
   fi
 }
 

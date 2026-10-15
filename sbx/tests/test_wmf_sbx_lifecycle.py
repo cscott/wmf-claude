@@ -484,10 +484,10 @@ class CreateTests(Env):
                          os.path.join(image.cache_root(self.env), "placeholder.qcow2"))
         self.assertIn("ready", self.err)
 
-    def test_inside_a_nested_sandbox_a_sandbox_gets_4_gib(self):
+    def test_inside_a_nested_sandbox_a_sandbox_gets_8_gib(self):
         with mock.patch.object(nested, "inside", lambda: True):
             self.assertEqual(self.create("--name", "inner", "--no-snapshot"), 0, self.err)
-        self.assertEqual(self.lima.templates["wmf-sbx-inner"]["memory"], "4GiB")
+        self.assertEqual(self.lima.templates["wmf-sbx-inner"]["memory"], "8GiB")
 
     def test_a_qemu_sandbox_starts_through_the_wrapper(self):
         import wmf_sbx.qemu_wrapper as qw
@@ -843,7 +843,7 @@ class CreateTests(Env):
         src = os.path.join(os.path.normpath(self.env["HOME"]), "wmf-sbx-src")
         self.assertEqual(st["nestedSrc"], src)
         tmpl = lima.templates["wmf-sbx-demo"]
-        self.assertEqual((tmpl["memory"], tmpl["disk"]), ("10GiB", "120GiB"))
+        self.assertEqual((tmpl["memory"], tmpl["disk"]), ("14GiB", "120GiB"))
         (script,) = [i for i in inputs if "usermod -aG kvm agent" in i]
         self.assertIn(f"lima-{nested.LIMA_VERSION}-Linux-", script)
         self.assertIn("sha256sum -c", script)

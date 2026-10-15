@@ -429,9 +429,10 @@ RAN on the engineer's host, after step 6 (2026-10-14, `create --sudo --nested
   inner `resume` with no credential variable answered from the marker alone;
 - **the acceptance test**: the agent in egsn ran the blind run in an inner
   sandbox against its own clone of wmf-claude. All passed but Translate's
-  `composer phan`, OOM-killed in the 4 GiB inner VM (`nested.INNER_MEMORY`;
-  HANDOFF-TRACK-A.md, open item 1). The report is on the egsn branch, not on
-  `lima-port`.
+  `composer phan`, OOM-killed in the 4 GiB inner VM (then
+  `nested.INNER_MEMORY`). The defaults are now 14 GiB and 8 GiB inside, and
+  `acceptance/README.md` gives both creates explicit sizes. The report is on
+  the egsn branch, not on `lima-port`.
 
 ## Later, not in this track
 

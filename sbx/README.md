@@ -471,8 +471,8 @@ wmf-sbx create PRIMARY[:ro] [EXTRA[:ro] ...] [options]
   grants for `~/.lima`, `/dev/kvm` and the download hosts of an image
   build. It also writes a `settings.yaml` for the inner wmf-sbx (repos
   in `~/wmf-sbx-src`, at your home's path as on the host) if there is
-  none. Defaults: 10 GiB of memory, a 120 GiB (sparse) disk; a sandbox
-  made inside it defaults to 4 GiB (one inner VM at a time fits). Nested KVM
+  none. Defaults: 14 GiB of memory, a 120 GiB (sparse) disk; a sandbox
+  made inside it defaults to 8 GiB (one inner VM at a time fits). Nested KVM
   needs the host to allow it (Linux: `kvm_intel`/`kvm_amd` `nested=1`, the
   default on recent kernels; macOS: M3 or later with macOS 15, on `vz`);
   without it the inner VMs run, slowly, without KVM. A session cannot

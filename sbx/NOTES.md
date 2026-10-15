@@ -477,7 +477,10 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   through the forwarder), a resume that left the inner VM running, and an inner `resume`
   that took its credential from the nested marker alone. The acceptance run passed but for
   Translate's `composer phan`, OOM-killed twice (exit 137, 2.65 GB in a 3.9 GB guest) at
-  `nested.INNER_MEMORY` 4 GiB: open, see "Host memory".
+  `nested.INNER_MEMORY` 4 GiB. Decided (the engineer, 2026-10-14): the nested defaults are
+  what work on wmf-claude needs, 14 GiB (as this `dev` sandbox) and 8 GiB inside; the
+  acceptance run gives its sizes explicitly (`--memory 8GiB --disk 60GiB`, the outer
+  `--memory 14GiB --disk 120GiB`), so a smaller default does not break it.
 - **An inner sandbox's credential (2026-10-14, after egsn).** The inner `resume` found
   none ("Not logged in"): the VM has only its session's phantom. The credential proxy now
   chains in a nested sandbox: `resume` of a nested sandbox writes the session's
@@ -837,7 +840,8 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
   host's OOM killer took it, twice, on a 60 GiB laptop with other sandboxes up. Now every
   QEMU start goes through the QEMU wrapper in plain mode (`WMF_SBX_QEMU_PLAIN=1`, set by
   `vm.start_instance`), which adds `virtio-balloon-pci,free-page-reporting=on`; the nested
-  default is 10 GiB and a sandbox inside one defaults to 4 GiB. RAN 2026-10-14
+  default is 14 GiB and a sandbox inside one defaults to 8 GiB (was 10 and 4, until phan
+  was OOM-killed at 4 inside). RAN 2026-10-14
   (`lima-port/checks/balloon.sh`, the engineer's host, Lima 2.3.0-beta.1): the guest bound
   the balloon; the QEMU's RSS went 809 MiB, 3873 MiB with 3 GiB touched in the guest, and
   751 MiB 30 s after the guest freed it. Page cache is not free memory: a guest that read a lot keeps it until it needs

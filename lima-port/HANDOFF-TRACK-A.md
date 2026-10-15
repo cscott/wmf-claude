@@ -47,14 +47,9 @@ So step 6 is done by its own definition. What is left is below.
 
 ## Open, in order
 
-1. **Phan in an inner sandbox is OOM-killed.** `nested.INNER_MEMORY` is
-   4 GiB; Translate's phan reached 2.65 GB in a 3.9 GB guest and was killed,
-   twice (exit 137). NOTES already says phan needs 8 GiB. Decide with the
-   engineer: raise `INNER_MEMORY` (and `nested.MEMORY` to fit it with the
-   outer session), or keep 4 GiB and give the acceptance run
-   `--memory 8GiB`. The 10/4 GiB defaults predate the balloon (NOTES "Host
-   memory"); with free-page reporting a larger outer VM costs the host
-   little while idle.
+1. Done: **phan in an inner sandbox was OOM-killed.** The engineer
+   decided: `nested.MEMORY` 14 GiB, `nested.INNER_MEMORY` 8 GiB, and the
+   acceptance README gives both creates explicit `--memory`/`--disk`.
 2. Done: **the intermittent ERROR in the sbx unit suite.** Two causes, both
    in tests: `limactl validate` refused a tempfile name ending in `_` or
    holding `__` (the two "valid for limactl" tests), and the QEMU wrapper

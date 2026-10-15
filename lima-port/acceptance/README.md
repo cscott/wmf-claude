@@ -6,7 +6,7 @@ this task list, and its report. Every step it had to invent is a
 documentation bug. On the host:
 
 ```bash
-wmf-sbx create --reset-all --name sbx-testverify \
+wmf-sbx create --reset-all --name sbx-testverify --memory 8GiB --disk 60GiB \
   gerrit:mediawiki/extensions/Translate \
   gerrit:mediawiki/extensions/Cite \
   gerrit:mediawiki/services/parsoid
@@ -20,6 +20,22 @@ background work, keep a Monitor running that reports when that work ends." \
   --max-turns 400
 git -C ~/<Translate checkout> fetch sbx-testverify
 git -C ~/<Translate checkout> show sbx-testverify/sandbox-report:REPORT.md
+```
+
+`--memory 8GiB --disk 60GiB`: the run needs this much, whatever the
+defaults are. Translate's phan peaks at about 2.7 GB and was OOM-killed
+in a 4 GiB VM (RAN 2026-10-14). Keep the sizes explicit, so a smaller
+default does not break the run.
+
+**Nested** (A3 step 6): the agent in a `--sudo --nested` sandbox of
+wmf-claude changes its own clone, then runs the commands above with that
+clone's `sbx/bin/wmf-sbx` in place of `wmf-sbx`, against the changed
+copy. Make the outer sandbox big enough for the session and the inner
+8 GiB VM, also with explicit sizes:
+
+```bash
+wmf-sbx create --sudo --nested --name egsn --memory 14GiB --disk 120GiB \
+  ~/Projects/Wikimedia/wmf-claude
 ```
 
 `--read-file`: the agent's home is not readable under the profile, and

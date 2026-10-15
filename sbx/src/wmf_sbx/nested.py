@@ -145,14 +145,15 @@ repos:
 """
 
 
-# Default resources: an image build and one inner sandbox (D2 copies).
-# 10 GiB, not 16 (RAN 2026-10-13): QEMU keeps what a guest has touched,
-# and a 16 GiB nested sandbox that built an image held 15 GB of the host
-# until the host's OOM killer took it. The inner work runs one VM at a
-# time: the 4 GiB image builder, or an inner sandbox at INNER_MEMORY.
-MEMORY = "10GiB"
-# The default memory of a sandbox made inside a nested sandbox.
-INNER_MEMORY = "4GiB"
+# Default resources: what work on wmf-claude needs, the session and one
+# inner VM at a time (the 4 GiB image builder, or an inner sandbox at
+# INNER_MEMORY), with room for the session's own tests. The balloon gives
+# the host back what the guest frees (NOTES "Host memory").
+MEMORY = "14GiB"
+# The default memory of a sandbox made inside a nested sandbox: the
+# plain default, as phan on Translate needs more than 4 GiB (RAN
+# 2026-10-14, egsn: OOM-killed at 2.65 GB in a 4 GiB inner VM).
+INNER_MEMORY = "8GiB"
 
 
 def inside():

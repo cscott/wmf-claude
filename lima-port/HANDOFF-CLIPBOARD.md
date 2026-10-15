@@ -409,16 +409,37 @@ GNOME Terminal), RAN 2026-10-15:
 - `xclip -selection clipboard` works too (the engineer uses it every
   day): a fallback on the same host, through XWayland.
 
+Reaching a guestfwd from under a contained session's nono, RAN
+2026-10-15 in a `--sudo --nested` sandbox behind the egress proxy
+(nono 0.78.0). A test script ran under `nono run --profile
+/opt/wmf-claude/profiles/wmf-engineer.json --sandbox-policy landlock
+--open-port 3129 --open-port 4000 --allow-domain '*' --upstream-proxy
+192.168.5.100:3128`: a contained session's network flags
+(`--landlock-only` is `--sandbox-policy landlock`), with the script in
+Claude Code's place. nono's restrictions pass to every child, so the
+shim, a child of Claude Code, gets the same.
+
+| | outside nono | inside nono |
+|---|---|---|
+| `192.168.5.100:3129` (opened) | open, 2 ms | open, 4 ms |
+| `192.168.5.100:53` (not opened; nftables lets it through) | open | Permission denied |
+| `192.168.5.100:3128` (not opened) | open | Permission denied |
+| 100 KB written to 3129, then close | 8 ms | 8 ms |
+
+- `--open-port=PORT` opens the port on 192.168.5.100, not only on
+  localhost (nono prints `ipc localhost:3129`): Landlock's network
+  rules have a port and no address. The credential proxy relies on the
+  same thing. So the clipboard port needs one more `--open-port` in
+  `resume`, next to the credential proxy's.
+- The guestfwd (a host `socat` per connection) costs a few ms: far
+  inside Claude Code's 2-second timeout.
+
 Still to measure before building (the egress-proxy case first):
 
 - the logging shim in a live session (step 1a), with `WAYLAND_DISPLAY`
   from the agent's settings `env`: the toast says "copied", and two
   calls arrive (plain, then `--primary`). If settings `env` comes after
   Claude Code's probe, the launcher must set the variable;
-- from a child of Claude Code in a contained egress session: a TCP
-  connection to `192.168.5.100:3129` (opened with `--open-port`) works,
-  one to an unopened port is refused, and the round trip through the
-  guestfwd's per-connection `socat` is well inside 2 s.
 
 Open questions:
 

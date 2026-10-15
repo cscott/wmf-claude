@@ -309,6 +309,17 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
 	  present behavior of `git safe-reset` and we should choose a
 	  different command name -- or use something other than `git pull`
 	  to get the latest work from the remote? Needs a plan with options.
+  READ 2026-10-15 (git-review 2.4.0, `git_review/cmd.py`): git-review follows the
+  current branch's upstream (remote *and* branch) only when `track` is on, and the
+  `.gitreview` of mediawiki/core, Cite and Parsoid all set `track=1`. So on a branch
+  that tracks `sbx-parsoid/foo`, `git review` checks for `remotes/sbx-parsoid/foo`,
+  finds it, and pushes to `sbx-parsoid` `refs/for/foo`. `git config gitreview.track
+  false` in the repo wins over `.gitreview` (git config is read first), but then the
+  remote is `gerrit` (no `defaultremote` in these files) and the branch `master`, for
+  every branch of that repo. Also: `git safe-reset NAME/BRANCH` runs `git checkout
+  BRANCH`, which git's DWIM turns into a new branch that tracks `NAME/BRANCH` when only
+  one remote has it: the setup that breaks `git review`. And the agent amends, so a pull
+  from a sandbox is often not a fast-forward.
 
 ### Upstream work and repo hygiene
 

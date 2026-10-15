@@ -174,7 +174,15 @@ else
       | grep -o 'PHABRICATOR_USERNAME=[^[:space:]"]*' \
       | head -n1 | cut -d= -f2- || true)
   fi
-  if [[ -n "$DEFAULT_PHAB_USER" ]]; then
+  # WMF_CLAUDE_PHAB_USER answers without a prompt. So does the recalled
+  # username in a VM (an update is a refresh) or when there is no terminal.
+  PHAB_USER="${WMF_CLAUDE_PHAB_USER:-}"
+  if [[ -n "$PHAB_USER" ]]; then
+    ok "Phabricator username: $PHAB_USER (WMF_CLAUDE_PHAB_USER)"
+  elif [[ -n "$DEFAULT_PHAB_USER" && ( -n "${WMF_CLAUDE_IN_VM:-}" || ! -t 0 ) ]]; then
+    PHAB_USER="$DEFAULT_PHAB_USER"
+    ok "Phabricator username: $PHAB_USER (kept; set WMF_CLAUDE_PHAB_USER to change it)"
+  elif [[ -n "$DEFAULT_PHAB_USER" ]]; then
     read -rp "    Phabricator username [$DEFAULT_PHAB_USER]: " PHAB_USER
     PHAB_USER="${PHAB_USER:-$DEFAULT_PHAB_USER}"
   else
@@ -210,12 +218,14 @@ else
   ok "gitlab registered"
 fi
 
-# Write the config bin/claude --chrome passes via --mcp-config. Never registered
-# globally, so the CDP-controlled-browser surface stays off other sessions.
+# bin/wmf-claude-build wrote the config bin/claude --chrome passes via
+# --mcp-config. Here: drop a stale global registration, and sweep leaked
+# browser data dirs.
 step "Configuring chrome-devtools MCP"
 CDP_DIR="$ROOT/chrome-devtools-mcp"
 CDP_BIN="$CDP_DIR/node_modules/.bin/chrome-devtools-mcp"
 if [[ -x "$CDP_BIN" ]]; then
+  [[ -f "$CDP_DIR/mcp-config.json" ]] || fail "$CDP_DIR/mcp-config.json is missing; run bin/wmf-claude-build"
   # Drop a stale global registration left by older setup.sh versions.
   EXISTING_CDP="$(claude mcp get --scope user chrome-devtools 2>/dev/null || true)"
   if [[ -n "$EXISTING_CDP" ]] && grep -qF "$CDP_DIR" <<<"$EXISTING_CDP"; then
@@ -225,23 +235,12 @@ if [[ -x "$CDP_BIN" ]]; then
   find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'wmf-claude-chrome.*' -type d -mtime +1 -print 2>/dev/null \
     | while read -r d; do rm -rf "$d"; done
 
-  # jq quotes safely. Flags: attach to the external Chrome, no telemetry/CrUX,
-  # redact sensitive response headers.
-  jq -n --arg cmd "$CDP_BIN" '{
-    mcpServers: {
-      "chrome-devtools": {
-        command: $cmd,
-        args: [
-          "--browserUrl", "http://127.0.0.1:9222",
-          "--no-usage-statistics",
-          "--no-performance-crux",
-          "--redactNetworkHeaders"
-        ]
-      }
-    }
-  }' > "$CDP_DIR/mcp-config.json"
-  ok "wrote $CDP_DIR/mcp-config.json"
-  dim "      Launch with 'bin/claude --chrome'; run 'bin/launch-test-chrome' first."; echo ""
+  ok "$CDP_DIR/mcp-config.json (written by the build)"
+  if [[ -n "${WMF_CLAUDE_IN_VM:-}" ]]; then
+    dim "      Launch with 'bin/wmf-claude-vm claude NAME --chrome'; the VM starts a headless Chromium."; echo ""
+  else
+    dim "      Launch with 'bin/claude --chrome'; run 'bin/launch-test-chrome' first."; echo ""
+  fi
 else
   ok "chrome-devtools MCP not built — skipping (set WMF_CLAUDE_SKIP_CHROME unset and rebuild to enable)"
 fi

@@ -108,7 +108,7 @@ scoped to the session you choose it in unless noted.
 | `--override-deny PATH` + `--read-file PATH` | Lifts a specific deny. Use for one file, not a directory. |
 | `--local-db[=PORT]` | Reach to the dev database — and anything else on that port. Was in the static profile; now only sessions that need it carry it. |
 | `--local-web[=PORTS]` | Reach to **any** local service on 80/443/8080, not just your wiki. External egress does not widen. |
-| `--chrome` | A Chrome running **outside** the sandbox with unrestricted network, driven over an unauthenticated debug port. Implies `--local-web`. **Throwaway dev-wiki accounts only.** |
+| `--chrome` | A Chrome running **outside** the sandbox with unrestricted network, driven over an unauthenticated debug port. Implies `--local-web`. **Throwaway dev-wiki accounts only.** In a Lima VM: a headless Chromium in the guest, as its own user, kept to loopback by the guest firewall. |
 | `--ide`, or `CLAUDE_CODE_SSE_PORT` set (a launch by the IDE plugin, or `claude` in the IDE's terminal) | `signal_mode: allow_all` for the session: it can signal or kill your other processes. Plus the plugin's one localhost port: the plugin runs outside the sandbox, and a diff you accept there is written by the IDE, not by the sandboxed session. No new network access. |
 | `--docker=SERVICE` without `--egress` | Code execution in a container whose network nono cannot restrict — an outbound channel. The launcher warns and asks for a one-time acknowledgment. |
 | `--minimax` | Egress to `api.minimax.io`, a third-party LLM API, for this session. It used to be in the static profile; now only sessions that use MiniMax carry that channel. |

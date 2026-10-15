@@ -112,8 +112,8 @@ host that holds the token, allows only Messages API requests, refuses
 anything that would make the API fetch from the internet for the agent
 (server tools such as web search, the MCP connector, URL content sources),
 and logs each request to `~/.local/state/wmf-claude/model-proxy-<vm>.log`.
-`--allow-post`, `--minimax`, `--chrome` and `--ide` are refused; the VM has
-no MCP servers.
+`--allow-post`, `--minimax` and `--ide` are refused; the VM has no MCP
+servers except chrome-devtools, whose browser runs in the VM.
 
 ### Network phases: locked and open
 
@@ -145,8 +145,8 @@ bin/wmf-claude-vm discard NAME BRANCH    # git branch -rd vm/BRANCH
   files that run on build or commit. The workspace remembers which repo it
   came from, so `pull`, `review`, `checkout` and `discard` need only its
   name; `pull NAME DEST` sends it elsewhere and remembers that instead.
-- `claude` takes `bin/claude`'s flags, except `--chrome` and `--ide` (they
-  need the host).
+- `claude` takes `bin/claude`'s flags, except `--ide` (it needs the host).
+  `--chrome` starts a browser in the VM: [A browser in the VM](#a-browser-in-the-vm).
 - A session is granted its own workspace. For core plus extensions, push
   each one with a nested name and start the session in `core`: it sees them
   all. For sibling workspaces, pass nono's grant through, with guest paths
@@ -169,7 +169,10 @@ bin/wmf-claude-vm discard NAME BRANCH    # git branch -rd vm/BRANCH
 ## PHPUnit in the VM
 
 The guest has PHP, Composer and MariaDB, so tests and maintenance scripts
-run as on the host: no Docker, and no emulated images on Apple Silicon.
+run as on the host: no Docker, and no emulated images on Apple Silicon. A
+project that is not MediaWiki can ignore this section; the packages do no
+harm, and `--local-web=PORT` opens, and lets the session bind, whatever port
+its own dev server uses.
 MariaDB listens on 127.0.0.1 only; `wikiuser` (password `wikipass`) owns the
 database `wikidb`.
 
@@ -177,6 +180,7 @@ database `wikidb`.
 bin/wmf-claude-vm shell --agent -- composer install -d /home/agent/work/core   # needs the network: a contained VM while open
 bin/wmf-claude-vm shell --agent -- php /home/agent/work/core/maintenance/install.php \
   --dbserver 127.0.0.1 --dbname wikidb --dbuser wikiuser --dbpass wikipass \
+  --server http://127.0.0.1:8080 --scriptpath '' \
   --pass 'change-me-adminpass' DevWiki admin
 bin/wmf-claude-vm claude core --local-db
 ```
@@ -193,8 +197,35 @@ bin/wmf-claude-vm claude core --local-db
 - No service: `--dbtype sqlite --dbpath /home/agent/work/core/data` gives a
   wiki that needs no `--local-db`. Use MariaDB when a finding depends on
   MySQL behaviour.
+- **Serving the wiki.** No web server runs unless Docker provides one. In a
+  `--local-web` (or `--chrome`) session, PHP's built-in server runs inside
+  the sandbox, since nono lets the session bind a port it opened, and it
+  stops with the session. Claude is told how at session start; by hand, from
+  the workspace root in the session:
+  `PHP_CLI_SERVER_WORKERS=4 php -S 127.0.0.1:8080 -t . &`. The install
+  command above points the wiki at that address.
 - `update` adds the packages to an existing VM (contained: unlock first).
 - Docker stays for the full dev stack: the services, and a wiki in a browser.
+
+## A browser in the VM
+
+`bin/wmf-claude-vm claude NAME --chrome` starts a headless Chromium in the
+guest for the session, as the `wmfchrome` user, and stops it with the
+session; there is nothing to run in another terminal. The chrome-devtools
+MCP attaches to it as on the host, and screenshots work headless.
+
+The browser reaches loopback only. An nftables rule rejects everything the
+browser user sends out of a non-loopback interface; on top of that, name
+resolution is off for every name but `localhost`, and the default context
+points at a closed proxy. So it shows what the VM serves on loopback: the
+local wiki from `--docker=mediawiki --local-web` or from PHP's built-in
+server, or any dev server the session starts on an opened port, and not
+Wikimedia sites. The firewall is the layer that holds: a CDP client can open
+a browser context with its own proxy, so the flags alone would not.
+`update` adds Chromium to an existing VM. If the browser does not start,
+`bin/wmf-claude-vm claude` prints its log; "No usable sandbox" means user
+namespaces are off in the guest. The `dbus` errors in that log are noise:
+a headless system has no session bus.
 
 ## Docker inside the VM
 
@@ -239,7 +270,11 @@ bin/wmf-claude-vm reset     # delete (confirmed by name) and create again: drops
 
 A failed `update` leaves the previous install in place. The VM's copy has no
 `.git`, so `bin/claude`'s self-update is off there; `update` is the only
-update path.
+update path. It asks nothing after the first run: it keeps the Phabricator
+username it has (`WMF_CLAUDE_PHAB_USER=<name>` sets it, for `create` too) and
+reuses the previous revision's vendored dependencies when their lockfiles
+are unchanged, so a routine update is mostly the upload and a Claude Code
+check.
 
 ## Known limitations
 
@@ -271,9 +306,6 @@ update path.
   but maybe not DNS (`check-host-block` reports whether it does) and not the
   host's own loopback services. The in-VM lock covers both; closing them on
   the host needs a VM with no network at all, which Lima does not offer yet.
-- **Lima VM: no `--chrome`.** Chrome runs on the host today, and the VM
-  cannot reach it. Follow-up: headless Chromium in the guest, started by
-  `guest-claude.sh` as the engineer, with the MCP built there.
 - **Contained: not done yet.** Transcript and log retention outside the
   agent's reach, and a per-engagement scope prompt.
 - **Linux hosts: contained mode is untested.** The token store (a 0600 file

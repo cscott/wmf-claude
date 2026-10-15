@@ -405,12 +405,18 @@ if grep -qx "NONO_ARG: $FAKE_REPO/profiles/wmf-contained.json" <<<"$out" && grep
   pass "contained: loads wmf-contained and opens the proxy port"
 else fail "contained: wrong profile or no --open-port 7319"; fi
 if grep -q 'contained (model API via host proxy only)' <<<"$out"; then pass "contained: shows in WMF_CLAUDE_SESSION"; else fail "contained: missing from WMF_CLAUDE_SESSION"; fi
-for args in "--docker=mediawiki" "--minimax" "--allow-post=en.wikipedia.org" "--chrome" "--ide" "--allow-domain example.org --" "--network-profile minimal --" "--sandbox-policy landlock --" "--credential anthropic --" "--allow-endpoint anthropic:GET:/x --" "--open-port 9000 --"; do
+for args in "--docker=mediawiki" "--minimax" "--allow-post=en.wikipedia.org" "--ide" "--allow-domain example.org --" "--network-profile minimal --" "--sandbox-policy landlock --" "--credential anthropic --" "--allow-endpoint anthropic:GET:/x --" "--open-port 9000 --"; do
   # shellcheck disable=SC2086
   out="$(run_contained $args)"
   if grep -q 'contained mode allows no egress' <<<"$out" && ! grep -q '^NONO_ARG:' <<<"$out"; then pass "contained: refuses $args"
   else fail "contained: accepted $args"; fi
 done
+# --chrome adds a loopback port and a local MCP; in the VM the browser runs
+# headless under the lock, so contained mode takes it.
+out="$(run_contained --chrome)"
+if ! grep -q 'contained mode allows no egress' <<<"$out" && grep -A1 -x 'NONO_ARG: --open-port' <<<"$out" | grep -qx 'NONO_ARG: 9222'; then
+  pass "contained: accepts --chrome and opens 9222"
+else fail "contained: --chrome refused or 9222 not opened"; fi
 # In a locked VM nothing has egress, so local services are fine to reach.
 out="$(run_contained --local-web)"
 if grep -A1 -x 'NONO_ARG: --open-port' <<<"$out" | grep -qx 'NONO_ARG: 8080' && ! grep -q 'contained mode allows no egress' <<<"$out"; then

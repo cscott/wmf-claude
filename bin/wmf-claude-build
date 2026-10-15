@@ -123,6 +123,27 @@ else
     ok "chrome-devtools-mcp@$PINNED_VERSION installed"
   fi
 
+  # The config bin/claude --chrome passes with --mcp-config. Written here,
+  # by the tree's owner (in the Lima guest the tree is the engineer's and
+  # setup runs as the agent). Never registered globally, so the
+  # CDP-controlled-browser surface stays off other sessions. jq quotes
+  # safely. Flags: attach to the external Chrome, no telemetry/CrUX, redact
+  # sensitive response headers.
+  jq -n --arg cmd "$CDP_BIN" '{
+    mcpServers: {
+      "chrome-devtools": {
+        command: $cmd,
+        args: [
+          "--browserUrl", "http://127.0.0.1:9222",
+          "--no-usage-statistics",
+          "--no-performance-crux",
+          "--redactNetworkHeaders"
+        ]
+      }
+    }
+  }' > "$CDP_DIR/mcp-config.json"
+  ok "wrote $CDP_DIR/mcp-config.json"
+
   # Supply-chain invariant: chrome-devtools-mcp bundles its deps (one top-level
   # entry). If a future version stops, catch the unreviewed drift here.
   TOP_LEVEL_PKGS="$(find "$CDP_DIR/node_modules" -mindepth 1 -maxdepth 1 -type d \

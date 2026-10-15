@@ -410,7 +410,8 @@ Attach mode.
 > chrome-devtools support, revisit this section and the wiring directives.
 
 The optional `chrome-devtools` MCP runs the *server* inside the sandbox but
-its *Chrome* outside. Chrome cannot run inside the wmf-engineer profile —
+its *Chrome* outside. (In a Lima VM the browser is a headless Chromium in
+the guest, kept to loopback by the firewall: [Lima VM mode](#the-vm).) Chrome cannot run inside the wmf-engineer profile —
 it calls `IONotificationPortCreate(kIOMainPortDefault)` during early init,
 and when IOKit is denied at the Mach layer (which the base `claude-code`
 profile does, since LLM API talkers don't need driver access) the call
@@ -630,6 +631,17 @@ How `bin/wmf-claude-vm` builds its boundary. The user guide is
   host, but the agent reaches the socket in any session (nono does not
   mediate AF_UNIX on Linux) and reads the password in `LocalSettings.php`.
   The database is test data inside the VM; the control is the VM.
+- **`--chrome`.** `lima/guest-claude.sh` starts `lima/guest-chrome.sh` as
+  `wmfchrome`, a system user in no other group: headless Chromium with the
+  flags of `bin/launch-test-chrome`, a fresh data directory per run, CDP on
+  127.0.0.1:9222. The nftables table `wmf_claude_chrome` rejects every
+  packet that uid sends out of a non-loopback interface, loaded by its own
+  unit so the template's boot-time rewrite of `/etc/nftables.conf` leaves
+  it alone. That rule is the control: a CDP client can create a browser
+  context with its own proxy settings, so the `--proxy-server` and
+  `--host-resolver-rules` flags are hygiene, not the boundary. The browser
+  can show the VM's own services and nothing else, in a normal VM and
+  under the contained lock alike.
 - **`--docker`.** `lima/guest-claude.sh` starts `bin/launch-docker-broker` as
   `engineer` for the workspace's `docker-compose.yml`, publishes the
   `{port, token}` handshake in `/run/wmf-claude/` (mode 0640, group

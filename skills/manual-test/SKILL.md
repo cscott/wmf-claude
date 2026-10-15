@@ -25,7 +25,7 @@ Default to Tier 1. Escalate only when the answer requires a real browser.
 
 ## Tier 1 — curl + the action API
 
-Requires the session launched with **`bin/claude --local-web`** (or `--chrome`, which implies it). A plain `bin/claude` session cannot reach the local wiki at all — nono blocks localhost web ports by default. If curl to the wiki fails instantly (connect refused in ~0ms) and the wiki is definitely running, the session wasn't launched with `--local-web`; tell the engineer to relaunch.
+Requires the session launched with **`bin/claude --local-web`** (or `--chrome`, which implies it). A plain `bin/claude` session cannot reach the local wiki at all — nono blocks localhost web ports by default. If curl to the wiki fails instantly (connect refused in ~0ms) and the wiki is definitely running, the session wasn't launched with `--local-web`; tell the engineer to relaunch. In a Lima VM (`WMF_CLAUDE_IN_VM` set) nothing serves the wiki unless Docker does: start PHP's built-in server from the workspace root in the background (`PHP_CLI_SERVER_WORKERS=4 php -S 127.0.0.1:8080 -t . &`) and use `http://127.0.0.1:8080`; it stops with the session.
 
 ### Find the base URL
 
@@ -72,7 +72,7 @@ Only when Tier 1 can't answer it: visual output, accessibility tree, console err
 ### Prerequisites
 
 1. **MCP loaded.** Only present when launched with `bin/claude --chrome`. If `mcp__chrome-devtools__*` tools aren't available, stop and tell the engineer to relaunch with `--chrome` (and to have run `setup.sh`'s chrome-devtools step).
-2. **Chrome running in attach mode.** Chrome can't run inside the sandbox (IOKit denied — it segfaults). The engineer must run `bin/launch-test-chrome` in another terminal first; it starts a dedicated Chrome with a fresh `mktemp -d` user-data-dir on `--remote-debugging-port=9222`. If the MCP can't connect, ask them to start it.
+2. **Chrome running in attach mode.** Chrome can't run inside the sandbox (IOKit denied — it segfaults). The engineer must run `bin/launch-test-chrome` in another terminal first; it starts a dedicated Chrome with a fresh `mktemp -d` user-data-dir on `--remote-debugging-port=9222`. If the MCP can't connect, ask them to start it. In a Lima VM (`WMF_CLAUDE_CHROME_IN_VM` set), `bin/wmf-claude-vm claude NAME --chrome` already started a headless Chromium for the session; it reaches loopback only, so the local wiki works and external sites do not.
 3. **A running local wiki** and its base URL + credentials (project `CLAUDE.md`, else ask).
 
 ### Frugality rules (this is where the token cost lives)

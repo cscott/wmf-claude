@@ -58,6 +58,7 @@ threat model, so there is no supported way to pass them.
 | `WMF_DOCKER_HANDSHAKE` | Bare `--docker` (attach mode): read the broker handshake from this path instead of the runtime dir. Set by the Lima guest launcher; unset before the sandbox starts |
 | `WMF_CLAUDE_VM` | `bin/wmf-claude-vm`: the Lima instance name (default `wmf-claude`) |
 | `WMF_CLAUDE_REQUIRE_HOST_BLOCK` | `bin/wmf-claude-vm claude` on a contained VM: refuse to start unless `check-host-block` passed for the current `limactl` binary (otherwise it only warns) |
+| `WMF_CLAUDE_PHAB_USER` | The Phabricator username for the MCP, with no prompt: `./setup.sh`, and `bin/wmf-claude-vm create` or `update`. An update keeps the known username without it |
 | `WMF_CLAUDE_MODEL_PROXY_PORT` | `bin/claude` contained mode: profile `wmf-contained`, no egress, the model API only via the host proxy on this localhost port. Set by `lima/guest-claude.sh` in a contained VM |
 
 ## Startup notices and the status line
@@ -105,7 +106,7 @@ It is a separate entry point, not a `bin/claude` flag:
 | `update` | Upload this checkout's HEAD (submodules included) and reinstall it in the guest |
 | `login` | Sign Claude Code in as `agent` (`claude auth login`, outside nono); once per VM. On a contained VM: store a `claude setup-token` token in the host keychain instead |
 | `push DIR [NAME]` | Git-bundle a repo into `/home/agent/work/NAME` |
-| `claude NAME [bin/claude args]` | Sandboxed session in that workspace, as the `agent` user. `--docker=SERVICE` starts the broker as the engineer; `--chrome` and `--ide` are refused; `--allow /home/agent/work --` grants every workspace. On exit, lists the branches not pulled and the files not committed |
+| `claude NAME [bin/claude args]` | Sandboxed session in that workspace, as the `agent` user. `--docker=SERVICE` starts the broker as the engineer; `--chrome` starts a headless, loopback-only Chromium in the guest; `--ide` is refused; `--allow /home/agent/work --` grants every workspace. On exit, lists the branches not pulled and the files not committed |
 | `pull NAME [DEST]` | Fetch the agent's branches into `vm/*` (remote-tracking refs) of the repo NAME was pushed from, or of DEST; nothing is checked out |
 | `review NAME BRANCH`, `checkout NAME BRANCH`, `discard NAME BRANCH` | Show what `vm/BRANCH` adds, create a local branch from it, or delete it (plain git in NAME's host repo) |
 | `lock`, `unlock` | Contained VM: no egress (sessions run only then) or egress for setup ([lima-vm.md#network-phases-locked-and-open](lima-vm.md#network-phases-locked-and-open)) |

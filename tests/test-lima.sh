@@ -163,7 +163,7 @@ check  "pull fetches into remote-tracking vm/*"     "$VM" '\+refs/heads/\*:refs/
 check  "pull verifies the bundle first"             "$VM" 'bundle verify "\$bundle"'
 absent "pull never checks out, merges or resets"    "$VM" 'git -C "\$dest" (checkout|merge|reset|pull)'
 check  "checkout never overwrites a local branch"     "$VM" 'die "\$2 exists in'
-check  "push records the workspace's host repo"     "$VM" 'ws_save "\$\{wss\[i\]\}" "\$top'
+check  "push records the workspace's host repo"     "$VM" '\| ws_save_many$'
 check  "update ships HEAD via git archive"          "$VM" 'git -C "\$ROOT" archive'
 check  "update includes the submodules at HEAD's commits" "$VM" 'done < <\(git -C "\$ROOT" ls-tree -r HEAD\)'
 check  "update stops on a missing submodule commit" "$VM" 'cat-file -e "\$sha\^\{commit\}"'
@@ -448,7 +448,7 @@ out=$(rt push --nested "$H")
 if grep -q 'nothing to send' <<<"$out"; then pass "push --nested again: nothing to send"; else fail "push --nested again sent bundles: $out"; fi
 git -C "$H/extensions/A" commit -q --allow-empty -m host-change
 out=$(rt push --nested=A "$H")
-if grep -q '1 bundle' <<<"$out" && grep -q '1 up to date' <<<"$out" \
+if grep -q '1 to send' <<<"$out" && grep -q '1 up to date' <<<"$out" \
    && [[ "$(ag core/extensions/A rev-parse host/main 2>/dev/null)" == "$(git -C "$H/extensions/A" rev-parse main)" ]]; then
   pass "push --nested=A: sends only A's new commits; the top repo is up to date"
 else fail "push --nested=A: $out"; fi
@@ -471,14 +471,38 @@ got=$(git -C "$H/extensions/B" rev-parse -q --verify vm/fix); want=$(ag core/ext
 if [[ -n "$want" && "$got" == "$want" ]]; then pass "pull --nested: a nested branch lands in vm/* of its own repo"
 else fail "pull --nested: no vm/fix in B: $out"; fi
 if git -C "$H" rev-parse -q --verify vm/topfix >/dev/null; then pass "pull --nested: the top repo is pulled too"; else fail "pull --nested: no vm/topfix in core"; fi
-if ! git -C "$H/extensions/A" rev-parse -q --verify vm/main >/dev/null; then pass "pull --nested: a nested repo with no new commits is left alone"
-else fail "pull --nested fetched A, which has no new commits"; fi
+if [[ "$(git -C "$H/extensions/A" rev-parse -q --verify vm/main)" == "$(ag core/extensions/A rev-parse main)" ]]; then
+  pass "pull --nested: a nested repo with no new commits gets its branches, without a bundle"
+else fail "pull --nested: A's vm/main does not match the VM"; fi
+# A branch at a commit the other side has travels without new commits, and
+# a deleted branch goes, each way.
+git -C "$H/extensions/A" branch feat main
+out=$(rt push --nested=A "$H")
+if [[ "$(ag core/extensions/A rev-parse -q --verify host/feat)" == "$(git -C "$H/extensions/A" rev-parse main)" ]]; then pass "push: a new branch at a commit the VM has reaches host/*"
+else fail "push: host/feat missing in the VM: $out"; fi
+git -C "$H/extensions/A" branch -q -D feat
+out=$(rt push --nested=A "$H")
+if ! ag core/extensions/A rev-parse -q --verify host/feat >/dev/null && ag core/extensions/A rev-parse -q --verify host/main >/dev/null; then
+  pass "push: a branch deleted on the host leaves host/*, and host/HEAD's branch stays"
+else fail "push: host/feat still in the VM, or host/main gone: $out"; fi
+ag core/extensions/A branch atold main
+out=$(rt pull --nested core)
+if git -C "$H/extensions/A" rev-parse -q --verify vm/atold >/dev/null; then pass "pull --nested: a VM branch at a commit the host has comes back"
+else fail "pull --nested: no vm/atold: $out"; fi
+ag core/extensions/A branch -q -D atold
+out=$(rt pull --nested core)
+if ! git -C "$H/extensions/A" rev-parse -q --verify vm/atold >/dev/null; then pass "pull --nested: a branch deleted in the VM leaves vm/*"
+else fail "pull --nested: vm/atold is still there"; fi
+out=$(rt pull --nested core)
+if grep -q 'no nested workspace has changed' <<<"$out" && ! ls "$W/.pull" | grep -q nested; then pass "pull --nested again: nothing is sent twice"
+else fail "pull --nested sent commits again: $out"; fi
 if [[ -d "$W/.pull" ]] && ! ls "$W/.pull" | grep -q nested; then pass "pull --nested removes its bundles in the guest"; else fail "pull --nested left bundles in the guest, or made none"; fi
 out=$(rt pull --nested core somewhere)
 if grep -q 'takes no DEST' <<<"$out"; then pass "pull --nested refuses a DEST"; else fail "pull --nested took a DEST"; fi
 
 # The end-of-session report suggests one pull --nested, not one per repo.
 ag core/extensions/A switch -q -c more && ag core/extensions/A commit -q --allow-empty -m agent-a
+ag core commit -q --allow-empty -m agent-top2
 ag core/extensions/B commit -q --allow-empty -m agent-b2
 rpt=$(env XDG_CONFIG_HOME="$RT/cfg" FAKE_AGENT_HOME="$RT/agent" PATH="$RT/bin:$PATH" bash -c '
   VM=wmf-claude; ENGINEER_HOME=/; AGENT=agent; WS_FILE="$1"
@@ -489,7 +513,7 @@ if grep -q 'Pull with: claude-vm pull --nested core$' <<<"$rpt"; then pass "the 
 else fail "the report did not group the nested workspaces: $rpt"; fi
 # A guest that reports an index out of range, or not a number, gets nothing.
 pn=$(awk '/^pull_nested\(\) \{/,/^\}/' "$VM")
-if grep -qF 'if [[ ! "$i" =~ ^[0-9]+$ ]] || (( i >= ${#wss[@]} )); then continue; fi' <<<"$pn"; then pass "pull --nested takes only indices in range from the guest"
+if grep -qF 'if [[ "$kind" != B || ! "$i" =~ ^(0|[1-9][0-9]*)$ ]] || (( i >= ${#wss[@]} )); then continue; fi' <<<"$pn"; then pass "pull --nested takes only indices in range from the guest"
 else fail "pull --nested does not check the guest's indices"; fi
 rm -rf "$RT"
 unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL

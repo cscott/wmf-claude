@@ -194,10 +194,11 @@ claude-vm discard NAME BRANCH    # git branch -rd vm/BRANCH
   files that run on build or commit. The workspace remembers which repo it
   came from, so `pull`, `review`, `checkout` and `discard` need only its
   name; `pull NAME DEST` sends it elsewhere and remembers that instead.
-  `pull --nested NAME` also brings back the new commits of the workspaces
-  pushed with `--nested`, each into its own repo, in one pass. It skips a
-  repo with no new commits and does not prune `vm/*`: `pull` a workspace by
-  its name for a full sync of its branches.
+  `pull --nested NAME` also brings back the work in the workspaces pushed
+  with `--nested`, each into its own repo, in one pass. Like `pull`, it
+  keeps each repo's `vm/*` the same as the VM's branches, deletions too,
+  and sends only commits the host does not have yet. When the top repo's
+  pull fails, the nested ones still run.
 - `claude` takes `bin/claude`'s flags, except `--ide` (it needs the host).
   `--chrome` starts a browser in the VM: [A browser in the VM](#a-browser-in-the-vm).
 - A session is granted its own workspace. For core plus extensions, push

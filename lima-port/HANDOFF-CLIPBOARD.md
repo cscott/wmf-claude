@@ -489,12 +489,26 @@ Result: it works.
 RAN on the engineer's host (2026-10-15): the same, in a sandbox made with
 `wmf-sbx create --sudo`. Result: it works.
 
-Still to RAN, on the engineer's host:
+RAN in a sandbox (2026-10-15, the `dev` sandbox, whose session has
+`WAYLAND_DISPLAY=wmf-sbx` from `native_copy`): the browsers that the test
+suites start do not change with the dummy variable. Each case ran with
+`WAYLAND_DISPLAY=wmf-sbx` and with it unset, with the same result:
 
-- QUnit (karma's Chrome) and Cypress in a session with
-  `WAYLAND_DISPLAY=wmf-sbx` set: a Chromium that picks its platform by
-  that variable would look for a compositor. Headless Chrome uses no
-  display; Cypress's Electron is the one to check.
+- Chrome for Testing 155 through `/usr/bin/chromium`, with
+  karma-chrome-launcher's ChromeHeadless flags (`--headless --disable-gpu
+  --disable-dev-shm-usage --remote-debugging-port`): `--dump-dom`
+  renders the page. Headed, with `--ozone-platform-hint=auto` too, it
+  stops with `Missing X server or $DISPLAY` (ozone x11) in both cases.
+  The sandbox has no MediaWiki, so `mw-install-browser` would not run:
+  the same `@puppeteer/browsers install chrome@stable` from a scratch
+  folder, and the same link in `~/.cache/wmf-sbx-browser/`.
+- Cypress 16.2.0 (Electron 146, headless), a spec against a static page
+  on 127.0.0.1: `cypress verify` passes and the spec passes. With
+  `DEBUG=cypress:*`, the CLI logs `undefined DISPLAY environment
+  variable` and `needs to start own Xvfb? true` in both cases: Cypress
+  decides by `DISPLAY` only. Not Cite's pinned Cypress version.
+
+Nothing is still to RAN for copy.
 
 Open questions:
 

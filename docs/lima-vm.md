@@ -128,7 +128,7 @@ shows `locked`, `open`, or `broken` (sessions refused).
 
 ```bash
 bin/wmf-claude-vm push DIR [NAME]        # git bundle of HEAD, branches and tags -> /home/agent/work/NAME
-bin/wmf-claude-vm claude NAME [args]     # bin/claude in that workspace, as agent, sandboxed
+bin/wmf-claude-vm claude NAME [args]     # bin/claude in that workspace, as agent, sandboxed; on exit: what is not pulled yet
 bin/wmf-claude-vm pull NAME [DEST]       # agent's branches -> vm/* in the repo NAME came from
 bin/wmf-claude-vm review NAME BRANCH     # git log -p HEAD..vm/BRANCH
 bin/wmf-claude-vm checkout NAME BRANCH   # git switch -c BRANCH vm/BRANCH
@@ -147,6 +147,19 @@ bin/wmf-claude-vm discard NAME BRANCH    # git branch -rd vm/BRANCH
   name; `pull NAME DEST` sends it elsewhere and remembers that instead.
 - `claude` takes `bin/claude`'s flags, except `--chrome` and `--ide` (they
   need the host).
+- A session is granted its own workspace. For core plus extensions, push
+  each one with a nested name and start the session in `core`: it sees them
+  all. For sibling workspaces, pass nono's grant through, with guest paths
+  and the `--`: `bin/wmf-claude-vm claude core --allow /home/agent/work --`
+  (`--read DIR --` for read-only). Only what you pushed is in reach, so this
+  is a smaller step than `--allow ~/src` on the host.
+- Notes, or any directory that is not a repository: `git init` it on the
+  host, add a `.gitignore` for anything large, commit, and push it like a
+  repo. What the agent commits there comes back with `pull`.
+- When a session ends, `claude` lists what is still only in the VM: branches
+  not pulled, and changed files not committed (`status` shows the same).
+  Uncommitted files never travel, since a bundle carries commits only: ask
+  the agent to commit, or commit yourself with `shell --agent`.
 - A large repository can be cloned shallow in the VM instead of pushed
   (in a contained VM, while open):
   `bin/wmf-claude-vm shell --agent -- git clone --depth 1 URL /home/agent/work/NAME`.
@@ -227,6 +240,14 @@ update path.
   but maybe not DNS (`check-host-block` reports whether it does) and not the
   host's own loopback services. The in-VM lock covers both; closing them on
   the host needs a VM with no network at all, which Lima does not offer yet.
+- **Lima VM: no `--chrome`, and tests need a wiki in the VM.** `--chrome` is
+  refused: Chrome runs on the host today, and the VM cannot reach it.
+  PHPUnit runs through the Docker broker (`--docker=mediawiki`), so it needs
+  the dev stack in the VM, which the amd64-only images rule out on Apple
+  Silicon (above). `--local-db` passes through, but only meets a database
+  that listens in the VM. Follow-up: headless Chromium in the guest, started
+  by `guest-claude.sh` as the engineer with the MCP built there, and a
+  multi-arch compose for the dev stack.
 - **Contained: not done yet.** Transcript and log retention outside the
   agent's reach, and a per-engagement scope prompt.
 - **Linux hosts: contained mode is untested.** The token store (a 0600 file

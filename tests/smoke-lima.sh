@@ -241,9 +241,20 @@ rm -f "$SRC/.git/hooks/post-checkout"
 # The agent commits on a new branch, as a session would.
 ga bash -c 'cd "$1" && git switch -q -c smoke-branch && echo agent > agent.txt && git add agent.txt &&
   git -c user.name=agent -c user.email=agent@invalid commit -q -m "smoke: agent commit"' _ "/home/agent/work/$NAME"
+# Until pulled, status reports the branch; a changed file is reported as
+# uncommitted, since a bundle would not carry it.
+ga bash -c 'echo dirty > "$1/dirty.txt"' _ "/home/agent/work/$NAME"
+st=$("$VMCMD" status 2>/dev/null)
+if grep -qE "$NAME +smoke-branch +1 commit not pulled" <<<"$st"; then pass "status lists the agent's branch as not pulled"
+else fail "status does not list smoke-branch as not pulled"; fi
+if grep -qE "$NAME +\(working tree\) +1 uncommitted file" <<<"$st"; then pass "status lists the uncommitted file"
+else fail "status does not list the uncommitted file"; fi
+ga rm -f "/home/agent/work/$NAME/dirty.txt"
 head_before=$(git -C "$SRC" rev-parse HEAD)
 if "$VMCMD" pull "$NAME" >/dev/null 2>&1; then pass "pull (destination from the push record)"
 else fail "pull failed"; fi
+if "$VMCMD" status 2>/dev/null | grep -qE "$NAME +smoke-branch"; then fail "status still lists smoke-branch after pull"
+else pass "status drops the branch once pulled"; fi
 if [[ "$(git -C "$SRC" log -1 --format=%s vm/smoke-branch 2>/dev/null)" == "smoke: agent commit" ]]; then
   pass "pull fetched vm/smoke-branch"
 else fail "vm/smoke-branch missing or wrong"; fi

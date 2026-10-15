@@ -105,13 +105,13 @@ It is a separate entry point, not a `bin/claude` flag:
 | `update` | Upload this checkout's HEAD (submodules included) and reinstall it in the guest |
 | `login` | Sign Claude Code in as `agent` (`claude auth login`, outside nono); once per VM. On a contained VM: store a `claude setup-token` token in the host keychain instead |
 | `push DIR [NAME]` | Git-bundle a repo into `/home/agent/work/NAME` |
-| `claude NAME [bin/claude args]` | Sandboxed session in that workspace, as the `agent` user. `--docker=SERVICE` starts the broker as the engineer; `--chrome` and `--ide` are refused |
+| `claude NAME [bin/claude args]` | Sandboxed session in that workspace, as the `agent` user. `--docker=SERVICE` starts the broker as the engineer; `--chrome` and `--ide` are refused; `--allow /home/agent/work --` grants every workspace. On exit, lists the branches not pulled and the files not committed |
 | `pull NAME [DEST]` | Fetch the agent's branches into `vm/*` (remote-tracking refs) of the repo NAME was pushed from, or of DEST; nothing is checked out |
 | `review NAME BRANCH`, `checkout NAME BRANCH`, `discard NAME BRANCH` | Show what `vm/BRANCH` adds, create a local branch from it, or delete it (plain git in NAME's host repo) |
 | `lock`, `unlock` | Contained VM: no egress (sessions run only then) or egress for setup ([lima-vm.md#network-phases-locked-and-open](lima-vm.md#network-phases-locked-and-open)) |
 | `check-host-block` | Contained VM: remove its lock for one request and check that a firewall on the host still blocks it; `status` shows the result. `WMF_CLAUDE_REQUIRE_HOST_BLOCK=1` makes sessions refuse until it passes for the current `limactl` |
 | `shell [--agent] [-- CMD...]` | Engineer shell (sudo, docker), or a shell as `agent`; with `-- CMD`, run just that command |
-| `status`, `start`, `stop`, `delete`, `reset` | Lifecycle; `delete` asks for the VM name |
+| `status`, `start`, `stop`, `delete`, `reset` | Lifecycle; `status` also lists what is not pulled yet; `delete` asks for the VM name |
 
 Threat model, first login, Docker inside the VM and the smoke test: [`lima-vm.md`](lima-vm.md).
 

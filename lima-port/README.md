@@ -21,6 +21,11 @@ sandbox. Delete it, or move its content into `sbx/`, when the port lands.
 - [`HANDOFF-LIMA-QCOW2-OVERLAYS.md`](HANDOFF-LIMA-QCOW2-OVERLAYS.md) —
   the evidence and test procedure behind D12 (qcow2 overlays on an
   immutable golden image). Track B, which it was for, is done.
+- [`HANDOFF-CLIPBOARD.md`](HANDOFF-CLIPBOARD.md) — copy and paste
+  from Claude Code in a sandbox to the host's clipboard (GNOME Terminal
+  drops OSC 52): a write-only `wl-copy` shim, what Claude Code really
+  runs (READ in 2.1.292), and how it would fit wmf-sbx. Research; no
+  code yet.
 - [`../sbx/MACOS.md`](../sbx/MACOS.md) — the tests for a person with a
   Mac, and what macOS still lacks (copy-on-write disks and the egress
   proxy on `vz`).

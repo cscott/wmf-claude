@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """The fake-address resolver of a sandbox behind the egress proxy
-(lima-port/PLAN-SUDO.md, A2.3).
+(README.md, Architecture: the egress proxy).
 
 Behind `restrict=on` the guest has no DNS, but a contained session's
 nono looks up each name before it CONNECTs to the upstream proxy, and
-fails when the lookup fails (A2.0 item 9). It does not use the address:
+fails when the lookup fails (NOTES, A2.0 item 9). It does not use the address:
 the proxy gets the name. So this resolver answers every A query with an
 address of its own, and never asks a real resolver (one reached through
 a guestfwd would be a DNS tunnel past the allowlist).

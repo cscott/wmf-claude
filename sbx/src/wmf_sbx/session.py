@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The Claude session of a Lima sandbox (lima-port/HANDOFF-LIMA.md §8,
 phase 6). In contained mode the agent runs Claude Code under nono,
-through upstream's bin/claude. In a `sudo` sandbox (PLAN-SUDO.md, A3) it
+through upstream's bin/claude. In a `sudo` sandbox (README.md, "`--sudo` sessions") it
 runs bin/launch-claude.sh with no nono: the host egress proxy is the
 network boundary.
 
@@ -334,8 +334,8 @@ def launcher_argv(state, cred_path=None, launcher_flags=(), claude_args=(),
         grants += ["--read-file", path]
     # Behind the egress proxy, every host: the outer proxy is the only
     # allowlist (it has REGISTRY_DOMAINS and `wmf-sbx allow`'s hosts), and
-    # the inner one still applies the profile's endpoint rules (A2.0
-    # item 9, RAN: a wiki POST got 403).
+    # the inner one still applies the profile's endpoint rules (NOTES,
+    # A2.0 item 9, RAN: a wiki POST got 403).
     for domain in (["*"] if egress_mod.enabled(state) else REGISTRY_DOMAINS):
         grants += ["--allow-domain", domain]
     if proxy:

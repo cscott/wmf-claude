@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Let a sandbox behind the egress proxy reach more hosts
-(lima-port/PLAN-SUDO.md A2.3).
+(README.md, Architecture: the egress proxy).
 
 The egress proxy allows the hosts of the wmf-engineer profile, the
 package registries and Debian's mirror. `allow` adds hosts for one

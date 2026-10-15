@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """The QEMU wrapper for a sandbox behind the host egress proxy
-(lima-port/PLAN-SUDO.md, A2.1), and for every other QEMU sandbox, for
+(README.md, Architecture), and for every other QEMU sandbox, for
 free-page reporting. Lima runs it in place of QEMU
 (QEMU_SYSTEM_<ARCH>=bin/wmf-sbx-qemu); wmf-sbx sets:
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Unit tests for the fake-address resolver (fakedns.py,
-lima-port/PLAN-SUDO.md A2.3) -- run with:
+README.md, Architecture) -- run with:
   python3 -m unittest discover -s sbx/tests -v"""
 
 import ipaddress

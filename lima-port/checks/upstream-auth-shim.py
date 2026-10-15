@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A2.0 throwaway (lima-port/PLAN-SUDO.md): `nono proxy --upstream-proxy`
+"""A2.0 throwaway (sbx/NOTES.md, "The egress proxy and `--sudo`"): `nono proxy --upstream-proxy`
 sends no credentials, so put this between it and an upstream proxy that
 needs them. It listens on 127.0.0.1, reads each request head (CONNECT or
 an absolute-URI request), adds Proxy-Authorization for the upstream, and

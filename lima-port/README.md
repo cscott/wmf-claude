@@ -14,11 +14,6 @@ sandbox. Delete it, or move its content into `sbx/`, when the port lands.
   `lima.py`, `helpers/wmf-sbx-qemu`, `proxy.py`, `disk.py`), and the order
   of work (§11: phases 0–7 are the `--no-sudo` MVP; tracks A (`--sudo` on
   QEMU) and B (qcow2 copy-on-write disks) come after it). Read this first.
-- [`PLAN-SUDO.md`](PLAN-SUDO.md) — the plan for track A (`--sudo`),
-  egress proxy first: `nono proxy` on the host, owned by the QEMU wrapper.
-  Done (2026-10-14): the egress proxy is the default on QEMU
-  (`--no-egress-proxy` opts out), and `--sudo` RAN on the host,
-  `--sudo --nested` included. What is open is in `sbx/NOTES.md`.
 - [`PLAN-SETTINGS-DEFAULTS.md`](PLAN-SETTINGS-DEFAULTS.md) — defaults
   for command-line options from settings.yaml (`create.cloneMissing` and
   every other option of every command): one helper, every flag a
@@ -26,6 +21,9 @@ sandbox. Delete it, or move its content into `sbx/`, when the port lands.
 - [`HANDOFF-LIMA-QCOW2-OVERLAYS.md`](HANDOFF-LIMA-QCOW2-OVERLAYS.md) —
   the evidence and test procedure behind D12 (qcow2 overlays on an
   immutable golden image). Read it before track B.
+- [`../sbx/MACOS.md`](../sbx/MACOS.md) — the tests for a person with a
+  Mac, and what macOS still lacks (copy-on-write disks and the egress
+  proxy on `vz`).
 
 Both were copied unchanged from untracked files in the engineer's host
 checkout. They refer to each other by bare file name, which still works
@@ -110,8 +108,9 @@ to paste the output back.
 Most of A1 and B1 already ran on 2026-10-08, in a cloud session that
 could run Lima on QEMU (Linux, no KVM). The results are in both task
 documents, marked **RAN** and **READ**, and the items still to do (for
-example macOS, `vz`, and Claude Code through the proxy) are marked in
-§11 and §13 of `HANDOFF-LIMA.md`.
+example `vz`, and Claude Code through the proxy) are marked in §11 and
+§13 of `HANDOFF-LIMA.md`. Everything that needs a Mac is in
+`sbx/MACOS.md`.
 
 It can do the code work: the new modules with a fake `limactl` in the
 unit tests, the rebase onto !127, and the sbx test suite

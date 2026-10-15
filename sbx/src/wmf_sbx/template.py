@@ -18,8 +18,8 @@ The rules, which `check_template()` asserts, and the tests too:
   mount has no guest cache;
 - Lima's user (`engineer`) has a uid that is neither the host's (the
   agent has that, D10) nor the image builder's;
-- behind the host egress proxy (`egress_ca`, lima-port/PLAN-SUDO.md
-  A2.3): QEMU only, no host resolver, no proxy variables from the host,
+- behind the host egress proxy (`egress_ca`, README.md,
+  Architecture): QEMU only, no host resolver, no proxy variables from the host,
   the sandbox's egress CA in `caCerts`.
 """
 

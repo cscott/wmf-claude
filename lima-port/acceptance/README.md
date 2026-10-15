@@ -27,7 +27,7 @@ defaults are. Translate's phan peaks at about 2.7 GB and was OOM-killed
 in a 4 GiB VM (RAN 2026-10-14). Keep the sizes explicit, so a smaller
 default does not break the run.
 
-**Nested** (A3 step 6): the agent in a `--sudo --nested` sandbox of
+**Nested**: the agent in a `--sudo --nested` sandbox of
 wmf-claude changes its own clone, then runs the commands above with that
 clone's `sbx/bin/wmf-sbx` in place of `wmf-sbx`, against the changed
 copy. Make the outer sandbox big enough for the session and the inner

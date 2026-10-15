@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Unit tests for the host egress proxy's files and auth shim (egress.py,
-lima-port/PLAN-SUDO.md A2.2) -- run with:
+README.md, Architecture) -- run with:
   python3 -m unittest discover -s sbx/tests -v
 
-`nono proxy` itself ran in A2.0 (sbx/NOTES.md, "`--sudo` egress"); here
+`nono proxy` itself ran in A2.0 (sbx/NOTES.md, "The egress proxy and `--sudo`"); here
 nothing runs nono. The shim forwards to a fake upstream proxy on the
 loopback."""
 

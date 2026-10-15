@@ -2,9 +2,9 @@
 
 Open to-do items, and the decisions and findings that the code depends on
 or that future work needs. No history: `git log` has it. The design is in
-`README.md` (Architecture), `../lima-port/HANDOFF-LIMA.md` (decisions D1
-to D12, and tracks A and B, which are not repeated here) and `../lima-port/PLAN-SUDO.md`
-(track A's plan).
+`README.md` (Architecture) and `../lima-port/HANDOFF-LIMA.md` (decisions D1
+to D12, and tracks A and B, which are not repeated here). What is open on macOS, and the
+tests for a Mac, are in `MACOS.md`.
 
 ## To do
 
@@ -49,7 +49,7 @@ Development scaffolding:
   numbers, D-numbers, N1–N3, and "(RAN ...)" in about 100 comments in 24 files
   (`git grep -c -E 'HANDOFF-LIMA|RAN\b|phase [0-9]' -- sbx/src sbx/bin sbx/helpers
   sbx/templates`). Keep the reason each one gives; drop the pointer to the process.
-- [ ] **`lima-port/`**: the handoff documents, `TESTING-MACOS.md`, `acceptance/` and
+- [ ] **`lima-port/`**: the handoff documents, `acceptance/` and
   `checks/` are for this port. Decide what ships: move the checks that stay useful
   (`real-hardware.sh`, `cypress-nono.sh`, `credential-scan.py`) to `sbx/tests/` or
   `sbx/checks/`, the decisions that the code depends on to README.md or SECURITY.md, and
@@ -228,15 +228,9 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
   on the egsn branch, not on `lima-port`). Use the commands in `lima-port/acceptance/
   README.md`, which give the outer and the inner sandbox explicit sizes. It checks too that
   Translate's phan passes in an 8 GiB inner VM.
-- [ ] **The egress proxy on macOS** (QEMU with HVF, `--vm-type qemu`): A2.0 item 7,
-  `lima-port/TESTING-MACOS.md` step 9, for someone with a Mac. Without
-  `PR_SET_PDEATHSIG`, a killed wrapper leaves its proxy and QEMU behind there.
-- [ ] **If `vz` gets an equivalent of QEMU's `restrict=on`**, then every sandbox can be
-  behind the egress proxy, and `--no-egress-proxy`, the fallback and the guest's network
-  filtering go. The main cost is in the launcher: nono with `--allow-net` drops the proxy
-  variables, so it must export them again inside the sandbox. Until then, doing it for
-  QEMU alone adds a branch and removes no code (the "Local ports" bookmark). For an engineer
-  with a Mac.
+- [ ] **macOS**: the egress proxy on QEMU with HVF, and an equivalent of `restrict=on` on
+  `vz`, which would remove `--no-egress-proxy` and the guest's network filtering:
+  `MACOS.md`.
 - [ ] **Propose upstream:**
   - Lima: a native `restrict`/egress-proxy option for QEMU, to drop the wrapper;
   - nono: backdate the leaf certificates' `notBefore` (mitmproxy does), for the up to
@@ -387,8 +381,22 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
 
 ### The egress proxy and `--sudo` (track A)
 
-Plan and design: `lima-port/PLAN-SUDO.md` (done 2026-10-14). A2.0 results (in the nested
-`dev` VM, nono 0.78.0, 2026-10-13):
+The design is in `README.md` (Architecture: the egress proxy, `--sudo` sessions) and
+`SECURITY.md` (§3, §6b). The labels below, and in code comments, are the plan's steps:
+
+- A2.0, measurements with throwaway scripts (`lima-port/checks/`): (1) `nono proxy` on the
+  host side, nested and chained; (2) from the guest: an allowed GET passes, a POST, a host
+  off the list, the host and a direct address fail, also after guest root flushes nft;
+  (3) package installs with no guest DNS; (4) Claude Code through `HTTPS_PROXY`;
+  (5) throughput; (6) the wrapper as QEMU's parent, through every kind of stop; (7) items
+  2, 6 and 8 unnested on a real host (`checks/sudo-egress-m7.sh`); (8) a new proxy under a
+  running VM; (9) a contained session's nono behind the host proxy.
+- A2.1 the QEMU wrapper, A2.2 the proxy's config (`egress.py`), A2.3 the template, start,
+  the fake-address resolver and `wmf-sbx allow` (`create --egress-proxy`).
+- A3 `--sudo`: (1) create and state, (2) the guest's sudo grant, (3) the session, (4) what
+  Claude is told, (5) the docs, (6) `--sudo --nested`.
+
+A2.0 results (in the nested `dev` VM, nono 0.78.0, 2026-10-13):
 
 - `nono proxy --profile profiles/wmf-engineer.json` (password by `NONO_PROXY_PASS`) loads the
   profile and intercepts TLS for its 48 endpoint routes: through it, GET
@@ -408,7 +416,7 @@ Plan and design: `lima-port/PLAN-SUDO.md` (done 2026-10-14). A2.0 results (in th
   `--upstream-proxy` the same way, `session.upstream_proxy`, without the password: check
   whether their egress works at all when nested.)
 - No live allowlist change: no reload flag, signal or control socket in 0.78. `wmf-sbx
-  allow` replaces the proxy (PLAN-SUDO.md).
+  allow` replaces the proxy (README.md, Architecture).
 - With `lima-port/checks/upstream-auth-shim.py` between them, the chain guest → `nono proxy`
   (fixed EC P-256 CA, `--proxy-ca-cert/--proxy-ca-key`) → shim → session proxy works: two
   TLS interceptions in a row, each trusting the next CA (RAN).
@@ -475,8 +483,8 @@ Plan and design: `lima-port/PLAN-SUDO.md` (done 2026-10-14). A2.0 results (in th
     image): the guest was -534 and -229 ms off at the first sync. At the restarts the sync
     landed 1 s before `limactl start` returned; at the first boot (the provisioning) READY
     came in the same second as "guest agent is alive", so the sync came about 5 s after
-    `limactl start` returned. So (a) is a race, both ways: A2.3's start must wait for the
-    first "Time sync:" line. `ptp_kvm` loads there (`/dev/ptp0`), so chrony with a PHC
+    `limactl start` returned. So (a) is a race, both ways: `start` waits for the first
+    "Time sync:" line (`egress.TIME_SYNC_DONE`). `ptp_kvm` loads there (`/dev/ptp0`), so chrony with a PHC
     refclock is possible unnested on Linux (not nested, not on macOS).
   - No guest agent, no sync: Lima runs none in `plain: true` mode
     (`hostagent.go`: "Guest agent will not be running"). wmf-sbx's template is not plain;
@@ -492,8 +500,8 @@ Plan and design: `lima-port/PLAN-SUDO.md` (done 2026-10-14). A2.0 results (in th
     hosts` hung). Every request timed out (curl exit 28) and nothing got to the egress
     proxy. With a line in /etc/hosts it went through, and the address in that line is not
     used: 10.9.9.9 did as well as 1.1.1.1, because nono sends the name in the upstream
-    CONNECT. So the guest needs a lookup that succeeds, not a real resolver (A2.3: a
-    fake-address resolver that keeps its mapping). Plain tools given the proxy variables
+    CONNECT. So the guest needs a lookup that succeeds, not a real resolver (A2.3: the
+    fake-address resolver, `fakedns.py`). Plain tools given the proxy variables
     (curl, apt, git, npm) do not look up names.
   - Two interceptions in a row work: the inner nono trusts the egress CA from the guest's
     store, and the outer proxy still applies the endpoint rules (its log has the `l7`
@@ -609,8 +617,7 @@ Plan and design: `lima-port/PLAN-SUDO.md` (done 2026-10-14). A2.0 results (in th
   egress proxy's variables (`sudo -u agent` drops `/etc/environment`'s) and
   `NODE_EXTRA_CA_CERTS` set to the system bundle, which holds the egress CA. Without nono in
   between, the session-start bullet gives the proxy's own `403` at CONNECT, not the 502 of
-  a contained session (RAN above, `nono proxy --profile`: a host off the list gets 403 at CONNECT). To check
-  on the host: the RAN list at the end of PLAN-SUDO's A3 steps.
+  a contained session (RAN above, `nono proxy --profile`: a host off the list gets 403 at CONNECT).
   First host create (egsudo, 2026-10-14): every invariant passed but "the agent can sudo,
   from its sudoers file". The invariants run as the engineer, and `/etc/sudoers.d` is
   0750 root:root, so its `test -e` failed with the file there. The test now runs under
@@ -624,7 +631,8 @@ Plan and design: `lima-port/PLAN-SUDO.md` (done 2026-10-14). A2.0 results (in th
   `Read-only file system` from the host side. Some 30 denied CONNECTs to
   `metadata.ftp-master.debian.org` (backoff 1, 2, 4 s) were `apt-listchanges.timer`
   ("Try hourly to initialize apt-listchanges database": `apt-get changelog`, on the first
-  hour mark after boot); the image now masks it and apt's daily timers.
+  hour mark after boot); the image now masks it and apt's daily timers. The blind run
+  (HANDOFF-LIMA §11) passed in a `--sudo` sandbox.
 - **`--sudo --nested` (A3 step 6, written and RAN 2026-10-14).** An inner VM's only
   way out is 192.168.5.2, the outer guest's loopback. A contained session's nono proxy
   listens there; a `sudo` session and `exec` have none. So every nested egress sandbox
@@ -950,9 +958,9 @@ Plan and design: `lima-port/PLAN-SUDO.md` (done 2026-10-14). A2.0 results (in th
   guide says, except Cypress (does not start under nono) and the guide's errors it found
   (parsertests scope, `--testsuite=extensions`, core's other suites, Parsoid needing
   ParserFunctions), now fixed in MEDIAWIKI-TESTING.md.
-- Still to run: macOS by someone with a Mac
-  (`lima-port/TESTING-MACOS.md`, a guide for a human tester). The check scripts avoid
-  bash 4 features and empty-array expansions under `set -u` (macOS has bash 3.2).
+- Still to run: macOS by someone with a Mac (`MACOS.md`, a guide for a human tester).
+  The check scripts avoid bash 4 features and empty-array expansions under `set -u`
+  (macOS has bash 3.2).
 - Docker sbx's sign-in (Docker's docs, and our pre-deletion SECURITY.md §7.5): `/login` ran
   in the sandbox; the host's egress proxy completed the OAuth exchange, kept the token on
   the host (one per host, shared by every sandbox), refreshed it, and swapped a
@@ -1009,8 +1017,7 @@ Plan and design: `lima-port/PLAN-SUDO.md` (done 2026-10-14). A2.0 results (in th
   `--no-egress-proxy` sandboxes exist: they keep all of the guest filtering, so the change
   adds an egress/no-egress branch to provisioning, the session launch, the invariants and
   the tests, and removes no code. It pays only if `vz` gets an equivalent of `restrict=on`
-  (a macOS engineer can find out): then `--no-egress-proxy` and the fallback go, and with
-  them the guest's network filtering. For a sandbox not behind the proxy, the DNS residual
+  (`MACOS.md`). For a sandbox not behind the proxy, the DNS residual
   stays (lookups through Lima's resolver can tunnel data); its separate fix is a filtering
   DNS forwarder in the VM (dnsmasq or unbound, as root) that answers only for nono's
   allowlist (the profile's domains plus `session.REGISTRY_DOMAINS`): only nono's proxy

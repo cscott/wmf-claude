@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Unit tests for the QEMU wrapper (qemu_wrapper.py, bin/wmf-sbx-qemu;
-lima-port/PLAN-SUDO.md A2.1) -- run with:
+README.md, Architecture) -- run with:
   python3 -m unittest discover -s sbx/tests -v
 
 The argv rewriting is tested as pure functions. The lifetime runs the

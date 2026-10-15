@@ -10,8 +10,10 @@ gets a git remote to fetch the agent's work.
 - `SECURITY.md`: what the agent can and cannot reach.
 - `NOTES.md`: open to-do items, and the decisions and findings that the
   code depends on.
+- `MACOS.md`: the tests that check wmf-sbx on a Mac, and what macOS
+  still lacks (copy-on-write disks and the egress proxy on `vz`).
 - `../lima-port/HANDOFF-LIMA.md`: the port's decisions (D1 to D12) and
-  the work that remains (track B, copy-on-write disks). `../lima-port/PLAN-SUDO.md`: the `--sudo` steps.
+  the work that remains (track B, copy-on-write disks).
 
 ## Install
 
@@ -660,6 +662,46 @@ agent gets TCP 80 and 443 only, off the VM), narrows the ephemeral port
 range (see `SECURITY.md`), and turns TIOCSTI off. `vm.INVARIANTS` are
 checked at every start, resume and status.
 
+**The egress proxy** (`qemu_wrapper.py`, `egress.py`, `fakedns.py`,
+`allow.py`; `SECURITY.md` §3). On QEMU, `limactl start` runs
+`bin/wmf-sbx-qemu` as `QEMU_SYSTEM_<ARCH>`. The wrapper passes Lima's
+probe calls to the real QEMU unchanged; for the boot call it refuses any
+network but one `-netdev user`, adds `restrict=on` (no route out, no
+DNS) and three `guestfwd`s on 192.168.5.100, and runs QEMU as its child:
+
+- 3128: a `nono proxy` with `profiles/wmf-engineer.json`, the package
+  registries, Debian's mirror and the hosts of `wmf-sbx allow`. It is
+  the same policy as a contained session's nono, endpoint rules
+  included, so there is one allowlist. Each sandbox has its own CA
+  (`egress.make_ca`), which Lima's `caCerts` puts in the guest at
+  create. `egress.proxy_argv` writes the proxy's argv to
+  `proxy.json` in `~/.local/state/wmf-sbx/egress/NAME/` at each start,
+  so a start picks up a new allowlist. When the host itself is behind
+  a proxy that needs credentials, `egress.AuthShim` (a thread of the
+  wrapper) adds them: `nono proxy --upstream-proxy` sends none.
+- 53: `fakedns.py`, a thread of the wrapper. A contained session's
+  nono looks up each name before it sends the name in its upstream
+  CONNECT, and fails when the lookup fails. The resolver gives every
+  name its own address in 198.18.0.0/15 and keeps the mapping for the
+  sandbox's life; it never asks a real resolver, which would be a DNS
+  tunnel past the allowlist. glibc reaches it over TCP (`options
+  use-vc`; a guestfwd is TCP only), and systemd-resolved is masked.
+- 3129: the session's credential proxy, on `cred.sock` (one session
+  at a time).
+
+The wrapper owns the proxy: it starts it before QEMU, stops it when
+QEMU exits, and on Linux gives both `PR_SET_PDEATHSIG`. So the proxy
+lives exactly as long as the VM, whoever stops it, with no pidfile to
+go stale. `nono proxy` cannot change its allowlist while it runs, so
+`wmf-sbx allow` writes the list, signals the wrapper (SIGUSR1), and the
+wrapper starts a new proxy and rewrites the port file that the guestfwd
+command reads at each connection: new connections go to the new proxy,
+and open ones finish on the old. The guest has no NTP, and nono's leaf
+certificates start at "now", so `start` waits for Lima's first time
+sync (`egress.TIME_SYNC_DONE`) before it returns. `create` falls back
+to the guest's own route, with a warning, where the proxy cannot run
+(`vz`, missing host tools), and `--no-egress-proxy` asks for that.
+
 **Repos in the VM** (`repos.py`, `sandbox-repos.sh`). Each repo's git
 dir is a read-only Lima mount (9p on QEMU, virtiofs on `vz`) under
 `/run/wmf-sbx/host/`. The VM has a `git clone --shared` of it at the
@@ -700,4 +742,22 @@ SessionStart text in `hooks/context/lima-sbx/`. The wiki variables
 the `env` key of the agent's `~/.claude/settings.json`, which `create`
 writes with `~/.claude/CLAUDE.md` and `~/MEDIAWIKI-TESTING.md`.
 `wmf-claude-setup` runs at create time to register the anonymous MCP
-servers (Phabricator, Gerrit, GitLab) in the VM.
+servers (Phabricator, Gerrit, GitLab) in the VM. Behind the egress
+proxy, the session's nono allows every host (`--allow-domain '*'`) and
+chains to the egress proxy (`--upstream-proxy`), so that proxy is the
+only allowlist and `wmf-sbx allow` reaches a running session; nono
+still applies the profile's endpoint rules.
+
+**`--sudo` sessions** (`session.sudo_launcher_argv`; `SECURITY.md`
+§6b). The provisioning gives the agent a sudoers file and the marker
+`/etc/wmf-sbx/sudo` (a contained sandbox removes both at each boot),
+and `vm.invariants` swaps the no-sudo checks for sudo ones. A session
+runs `bin/launch-claude.sh` with the plugin and
+`wiring/settings-merge.json`, with no nono: its network is the egress
+proxy's variables, and `NODE_EXTRA_CA_CERTS` names the system bundle,
+which holds the egress CA. `WMF_CLAUDE_SANDBOX_BACKEND=lima-sbx-sudo`
+selects its SessionStart text. A nested `--sudo` sandbox has no nono
+proxy on the guest's loopback for inner VMs to reach, so a root socket
+unit (`wmf-sbx-egress-forward.socket`, `systemd-socket-proxyd`) forwards
+127.0.0.1:3128 to the egress proxy, and inner VMs trust the CAs that
+Lima put in the outer VM.

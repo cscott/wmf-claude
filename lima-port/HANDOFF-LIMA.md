@@ -1317,38 +1317,11 @@ phase A3. Every sandbox gets a full copy of the golden image (D2).
 
 ### Tests that need a Mac (ask Kosta)
 
-cananian works on Linux, so every macOS item is collected here, to ask
-Kosta Harlan to run. Each one is also named in its phase. Record Lima,
-QEMU and macOS versions with the results.
-
-- **Phase 0:** the time and bytes of a full-copy `create` on `vz` (the
-  baseline for track B); the read-only bypass test for virtiofs on `vz`
-  (D10: guest root `mount -o remount,rw`, then a write; the host file
-  must not change).
-- **Phase 2:** the same sealed golden image boots under `vz`, and two
-  sandboxes from it on `vz` have different machine-ids and host keys.
-- **Phase 3:** the lifecycle round trip (`create`, `start`, `stop`,
-  `exec`, `cp`, `rm`) on `vz`.
-- **Phase 4:** the git-dir mounts on `vz` (virtiofs): they mount; a
-  host commit, `pack-refs`, a full repack and `gc --prune=now` are each
-  seen at once by `git fetch local` in the guest (9p needed
-  `cache: none` for this; virtiofs may have its own cache setting);
-  `lima-port/checks/phase4.sh` does these checks: the agent cannot write the
-  mount, guest root's `remount,rw` cannot either, `git fetch NAME` and
-  the `rm` guard work.
-- **Phase 6:** `wmf-sbx resume` on `vz`: the session starts under nono,
-  `mcp list` shows the servers connected, and Claude reaches the wiki
-  (`composer serve`, then `curl $MW_SERVER`). On macOS the agent's
-  paths differ, so check that the grants in `session.py` are enough.
-- **Phase 7:** the blind run (`lima-port/acceptance/`) in a contained
-  sandbox on `vz`.
-- **Track A (A1):** the D11 measurements on macOS QEMU with HVF:
-  `restrict=on`, the `cmd:` guestfwd, slirp DNS, and that virtiofs is
-  not available (so the mounts are 9p there too).
-- **Track B (B1):** method B on macOS with `vmType: qemu` and HVF, the
-  seven success checks, and real times.
-- **D12, optional:** APFS `cp -c` (clonefile) copies of a stopped raw
-  golden disk into a `vz` instance's `disk`.
+cananian works on Linux, so every macOS item is in `sbx/MACOS.md`: the
+steps for a person with a Mac (Kosta Harlan, for one), what each step
+checks and what is not covered yet, and what macOS still lacks
+(copy-on-write disks and the egress proxy on `vz`). Each item is also
+named in its phase.
 
 ### After the MVP: four tracks
 
@@ -1414,7 +1387,7 @@ clonefile option stays open for later. Decided with cananian,
 - **B1. Research and measure** (no code). **Done on Linux** (READ and
   RAN; results in the companion note): method A is refused by Lima,
   method B passes all seven checks, and H1–H4 and H6 held. macOS with
-  `vmType: qemu` waits for a Mac (TESTING-MACOS.md). The seven checks:
+  `vmType: qemu` waits for a Mac (`sbx/MACOS.md`). The seven checks:
   - the backing file survives create and start;
   - a fresh `disk` is MB, not GB;
   - the guest boots, and the shell, mounts and SSH work;

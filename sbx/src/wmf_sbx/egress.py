@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """The host egress proxy for a QEMU sandbox behind `restrict=on`
-(lima-port/PLAN-SUDO.md, A2.2; HANDOFF-LIMA.md D11).
+(README.md, Architecture; HANDOFF-LIMA.md D11).
 
 The guest has no route and no DNS. Its one way out is a QEMU `guestfwd`
 at EGRESS_ADDR:EGRESS_PORT, which the QEMU wrapper
@@ -405,7 +405,7 @@ def guest_provision(name=None, env=None):
     (Lima's propagateProxyEnv is off), apt's and git's proxy, and glibc
     straight to the fake-address resolver over TCP (`use-vc`).
     systemd-resolved would try UDP first and go to TCP only after
-    timeouts (A2.0 item 9), so it is masked."""
+    timeouts (NOTES, A2.0 item 9), so it is masked."""
     lines = ["# The host egress proxy (egress.py).",
              f"sed -i '/^{ENV_BEGIN}$/,/^{ENV_END}$/d' /etc/environment",
              "cat >> /etc/environment <<'WMF_SBX_ENV'", ENV_BEGIN]

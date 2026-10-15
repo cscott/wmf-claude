@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PLAN-SUDO A2.0 item 7: the QEMU wrapper and the host egress proxy
+# A2.0 item 7 (sbx/NOTES.md, "The egress proxy and `--sudo`"): the QEMU wrapper and the host egress proxy
 # (sbx/bin/wmf-sbx-qemu, sbx/src/wmf_sbx/egress.py) on a host that is not
 # itself a VM: Linux with KVM, or macOS with HVF. Items 2, 6 and 8 again,
 # plus the guest's clock. In the nested dev VM they passed (sbx/NOTES.md,

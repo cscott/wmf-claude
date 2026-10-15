@@ -215,10 +215,12 @@ with the size and never the text, is
 - Only behind the egress proxy, for now (not `vz` or
   `--no-egress-proxy`). A sandbox made before this gets it when made
   again.
-- Copy only. To paste into Claude Code, use Ctrl+V, Ctrl+Shift+V or
-  Shift+middle click: the terminal sends the text. A plain middle click
-  pastes nothing, because Claude Code takes the click and reads the
-  clipboard itself, which the sandbox cannot see. There is no paste
+- Copy only. To paste into Claude Code, use the terminal's own paste:
+  Ctrl+Shift+V or Shift+middle click in GNOME Terminal. A plain middle
+  click pastes nothing, because Claude Code takes the click and reads
+  the clipboard itself, which the sandbox cannot see. (GNOME Terminal
+  sends Ctrl+V to the program, as in a shell; a terminal that pastes on
+  Ctrl+V works there too.) There is no paste
   channel on purpose: it would let the VM read your clipboard (your
   passwords too), and a step to approve each read would be more work
   than the Shift key.

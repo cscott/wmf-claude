@@ -523,12 +523,15 @@ Open questions:
   copy with no code.
 - Paste: DECIDED (cananian 2026-10-15): not built. A read channel lets
   the VM read the host's clipboard, and an approval step for each read
-  would be more intrusive than pressing Shift. Ctrl+V, Ctrl+Shift+V and
-  Shift+middle click paste through the terminal (RAN by the engineer);
-  only a plain middle click does not. sbx/README.md "Copy" says so.
+  would be more intrusive than pressing Shift. The terminal's own paste
+  (Ctrl+Shift+V, Shift+middle click in GNOME Terminal) works (RAN by the
+  engineer); a plain middle click does not. GNOME Terminal sends Ctrl+V
+  to the program, as in a shell. sbx/README.md "Copy" says so.
 - The pastejacking note in "Security notes" applies as written. A
   per-write desktop notification would also show a write that the
   engineer did not make.
 - Claude Code has no setting for a clipboard command (the probe list
   above is fixed in the code). A feature request for one (for example
   an env var naming a copy command) would remove the name squatting.
+  Filed by the engineer: https://github.com/anthropics/claude-code/issues/102454
+  (2026-10-15).

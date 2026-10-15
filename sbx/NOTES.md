@@ -254,6 +254,8 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
   alone: it saves one line, slirp accepts at once, Claude Code kills the shim after 2 s,
   and a new package changes the image's cache key, so every host rebuilds the image. It
   may be worth it for paste (`session.native_paste`) or for the no-egress case.
+  Upstream, a setting that names the copy command would replace the fake `wl-copy`:
+  https://github.com/anthropics/claude-code/issues/102454 (filed 2026-10-15).
 
 - [ ] **Copy without the egress proxy** (a task for someone else; cananian 2026-10-15
   will not work on it). Today copy needs the egress proxy's guestfwd to `clip.sock`.
@@ -263,8 +265,8 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
   settled (the egress proxy is the more secure design), which would make this moot.
 - **Paste: not built, on purpose** (cananian 2026-10-15). A paste channel lets the VM
   read the host's clipboard, and a step to approve each read would be more intrusive
-  than the workaround: Ctrl+V, Ctrl+Shift+V and Shift+middle click paste through the
-  terminal; only a plain middle click does not (README "Copy").
+  than the workaround: the terminal's own paste (Ctrl+Shift+V, Shift+middle click in
+  GNOME Terminal) works; a plain middle click does not (README "Copy").
 
 ### From the design documents
 
@@ -327,6 +329,45 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
   branch with the fewest commits to the sandbox branch (`git rev-list --count
   origin/X..NAME/BRANCH`), master on a tie, said aloud, with an option (`--onto
   REL1_46`) to name it.
+
+  **Plan (cananian 2026-10-15): a `git sbx` command, `git sbx pull` and `git sbx push`,
+  which DWIM by default.** The upstream (`branch.B.remote`/`merge`) stays on Gerrit, for
+  `git pull` and `git review`, release branches too. A branch that `git sbx` touched
+  gets its own config, `branch.B.wmfsbx = NAME` (and `branch.B.wmfsbxBranch` when the
+  sandbox's branch has another name), which no git command reads. Host side, in
+  `sbx/bin/git-sbx` and a `wmf_sbx` module, as the other `sbx/bin` commands.
+  - `git sbx pull [NAME[/BRANCH]] [--onto GERRIT_BRANCH] [--force]`. Which sandbox:
+    the argument, else `branch.B.wmfsbx`, else the only sandbox with a remote in this
+    repo (`wmf-sbx-ls-remotes --path`), else stop and list them. Which branch: the
+    argument, else the recorded one, else the branch checked out in the sandbox (its
+    `HEAD`, which upload-pack advertises). It fetches `NAME` (as `git fetch NAME` does
+    now), then: on a branch recorded for that sandbox branch, moves it to the new tip;
+    else makes or switches to a local branch of the sandbox branch's name, with the
+    upstream from `--onto` or the guess above (said aloud). Gates: a dirty tree stops
+    it; moving past local commits needs them to be in the new tip, in the old sandbox
+    tip (the remote-tracking ref's reflog: the agent amends), or on Gerrit
+    (`git-review-check`); else `--force`. A local branch of that name with another
+    record, or none, is not taken: stop and say so.
+  - `git sbx push [NAME[/BRANCH]] [--force]`: gives the current branch to the sandbox,
+    for example a change from `git review -d`. The host still writes nothing into the
+    VM, and the helper stays fetch-only: the agent's clone sees the host's `.git` as
+    the read-only `local` remote, so `push` runs, as the agent, `wmf-sbx exec NAME --
+    git -C PATH fetch local B:refs/heads/BRANCH`. git refuses a non-fast-forward
+    without `--force` (passed as `+`), and always refuses the branch checked out in the
+    sandbox: then it says so, for the agent to `git fetch local` itself. It records
+    `branch.B.wmfsbx`. DWIM of NAME as for pull.
+  - Both need the VM running (`wmf-sbx start NAME`), and say so if it is not.
+  - `wmf-sbx rm NAME` unsets `branch.*.wmfsbx` entries that name the sandbox, as
+    `git remote remove` does for upstreams: a later sandbox of the same name is a
+    different one.
+  - Bash completion (`_git_sbx`): subcommands, sandbox names, then the `NAME/` branch
+    names from `refs/remotes/NAME/*`. Open: where the host install puts it.
+  - Open: should `git safe-reset NAME/BRANCH` keep its DWIM checkout (which tracks the
+    sandbox), or stop and point at `git sbx pull`?
+  - READ 2026-10-15, why upstreams to a sandbox seemed to vanish: `wmf-sbx rm` runs
+    `git remote remove NAME` (remotes.py), which deletes `refs/remotes/NAME/*` and
+    unsets `branch.*.remote`/`merge` for every branch that tracked NAME. The local
+    branches stay (RAN in a scratch repo). With the upstream on Gerrit this is moot.
 
 ### Upstream work and repo hygiene
 

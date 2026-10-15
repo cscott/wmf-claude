@@ -443,7 +443,8 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
     README's "Getting started" links it there and nothing edits `~/.bashrc`. One
     file does both modes, by `$SANDBOX_NAME`; the guest image does not install it
     (the agent has no TTY). The README has a "Commit flow" section, which the host
-    command's `--help` names. Open: zsh (its own `_git` and git's
+    command's `--help` names. RAN 2026-10-15 on the engineer's host: the completion
+    works. Not yet RAN: `/sbx-pull` in a new sandbox. Open: zsh (its own `_git` and git's
     `git-completion.zsh` find subcommands in different ways), and macOS bash 3.2
     (bash-completion 2 needs bash 4).
   - READ 2026-10-15, why upstreams to a sandbox seemed to vanish: `wmf-sbx rm` runs

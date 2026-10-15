@@ -1059,8 +1059,11 @@ class CreateTests(Env):
         lima = FakeLima()
         argv = ["--no-deps", "--config", self.config, "--image", self.KEY, self.repo,
                 "--name", name] + list(extra)
-        with mock.patch.object(resume_mod, "main",
-                               side_effect=lambda a, lima=None, env=None: calls.append(a) or 5):
+        def resume(a, lima=None, env=None):
+            calls.append(a)
+            sys.stderr.write("RESUME RAN\n")
+            return 5
+        with mock.patch.object(resume_mod, "main", side_effect=resume):
             rc = self.quiet(create.main, argv, lima=lima, env=self.env, build=self.fake_build,
                             inputs_fn=self.fake_inputs, prompt=lambda q: "",
                             isatty=lambda: ttys, stdout_isatty=lambda: ttys)
@@ -1072,8 +1075,16 @@ class CreateTests(Env):
         # the name is free for the session's time
         self.assertNotIn("demo", state_mod.reserved_names(self.env))
 
+    def test_the_ready_block_comes_after_the_session(self):
+        # RAN 2026-10-15: printed before it, the block scrolled away, and
+        # the last line was Claude Code's `claude --resume UUID`.
+        self.start_create(ttys=True)
+        self.assertLess(self.err.index("RESUME RAN"), self.err.index("Sandbox demo is ready"))
+        self.assertTrue(self.err.rstrip().endswith("the agent's work"), self.err[-200:])
+
     def test_create_does_not_start_one_in_a_script(self):
         self.assertEqual(self.start_create(), (0, []))
+        self.assertIn("Sandbox demo is ready", self.err)
 
     def test_start_and_no_start_win(self):
         self.assertEqual(self.start_create("--no-start", ttys=True), (0, []))

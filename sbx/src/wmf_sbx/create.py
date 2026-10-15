@@ -1070,26 +1070,35 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
                                     f"these repos is cold."), file=sys.stderr)
 
     gc_old_images(key, env, config, say)
-    print(f"\nSandbox {name} is ready (Lima instance {vm_mod.instance_name(name)}).\n"
-          f"  wmf-sbx resume {name}          start Claude Code in it\n"
-          f"  wmf-sbx exec {name} -- CMD     run a command as the agent\n"
-          f"  wmf-sbx status {name}          check it\n"
-          f"  wmf-sbx stop|start {name}\n"
-          f"  wmf-sbx rm {name}\n"
-          + ("" if not args.remotes else
-             f"  git fetch {name}               (on the host, in a repo) the agent's work\n"),
-          file=sys.stderr, end="")
     start = args.start if args.start is not None else (
         interactive and (stdout_isatty or sys.stdout.isatty)())
     if not start:
+        _print_ready(name, args.remotes)
         return 0
     # The name is the sandbox's now; the session can be long.
     if reservation is not None:
         reservation.close()
     from . import resume as resume_mod
     say(f"\n+ wmf-sbx resume {name}   (--no-start: do not)")
-    return resume_mod.main([name], lima=lima, env=env)
+    # The block comes after the session, as the last thing on the terminal,
+    # not Claude Code's `claude --resume UUID`, which is not how to resume
+    # a sandbox.
+    try:
+        return resume_mod.main([name], lima=lima, env=env)
+    finally:
+        _print_ready(name, args.remotes)
 
+
+def _print_ready(name, remotes):
+    print(f"\nSandbox {name} is ready (Lima instance {vm_mod.instance_name(name)}).\n"
+          f"  wmf-sbx resume {name}          start Claude Code in it\n"
+          f"  wmf-sbx exec {name} -- CMD     run a command as the agent\n"
+          f"  wmf-sbx status {name}          check it\n"
+          f"  wmf-sbx stop|start {name}\n"
+          f"  wmf-sbx rm {name}\n"
+          + ("" if not remotes else
+             f"  git fetch {name}               (on the host, in a repo) the agent's work\n"),
+          file=sys.stderr, end="")
 
 if __name__ == "__main__":
     sys.exit(main())

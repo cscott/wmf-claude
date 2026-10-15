@@ -46,20 +46,26 @@ REMOTE="$1"
 #     directory as this script when running from a checkout) is the
 #     standalone tool that does that state-file lookup; git-review-check
 #     just asks it whether REMOTE is in the list.
-is_local_check_target() {
-    if [ "$1" = "local" ]; then
-        [ -n "$SANDBOX_NAME" ] && return 0
-        return 1
-    fi
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
+# The sandbox remotes wmf-sbx registered for this repo, one per line.
+sandbox_remotes() {
     LS_REMOTES=""
-    SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
     if [ -x "$SCRIPT_DIR/wmf-sbx-ls-remotes" ]; then
         LS_REMOTES="$SCRIPT_DIR/wmf-sbx-ls-remotes"
     else
         LS_REMOTES=$(command -v wmf-sbx-ls-remotes 2>/dev/null)
     fi
     [ -n "$LS_REMOTES" ] || return 1
-    "$LS_REMOTES" --path "$REPO_ROOT" 2>/dev/null | grep -Fqx -- "$1"
+    "$LS_REMOTES" --path "$REPO_ROOT" 2>/dev/null
+}
+
+is_local_check_target() {
+    if [ "$1" = "local" ]; then
+        [ -n "$SANDBOX_NAME" ] && return 0
+        return 1
+    fi
+    sandbox_remotes | grep -Fqx -- "$1"
 }
 
 if [ -n "$REMOTE" ] && is_local_check_target "$REMOTE"; then
@@ -77,6 +83,26 @@ if [ -n "$REMOTE" ] && is_local_check_target "$REMOTE"; then
         echo "Not yet reachable from '$REMOTE':" >&2
         echo "$HASH $SUBJECT" >&2
         exit 1
+    fi
+fi
+
+# Whatever REMOTE is: HEAD is safe when the agent of a sandbox of this
+# repo has it, as a sandbox branch (refs/remotes/NAME/*) or as a hand-off
+# it took (refs/remotes/NAME-seen/*, which `git sbx-pull` fetches from the
+# guest's refs/sbx/seen/*). So `git safe-reset` after a hand-off does not
+# complain (sbx/NOTES.md, the commit-flow plan). No fetch here: these
+# refs are as of the last `git remote update` or `git sbx-pull`. Inside a
+# sandbox there are no sandbox remotes, and this finds nothing.
+AGENT_REFS=()
+while read -r R; do
+    [ -n "$R" ] && AGENT_REFS+=("refs/remotes/$R/" "refs/remotes/$R-seen/")
+done < <(sandbox_remotes)
+if [ "${#AGENT_REFS[@]}" -gt 0 ]; then
+    MATCH=$(git for-each-ref --contains=HEAD --format='%(refname)' --count=1 \
+        "${AGENT_REFS[@]}" 2>/dev/null)
+    if [ -n "$MATCH" ]; then
+        echo "HEAD is in a sandbox (${MATCH#refs/remotes/})"
+        exit 0
     fi
 fi
 

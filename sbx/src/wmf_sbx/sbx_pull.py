@@ -317,9 +317,12 @@ def guess_upstream(git, new):
     return min(rows, key=lambda r: (r[0], rank.get(r[1], 2), r[1]))[1]
 
 
-def choose_upstream(git, entry, branch, new, onto, sandbox_upstream_fn):
+def choose_upstream(git, entry, branch, new, onto, sandbox_upstream_fn, remotes=()):
     """(upstream, why) for a new local branch, e.g. ("origin/master",
-    "the sandbox branch's upstream")."""
+    "the sandbox branch's upstream"). Never a branch of a sandbox remote
+    (`remotes`): the old `git safe-reset NAME/BRANCH` made such branches."""
+    def on_gerrit(up):
+        return up and up.partition("/")[0] not in remotes
     if onto:
         name = onto[len("origin/"):] if onto.startswith("origin/") else onto
         if not git.sha(f"refs/remotes/origin/{name}"):
@@ -333,13 +336,13 @@ def choose_upstream(git, entry, branch, new, onto, sandbox_upstream_fn):
     if up.startswith("refs/remotes/local/"):
         host = up[len("refs/remotes/local/"):]
         hu = git.out("for-each-ref", "--format=%(upstream:short)", f"refs/heads/{host}")
-        if hu:
+        if on_gerrit(hu):
             return hu, f"the upstream of {host}, which the sandbox branch tracks"
     # The host branch the work sits on: the nearest one with an upstream.
     best = None
     for line in git.refs("refs/heads/", "%(refname:short) %(upstream:short)"):
         name, _, hu = line.partition(" ")
-        if not hu or not git.ok("merge-base", "--is-ancestor", f"refs/heads/{name}", new):
+        if not on_gerrit(hu) or not git.ok("merge-base", "--is-ancestor", f"refs/heads/{name}", new):
             continue
         n = int(git.out("rev-list", "--count", f"refs/heads/{name}..{new}"))
         if best is None or n < best[0]:
@@ -440,13 +443,14 @@ def pull(args, env, run, sandbox_upstream_fn, gerrit_has_fn, say, cwd=None):
             say(f"{local}: at {new[:12]} ({remote}/{branch}) already")
         if args.onto:
             up, why = choose_upstream(git, entry, branch, new, args.onto,
-                                      sandbox_upstream_fn)
+                                      sandbox_upstream_fn, remotes)
             git("branch", "-q", f"--set-upstream-to={up}", local)
             say(f"{local}: upstream {up} ({why})")
     else:
         git("checkout", "-q", "--no-track", "-b", local, new)
         say(f"{local}: new branch at {new[:12]} ({remote}/{branch})")
-        up, why = choose_upstream(git, entry, branch, new, args.onto, sandbox_upstream_fn)
+        up, why = choose_upstream(git, entry, branch, new, args.onto, sandbox_upstream_fn,
+                                  remotes)
         if up:
             git("branch", "-q", f"--set-upstream-to={up}", local)
             say(f"{local}: upstream {up} ({why})")

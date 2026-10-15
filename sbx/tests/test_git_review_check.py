@@ -210,6 +210,35 @@ class LocalIshRemoteTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("No .gitreview found", result.stderr)
 
+    def test_a_commit_the_agent_has_passes_whatever_the_remote(self):
+        # A sandbox branch (refs/remotes/NAME/*) or a hand-off the agent
+        # took (refs/remotes/NAME-seen/*, fetched by git sbx-pull).
+        self.register_sandbox_remote("sbx-p", "sbx-p")
+        commit(self.repo, "LOCAL", "handed off")
+        for ref in ("refs/remotes/sbx-p/fix-thing", "refs/remotes/sbx-p-seen/fix-thing"):
+            with self.subTest(ref=ref):
+                git(self.repo, "update-ref", ref, "HEAD")
+                for args in ((), ("origin",)):
+                    result = self.run_script(*args)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn(f"HEAD is in a sandbox ({ref[len('refs/remotes/'):]})",
+                                  result.stdout)
+                git(self.repo, "update-ref", "-d", ref)
+
+    def test_a_commit_the_agent_does_not_have_goes_to_gerrit(self):
+        self.register_sandbox_remote("sbx-p", "sbx-p")
+        git(self.repo, "update-ref", "refs/remotes/sbx-p/fix-thing", "HEAD")
+        commit(self.repo, "LOCAL", "not handed off")
+        result = self.run_script("origin")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("No .gitreview found", result.stderr)
+
+    def test_an_unregistered_remotes_refs_do_not_count(self):
+        git(self.repo, "update-ref", "refs/remotes/sbx-p/fix-thing", "HEAD")
+        result = self.run_script()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("No .gitreview found", result.stderr)
+
     def test_no_remote_argument_keeps_the_original_gerrit_only_behavior(self):
         result = self.run_script()
         self.assertEqual(result.returncode, 1)
@@ -273,6 +302,22 @@ class SafeResetAgainstSandboxRemoteTests(unittest.TestCase):
         result = self.run_script("sandbox-mw-cite")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("Not uploaded to Gerrit", result.stderr)
+
+    def test_a_sandbox_branch_goes_to_git_sbx_pull(self):
+        git(self.repo, "config", "remote.sandbox-mw-cite.wmfSbxSandbox", "mw-cite")
+        git(self.far, "checkout", "-q", "-b", "fix-thing")
+        tip = commit(self.far, "FIX", "agent work")
+        for args in (("sandbox-mw-cite/fix-thing",), ("sandbox-mw-cite", "fix-thing")):
+            with self.subTest(args=args):
+                git(self.repo, "checkout", "-q", "master")
+                result = self.run_script(*args)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("warning: sandbox-mw-cite is a sandbox; running "
+                              "`git sbx-pull sandbox-mw-cite/fix-thing`", result.stderr)
+                self.assertNotIn("Resetting", result.stdout)
+                self.assertEqual(git(self.repo, "rev-parse", "fix-thing").stdout.strip(), tip)
+                self.assertEqual(git(self.repo, "config", "branch.fix-thing.wmfsbx")
+                                 .stdout.strip(), "mw-cite")
 
 
 if __name__ == "__main__":

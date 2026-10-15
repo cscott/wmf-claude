@@ -424,8 +424,11 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
     re-points the upstream; a bare pull takes the only new branch of *all* the
     sandboxes, not only of a sole sandbox; a branch at its `wmfsbxSha` may be left
     (it is what was pulled). The Gerrit check is in Python (`gerrit_has`, the same
-    query as `git-review-check`). Still to build: `git-review-check` and `git
-    safe-reset`, guest mode and the skill, the completion and the README.
+    query as `git-review-check`). A host branch's upstream on a sandbox remote is
+    never passed on. Then `git-review-check` (HEAD in `refs/remotes/NAME/*` or
+    `NAME-seen/*`) and `git safe-reset NAME/BRANCH` (or `NAME BRANCH`; a bare `NAME`
+    still resets to its master). Still to build: guest mode and the skill, the
+    completion and the README.
   - READ 2026-10-15, why upstreams to a sandbox seemed to vanish: `wmf-sbx rm` runs
     `git remote remove NAME` (remotes.py), which deletes `refs/remotes/NAME/*` and
     unsets `branch.*.remote`/`merge` for every branch that tracked NAME. The local

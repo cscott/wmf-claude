@@ -337,6 +337,17 @@ class PullTests(unittest.TestCase):
         self.assertIn("the upstream of review/someone/1354096, which the work sits on",
                       self.said())
 
+    def test_a_sandbox_remote_is_never_the_upstream(self):
+        # master tracks the sandbox, as the old `git safe-reset NAME/BRANCH` left it.
+        sb = self.sandbox("sbx-p")
+        git(self.host, "fetch", "-q", "sbx-p")
+        git(self.host, "branch", "-q", "--set-upstream-to=sbx-p/master", "master")
+        git(sb, "checkout", "-q", "--no-track", "-b", "fix-thing")
+        commit(sb, "agent work")
+        self.assertEqual(self.pull(), 0, self.said())
+        self.assertEqual(self.upstream("fix-thing"), "origin/master")
+        self.assertIn("a guess", self.said())
+
     def test_onto(self):
         sb = self.sandbox("sbx-p")
         self.agent_branch(sb, "fix-thing")

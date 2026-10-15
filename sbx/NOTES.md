@@ -417,6 +417,15 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
     macOS (Homebrew `bash-completion@2`; zsh is the default shell there, and zsh's git
     completion is another mechanism).
   - Open: whether Claude Code takes `/sbx-pull` for the plugin's `/wmf-claude:sbx-pull`.
+  - Built (2026-10-15): the host side, `sbx/src/wmf_sbx/sbx_pull.py` (tests:
+    `test_wmf_sbx_sbx_pull.py`, real repos), and `wmf-sbx rm`'s clean-up
+    (`remotes.forget_pulls`: the records and `refs/remotes/NAME-seen/*`). Differences
+    from the plan: `--onto` comes first, not last, and on a branch that exists it
+    re-points the upstream; a bare pull takes the only new branch of *all* the
+    sandboxes, not only of a sole sandbox; a branch at its `wmfsbxSha` may be left
+    (it is what was pulled). The Gerrit check is in Python (`gerrit_has`, the same
+    query as `git-review-check`). Still to build: `git-review-check` and `git
+    safe-reset`, guest mode and the skill, the completion and the README.
   - READ 2026-10-15, why upstreams to a sandbox seemed to vanish: `wmf-sbx rm` runs
     `git remote remove NAME` (remotes.py), which deletes `refs/remotes/NAME/*` and
     unsets `branch.*.remote`/`merge` for every branch that tracked NAME. The local

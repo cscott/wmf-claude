@@ -486,9 +486,11 @@ host app; the log line in
 session and paste again (the host's `wl-copy` keeps the selection).
 Result: it works.
 
+RAN on the engineer's host (2026-10-15): the same, in a sandbox made with
+`wmf-sbx create --sudo`. Result: it works.
+
 Still to RAN, on the engineer's host:
 
-- end to end, as above, in a `--sudo` sandbox;
 - QUnit (karma's Chrome) and Cypress in a session with
   `WAYLAND_DISPLAY=wmf-sbx` set: a Chromium that picks its platform by
   that variable would look for a compositor. Headless Chrome uses no

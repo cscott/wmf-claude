@@ -54,7 +54,10 @@ valid_name() { [[ "$1" =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ && "$1" != *..* ]
 
 [[ "$VM" =~ ^[A-Za-z0-9_.-]+$ ]] || die "WMF_CLAUDE_VM='$VM' is not a valid instance name"
 
-vm_exists() { limactl list --format '{{.Name}}' 2>/dev/null | grep -qx "$VM"; }
+# grep reads the whole list, no -q: with pipefail, an early exit would let
+# a later line hit a closed pipe, and Go exits limactl on SIGPIPE, so the
+# check would fail at random whenever another VM is listed after this one.
+vm_exists() { limactl list --format '{{.Name}}' 2>/dev/null | grep -Fx "$VM" >/dev/null; }
 vm_status() { limactl list --format '{{.Status}}' "$VM" 2>/dev/null || true; }
 require_running() {
   vm_exists || die "VM '$VM' does not exist; create it: bin/wmf-claude-vm create"

@@ -622,6 +622,14 @@ How `bin/wmf-claude-vm` builds its boundary. The user guide is
   engineer's subordinate range, so those writes fail or leave files the agent
   cannot touch. Mapping the agent's UID into another user's subuid range works
   but is fragile.
+- **PHP and MariaDB in the guest** (`lima/guest-dev-stack.sh`, run as root
+  by `guest-install.sh`): Debian packages only. MariaDB runs as `mysql`,
+  bound to 127.0.0.1, and a wiki user with a fixed password has rights on
+  the wiki database only; root keeps `unix_socket` authentication, which
+  only OS root passes. `--local-db` opens TCP 3306 to a session as on the
+  host, but the agent reaches the socket in any session (nono does not
+  mediate AF_UNIX on Linux) and reads the password in `LocalSettings.php`.
+  The database is test data inside the VM; the control is the VM.
 - **`--docker`.** `lima/guest-claude.sh` starts `bin/launch-docker-broker` as
   `engineer` for the workspace's `docker-compose.yml`, publishes the
   `{port, token}` handshake in `/run/wmf-claude/` (mode 0640, group

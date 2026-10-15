@@ -11,7 +11,9 @@
 #      host, which the VM cannot reach). /opt/wmf-claude is a symlink to it,
 #      swapped after the build. The agent reads the tree and writes one file
 #      in it: gerrit-mcp-server/server.log.
-#   3. The agent: Claude Code from the official installer, then
+#   3. PHP, Composer and MariaDB (lima/guest-dev-stack.sh, as root), so
+#      PHPUnit and the maintenance scripts run in the VM as on the host.
+#   4. The agent: Claude Code from the official installer, then
 #      bin/wmf-claude-setup with WMF_CLAUDE_SKIP_BUILD=1. That pulls the nono
 #      base pack, asks for the Phabricator username and registers the MCP
 #      servers, all as `agent`.
@@ -114,6 +116,12 @@ else
   ok "nftables.service no longer flushes the ruleset on stop"
 fi
 
+# PHP, Composer and MariaDB, for PHPUnit without Docker. Root runs the
+# script from the new tree, which the agent cannot write.
+step "PHP, Composer and MariaDB"
+dev_stack=$(sudo bash "$NEW/lima/guest-dev-stack.sh" | tail -n1)
+ok "$dev_stack"
+
 # Contained VM: the network phase script, root-owned, and the unit that loads the
 # recorded phase at boot, before the network starts. A copy outside
 # /opt/wmf-claude, which the engineer owns: root runs it.
@@ -144,7 +152,7 @@ UNIT
   ok "wmf-claude-contained-net installed; phase: $(sudo /usr/local/sbin/wmf-claude-contained-net status)"
 fi
 
-# 3. The agent. Claude Code's official installer puts the binary in
+# 4. The agent. Claude Code's official installer puts the binary in
 # ~/.local/bin. It is not pinned or checksummed; accepted for now, and noted
 # in docs/lima-vm.md.
 step "Claude Code for $AGENT"

@@ -207,6 +207,57 @@ elif [[ "$r" =~ ^(EPERM|EACCES|ECONNREFUSED|TIMEOUT)$ ]]; then pass "with --open
 else fail "with --open-port 443: probe did not run: $r"; fi
 
 echo ""
+echo "--- PHP and MariaDB ---"
+phpv=$(ga php -r 'echo PHP_VERSION;' 2>/dev/null | tr -d '\r')
+if [[ "$phpv" =~ ^8\.[3-9] ]]; then pass "php $phpv as the agent"
+else fail "php as the agent: '${phpv:-missing}', want 8.3 or newer"; fi
+if ga composer --version >/dev/null 2>&1; then pass "composer as the agent"
+else fail "composer missing for the agent"; fi
+listen=$(g ss -H -ltn 'sport = :3306' 2>/dev/null | awk '{print $4}' | tr -d '\r' | sort -u | tr '\n' ' ')
+if [[ "$listen" == "127.0.0.1:3306 " ]]; then pass "MariaDB listens on 127.0.0.1:3306 only"
+else fail "MariaDB listens on '${listen:-nothing}', want 127.0.0.1:3306 only"; fi
+if ga mariadb -h 127.0.0.1 -u wikiuser -pwikipass -e 'SELECT 1' wikidb >/dev/null 2>&1; then pass "agent: wikiuser connects over TCP"
+else fail "agent: wikiuser cannot connect over TCP"; fi
+if ga mariadb -u root -e 'SELECT 1' >/dev/null 2>&1; then fail "agent can use the MariaDB root account"
+else pass "agent cannot use the MariaDB root account"; fi
+# In nono, 3306 answers with the grant --local-db makes, and not without.
+# A raw connect first, which tells a nono deny from a client problem (the
+# server speaks first, so recv proves it is mariadbd); then the client,
+# whose error the failure message shows.
+DB_PROBE='
+import socket, errno
+try:
+    s = socket.create_connection(("127.0.0.1", 3306), timeout=5)
+    s.recv(1)
+    s.close()
+    print("CONNECTED")
+except OSError as e:
+    print(errno.errorcode.get(e.errno, str(e)))
+'
+# From the agent's work directory: with no XDG_RUNTIME_DIR, nono resolves
+# the base profile's $XDG_RUNTIME_DIR/cc-socks grant against the cwd, and
+# the engineer's home is closed to the agent.
+raw=$(ga bash -c '
+  cd /home/agent/work
+  n() { nono run --silent --profile /opt/wmf-claude/profiles/wmf-engineer.json --workdir /home/agent/work "$@"; }
+  printf "granted=%s ungranted=%s\n" \
+    "$(n --open-port 3306 -- python3 -c "$1" 2>&1 | tail -n1)" \
+    "$(n -- python3 -c "$1" 2>&1 | tail -n1)"' _ "$DB_PROBE" | tr -d '\r')
+if [[ "$raw" == "granted=CONNECTED ungranted="* && "$raw" != "granted=CONNECTED ungranted=CONNECTED" ]]; then
+  pass "in nono: TCP 3306 connects with the --local-db grant, not without ($raw)"
+else fail "in nono: TCP 3306: $raw, want granted=CONNECTED and an ungranted deny"; fi
+# --batch: one value per line whether or not a terminal is attached (limactl
+# shell may attach one, and the client then draws a table). The exit code
+# is information only: nono's own code is not the child's in every mode.
+client=$(ga bash -c '
+  cd /home/agent/work
+  nono run --silent --profile /opt/wmf-claude/profiles/wmf-engineer.json --workdir /home/agent/work --open-port 3306 \
+    -- mariadb -h 127.0.0.1 -u wikiuser -pwikipass --batch --skip-column-names -e "SELECT 42" wikidb 2>&1
+  echo "rc=$?"' | tr -d '\r' | tail -n2 | tr '\n' ' ')
+if [[ "$client" == "42 rc="* ]]; then pass "in nono: the mariadb client reaches wikidb with the grant (nono ${client#42 })"
+else fail "in nono: the mariadb client with the grant said: '$client'"; fi
+
+echo ""
 echo "--- push / pull round trip ---"
 NAME="smoke-$$"
 SRC=$(mktemp -d)

@@ -37,7 +37,8 @@
     "read": [
       "~/.local/state/fnm_multishells",
       "~/.local/state/claude/locks",
-      "~/.agents/skills"
+      "~/.agents/skills",
+      "/etc/php"
     ],
     "deny": [
       "~/.ssh",

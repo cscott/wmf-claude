@@ -717,11 +717,21 @@ class ResumeMainTests(Env):
         orig = self.lima.call
 
         self.interactive = []
+        # The guest's saved conversation (resume.has_conversation): none
+        # until a session ran; then one, as if a message had been sent.
+        # None: the check fails.
+        self.conversation = False
 
         def call(*args, **kw):
             self.inputs.append(kw.get("input"))
+            if args[0] == "shell" and any("*.jsonl" in str(a) for a in args):
+                self.lima.calls.append(("call",) + args)
+                rc = {True: 0, False: 1, None: 255}[self.conversation]
+                return Done(returncode=rc)
             if kw.get("interactive"):
                 self.interactive.append(("call",) + args)
+                if self.conversation is False:
+                    self.conversation = True
             return orig(*args, **kw)
         self.lima.call = call
 
@@ -878,6 +888,42 @@ class ResumeMainTests(Env):
         self.assertEqual(cm.exception.code, 2)
         self.assertIn("--open-port=PORT", self.err)
         self.assertEqual(self.lima.calls, [])
+
+    def test_no_continue_when_the_last_session_saved_no_conversation(self):
+        # RAN 2026-10-15: a session exited before any message, then the
+        # next resume said "No conversation found to continue".
+        self.resume()
+        self.assertTrue(state_mod.load("demo", self.env)["attached"])
+        check = self.lima.call
+
+        def none_saved(*args, **kw):
+            if args[0] == "shell" and any("*.jsonl" in str(a) for a in args):
+                return Done(returncode=1)
+            return check(*args, **kw)
+        self.lima.call = none_saved
+        self.resume()
+        self.assertEqual(self.launcher_and_claude()[1], ())
+
+    def test_a_conversation_is_continued_after_an_unclean_exit_too(self):
+        st = state_mod.load("demo", self.env)
+        self.assertFalse(st.get("attached"))
+        self.conversation = True
+        self.resume()
+        self.assertEqual(self.launcher_and_claude()[1], ("--continue",))
+
+    def test_a_failed_check_falls_back_to_the_attached_flag(self):
+        self.conversation = None
+        self.resume()
+        self.assertEqual(self.launcher_and_claude()[1], ())
+        self.resume()
+        self.assertEqual(self.launcher_and_claude()[1], ("--continue",))
+
+    def test_project_dir_is_claude_codes(self):
+        self.assertEqual(resume.project_dir("/home/c/Projects/Wikimedia/Extensions/Translate"),
+                         "/home/agent/.claude/projects/"
+                         "-home-c-Projects-Wikimedia-Extensions-Translate")
+        self.assertEqual(resume.project_dir("/h/wmf-claude/x.y_z"),
+                         "/home/agent/.claude/projects/-h-wmf-claude-x-y-z")
 
     def test_info_commands_do_not_mark_it_attached(self):
         self.resume("--", "mcp", "list")

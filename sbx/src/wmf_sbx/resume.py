@@ -17,11 +17,13 @@ sandbox starts Claude Code with bin/launch-claude.sh, so it takes no
 LAUNCHER-FLAGs.
 
 `--continue` passes Claude Code `--continue`, and `--no-continue` starts
-a new conversation. With neither, a sandbox that has had a conversation
-gets `--continue` when there are no CLAUDE-ARGs. The sandbox has had one
-once an interactive session in it has exited cleanly; the first session
-that does not (a closed terminal, a host that slept) leaves that unknown,
-and `--continue` then picks it up.
+a new conversation. With neither, and no CLAUDE-ARGs, `--continue` is
+passed when Claude Code has a saved conversation in the primary
+workspace: a transcript in the agent's ~/.claude/projects/
+(has_conversation). Claude Code saves one only after a message, so a
+session exited at once leaves none. If the check fails, the sandbox's
+`attached` flag decides: set when an interactive session exited
+cleanly.
 
 The credential stays on the host (track L, credproxy.py): $ANTHROPIC_API_KEY,
 $CLAUDE_CODE_OAUTH_TOKEN, the file ~/.config/wmf-sbx/claude-oauth-token
@@ -34,6 +36,7 @@ VM.
 
 import argparse
 import os
+import re
 import sys
 
 from . import cli as cli_mod
@@ -99,6 +102,30 @@ def claude_args_for(cont, claude_args, attached):
     return claude_args
 
 
+def project_dir(cwd):
+    """Claude Code's transcript directory for a working directory:
+    ~/.claude/projects/ and the path with every character but a letter or
+    a digit made `-` (RAN: /home/cananian/Projects/Wikimedia/Extensions/
+    Translate is -home-cananian-Projects-Wikimedia-Extensions-Translate)."""
+    return f"{vm_mod.AGENT_HOME}/.claude/projects/{re.sub(r'[^A-Za-z0-9]', '-', cwd)}"
+
+
+def has_conversation(name, cwd, lima):
+    """True when the agent has a saved conversation in `cwd` (a transcript
+    in project_dir), False when it has none, None when the check failed.
+    Claude Code saves one only once a message was sent: a session that
+    ended cleanly with none leaves nothing to --continue (RAN 2026-10-15:
+    "No conversation found to continue" after a create that started a
+    session that was exited at once)."""
+    try:
+        res = vm_mod.shell(name, vm_mod.agent_argv(
+            ["sh", "-c", 'for f in "$1"/*.jsonl; do [ -s "$f" ] && exit 0; done; exit 1',
+             "_", project_dir(cwd)], workdir="/tmp"), lima=lima, check=False)
+    except lima_mod.LimaError:
+        return None
+    return {0: True, 1: False}.get(res.returncode)
+
+
 def set_attached(name, env=None):
     state = state_mod.load(name, env=env)
     if state is None or state.get("attached"):
@@ -121,8 +148,8 @@ def build_parser():
     parser.add_argument("--continue", dest="continue", action=argparse.BooleanOptionalAction,
                         default=None,
                         help="continue the last conversation, or (--no-continue) start a new "
-                             "one (default: continue once the sandbox has had one, when no "
-                             "CLAUDE-ARGs are given)")
+                             "one (default: continue when the sandbox has a saved "
+                             "conversation and no CLAUDE-ARGs are given)")
     parser.add_argument("name", help="the sandbox (or a path shortcut such as .)")
     parser.add_argument("rest", nargs=argparse.REMAINDER, metavar="ARGS",
                         help="[LAUNCHER-FLAG ... --] CLAUDE-ARG ...")
@@ -173,8 +200,11 @@ def main(argv=None, lima=None, env=None):
             f"$CLAUDE_CODE_OAUTH_TOKEN, {credproxy_mod.token_file(env)}, or a Claude Code "
             "login). Run `wmf-sbx login` once for all sandboxes; for now, Claude Code will "
             "ask you to log in, in this VM only."), file=sys.stderr)
-    claude_args = claude_args_for(getattr(args, "continue"), claude_args,
-                                  state.get("attached"))
+    attached = state.get("attached")
+    if getattr(args, "continue") is None and not claude_args and state.get("primaryDir"):
+        found = has_conversation(name, state["primaryDir"], lima)
+        attached = attached if found is None else found
+    claude_args = claude_args_for(getattr(args, "continue"), claude_args, attached)
     proxy = None
     try:
         cred_path = None

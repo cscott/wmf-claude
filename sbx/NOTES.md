@@ -3,7 +3,7 @@
 Open to-do items, and the decisions and findings that the code depends on
 or that future work needs. No history: `git log` has it. The design is in
 `README.md` (Architecture) and `../lima-port/HANDOFF-LIMA.md` (decisions D1
-to D12, and tracks A and B, which are not repeated here). What is open on macOS, and the
+to D12, and tracks A, B, C and L, which are not repeated here; A and B are done). What is open on macOS, and the
 tests for a Mac, are in `MACOS.md`.
 
 ## To do
@@ -99,23 +99,15 @@ cananian, 2026-10-14: small changes, to do once the blind run in a warm sandbox 
   (engineer's note: my recollection is that is already a helper
   function registered by mediawiki-phan to add an extension as a
   dependency, but no extension is using it yet.)
-- [ ] **Four core test failures, out to cananian** (B4 blind run; handoff
-  `sbx/upstream/HANDOFF-CORE.md`, 2026-10-14; one branch and one Gerrit change each):
-  (1) 11 AbuseFilter schema tests on the symlinks (`SchemaGenerator::normalizePath()`);
-  (2) api-testing `ReparseDependentPages.js`, the 18th failure (the red-link URL of Parsoid
-  read views, since core `87bc95497cb`); (3) `UndoIntegrationTest::testMcrUndoAction`, 4
-  errors with EventLogging (no title in the test's context); (4) `WikiBirthdayTest`, 2
-  failures with cldr (its `GetHumanTimestamp` hook). Record each Gerrit change and task
-  here and in `sbx/upstream/README.md`. Until each merges, MEDIAWIKI-TESTING.md names it
-  (§0 for (1), §6 item 7 for (2), §2 for (3) and (4)).
-- [ ] **MEDIAWIKI-TESTING.md, stale after the B4 blind run**: besides the four failures
-  above, the Popups `navigator` workaround (§3) is not needed with `mw-node-qunit` 7.11.0;
-  §2's list of `--testsuite=includes` failures from loaded extensions misses 8 classes
-  (`NamespaceInfoTest`, `ActionEntryPointTest::testForceSafeMode`,
-  `QueryAllSpecialPagesTest`, `WikiPageDbTest`, `SkinTemplateTest`, `MWDebugTest`,
-  `UserBlockedErrorTest`, `ParserOptionsTest`), and `SignatureValidatorTest` failed with cldr
-  loaded too; §3's Translate `UnusedPluginSuppression` example holds only without Elastica.
-  The report: `lima-port/acceptance/` run of 2026-10-14.
+- [ ] **Four core test failures, in review** (B4 blind run; handoff
+  `sbx/upstream/HANDOFF-CORE.md`): (1) 11 AbuseFilter schema tests on the symlinks,
+  Gerrit 1355223; (2) api-testing `ReparseDependentPages.js`, Gerrit 1355226 (the test)
+  and 1355227 (`$wgUsePathInfo` in DevelopmentSettings); (3)
+  `UndoIntegrationTest::testMcrUndoAction` with EventLogging, Gerrit 1355229; (4)
+  `WikiBirthdayTest` with cldr, Gerrit 1355230. MEDIAWIKI-TESTING.md names each one and its
+  change (§0, §2, §6 item 7). **Deferred until they merge** (cananian, 2026-10-15): then
+  take each failure out of MEDIAWIKI-TESTING.md, run the blind acceptance run again, and
+  delete HANDOFF-CORE.md.
 - [ ] **Generate the testing section of `~/.claude/CLAUDE.md` per sandbox**: name each repo's real entry points (composer/npm scripts,
   Jest wiring, `tests/` dirs, `QUnitTestModule`, `tests/parser/*.txt`) and say which runners do
   not apply.
@@ -139,7 +131,16 @@ cananian, 2026-10-14: small changes, to do once the blind run in a warm sandbox 
   `mr_default_target_self` (anonymous callers see `None`).
 - [ ] **Full GitLab project listing with an on-disk cache, plus recorded-response fixtures**.
 
-### Lima, QEMU and the disks (track B)
+### Lima, QEMU and the disks
+
+Copy-on-write disks and warm snapshots (HANDOFF-LIMA.md D12, B1 to B4) are done (closed
+2026-10-15). Copy-on-write for `vz` is in `MACOS.md`, Part 2.
+
+- [ ] **The golden image key includes the HEAD commit** (deferred, low priority; cananian,
+  2026-10-15): every wmf-claude commit gives a new image, so a cold create, unless
+  `WMF_SBX_GIT_HASH_OVERRIDE` is set. A key on a hash of only the files staged into the
+  image would keep images and snapshots across host-only commits, but it adds a list of
+  paths to maintain and a way to get the key wrong; the override is enough for now.
 
 ### Nested Lima (track C)
 
@@ -817,7 +818,7 @@ A2.0 results (in the nested `dev` VM, nono 0.78.0, 2026-10-13):
   `image prune` removes every unused image. An image is in use if a state file names it
   or an instance's disk has it in its backing chain (the qcow2 headers, read without
   `qemu-img`, so no lock on a running disk).
-- Copy-on-write disks (track B2, `disk.py`): on QEMU, `limactl create` with a shared
+- Copy-on-write disks (HANDOFF-LIMA.md B2, `disk.py`): on QEMU, `limactl create` with a shared
   placeholder image, then the instance's `disk` is replaced by `qemu-img create -b
   GOLDEN` (method B), and `disk.check_chain` runs before and after the first start.
   `--full-disk` and `vz` keep the full copy. RAN 2026-10-13 (`lima-port/checks/overlay-b2.sh`
@@ -832,13 +833,16 @@ A2.0 results (in the nested `dev` VM, nono 0.78.0, 2026-10-13):
   and 33 MiB each. The outer sandbox for the run
   was made with Lima 2.3.0-beta.1 on the host: the overlay worked there too (`create`
   warned).
-- Warm snapshots (track B3, `snapshot.py`): the key is the golden image, `--nested`, the
+- Warm snapshots (HANDOFF-LIMA.md B3, `snapshot.py`): the key is the golden image, `--nested`, the
   egress proxy (only when on, so the plain keys did not change) and the set of (canonical,
   host path, read-only). Behind the egress proxy (2026-10-14, after the merge that made it
   the default): the guest side of the proxy is the same in every egress sandbox and is
   written again at each boot; only the CA differs, so the seal also runs
   `update-ca-certificates --fresh` (as image-build.sh does), and cloud-init adds the next
-  sandbox's CA. Not yet RAN on hardware. The freeze runs at the end of every QEMU
+  sandbox's CA. RAN 2026-10-14 (engineer's host, Cite and 11 dependencies, egress proxy):
+  the second sandbox started warm from the first one's snapshot in 80 s; it had one
+  `cloud-init-ca-cert` (its own), the first one's CA was not in the trust bundle, and
+  HTTPS through the proxy gave 200. The freeze runs at the end of every QEMU
   `create`: the seal (identity, setup logs) in the guest, stop, the disk moved into
   `snapshots/KEY/GEN.qcow2`, `qemu-img rebase` onto the golden image (depth 2), read-only,
   a new overlay for the sandbox, start. A warm create refreshes the clones
@@ -1144,7 +1148,10 @@ A2.0 results (in the nested `dev` VM, nono 0.78.0, 2026-10-13):
   across 24 repos), and EventLogging's `load_composer_autoloader` loaded its json-schema
   6.13.1 over core's 5.3.4 (2 `ArrayDefTest` failures in `core:unit`). The session's
   CLAUDE.md and MEDIAWIKI-TESTING.md §0 tell the agent to run `composer update` and `npm
-  ci` in a dependency it changes, before that repo's own scripts. Not yet RAN.
+  ci` in a dependency it changes, before that repo's own scripts. RAN 2026-10-14 for
+  composer (engineer's host, Cite): the setup log named the 10 dependencies, only Cite had
+  a `vendor/` of its own, and Cite's phan had no `PhanRedefined*`. The `npm ci` half is not
+  yet RAN.
 - Setup timings on real hardware (Linux, KVM; Cite, Popups, TextExtracts, PageImages, core,
   Vector, cold caches): every `composer update` together 27 s (core 20 s: resolve 2,
   install 12, autoload 6), every `npm ci` together 19 s. So no composer cache in the golden

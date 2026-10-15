@@ -1325,12 +1325,16 @@ named in its phase.
 
 ### After the MVP: four tracks
 
+Status (2026-10-15): tracks A and B are **done**; their open items are in
+`sbx/NOTES.md` and, for macOS, in `sbx/MACOS.md`. This section stays as
+the record of their design, which code comments refer to.
+
 Track L (the shared login) comes first. Tracks A and B touch only QEMU
 sandboxes, and neither depends on the other; track L's host proxy is
 the start of track A's. Track C (development inside a sandbox) depends
 on none of them.
 
-**Track A: `--sudo` (D9 + D11)**
+**Track A: `--sudo` (D9 + D11)** (done, closed by cananian 2026-10-14)
 
 Also with this track, the sbx way of signing in (sbx/NOTES.md, "Shared
 login"): `/login` in any sandbox, the host's egress proxy captures the
@@ -1375,7 +1379,8 @@ a filtering DNS forwarder, sbx/NOTES.md) may go.
   demand through the proxy; the blind run passes in a `--sudo` sandbox
   on Linux.
 
-**Track B: copy-on-write disks (D12), then warm snapshots**
+**Track B: copy-on-write disks (D12), then warm snapshots** (done, closed by
+cananian 2026-10-15)
 
 Goal: a `create` on QEMU writes only what the sandbox changes (B2), and a
 `create` of a set of repos that was made before starts from the disk

@@ -23,10 +23,10 @@ handoff when the fix merges.
 
 | Handoff, issue | Repo of the fix | Bug | Gerrit / task |
 |---|---|---|---|
-| `HANDOFF-CORE.md` 1 | mediawiki/core | `SchemaGenerator::normalizePath()` leaves the path absolute for a symlinked extension: 11 AbuseFilter schema tests fail | — |
-| `HANDOFF-CORE.md` 2 | mediawiki/core | api-testing `ReparseDependentPages.js` expects the `?title=` red-link URL; Parsoid read views write `/index.php/X?action=edit` | — |
-| `HANDOFF-CORE.md` 3 | mediawiki/core | `UndoIntegrationTest::testMcrUndoAction` has no title in its context; EventLogging's hook dereferences it | — |
-| `HANDOFF-CORE.md` 4 | mediawiki/core | `WikiBirthdayTest` does not clear the `GetHumanTimestamp` hook, which cldr handles | — |
+| `HANDOFF-CORE.md` 1 | mediawiki/core | `SchemaGenerator::normalizePath()` leaves the path absolute for a symlinked extension: 11 AbuseFilter schema tests fail | [1355223](https://gerrit.wikimedia.org/r/c/mediawiki/core/+/1355223) |
+| `HANDOFF-CORE.md` 2 | mediawiki/core | api-testing `ReparseDependentPages.js` expects the `?title=` red-link URL; Parsoid read views write `/index.php/X?action=edit` | [1355226](https://gerrit.wikimedia.org/r/c/mediawiki/core/+/1355226), [1355227](https://gerrit.wikimedia.org/r/c/mediawiki/core/+/1355227) |
+| `HANDOFF-CORE.md` 3 | mediawiki/core | `UndoIntegrationTest::testMcrUndoAction` has no title in its context; EventLogging's hook dereferences it | [1355229](https://gerrit.wikimedia.org/r/c/mediawiki/core/+/1355229) |
+| `HANDOFF-CORE.md` 4 | mediawiki/core | `WikiBirthdayTest` does not clear the `GetHumanTimestamp` hook, which cldr handles | [1355230](https://gerrit.wikimedia.org/r/c/mediawiki/core/+/1355230) |
 
 A wmf-claude fix that is ready goes upstream as a GitLab merge request,
 not as a task here. Those already sent or merged:

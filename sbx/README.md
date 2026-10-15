@@ -13,7 +13,7 @@ gets a git remote to fetch the agent's work.
 - `MACOS.md`: the tests that check wmf-sbx on a Mac, and what macOS
   still lacks (copy-on-write disks and the egress proxy on `vz`).
 - `../lima-port/HANDOFF-LIMA.md`: the port's decisions (D1 to D12) and
-  the work that remains (track B, copy-on-write disks).
+  the record of the work after the MVP (tracks A, B, C and L).
 
 ## Install
 

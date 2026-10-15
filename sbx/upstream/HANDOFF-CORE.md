@@ -4,6 +4,10 @@ The B4 blind run in a wmf-sbx sandbox found these on 2026-10-14 (see
 `sbx/NOTES.md`). Each fix goes in mediawiki/core. A fix may touch the
 tests of an extension, but the code to change is core's.
 
+**Status (2026-10-15): in review.** (1) Gerrit 1355223; (2) 1355226 and
+1355227 (`$wgUsePathInfo` in DevelopmentSettings); (3) 1355229; (4)
+1355230. Delete this file when all of them are merged.
+
 **These are four separate issues.** Fix each one on its own branch, as
 its own Gerrit change, with its own Phabricator task (or a subtask of
 the task named below). Do not put two of them in one change. They have

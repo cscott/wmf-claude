@@ -13,14 +13,14 @@ sandbox. Delete it, or move its content into `sbx/`, when the port lands.
   D1–D12, the new modules (`git-remote-wmfsbx`, `image.py`, `template.py`,
   `lima.py`, `helpers/wmf-sbx-qemu`, `proxy.py`, `disk.py`), and the order
   of work (§11: phases 0–7 are the `--no-sudo` MVP; tracks A (`--sudo` on
-  QEMU) and B (qcow2 copy-on-write disks) come after it). Read this first.
+  QEMU) and B (qcow2 copy-on-write disks) came after it, and are done). Read this first.
 - [`PLAN-SETTINGS-DEFAULTS.md`](PLAN-SETTINGS-DEFAULTS.md) — defaults
   for command-line options from settings.yaml (`create.cloneMissing` and
   every other option of every command): one helper, every flag a
   `--X/--no-X` pair, `--no-settings`. Not started.
 - [`HANDOFF-LIMA-QCOW2-OVERLAYS.md`](HANDOFF-LIMA-QCOW2-OVERLAYS.md) —
   the evidence and test procedure behind D12 (qcow2 overlays on an
-  immutable golden image). Read it before track B.
+  immutable golden image). Track B, which it was for, is done.
 - [`../sbx/MACOS.md`](../sbx/MACOS.md) — the tests for a person with a
   Mac, and what macOS still lacks (copy-on-write disks and the egress
   proxy on `vz`).

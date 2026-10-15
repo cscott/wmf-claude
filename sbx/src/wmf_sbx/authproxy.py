@@ -12,6 +12,13 @@ on the host and gives Claude Code phantoms (RAN, L5). Every auth-proxy
 sandbox's proxy uses one nono state directory (nono_state_dir), so a
 phantom that one proxy made resolves in all of them.
 
+`nono proxy` reads its capture store once, when it starts, and writes
+all of what it holds at each capture (nono's oauth_capture/mod.rs and
+persist.rs, RAN in L6: a sandbox whose proxy had started before the
+/login in another could not use the login). So a proxy that started
+before the store's last change is restarted (`allow.swap`, which keeps
+its connections) before its sandbox gets phantoms: refresh_proxy.
+
 The phantoms are copied from sandbox to sandbox: the host keeps the
 newest `claudeAiOauth` record (by expiresAt) in credentials_file(), and
 `resume` syncs it with the guest's ~/.claude/.credentials.json at the
@@ -129,6 +136,33 @@ def nono_state_dir(env=None):
 
 def credentials_file(env=None):
     return os.path.join(auth_dir(env), "credentials.json")
+
+
+def store_file(env=None):
+    """nono's OAuth capture store (nono: user_state_dir()/oauth-capture)."""
+    return os.path.join(nono_state_dir(env), "nono", "oauth-capture", "providers.json")
+
+
+def proxy_stale(name, env=None):
+    """Whether the sandbox's running proxy started before the capture
+    store last changed (the port file is written when a proxy starts)."""
+    try:
+        started = os.stat(egress_mod.port_file(name, env)).st_mtime
+        changed = os.stat(store_file(env)).st_mtime
+    except OSError:
+        return False
+    return started < changed
+
+
+def refresh_proxy(name, env=None, swap=None):
+    """Restart the sandbox's proxy if it is stale, so that it reads the
+    store again. Returns True when it was restarted."""
+    if not proxy_stale(name, env):
+        return False
+    if swap is None:
+        from . import allow as allow_mod
+        swap = allow_mod.swap
+    return swap(name, env) is not None
 
 
 def profile_file(env=None):
@@ -256,14 +290,16 @@ def sync(name, lima=None, env=None):
 class Syncer:
     """sync() now, every `interval` seconds in a thread, and at stop()."""
 
-    def __init__(self, name, lima=None, env=None, interval=SYNC_SECONDS, log=None):
+    def __init__(self, name, lima=None, env=None, interval=SYNC_SECONDS, log=None, swap=None):
         self.name, self.lima, self.env, self.interval = name, lima, env, interval
         self.log = log or (lambda m: print(m, file=sys.stderr))
+        self.swap = swap
         self._stop = threading.Event()
         self._thread = None
 
     def _sync(self):
         try:
+            refresh_proxy(self.name, self.env, swap=self.swap)
             return sync(self.name, self.lima, self.env)
         except Exception as e:     # a failed sync must not end the session
             self.log(f"warning: could not sync the shared login with {self.name} ({e})")

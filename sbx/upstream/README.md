@@ -16,6 +16,12 @@ tested as the task says.
 When a task is filed, add its T-number to the table. When upstream takes
 a fix, delete the pair.
 
+Issues for other projects, for the engineer to file:
+
+| File | Project | Bug | Issue |
+|---|---|---|---|
+| `NONO-ISSUE-1.md` | always-further/nono | the OAuth capture store is read once and written whole: proxies that share it lose phantoms (track L6) | — |
+
 Handoffs: bugs for an agent to fix in a sandbox of its own, which then
 files the task and the change. When cananian gives the Gerrit and
 Phabricator numbers, record them in `sbx/NOTES.md`, and delete the

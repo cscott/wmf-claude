@@ -226,8 +226,12 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
 ### Session, credentials, Claude Code
 
 - [ ] **Track L6: measure the shared login** (HANDOFF-LIMA, track L, L6): run
-  `lima-port/checks/oauth-l6.sh` on the host. Rotation and two refreshes at once decide
-  whether the minute's sync is enough or wmf-sbx must be the only refresher.
+  `lima-port/checks/oauth-l6.sh` on the host again, from `use l6-b`, with the proxy
+  restart. Rotation and two refreshes at once decide whether the minute's sync is
+  enough or wmf-sbx must be the only refresher.
+- [ ] **Upstream: file `sbx/upstream/NONO-ISSUE-1.md`** (nono's capture store is read
+  once and written whole). When nono reloads and merges, remove
+  `authproxy.refresh_proxy`.
 - [x] **The "update installed, restart to update" message on the first resume**: gone
   since `wmf-claude-setup` skips `claude update` (`WMF_CLAUDE_SKIP_UPDATE=1`) and the
   version is pinned (cananian, 2026-10-16).
@@ -1221,6 +1225,21 @@ A2.0 results (in the nested `dev` VM, nono 0.78.0, 2026-10-13):
   `/mcp-registry/v0/servers` and `/api/event_logging/v2/batch` (GET and POST) get nono's
   403; `/api/hello` and `/api/oauth/profile` reach Anthropic. The query string is not
   part of the match.
+- L6, first run (engineer's host, 2026-10-15): `/login` in l6-a worked in a session under
+  nono (the banner then says "Claude Pro"; profile, roles, bootstrap, metrics, ultrareview
+  quota and `/api/frame/contract/latest` reach Anthropic; the four denied paths are
+  refused). The host copy and the store were written. But l6-b and l6-c, with the same
+  unexpired phantoms, failed: "OAuth session expired and could not be refreshed" (401,
+  then 400 from the token endpoint). Cause, from nono's source (`main` 45fcc24,
+  `oauth_capture/mod.rs`, `persist.rs`): `nono proxy` reads the capture store once, at
+  start, and writes its whole in-memory map at each capture. l6-b's and l6-c's proxies
+  had started before the login. Fix: `authproxy.refresh_proxy` restarts a proxy older
+  than the store file (`allow.swap`) before the sandbox gets phantoms;
+  `sbx/upstream/NONO-ISSUE-1.md` for nono. The `rotation` result of that run does not
+  count: l6-b's proxy could not resolve even the old phantoms.
+- Other denials in the login session, not ours to allow: `downloads.claude.ai` (Claude
+  Code's update and plugin downloads), `http-intake.logs.us5.datadoghq.com` (telemetry),
+  `raw.githubusercontent.com`.
 - A shallow host repo (`git clone --depth`): `git clone --shared` copies the objects and
   writes no alternates file; `sandbox-repos.sh` accepts that (RAN).
 

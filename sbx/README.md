@@ -147,7 +147,9 @@ egress proxy uses, and the current phantoms in
 `~/.local/state/wmf-sbx/auth/credentials.json`. `resume` copies the
 newest phantoms into the sandbox before the session, every minute during
 it, and back to the host after it (only the `claudeAiOauth` record, and
-only when it holds phantoms). `rm -r ~/.local/state/wmf-sbx/auth` signs
+only when it holds phantoms). nono's proxy reads the store only when it
+starts, so `resume` first restarts a sandbox's egress proxy that started
+before the store last changed (as `wmf-sbx allow` does). `rm -r ~/.local/state/wmf-sbx/auth` signs
 every sandbox out; the next one asks for `/login` again.
 
 ### The inference-only token

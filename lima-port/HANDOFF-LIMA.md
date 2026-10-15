@@ -1694,7 +1694,12 @@ Candidates (L1 measures them):
     the host (`auth/credentials.json`) before, every minute during, and
     after a session.
   - The session gets no credential proxy and no `ANTHROPIC_*`.
-- **L6. Measure the shared login** (`lima-port/checks/oauth-l6.sh`):
+- **L6. Measure the shared login** (`lima-port/checks/oauth-l6.sh`).
+  First run (2026-10-15): `/login` works; a second sandbox could not
+  use it, because `nono proxy` reads its capture store only at start
+  (sbx/NOTES.md, "Shared login"). Fixed by restarting a stale proxy
+  (`authproxy.refresh_proxy`); nono issue drafted
+  (`sbx/upstream/NONO-ISSUE-1.md`). To run again from item 1:
   1. A second sandbox, and a `--sudo` one, work with no `/login`.
   2. Rotation: after a refresh in one sandbox, does the other's old
      refresh phantom still work? If not, the minute's sync is what keeps

@@ -217,6 +217,41 @@ class SyncTests(Base):
         self.assertEqual(syncer.stop(), "pulled")
         self.assertEqual(authproxy.read_host(self.env)["expiresAt"], 30)
 
+    def touch(self, path, mtime):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write("1\n")
+        os.utime(path, (mtime, mtime))
+
+    def test_a_proxy_older_than_the_store_is_restarted(self):
+        # nono reads its capture store only when it starts (L6).
+        swapped = []
+
+        def swap(name, env=None):
+            swapped.append(name)
+            self.touch(egress.port_file(name, env), 300 * len(swapped))
+            return 4242
+        self.assertFalse(authproxy.refresh_proxy("demo", self.env, swap=swap))  # no files
+        self.touch(egress.port_file("demo", self.env), 100)
+        self.touch(authproxy.store_file(self.env), 200)
+        self.assertTrue(authproxy.proxy_stale("demo", self.env))
+        self.assertTrue(authproxy.refresh_proxy("demo", self.env, swap=swap))
+        self.assertFalse(authproxy.refresh_proxy("demo", self.env, swap=swap))
+        self.assertEqual(swapped, ["demo"])
+        # through the syncer, before the phantoms go in
+        self.touch(authproxy.store_file(self.env), 400)
+        authproxy.write_host(login(20), self.env)
+        guest = Guest(None)
+        syncer = authproxy.Syncer("demo", lima=guest, env=self.env, interval=3600, swap=swap)
+        self.assertEqual(syncer.start(), "pushed")
+        syncer.stop()
+        self.assertEqual(swapped, ["demo", "demo"])
+
+    def test_the_store_is_where_nono_puts_it(self):
+        self.assertEqual(authproxy.store_file(self.env),
+                         os.path.join(authproxy.nono_state_dir(self.env), "nono",
+                                      "oauth-capture", "providers.json"))
+
     def test_a_failed_sync_does_not_end_the_session(self):
         class Broken:
             def call(self, *a, **kw):

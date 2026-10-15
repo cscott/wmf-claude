@@ -22,10 +22,13 @@ Per sandbox, in egress_dir(NAME), all 0600 in a 0700 directory:
                   the wrapper; names is its mapping, append-only.
   cred.sock       the session's credential proxy (credproxy.py), bound
                   by `resume` while a session runs.
+  clip.sock       the session's clipboard listener (clipboard.py), bound
+                  by `resume` while a session runs.
 
-The guest reaches the three on EGRESS_ADDR: the proxy on EGRESS_PORT,
-the resolver on DNS_PORT, the credential proxy on CRED_PORT. Each is a
-`guestfwd`, so the guest needs no route to the host.
+The guest reaches the four on EGRESS_ADDR: the proxy on EGRESS_PORT,
+the resolver on DNS_PORT, the credential proxy on CRED_PORT, the
+clipboard listener on CLIP_PORT. Each is a `guestfwd`, so the guest
+needs no route to the host.
 
 `nono proxy --upstream-proxy` sends no credentials (sbx/NOTES.md,
 "`--sudo` egress"). When the host's proxy needs them (a nested sandbox
@@ -59,6 +62,7 @@ EGRESS_ADDR = "192.168.5.100"
 EGRESS_PORT = 3128
 DNS_PORT = 53
 CRED_PORT = 3129
+CLIP_PORT = 3130
 # A nested sandbox's forwarder to the proxy, on the guest's loopback
 # (nested.forward_script). An inner VM's only way out is 192.168.5.2, the
 # outer guest's loopback, where Lima and image.guest_proxy_env point it.
@@ -126,6 +130,10 @@ def dns_socket(name, env=None):
 
 def cred_socket(name, env=None):
     return _path(name, "cred.sock", env)
+
+
+def clip_socket(name, env=None):
+    return _path(name, "clip.sock", env)
 
 
 def names_file(name, env=None):
@@ -347,7 +355,8 @@ def proxy_config(name, env=None, nono="nono"):
             "pidFile": _path(name, "wrapper.pid", env),
             "dnsSocket": dns_socket(name, env),
             "namesFile": names_file(name, env),
-            "credSocket": cred_socket(name, env)}
+            "credSocket": cred_socket(name, env),
+            "clipSocket": clip_socket(name, env)}
 
 
 def write_config(name, env=None, nono="nono"):
@@ -566,12 +575,15 @@ def socket_guestfwd(guest_port, sock_path):
 
 def guestfwds(config):
     """Every guestfwd of the netdev, comma-separated: the proxy, and the
-    resolver and the credential proxy when the config names them."""
+    resolver, the credential proxy and the clipboard listener when the
+    config names them."""
     fwds = [guestfwd(config["portFile"])]
     if config.get("dnsSocket"):
         fwds.append(socket_guestfwd(DNS_PORT, config["dnsSocket"]))
     if config.get("credSocket"):
         fwds.append(socket_guestfwd(CRED_PORT, config["credSocket"]))
+    if config.get("clipSocket"):
+        fwds.append(socket_guestfwd(CLIP_PORT, config["clipSocket"]))
     return ",".join(fwds)
 
 

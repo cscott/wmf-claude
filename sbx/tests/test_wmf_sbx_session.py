@@ -21,6 +21,7 @@ from unittest import mock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 sys.path.insert(0, os.path.dirname(__file__))
 
+import wmf_sbx.clipboard as clipboard  # noqa: E402
 import wmf_sbx.create as create  # noqa: E402
 import wmf_sbx.credproxy as credproxy  # noqa: E402
 import wmf_sbx.egress as egress  # noqa: E402
@@ -433,6 +434,17 @@ class SessionFilesTests(unittest.TestCase):
             with open(os.path.join(home, ".claude", "CLAUDE.md")) as f:
                 self.assertEqual(f.read(), "hi")
 
+    def test_write_session_gives_a_file_its_mode(self):
+        with tempfile.TemporaryDirectory() as home:
+            run = lambda argv, **kw: subprocess.CompletedProcess(argv, 0)  # noqa: E731
+            self.assertTrue(setup.write_session(
+                {"files": [{"path": "~/.local/bin/wl-copy", "content": "#!/bin/sh\n",
+                            "mode": 0o755},
+                           {"path": "~/plain", "content": "x"}]}, home=home, run=run))
+            self.assertEqual(os.stat(os.path.join(home, ".local/bin/wl-copy")).st_mode & 0o777,
+                             0o755)
+            self.assertFalse(os.stat(os.path.join(home, "plain")).st_mode & 0o111)
+
     def test_write_session_merges_the_preference_settings(self):
         with tempfile.TemporaryDirectory() as home:
             run = lambda argv, **kw: subprocess.CompletedProcess(argv, 0)  # noqa: E731
@@ -560,6 +572,41 @@ class GitIdentityTests(unittest.TestCase):
         self.assertEqual(plan["env"]["N"], "1")
         self.assertEqual(plan["env"]["FLAG"], "1")
         self.assertEqual(plan["env"]["WMF_CLAUDE_STE"], "0")
+
+    def test_native_copy_is_on_behind_the_egress_proxy_unless_turned_off(self):
+        self.assertTrue(session.native_copy({}, egress=True))
+        self.assertTrue(session.native_copy(None, egress=True))
+        self.assertTrue(session.native_copy({"native_copy": True}, egress=True))
+        self.assertFalse(session.native_copy({"native_copy": False}, egress=True))
+        # not yet without the egress proxy
+        self.assertFalse(session.native_copy({"native_copy": True}, egress=False))
+
+    def test_native_copy_must_be_a_boolean_and_is_no_unknown_key(self):
+        with self.assertRaisesRegex(session.SessionError, "session.native_copy 'no'"):
+            session.preference_settings({"native_copy": "no"})
+        warned = []
+        self.assertEqual(session.preference_settings({"native_copy": False},
+                                                     warn=warned.append), {})
+        self.assertEqual(warned, [])
+
+    def test_a_copy_plan_has_the_shim_and_its_variables(self):
+        plan = session.session_plan("demo", [], environment={"WAYLAND_DISPLAY": "x"},
+                                    copy=True)
+        self.assertEqual(plan["env"]["WAYLAND_DISPLAY"], "wmf-sbx")
+        self.assertEqual(plan["env"]["WMF_CLAUDE_CLIPBOARD"], "192.168.5.100:3130")
+        (shim,) = [f for f in plan["files"] if f["path"] == "~/.local/bin/wl-copy"]
+        self.assertEqual(shim["mode"], 0o755)
+        self.assertTrue(shim["content"].startswith("#!/bin/bash\n"))
+        # `wmf-sbx exec` runs no Claude Code: it gets neither
+        exec_env = session.exec_env(plan["env"])
+        self.assertNotIn("WAYLAND_DISPLAY", exec_env)
+        self.assertNotIn("WMF_CLAUDE_CLIPBOARD", exec_env)
+
+    def test_a_plan_without_copy_has_no_shim(self):
+        plan = session.session_plan("demo", [])
+        self.assertNotIn("WAYLAND_DISPLAY", plan["env"])
+        self.assertNotIn("WMF_CLAUDE_CLIPBOARD", plan["env"])
+        self.assertFalse([f for f in plan["files"] if "wl-copy" in f["path"]])
 
     def test_the_session_env_names_the_sandbox(self):
         # bin/git-review-check: `local` is the host's repo only in a
@@ -1016,6 +1063,75 @@ class ResumeMainTests(Env):
         self.assertIn("another session runs in demo", self.err)
         self.assertEqual(self.launches(), [])
 
+    def copy_resume(self, *argv, settings=None, sudo=False):
+        st = state_mod.load("demo", self.env)
+        st["nativeCopy"] = True
+        if sudo:
+            st["sudo"] = True
+        state_mod.save(st, self.env)
+        opts = []
+        if settings is not None:
+            path = os.path.join(self.tmp, "settings.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(settings)
+            opts = ["--config", path]
+        seen = {}
+        orig = clipboard.Listener.start
+
+        def start(listener):
+            orig(listener)
+            seen["path"] = listener.path
+            seen["in_use"] = credproxy.socket_in_use(listener.path)
+        with mock.patch.object(clipboard.Listener, "available", return_value=True), \
+                mock.patch.object(clipboard.Listener, "start", start):
+            st = state_mod.load("demo", self.env)
+            st["egress"] = "proxy"
+            state_mod.save(st, self.env)
+            egress.make_dir("demo", self.env)
+            with mock.patch.object(egress, "wrapper_env", return_value={"WMF_SBX_X": "1"}), \
+                    mock.patch.object(egress, "wait_time_sync", return_value=True):
+                rc = self.quiet(resume.main, opts + ["demo", "--", "-p", "hi"],
+                                lima=self.lima, env=self.env)
+        return rc, seen
+
+    def test_a_copy_sandbox_gets_the_listener_for_the_session(self):
+        rc, seen = self.copy_resume()
+        self.assertEqual(rc, 0, self.err)
+        self.assertEqual(seen, {"path": egress.clip_socket("demo", self.env), "in_use": True})
+        self.assertFalse(os.path.exists(seen["path"]))   # stopped after the session
+        (launch,) = self.launches()
+        self.assertIn("--open-port=3130", launch[launch.index(session.LAUNCHER):])
+
+    def test_settings_native_copy_false_turns_off_an_older_sandbox(self):
+        rc, seen = self.copy_resume(settings="session:\n  native_copy: false\n")
+        self.assertEqual(rc, 0, self.err)
+        self.assertEqual(seen, {})
+        (launch,) = self.launches()
+        self.assertNotIn("--open-port=3130", launch)
+
+    def test_a_sudo_copy_sandbox_gets_the_listener_and_no_open_port(self):
+        rc, seen = self.copy_resume(sudo=True)
+        self.assertEqual(rc, 0, self.err)
+        self.assertIn("path", seen)
+        (launch,) = [s for s in self.lima.shells() if session.SUDO_LAUNCHER in s]
+        self.assertFalse(any(a.startswith("--open-port") for a in launch))
+
+    def test_a_host_with_no_clipboard_tool_starts_the_session_without(self):
+        st = state_mod.load("demo", self.env)
+        st["nativeCopy"] = True
+        state_mod.save(st, self.env)
+        with mock.patch.object(clipboard.Listener, "available", return_value=False):
+            rc = self.egress_resume("--", "-p", "hi")
+        self.assertEqual(rc, 0, self.err)
+        self.assertIn("does not reach its clipboard", self.err)
+        (launch,) = self.launches()
+        self.assertNotIn("--open-port=3130", launch)
+
+    def test_a_sandbox_made_without_copy_gets_no_listener(self):
+        with mock.patch.object(clipboard.Listener, "start") as start:
+            self.assertEqual(self.egress_resume("--", "-p", "hi"), 0, self.err)
+        start.assert_not_called()
+
     def sudo_resume(self, *argv, env=None):
         st = state_mod.load("demo", self.env)
         st["sudo"] = True
@@ -1104,6 +1220,38 @@ class CreateSessionTests(Env):
         self.assertEqual(state_mod.load("demo", self.env)["readOnly"], [self.ro])
         self.assertIn("wmf-sbx resume demo", self.err)
 
+    def copy_create(self, settings=""):
+        """create behind the egress proxy (its CA and wrapper faked), with
+        `settings` added to the config: (state, the plan's file paths)."""
+        with open(os.path.join(self.tmp, "repos.yaml"), "a", encoding="utf-8") as f:
+            f.write(settings)
+        with mock.patch.object(create, "egress_choice", return_value=(True, None)), \
+                mock.patch.object(egress, "make_ca"), \
+                mock.patch.object(egress, "wrapper_env", return_value={"WMF_SBX_X": "1"}), \
+                mock.patch.object(egress, "wait_time_sync", return_value=True):
+            _shells, inputs = self.create_demo()
+        session_plan = self.plan_of(inputs)["session"]
+        return (state_mod.load("demo", self.env), [f["path"] for f in session_plan["files"]],
+                session_plan["env"])
+
+    def test_a_create_behind_the_egress_proxy_sends_the_clipboard_shim(self):
+        st, files, env = self.copy_create()
+        self.assertTrue(st["nativeCopy"])
+        self.assertIn("~/.local/bin/wl-copy", files)
+        self.assertEqual(env["WMF_CLAUDE_CLIPBOARD"], "192.168.5.100:3130")
+
+    def test_settings_native_copy_false_sends_no_shim(self):
+        st, files, env = self.copy_create("session:\n  native_copy: false\n")
+        self.assertNotIn("nativeCopy", st)
+        self.assertNotIn("~/.local/bin/wl-copy", files)
+        self.assertNotIn("WAYLAND_DISPLAY", env)
+
+    def test_a_create_off_the_egress_proxy_sends_no_shim(self):
+        _shells, inputs = self.create_demo()
+        self.assertFalse(egress.enabled(state_mod.load("demo", self.env)))
+        self.assertNotIn("nativeCopy", state_mod.load("demo", self.env))
+        self.assertNotIn("~/.local/bin/wl-copy",
+                         [f["path"] for f in self.plan_of(inputs)["session"]["files"]])
 
 if __name__ == "__main__":
     unittest.main()

@@ -39,6 +39,8 @@ session:
   # ste: false                   # leave out the ASD-STE100 writing rule
   # settings: false              # take no option defaults from this file
                                  # (--settings overrides)
+  # native_copy: false           # a copy in Claude Code does not reach the
+                                 # host's clipboard (sbx/README.md, "Copy")
 
 # Defaults for the options of each command (sbx/README.md, "Defaults
 # from settings.yaml"): `VERB: {someFlag: value}` for `wmf-sbx VERB

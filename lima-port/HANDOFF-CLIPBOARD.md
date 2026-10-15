@@ -453,9 +453,47 @@ on stdin.
 
 Nothing is left to measure before building the egress-proxy case.
 
+Built (2026-10-15), for the egress-proxy case, behind settings.yaml
+`session.native_copy` (default true; a later `session.native_paste`
+would control a paste):
+
+- `sbx/src/wmf_sbx/clipboard.py`: the host listener (a thread in
+  `resume`, on `egress.clip_socket`, 0600), the host's tool
+  (`wl-copy --type text/plain;charset=utf-8 [--primary]`, else `xclip
+  -selection clipboard|primary`, else `pbcopy` with no PRIMARY), and
+  the guest's shim (`GUEST_SHIM`: bash `/dev/tcp`, sends `clipboard` or
+  `primary` on a line, then the text). A write over 1 MiB is refused,
+  not cut. One log line per write, never the text.
+- `egress.CLIP_PORT` 3130: a fourth guestfwd, and in the guest's
+  nftables `EGRESS_PORTS`. Every sandbox behind the proxy gets them; a
+  socket with no listener refuses the connection.
+- `create`: `state["nativeCopy"]` when behind the proxy and not
+  `native_copy: false`; then the plan writes `~/.local/bin/wl-copy`
+  (mode 0755) and puts `WAYLAND_DISPLAY=wmf-sbx` and
+  `WMF_CLAUDE_CLIPBOARD=192.168.5.100:3130` in the settings `env`.
+  `wmf-sbx exec` gets neither.
+- `resume`: with `nativeCopy`, and settings.yaml not now
+  `native_copy: false`, starts the listener and adds
+  `--open-port=3130` (not in a `--sudo` sandbox, which has no nono).
+  With no host tool (no display), a note, and the session starts.
+- A sandbox made before this has no shim, no `nativeCopy` and no
+  guestfwd: it gets them when made again.
+
+Still to RAN, on the engineer's host:
+
+- end to end: `wmf-sbx create` a new sandbox, select in Claude Code,
+  then Ctrl+V and middle click in a host app; the log line in
+  `~/.local/state/wmf-sbx/sandboxes/NAME.clipboard.log`; then exit the
+  session and paste again (the host's `wl-copy` keeps the selection);
+- the same in a `--sudo` sandbox;
+- QUnit (karma's Chrome) and Cypress in a session with
+  `WAYLAND_DISPLAY=wmf-sbx` set: a Chromium that picks its platform by
+  that variable would look for a compositor. Headless Chrome uses no
+  display; Cypress's Electron is the one to check.
+
 Open questions:
 
-- Without the egress proxy, the shim connects to `192.168.5.2:PORT`
+- Without the egress proxy (not built), the shim would connect to `192.168.5.2:PORT`
   (loopback on the host). The nono measurement above was on
   `192.168.5.100`; the same port-only Landlock rule applies, but it is
   not RAN.

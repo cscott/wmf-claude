@@ -188,6 +188,11 @@ class ProvisionTests(unittest.TestCase):
         self.assertIn("tcp dport { 80, 443 } accept", self.script())
         self.assertLessEqual(hi - lo + 1, 8192)  # bin/claude's --local-web range limit
 
+    def test_the_guest_reaches_each_guestfwd_on_the_egress_address(self):
+        script = template.provision_script(egress=True)
+        self.assertIn('EGRESS_RULE="ip daddr $EGRESS tcp dport { 53, 3128, 3129, 3130 } accept"',
+                      script)
+
     def test_the_proxy_rule_expands_to_valid_nft_syntax(self):
         out = subprocess.run(
             ["bash", "-c", 'PROXY_PORTS="3128 8080"; echo "ip daddr 192.168.5.2 tcp dport { ${PROXY_PORTS// /, } } accept"'],

@@ -1214,7 +1214,7 @@ def write_session(session, home=None, run=subprocess.run):
     the engineer's preference `settings` into the agent's
     ~/.claude/settings.json, `claude_json` (the first-run answers) into
     ~/.claude.json, and write each file, a path
-    under the agent's home. Returns False if a step failed."""
+    under the agent's home (with its `mode`, if it has one). Returns False if a step failed."""
     home = home or os.path.expanduser("~")
     ok = True
     patch = dict(session.get("settings") or {})
@@ -1237,6 +1237,8 @@ def write_session(session, home=None, run=subprocess.run):
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w", encoding="utf-8") as f:
                 f.write(entry["content"])
+            if entry.get("mode") is not None:
+                os.chmod(path, entry["mode"])
         except OSError as e:
             print(f"error: could not write {path} ({e})", file=sys.stderr)
             ok = False

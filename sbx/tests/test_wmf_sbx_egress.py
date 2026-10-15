@@ -223,15 +223,17 @@ class GuestTests(unittest.TestCase):
         self.assertIn("https_proxy=http://192.168.5.100:3128\n", script)
         self.assertEqual(subprocess.run(["bash", "-n"], input=script, text=True).returncode, 0)
 
-    def test_the_guestfwds_reach_the_resolver_and_the_credential_proxy(self):
+    def test_the_guestfwds_reach_the_resolver_the_credential_proxy_and_the_clipboard(self):
         config = egress.proxy_config("demo", self.env)
         fwds = egress.guestfwds(config).split(",")
-        self.assertEqual(len(fwds), 3)
+        self.assertEqual(len(fwds), 4)
         self.assertTrue(fwds[0].startswith("guestfwd=tcp:192.168.5.100:3128-cmd:"))
         self.assertEqual(fwds[1], "guestfwd=tcp:192.168.5.100:53-cmd:sh -c 'exec socat - "
                                   f"UNIX-CONNECT:{egress.dns_socket('demo', self.env)}'")
         self.assertEqual(fwds[2], "guestfwd=tcp:192.168.5.100:3129-cmd:sh -c 'exec socat - "
                                   f"UNIX-CONNECT:{egress.cred_socket('demo', self.env)}'")
+        self.assertEqual(fwds[3], "guestfwd=tcp:192.168.5.100:3130-cmd:sh -c 'exec socat - "
+                                  f"UNIX-CONNECT:{egress.clip_socket('demo', self.env)}'")
 
     def test_the_guestfwds_of_an_old_config_are_the_proxy_only(self):
         self.assertEqual(egress.guestfwds({"portFile": "/p"}), egress.guestfwd("/p"))

@@ -153,6 +153,8 @@ session:
                                       # commit messages (default: true)
   settings: false                     # take no option defaults from this file
                                       # ("Defaults from settings.yaml"; default: true)
+  native_copy: false                  # a copy in Claude Code does not reach the
+                                      # host's clipboard ("Copy"; default: true)
 ```
 
 `create --sudo` by default is `create: {sudo: true}`, not a `session:`
@@ -196,6 +198,32 @@ at the prompt: onboarding done, each repo of the sandbox trusted, the
 warning acknowledged (`SECURITY.md` §3 says why that is safe in a
 sandbox). Delete that file to see them all again. Sessions always skip
 `bin/claude`'s "Press Enter" pause.
+
+## Copy
+
+A mouse selection in Claude Code goes to the host's clipboard: Ctrl+V
+and middle click on the host paste it. Claude Code copies with
+`wl-copy`, and sends OSC 52 too, which GNOME Terminal drops; in the VM,
+`create` puts a `wl-copy` of wmf-sbx's in `~/.local/bin` and sets
+`WAYLAND_DISPLAY=wmf-sbx` (a name only: there is no display) in the
+agent's settings `env`. For the length of a session, `resume` listens
+for that shim on the host, and gives the text to the host's `wl-copy`
+(Wayland), `xclip` (X11) or `pbcopy` (macOS). Its log, a line per copy
+with the size and never the text, is
+`~/.local/state/wmf-sbx/sandboxes/NAME.clipboard.log`.
+
+- Only behind the egress proxy, for now (not `vz` or
+  `--no-egress-proxy`). A sandbox made before this gets it when made
+  again.
+- Copy only. Paste from the keyboard (Ctrl+Shift+V) and Shift+middle
+  click work as they do in any terminal; middle click, right click and
+  Ctrl+V in Claude Code read the clipboard, and still paste nothing.
+- With no display on the host (an SSH login), `resume` says so and the
+  session starts without it.
+- The agent can set your clipboard while a session runs (`SECURITY.md`
+  §6): check a command before you paste it into a shell.
+  `session: {native_copy: false}` leaves out the shim in new sandboxes,
+  and the listener for every sandbox.
 
 ## Defaults from settings.yaml
 

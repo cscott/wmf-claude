@@ -76,7 +76,8 @@
       "~/.config/hub",
       "~/.gitcookies",
       "~/.config/glab-cli",
-      "~/.config/wmf-claude"
+      "~/.config/wmf-claude",
+      "~/.local/state/wmf-claude"
     ],
     "suppress_save_prompt": [
       "/"

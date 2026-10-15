@@ -26,11 +26,22 @@ The proxy is the security boundary for model access, so it is strict:
   - Every request is logged, allowed or denied, as one JSON line.
 
 Usage:
-  bin/wmf-claude-model-proxy --socket PATH --log PATH \\
+  bin/wmf-claude-model-proxy --socket PATH --log PATH [--capture PATH.jsonl.gz] \\
       (--keychain-service S --keychain-account A | --token-file PATH)
+
+--capture writes a per-session transcript on the host: a request record before
+each call reaches the API and a response record after, linked by an id (calls
+can run in parallel), one gzip member each. It records what the agent sent and
+received, never the outbound headers (so never the injected token), and the
+file is on the host, out of the VM's reach. Fail closed: the proxy refuses to
+start if it cannot open the file, a request it cannot record is not forwarded,
+and the session stops when a write fails or the byte budget
+(WMF_CLAUDE_CAPTURE_MAX_BYTES) is reached.
 """
 
 import argparse
+import gzip
+import hashlib
 import http.client
 import json
 import os
@@ -42,11 +53,22 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 
 UPSTREAM_HOST = "api.anthropic.com"
 ALLOWED = {("POST", "/v1/messages"), ("POST", "/v1/messages/count_tokens")}
 MAX_HEADER_BYTES = 64 * 1024
 MAX_BODY_BYTES = 32 * 1024 * 1024
+# The transcript keeps at most this much of a response; the rest is marked
+# truncated. The request body is already bounded by MAX_BODY_BYTES.
+CAPTURE_RESP_MAX = 16 * 1024 * 1024
+# A refused body is kept only as a prefix plus a digest of the whole, so a
+# stream of refusals (free to the agent) cannot write the whole body each time.
+CAPTURE_DENY_REQ_MAX = 64 * 1024
+# The whole transcript of one session is bounded, in compressed bytes; the
+# session stops when it is reached, so the agent cannot fill the host disk.
+# Generous for a real session; WMF_CLAUDE_CAPTURE_MAX_BYTES overrides it.
+CAPTURE_SESSION_MAX_DEFAULT = 2 * 1024 * 1024 * 1024
 # Reading the request must not hold a thread forever. The response may stream
 # for minutes, so the limit applies only until the body is read.
 REQUEST_TIMEOUT = 60
@@ -55,7 +77,7 @@ UPSTREAM_TIMEOUT = 600
 DROP_HEADERS = {
     "authorization", "x-api-key", "cookie", "host", "content-length",
     "transfer-encoding", "connection", "keep-alive", "te", "trailer",
-    "upgrade", "expect",
+    "upgrade", "expect", "accept-encoding",
 }
 DROP_RESPONSE_HEADERS = {
     "connection", "keep-alive", "transfer-encoding", "content-length",
@@ -95,6 +117,63 @@ class Log:
         event["ts"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         with self.lock:
             self.f.write(json.dumps(event, sort_keys=True) + "\n")
+
+
+class Capture:
+    """A per-session transcript, on the host, out of the VM's reach. One gzip
+    member per record (members concatenate, so `gzip -dc` reads them all and a
+    crash truncates only the last). The agent cannot reach this file, so it is a
+    tamper-evident record. Fail closed: a bad path raises in __init__, before the
+    proxy serves; a write error, a record that cannot be built, or the byte
+    budget sets `failed`, and the handler then stops the session. A turn's
+    request and response records share an `id`."""
+    def __init__(self, path, budget):
+        self.lock = threading.Lock()
+        self.failed = False
+        self.fail_reason = None
+        self.budget = budget
+        self.written = 0
+        os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+        self.fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+
+    def _fail(self, reason):
+        if not self.failed:
+            self.failed = True
+            self.fail_reason = reason
+
+    def write(self, request=None, response_chunks=None, **record):
+        """Append one record. `request` is the client's body; `response_chunks`
+        is the relayed response as a list of byte chunks. They are joined,
+        decoded and compressed here, inside the try, so a MemoryError or a
+        decode error sets `failed` and never reaches the handler. Only the
+        budget check and the write hold the lock. Returns False once stopped."""
+        try:
+            if request is not None:
+                record["request"] = request.decode("utf-8", "replace")
+            if response_chunks is not None:
+                record["response"] = b"".join(response_chunks).decode("utf-8", "replace")
+            record["ts"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            member = gzip.compress(
+                (json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n").encode(),
+                compresslevel=6)
+        except Exception:  # noqa: BLE001  building a record must never reach the handler
+            self._fail("the transcript record could not be built")
+            return False
+        n = len(member)
+        with self.lock:
+            if self.failed:
+                return False
+            if self.written + n > self.budget:
+                self._fail("the transcript byte budget is exhausted")
+                return False
+            try:
+                while member:
+                    member = member[os.write(self.fd, member):]
+            except OSError:
+                self._fail("the transcript could not be written")
+                return False
+            self.written += n
+        return True
 
 
 INLINE_SOURCES = {"base64", "text", "content"}
@@ -181,7 +260,11 @@ def body_policy(body):
 
 
 class Handler(socketserver.StreamRequestHandler):
-    def deny(self, status, reason, **log):
+    def deny(self, status, reason, request=None, **log):
+        # Every policy refusal is recorded (request records and the id tie it
+        # to nothing here, so an id is optional).
+        self._capture(id=getattr(self, "rid", None), kind="request", decision="deny",
+                      status=status, reason=reason, request=request, **log)
         self.server.log.write(decision="deny", status=status, reason=reason, **log)
         body = json.dumps({"type": "error", "error": {
             "type": "permission_error",
@@ -190,27 +273,66 @@ class Handler(socketserver.StreamRequestHandler):
                 f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n")
         try:
             self.wfile.write(head.encode() + body)
+            self.responded = True
         except OSError:
             pass
 
+    def _session_stopped(self):
+        # The transcript has failed; the session is stopped. Respond, and log
+        # the reason once, so this path cannot itself fill the log.
+        srv = self.server
+        with srv.trip_lock:
+            if not srv.trip_logged:
+                srv.trip_logged = True
+                srv.log.write(decision="deny", status=503,
+                              reason=(srv.capture.fail_reason or "the transcript capture failed"))
+        body = json.dumps({"type": "error", "error": {"type": "permission_error",
+            "message": "wmf-claude model proxy: the session is stopped"}}).encode()
+        head = (f"HTTP/1.1 503 Denied\r\nContent-Type: application/json\r\n"
+                f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n")
+        try:
+            self.wfile.write(head.encode() + body)
+            self.responded = True
+        except OSError:
+            pass
+
+    def _capture(self, request=None, response_chunks=None, **rec):
+        """Record one event. request/response are the client's bytes only; the
+        outbound headers (with the token) are never passed here. Returns the
+        write result (True when there is no transcript), so a caller can refuse
+        to forward a request it could not record."""
+        cap = self.server.capture
+        if cap is None:
+            return True
+        return cap.write(request=request, response_chunks=response_chunks, **rec)
+
     def handle(self):
         # Every request ends in a response and a log line, also on a bug.
+        self.responded = False
+        self.rid = None
         self.connection.settimeout(REQUEST_TIMEOUT)
         try:
             self.handle_request()
         except TimeoutError:
-            self.server.log.write(decision="deny", status=408, reason="request not received in time")
-        except Exception as e:  # noqa: BLE001
-            self.deny(400, f"request refused: {type(e).__name__}")
+            if not self.responded:
+                self.server.log.write(decision="deny", status=408, reason="request not received in time")
+        except Exception:  # noqa: BLE001  already responded, or a bug: never a second response
+            if not self.responded:
+                self.deny(400, "request refused")
 
     def handle_request(self):
         started = time.monotonic()
+        cap = self.server.capture
+        if cap is not None and cap.failed:
+            return self._session_stopped()
+        self.rid = uuid.uuid4().hex
         # Request line and headers, with a hard size limit.
         raw = b""
         while not raw.endswith(b"\r\n\r\n"):
             line = self.rfile.readline(MAX_HEADER_BYTES + 1)
             if not line:
                 if raw:
+                    # An incomplete connection, not a refused request: log only.
                     self.server.log.write(decision="deny", status=400, reason="connection closed mid-request")
                 return
             raw += line
@@ -258,15 +380,30 @@ class Handler(socketserver.StreamRequestHandler):
             return self.deny(400, "body shorter than Content-Length", **log)
         reason = body_policy(body)
         if reason:
-            return self.deny(403, reason, req_bytes=content_length, **log)
+            cap_req, extra = body, {}
+            if len(body) > CAPTURE_DENY_REQ_MAX:
+                cap_req = body[:CAPTURE_DENY_REQ_MAX]
+                extra = {"request_truncated": True, "request_sha256": hashlib.sha256(body).hexdigest()}
+            return self.deny(403, reason, req_bytes=content_length, request=cap_req, **extra, **log)
+
+        # Record the request before it reaches the API, and refuse to forward if
+        # it cannot be recorded: the trail is complete, and a capture failure
+        # stops the request that fails, not only the next one.
+        if not self._capture(id=self.rid, kind="request", decision="request",
+                             req_bytes=content_length, request=body, **log):
+            return self._session_stopped()
 
         self.connection.settimeout(None)
         headers.append(("Authorization", f"Bearer {self.server.token}"))
         headers.append(("Content-Length", str(content_length)))
+        headers.append(("Accept-Encoding", "identity"))
         conn = http.client.HTTPSConnection(
             UPSTREAM_HOST, 443, timeout=UPSTREAM_TIMEOUT, context=self.server.tls)
         resp_bytes = 0
         status = None
+        cap_chunks = []
+        cap_bytes = 0
+        cap_trunc = False
         try:
             conn.putrequest(method, target, skip_host=False, skip_accept_encoding=True)
             for name, value in headers:
@@ -280,7 +417,9 @@ class Handler(socketserver.StreamRequestHandler):
                     out.append(f"{name}: {value}\r\n")
             out.append("Connection: close\r\n\r\n")
             self.wfile.write("".join(out).encode("latin-1"))
-            # Close-delimited body: relay each chunk as it arrives.
+            self.responded = True
+            # Close-delimited body: relay each chunk as it arrives, and keep a
+            # bounded copy for the transcript (the body only, never the headers).
             while True:
                 chunk = resp.read1(65536)
                 if not chunk:
@@ -288,22 +427,44 @@ class Handler(socketserver.StreamRequestHandler):
                 self.wfile.write(chunk)
                 self.wfile.flush()
                 resp_bytes += len(chunk)
+                if cap is not None and not cap_trunc:
+                    room = CAPTURE_RESP_MAX - cap_bytes
+                    if room <= 0:
+                        cap_trunc = True
+                    else:
+                        cap_chunks.append(chunk[:room])
+                        cap_bytes += min(len(chunk), room)
+                        cap_trunc = len(chunk) > room
         except ValueError as e:
-            # A header value that http.client refuses (a bare CR or LF).
-            if status is None:
-                return self.deny(400, f"request refused: {e}", **log)
+            # A header value http.client refuses; the request never went out.
+            self._capture(id=self.rid, kind="response", decision="error", status=status,
+                          reason=str(e), response_chunks=cap_chunks, response_truncated=cap_trunc, **log)
             self.server.log.write(decision="error", reason=str(e), status=status, **log)
+            if status is None and not self.responded:
+                try:
+                    self.wfile.write(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    self.responded = True
+                except OSError:
+                    pass
             return
         except (OSError, http.client.HTTPException) as e:
+            # A client that aborts mid-stream, or an upstream drop. The API had
+            # the request already (captured above), so record the partial reply.
+            self._capture(id=self.rid, kind="response", decision="error", status=status,
+                          reason=str(e), response_chunks=cap_chunks, response_truncated=cap_trunc, **log)
             self.server.log.write(decision="error", reason=str(e), status=status, **log)
-            if status is None:
+            if status is None and not self.responded:
                 try:
                     self.wfile.write(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    self.responded = True
                 except OSError:
                     pass
             return
         finally:
             conn.close()
+        self._capture(id=self.rid, kind="response", decision="allow", status=status,
+                      resp_bytes=resp_bytes, response_chunks=cap_chunks,
+                      response_truncated=cap_trunc, **log)
         self.server.log.write(
             decision="allow", status=status, req_bytes=content_length, resp_bytes=resp_bytes,
             ms=int((time.monotonic() - started) * 1000), **log)
@@ -317,6 +478,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--socket", required=True, help="Unix socket to listen on (created 0600)")
     ap.add_argument("--log", required=True, help="JSON-lines request log (appended, 0600)")
+    ap.add_argument("--capture", help="per-session transcript of request and response "
+                    "bodies, linked by id, one gzip member each (appended, 0600)")
     src = ap.add_mutually_exclusive_group(required=True)
     src.add_argument("--keychain-service", help="macOS keychain service of the token")
     src.add_argument("--token-file", help="file that holds the token (0600)")
@@ -329,6 +492,20 @@ def main():
     if len(os.fsencode(os.path.abspath(args.socket))) > 103:
         sys.exit(f"error: socket path too long for AF_UNIX: {args.socket}")
     token = load_token(args)
+    try:
+        budget = int(os.environ.get("WMF_CLAUDE_CAPTURE_MAX_BYTES", CAPTURE_SESSION_MAX_DEFAULT))
+    except ValueError:
+        sys.exit("error: WMF_CLAUDE_CAPTURE_MAX_BYTES must be an integer")
+    # The log and the transcript open, and the first record writes, before the
+    # socket binds: a path that cannot be opened or written must exit before the
+    # launcher can see a live socket.
+    log = Log(args.log)
+    try:
+        capture = Capture(args.capture, budget) if args.capture else None
+    except OSError as e:
+        sys.exit(f"error: cannot open the transcript file {args.capture}: {e}")
+    if capture is not None and not capture.write(kind="start", pid=os.getpid()):
+        sys.exit(f"error: cannot write the transcript file {args.capture}: {capture.fail_reason}")
     sock_dir = os.path.dirname(os.path.abspath(args.socket))
     os.makedirs(sock_dir, mode=0o700, exist_ok=True)
     if os.path.lexists(args.socket):
@@ -341,7 +518,10 @@ def main():
     finally:
         os.umask(old)
     server.token = token
-    server.log = Log(args.log)
+    server.log = log
+    server.capture = capture
+    server.trip_lock = threading.Lock()
+    server.trip_logged = False
     server.tls = tls_context()
     # SIGTERM (bin/wmf-claude-vm stops the proxy with it) exits through the
     # finally below, which removes the socket.

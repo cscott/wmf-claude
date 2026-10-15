@@ -112,6 +112,27 @@ host that holds the token, allows only Messages API requests, refuses
 anything that would make the API fetch from the internet for the agent
 (server tools such as web search, the MCP connector, URL content sources),
 and logs each request to `~/.local/state/wmf-claude/model-proxy-<vm>.log`.
+It also writes a per-session transcript next to that log,
+`transcript-<vm>-<time>-<pid>.jsonl.gz`: a request record before each call
+reaches the API and a response record after, linked by an id. Both live on the
+host, out of the VM's reach, so a session cannot alter its own record; a
+request it cannot record is not forwarded, and the session stops at a write
+error or the byte budget (`WMF_CLAUDE_CAPTURE_MAX_BYTES`, 2 GiB by default).
+`delete` and `reset` keep the files, so remove them yourself when the audit
+trail is no longer needed.
+
+To read these host-side artifacts, run `bin/wmf-claude-vm logs`. It reads the
+files only, so it needs neither a running VM nor the host that ran the session.
+With no argument it prints the most recent session of the request log, one line
+per request (colour on a terminal, plain in a pipe); `--all` prints every
+session and `-f` follows a live one. `logs --transcript` summarises the newest
+transcript, one line per record; `--transcript PATH` reads a specific file.
+`--text` reconstructs each turn as readable text: the model's prose, its
+extended thinking, and the tool calls it requested (shown as `→ Bash: ...`). A
+tool call is a request to run a command; what happened — the output, a denial
+or an error — is in the next request's result, which `--text` also shows. An
+error body or a part-captured turn is flagged, and `--raw` prints the decoded JSON. Set `WMF_CLAUDE_VM` to the VM whose logs you
+want, as with every other subcommand.
 `--allow-post`, `--minimax` and `--ide` are refused; the VM has no MCP
 servers except chrome-devtools, whose browser runs in the VM.
 
@@ -281,6 +302,14 @@ check.
 - **Lima VM: the model token is in the VM,** in reach of the sandbox, as on
   the host. `reset` drops it; revoke it at claude.ai if in doubt.
   → Contained mode keeps it on the host.
+- **Host files follow `$XDG_*`, the profile denies are literal.** The token
+  (`~/.config/wmf-claude`), the request log and the transcripts
+  (`~/.local/state/wmf-claude`) honour `XDG_CONFIG_HOME` and `XDG_STATE_HOME`,
+  but the profiles deny the literal `~/.config` and `~/.local/state` paths. If
+  you set those `XDG_*` variables to a non-default location, the files move out
+  from under the denies, so a host `bin/claude` session launched from that
+  location could read them. Leave `XDG_CONFIG_HOME`/`XDG_STATE_HOME` at their
+  defaults, or add the real paths to both profiles' `deny`.
 - **Lima VM: egress.** Inside the VM, nono's allowlist binds Claude exactly
   as on the host, and containers you start are not sandboxed by nono.
   → Contained mode locks the VM's network.
@@ -306,8 +335,8 @@ check.
   but maybe not DNS (`check-host-block` reports whether it does) and not the
   host's own loopback services. The in-VM lock covers both; closing them on
   the host needs a VM with no network at all, which Lima does not offer yet.
-- **Contained: not done yet.** Transcript and log retention outside the
-  agent's reach, and a per-engagement scope prompt.
+- **Contained: not done yet.** A per-engagement scope statement surfaced to
+  the session.
 - **Linux hosts: contained mode is untested.** The token store (a 0600 file
   under `~/.config/wmf-claude/`) is the same on Linux and macOS, but the Linux
   path has not run, `tests/smoke-contained.sh` uses some macOS commands, and no

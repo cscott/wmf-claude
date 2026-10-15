@@ -1669,6 +1669,12 @@ Candidates (L1 measures them):
      Control. Allow more paths only where needed.
   6. `scan`: no real token in the guest (credentials, `~/.claude`,
      every process's environment).
+  Status: **RAN** on the engineer's host (sbx/NOTES.md, "Shared
+  login"): A1 works in standalone `nono proxy` (items 1, 2, 3 and 6
+  pass); item 4: a login is per sandbox; item 5: the narrow policy
+  denies the profile, settings, policy and feature-flag endpoints, so
+  remote managed settings are not applied. Still to measure: does the
+  login survive a stop and start (`oauth-l5.sh persist`)?
   Exit: results in `sbx/NOTES.md`; a choice between A1 and A2; then
   build it (the profile in `egress.py`, the session without the
   credential proxy's variables when the sandbox has the egress proxy

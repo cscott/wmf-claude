@@ -1187,6 +1187,36 @@ A2.0 results (in the nested `dev` VM, nono 0.78.0, 2026-10-13):
   the code prompt: `script` is in the image, and the URL is an OSC 8 hyperlink). Without a
   terminal setup-token waits for ever, so `login` refuses to start; a SIGTERM left the VM
   running (Python runs no `finally` for it), so SIGTERM and SIGHUP now stop it cleanly.
+- L5 (`lima-port/checks/oauth-l5.sh`, engineer's host, Linux, KVM, nono 0.79, Claude Code
+  2.1.292, 2026-10-15): nono's `claude_code` `oauth_capture` provider works in the host's
+  standalone `nono proxy`, although the proxy's route list shows only
+  `api.anthropic.com | creds: none`.
+  - `/login` in the guest succeeded. The guest's `.credentials.json` has a phantom access
+    token (`sk-ant-oat01-`, 77 characters) and a phantom refresh token (`nono_`, 69), the
+    full login's scopes (`user:inference`, `user:profile`, `user:sessions:claude_code`,
+    `user:mcp_servers`, `user:file_upload`, `user:plugins`), and `subscriptionType: null`.
+    The real tokens are in the host's per-sandbox store
+    (`egress/NAME/state/nono/oauth-capture/providers.json`).
+  - `POST /v1/messages?beta=true` with the phantom: 200. A forced refresh (`expiresAt` 0)
+    went through `POST platform.claude.com/v1/oauth/token` (200) and gave the guest a new
+    phantom; the next turn worked.
+  - `scan`: 0 real tokens in the guest's credentials file, `~/.claude` and every process's
+    environment, in both sandboxes.
+  - The login does not move to another sandbox: the file copied to l5-b gave "OAuth
+    session expired and could not be refreshed" (l5-b's proxy has no capture for those
+    phantoms). A login is per sandbox, as the per-sandbox stores predict.
+  - The narrow policy (`POST /v1/messages` only) denies (403) everything else Claude Code
+    calls on `api.anthropic.com`: `GET /api/oauth/profile`, `/api/claude_cli/roles`,
+    `/api/claude_cli/bootstrap`, `/api/claude_code/settings`,
+    `/api/claude_code/policy_limits`, `/api/claude_code/organizations/metrics_enabled`,
+    `/api/organization/claude_code_first_token_date`, `/api/claude_code_penguin_mode`,
+    `/v1/mcp_servers`, `/mcp-registry/v0/servers`; `POST /api/eval/sdk-*` (feature flags)
+    and `/api/event_logging/v2/batch`. `downloads.claude.ai` is not in the profile's
+    allowlist. Effects: `/status` shows "Login method: Claude API account" and
+    "Organization policy: Couldn't load", so remote managed settings are not applied (they
+    fail open) and Remote Control, `/feedback` and web fetch stay off; `/usage` shows the
+    session and week limits (from the message responses) but "Could not refresh usage
+    data". Turns work.
 - A shallow host repo (`git clone --depth`): `git clone --shared` copies the objects and
   writes no alternates file; `sandbox-repos.sh` accepts that (RAN).
 

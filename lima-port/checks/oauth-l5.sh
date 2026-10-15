@@ -13,6 +13,7 @@
 #   lima-port/checks/oauth-l5.sh refresh l5-a   # force a token refresh, then a turn
 #   lima-port/checks/oauth-l5.sh share l5-a l5-b  # the login's file in a second sandbox
 #   lima-port/checks/oauth-l5.sh scan l5-a      # real tokens in the guest? (want 0)
+#   lima-port/checks/oauth-l5.sh persist l5-a   # stop and start the sandbox, then a turn
 #   lima-port/checks/oauth-l5.sh rm             # remove both sandboxes
 #
 # Order: profile, create, login l5-a, inspect l5-a, use l5-a, refresh l5-a,
@@ -113,7 +114,7 @@ phase_inspect() {  # NAME
 phase_use() {  # NAME
   need_profile
   "$WMF_SBX" exec "$1" -- "${NOCRED[@]}" claude -p "Reply with the single word ok." \
-    --model haiku > "$LOGS/use-$1.log" 2>&1
+    --model haiku < /dev/null > "$LOGS/use-$1.log" 2>&1
   local rc=$?
   sed 's/^/   | /' "$LOGS/use-$1.log" | tail -5
   [ $rc = 0 ] && result "use $1: ok" || result "use $1: exit $rc FAILED"
@@ -175,14 +176,24 @@ print(f"== RESULT scan {name}: {hits} hits" + ("" if hits == 0 else " FAILED"))
 EOF
 }
 
+phase_persist() {  # NAME
+  # The capture store is on the host's disk; the proxy is restarted with
+  # the VM. Does the login survive that?
+  need_profile
+  "$WMF_SBX" stop "$1" > "$LOGS/persist-$1.log" 2>&1 &&
+    "$WMF_SBX" start "$1" >> "$LOGS/persist-$1.log" 2>&1 ||
+    { tail -10 "$LOGS/persist-$1.log"; result "persist $1: stop/start FAILED"; return 1; }
+  phase_use "$1"
+}
+
 phase_rm() {
   for n in "${NAMES[@]}"; do "$WMF_SBX" rm --force "$n" >/dev/null 2>&1 && echo "-- $n removed"; done
 }
 
 case "${1:-}" in
   profile|create|rm) "phase_$1" ;;
-  login|inspect|use|refresh|scan) [ -n "${2:-}" ] || { echo "usage: $0 $1 NAME"; exit 2; }
+  login|inspect|use|refresh|scan|persist) [ -n "${2:-}" ] || { echo "usage: $0 $1 NAME"; exit 2; }
                                   "phase_$1" "$2" ;;
   share) [ -n "${3:-}" ] || { echo "usage: $0 share FROM TO"; exit 2; }; phase_share "$2" "$3" ;;
-  *) sed -n '2,29p' "$0"; exit 2 ;;
+  *) sed -n '2,30p' "$0"; exit 2 ;;
 esac

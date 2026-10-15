@@ -1534,13 +1534,20 @@ SL="$REPO_ROOT/bin/statusline.sh"
 SL_HOME="$(mktemp -d)"; trap 'rm -rf "$FAKE_REPO" "$IDE_HOME" "$UPD" "$SL_HOME"' EXIT
 if [[ -x "$SL" ]] && bash -n "$SL"; then pass "bin/statusline.sh is executable and parses"; else fail "bin/statusline.sh missing, not executable, or has a syntax error"; fi
 sl_run() {  # $1 stdin json; env from caller
-  ( cd "$SL_HOME" && printf '%s' "$1" | HOME="$SL_HOME" WMF_CLAUDE_HOME="$REPO_ROOT" bash "$SL" )
+  ( cd "$SL_HOME" && printf '%s' "$1" | HOME="$SL_HOME" WMF_CLAUDE_HOME="$REPO_ROOT" \
+      SANDBOX_NAME="${SL_SANDBOX_NAME:-}" bash "$SL" )
 }
 out="$(WMF_CLAUDE_PROFILE=wmf-engineer WMF_CLAUDE_SESSION="--local-db=3306 --docker=mediawiki" WMF_CLAUDE_UPDATE= sl_run '{"model":{"display_name":"Opus"}}')"
 if [[ "$out" == "WMF nono sandbox · --local-db=3306 --docker=mediawiki" ]]; then
   pass "status line shows the sandbox segment with the session flags"
 else
   fail "status line segment wrong: '$out'"
+fi
+out="$(SL_SANDBOX_NAME=sbx-cite WMF_CLAUDE_SESSION="--local-web" WMF_CLAUDE_UPDATE= WMF_CLAUDE_STATUSLINE='echo THEIRS' sl_run '{}')"
+if [[ "$out" == "sbx-cite · WMF nono sandbox · --local-web │ THEIRS" ]]; then
+  pass "status line puts a wmf-sbx sandbox's name first"
+else
+  fail "status line does not lead with the sandbox name: '$out'"
 fi
 out="$(WMF_CLAUDE_SANDBOX_BACKEND=lima-sbx-sudo WMF_CLAUDE_SESSION="sudo" WMF_CLAUDE_UPDATE= sl_run '{}')"
 if [[ "$out" == "WMF sandbox VM · sudo" ]]; then

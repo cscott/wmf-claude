@@ -66,10 +66,6 @@ Development scaffolding:
 
 cananian, 2026-10-14: small changes, to do once the blind run in a warm sandbox passes.
 
-- [ ] **The sandbox name first in the status line**: in a sandbox session the status line
-  starts with `WMF nono sandbox`, and a narrow terminal cuts off what comes later. Show the
-  sandbox name as the leftmost item (`bin/statusline.sh` today puts `WMF_CLAUDE_SESSION`
-  after that label), so it is always visible.
 - [ ] **`wmf-sbx cp` with more than one source and with wildcards**: take `SRC... DST`
   as `cp` does (DST must then be a directory), and expand wildcards in a source on the side
   it names: the host shell expands host paths, so expand `NAME:PATH` patterns in the guest

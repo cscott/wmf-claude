@@ -96,6 +96,20 @@ primary repo is that directory.
    wmf-sbx resume sbx-cite    # later sessions
    ```
 
+4. **Optional: tab completion for `git sbx-pull`** ("Commit flow"). git's
+   bash completion loads it from bash-completion's directory for your
+   user; nothing goes in `~/.bashrc`:
+
+   ```bash
+   dir=${BASH_COMPLETION_USER_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion}/completions
+   mkdir -p "$dir"
+   ln -s /path/to/wmf-claude/sbx/completion/git-sbx-pull "$dir/git-sbx-pull"
+   ```
+
+   It needs bash 4 or later and bash-completion 2 (on macOS, Homebrew's
+   `bash` and `bash-completion@2`)
+   and git's completion. zsh is not supported yet.
+
 ## Sign-in
 
 Sign in once, for every sandbox, without Claude Code on the host:
@@ -603,14 +617,56 @@ wmf-sbx create --sudo ~/src/Cite
 1. `wmf-sbx create Cite` (it starts a session; `wmf-sbx resume sbx-cite` later).
 2. In the sandbox, the remote `local` is your host checkout (read-only,
    current as of your last fetch). To give the agent your newer work,
-   tell it (or run `! git safe-reset local`).
+   tell it to run `/sbx-pull` ("Commit flow").
 3. The agent commits on a branch; its `~/.claude/CLAUDE.md` tells it to
    end each turn with a commit.
-4. On the host: `git fetch sbx-cite`, or `git safe-reset sbx-cite`, which
-   refuses to discard a dirty tree or unsubmitted commits without
-   `--force`.
+4. On the host: `git sbx-pull` ("Commit flow").
 5. Review, amend, and `git review` from the host, as usual. The sandbox
    cannot push.
+
+## Commit flow
+
+Work goes between the host and a sandbox as branches, in both directions,
+with one command: `git sbx-pull`. On the host it takes a sandbox's
+branch; in the sandbox it takes the host's branch. There is no push: the
+sandbox cannot reach the host, and the host never writes into the VM.
+
+**From the sandbox to the host.** In the host repo:
+
+```bash
+git sbx-pull                    # the current branch's sandbox branch, else the only new one
+git sbx-pull fix-thing          # that branch, from the sandbox that has it
+git sbx-pull sbx-cite/fix-thing # that branch, from that sandbox
+git sbx-pull fix-thing --onto REL1_46   # its upstream on origin, when the guess is wrong
+```
+
+It fetches from the sandbox remotes, then checks out a branch of the same
+name at the agent's tip. A new branch gets an upstream on origin (the
+sandbox branch's upstream, else the nearest host branch that has one), so
+`git review` sends it to the right Gerrit branch. An existing branch
+moves with `git reset --keep`; the old tip is in `BRANCH@{1}`. The host
+records which sandbox branch each host branch came from
+(`branch.BRANCH.wmfsbx*` in git config), so the next `git sbx-pull` on
+that branch needs no argument.
+
+It stops, unless `-f`/`--force`, when it would leave or move a branch
+with commits that are not saved: not in a sandbox remote, not on origin,
+and not on Gerrit. A dirty tree always stops it.
+
+`git safe-reset sbx-cite/fix-thing` says to use `git sbx-pull`, then runs
+it. `git review-check` (the pre-review hook) accepts a commit that is in a
+sandbox remote.
+
+**From the host to the sandbox.** Commit on a branch on the host, then
+tell the agent to run `/sbx-pull`. It runs `git sbx-pull` in the sandbox,
+which takes your current branch (or `git sbx-pull BRANCH`) as a branch of
+the same name, with upstream `local/BRANCH`, and shows the change with
+`git range-diff`. A hand-off from `master` or `main` gets a new branch
+name, which the agent picks from the commits (`git sbx-pull --as NAME`).
+It stops when the agent has commits that the host does not have: run
+`git sbx-pull` on the host first.
+
+When a sandbox is removed, `wmf-sbx rm` removes its records too.
 
 ## Tests in the sandbox
 

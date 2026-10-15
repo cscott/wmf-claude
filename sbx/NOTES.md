@@ -436,7 +436,16 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
     `~/.claude/skills/sbx-pull/SKILL.md` (source `sbx/templates/skills/sbx-pull/`),
     not the plugin's: it is wmf-sbx's alone, it stays out of the shared `skills/`,
     and a user skill's command is `/sbx-pull` (to RAN in a session). The agent's
-    CLAUDE.md names it. Still to build: the completion and the README.
+    CLAUDE.md names it. Last, `sbx/completion/git-sbx-pull` (bash): git's completion
+    calls `_git_sbx_pull`, and when it is not defined has bash-completion 2 load
+    `git-sbx-pull` from the user's completion directory
+    (`$BASH_COMPLETION_USER_DIR`, else `$XDG_DATA_HOME/bash-completion`), so the
+    README's "Getting started" links it there and nothing edits `~/.bashrc`. One
+    file does both modes, by `$SANDBOX_NAME`; the guest image does not install it
+    (the agent has no TTY). The README has a "Commit flow" section, which the host
+    command's `--help` names. Open: zsh (its own `_git` and git's
+    `git-completion.zsh` find subcommands in different ways), and macOS bash 3.2
+    (bash-completion 2 needs bash 4).
   - READ 2026-10-15, why upstreams to a sandbox seemed to vanish: `wmf-sbx rm` runs
     `git remote remove NAME` (remotes.py), which deletes `refs/remotes/NAME/*` and
     unsets `branch.*.remote`/`merge` for every branch that tracked NAME. The local

@@ -1,0 +1,51 @@
+# bash completion for `git sbx-pull` (sbx/bin/git-sbx-pull, and
+# sbx/helpers/git-sbx-pull in a sandbox).
+#
+# git's own completion calls _git_sbx_pull for `git sbx-pull <TAB>`; when
+# that is not defined, it has bash-completion 2 load the file named
+# `git-sbx-pull` from its completion directories, which include
+# ~/.local/share/bash-completion/completions/. Link this file there (see
+# sbx/README.md, "Getting started"); nothing goes in ~/.bashrc.
+
+_git_sbx_pull ()
+{
+	local origin
+	origin=$(__git for-each-ref --format='%(refname:lstrip=3)' refs/remotes/origin/ |
+		grep -vx HEAD)
+	case "$prev" in
+	--onto)
+		__gitcomp_nl "$origin"
+		return
+		;;
+	esac
+	case "$cur" in
+	--onto=*)
+		__gitcomp_nl "$origin" "" "${cur#--onto=}"
+		return
+		;;
+	-*)
+		if [ -n "${SANDBOX_NAME-}" ]; then
+			__gitcomp "--as= --force"
+		else
+			__gitcomp "--onto= --force"
+		fi
+		return
+		;;
+	esac
+	if [ -n "${SANDBOX_NAME-}" ]; then
+		# In a sandbox: the host's branches.
+		__gitcomp_nl "$(__git for-each-ref --format='%(refname:lstrip=3)' \
+			refs/remotes/local/ | grep -vx HEAD)"
+		return
+	fi
+	# On the host: BRANCH and NAME/BRANCH, for each sandbox of this repo.
+	local ls top remote list=""
+	ls=$(command -v wmf-sbx-ls-remotes) || return
+	top=$(__git rev-parse --show-toplevel) || return
+	for remote in $("$ls" --path "$top" 2>/dev/null); do
+		list+=$(__git for-each-ref --format="%(refname:lstrip=2)
+%(refname:lstrip=3)" "refs/remotes/$remote/" | grep -v '\(^\|/\)HEAD$')
+		list+=$'\n'
+	done
+	__gitcomp_nl "$(printf '%s' "$list" | sort -u)"
+}

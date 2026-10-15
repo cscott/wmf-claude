@@ -106,9 +106,9 @@ It is a separate entry point, not a `bin/claude` flag:
 | `list` | The wmf-claude VMs on this machine: state, mode, workspaces; `*` marks the selected one |
 | `update` | Upload this checkout's HEAD (submodules included) and reinstall it in the guest |
 | `login` | Sign Claude Code in as `agent` (`claude auth login`, outside nono); once per VM. On a contained VM: store a `claude setup-token` token in the host keychain instead |
-| `push DIR [NAME]` | Git-bundle a repo into `/home/agent/work/NAME` |
+| `push [--nested[=A,B]] DIR [NAME]` | Git-bundle a repo into `/home/agent/work/NAME`; a repeat push sends only new commits. `--nested`: also every repo inside DIR (core: `extensions/*`, `skins/*`), each its own workspace `NAME/<path>`, in one copy |
 | `claude NAME [bin/claude args]` | Sandboxed session in that workspace, as the `agent` user. `--docker=SERVICE` starts the broker as the engineer; `--chrome` starts a headless, loopback-only Chromium in the guest; `--ide` is refused; `--allow /home/agent/work --` grants every workspace. On exit, lists the branches not pulled and the files not committed |
-| `pull NAME [DEST]` | Fetch the agent's branches into `vm/*` (remote-tracking refs) of the repo NAME was pushed from, or of DEST; nothing is checked out |
+| `pull [--nested] NAME [DEST]` | Fetch the agent's branches into `vm/*` (remote-tracking refs) of the repo NAME was pushed from, or of DEST; nothing is checked out. `--nested`: also the new commits of the workspaces under NAME, each into its own repo (no prune; pull one by name for a full sync) |
 | `review NAME BRANCH`, `checkout NAME BRANCH`, `discard NAME BRANCH` | Show what `vm/BRANCH` adds, create a local branch from it, or delete it (plain git in NAME's host repo) |
 | `lock`, `unlock` | Contained VM: no egress (sessions run only then) or egress for setup ([lima-vm.md#network-phases-locked-and-open](lima-vm.md#network-phases-locked-and-open)) |
 | `check-host-block` | Contained VM: remove its lock for one request and check that a firewall on the host still blocks it; `status` shows the result. `WMF_CLAUDE_REQUIRE_HOST_BLOCK=1` makes sessions refuse until it passes for the current `limactl` |

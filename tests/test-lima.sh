@@ -148,6 +148,30 @@ check  "update includes the submodules at HEAD's commits" "$VM" 'done < <\(git -
 check  "update stops on a missing submodule commit" "$VM" 'cat-file -e "\$sha\^\{commit\}"'
 
 echo ""
+echo "--- bin/wmf-claude-vm: what a session left in the VM ---"
+claude_fn=$(awk '/^cmd_claude\(\) \{/,/^\}/' "$VM")
+if grep -q 'after_session' <<<"$claude_fn" && ! grep -q 'exec limactl' <<<"$claude_fn"; then
+  pass "claude keeps the launcher for the report after the session"
+else
+  fail "cmd_claude must call after_session and not exec"
+fi
+check  "a contained session records its exit code (errexit stays on)" "$VM" '--model-proxy-port "\$port" "\$name" "\$@" \|\| SESSION_RC=\$\?'
+check  "the report strips control characters from agent-chosen names" "$VM" "tr -d '\\\\000-\\\\010\\\\013-\\\\037\\\\177'"
+report_fn=$(awk '/^unpulled_report\(\) \{/,/^\}/' "$VM")
+if grep -q 'guest_agent bash -c' <<<"$report_fn" && grep -q 'core\.hooksPath=/dev/null' <<<"$report_fn"; then
+  pass "the report runs as the agent, hooks off"
+else fail "the report must run as the agent with hooks off"; fi
+if ! grep -qE '(g "\$w"|git -C "\$dest") (commit|checkout|merge|reset|push|fetch|add|switch)' <<<"$report_fn"; then
+  pass "the report is read-only"
+else fail "the report runs a git command that writes"; fi
+check  "the report compares with the host's vm/* refs" "$VM" 'refs/remotes/vm/\$branch'
+check  "the report counts uncommitted files"            "$VM" 'status --porcelain'
+status_fn=$(awk '/^cmd_status\(\) \{/,/^\}/' "$VM")
+if grep -q 'unpulled_report' <<<"$status_fn"; then pass "status shows the report"; else fail "status must show the report"; fi
+check  "docs: sibling workspaces via --allow"           "$REPO_ROOT/docs/lima-vm.md" 'claude core --allow /home/agent/work --'
+check  "docs: uncommitted files do not travel"          "$REPO_ROOT/docs/lima-vm.md" 'Uncommitted files never travel'
+
+echo ""
 echo "--- bin/claude: attach-mode handshake override ---"
 check  "bin/claude reads WMF_DOCKER_HANDSHAKE once" "$REPO_ROOT/bin/claude" '^DOCKER_HANDSHAKE_OVERRIDE="\$\{WMF_DOCKER_HANDSHAKE:-\}"$'
 check  "bin/claude unsets it on every path"         "$REPO_ROOT/bin/claude" '^unset WMF_DOCKER_HANDSHAKE$'

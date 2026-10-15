@@ -13,7 +13,7 @@
 #   bin/wmf-claude-vm lock | unlock                  # contained VM: no egress (sessions run) | egress (setup)
 #   bin/wmf-claude-vm check-host-block               # contained VM: prove the host blocks it without its lock
 #   bin/wmf-claude-vm push DIR [NAME]                # copy a git repo into the agent's workspace (git bundle)
-#   bin/wmf-claude-vm claude NAME [bin/claude args]  # run sandboxed Claude Code in workspace NAME
+#   bin/wmf-claude-vm claude NAME [bin/claude args]  # run sandboxed Claude Code in workspace NAME; on exit, list what is not pulled yet
 #   bin/wmf-claude-vm pull NAME [DEST]               # fetch the agent's branches into vm/* of the repo NAME was pushed from (or DEST)
 #   bin/wmf-claude-vm review NAME BRANCH             # show what vm/BRANCH adds (git log -p)
 #   bin/wmf-claude-vm checkout NAME BRANCH           # create local BRANCH from vm/BRANCH, switch to it
@@ -150,6 +150,68 @@ ws_dest() {  # $1 NAME; prints the recorded host repository, or dies
   [[ -n "$p" ]] || die "no host repository recorded for '$1'. Name it once: bin/wmf-claude-vm pull $1 ~/src/some-repo"
   git -C "$p" rev-parse --git-dir >/dev/null 2>&1 || die "$p (recorded for '$1') is not a git repository"
   printf '%s\n' "$p"
+}
+
+# What the agent has that the host does not, for every workspace: branches
+# whose tip is not the host's vm/<branch> (pull brings them), and files the
+# agent changed but did not commit (a bundle carries commits only, so pull
+# never brings them). Read-only, as the agent, hooks off; one guest call.
+# Prints the report to stdout, nothing when the host has it all. A workspace
+# with no host record counts as not pulled. Names come from the agent's
+# directories: control characters are dropped before they reach a terminal.
+unpulled_report() {
+  local lines kind name f3 f4 f5 branch sha ahead dirty dest have out="" pull="" uncommitted=false
+  # Per branch: B NAME BRANCH SHA AHEAD; then per workspace: W NAME DIRTY-FILES,
+  # where AHEAD counts the commits no remote of the workspace has (host/*
+  # for a pushed one, origin/* for a clone made in the VM). Tab-separated.
+  lines=$(guest_agent bash -c '
+    cd "$HOME/work" 2>/dev/null || exit 0
+    g() { git -c core.hooksPath=/dev/null -c core.fsmonitor=false -c core.pager=cat -C "$1" "${@:2}"; }
+    find . -mindepth 2 -maxdepth 6 -name .git -not -path "./.pull/*" -prune -print 2>/dev/null | sort | while read -r d; do
+      w="${d#./}"; w="${w%/.git}"
+      g "$w" for-each-ref --format="%(refname:short) %(objectname)" refs/heads/ 2>/dev/null | while read -r b s; do
+        printf "B\t%s\t%s\t%s\t%s\n" "$w" "$b" "$s" "$(g "$w" rev-list --count "$s" --not --remotes 2>/dev/null || echo 0)"
+      done
+      printf "W\t%s\t%s\n" "$w" "$(g "$w" status --porcelain 2>/dev/null | wc -l | tr -d " ")"
+    done
+  ' | LC_ALL=C tr -d '\000-\010\013-\037\177')
+  [[ -n "$lines" ]] || return 0
+  while IFS=$'\t' read -r kind name f3 f4 f5; do
+    case "$kind" in
+      W)
+        dirty="$f3"
+        [[ "$dirty" =~ ^[0-9]+$ && "$dirty" != 0 ]] || continue
+        out+=$(printf '    %-20s %-20s %s uncommitted file%s' "$name" "(working tree)" "$dirty" "$([[ "$dirty" == 1 ]] || echo s)")$'\n'
+        uncommitted=true
+        ;;
+      B)
+        branch="$f3"; sha="$f4"; ahead="$f5"
+        [[ "$ahead" =~ ^[0-9]+$ && "$ahead" != 0 ]] || continue
+        dest=$(awk -F'\t' -v n="$name" '$1 == n { print $2 }' "$WS_FILE" 2>/dev/null | tail -n1)
+        have=""
+        [[ -n "$dest" ]] && have=$(git -C "$dest" rev-parse -q --verify "refs/remotes/vm/$branch" 2>/dev/null || true)
+        [[ "$have" != "$sha" ]] || continue
+        out+=$(printf '    %-20s %-20s %s commit%s not pulled' "$name" "$branch" "$ahead" "$([[ "$ahead" == 1 ]] || echo s)")$'\n'
+        case " $pull " in *" $name "*) ;; *) pull+="${pull:+ }$name" ;; esac
+        ;;
+    esac
+  done <<< "$lines"
+  [[ -n "$out" ]] || return 0
+  printf '%s' "$out"
+  if [[ -n "$pull" ]]; then
+    printf '  Pull with: bin/wmf-claude-vm pull %s\n' "${pull// /; bin/wmf-claude-vm pull }"
+  fi
+  $uncommitted && echo "  Uncommitted files do not travel: commit them in the VM first."
+  return 0
+}
+
+# After a session: what is still only in the VM, on stderr so a -p run's
+# stdout stays clean. Exit output is visible, unlike startup output.
+after_session() {
+  local r
+  r=$(unpulled_report 2>/dev/null) || return 0
+  [[ -n "$r" ]] || return 0
+  { echo ""; echo "  Work in the VM not yet on the host:"; printf '%s\n' "$r"; } >&2
 }
 
 # HEAD of this checkout with the submodules at their recorded commits, as one
@@ -417,11 +479,17 @@ cmd_claude() {
   valid_name "$name" || die "invalid NAME '$name'"
   shift
   require_running
+  # Not exec: the launcher stays to report what the session left in the VM.
+  # SESSION_RC, not a return value: a function called in a `||` list runs
+  # with errexit off, and contained_session relies on it.
+  SESSION_RC=0
   if is_contained; then
     contained_session "$name" "$@"
-    return
+  else
+    limactl shell --workdir "$ENGINEER_HOME" "$VM" -- "$INSTALL/lima/guest-claude.sh" "$name" "$@" || SESSION_RC=$?
   fi
-  exec limactl shell --workdir "$ENGINEER_HOME" "$VM" -- "$INSTALL/lima/guest-claude.sh" "$name" "$@"
+  after_session
+  return "$SESSION_RC"
 }
 
 # A contained session: bin/wmf-claude-model-proxy on the host, with the token, on a
@@ -480,7 +548,7 @@ contained_session() {
   done
   [[ -n "$port" ]] || die "the SSH forward to the guest did not start: $(cat "$sshlog")"
   dim "    model API: host proxy -> guest 127.0.0.1:$port; log: $log"; echo ""
-  limactl shell --workdir "$ENGINEER_HOME" "$VM" -- "$INSTALL/lima/guest-claude.sh" --model-proxy-port "$port" "$name" "$@"
+  limactl shell --workdir "$ENGINEER_HOME" "$VM" -- "$INSTALL/lima/guest-claude.sh" --model-proxy-port "$port" "$name" "$@" || SESSION_RC=$?
 }
 # The EXIT trap. Stop the processes first: nothing after them may keep them
 # alive. The ${a[@]+...} form: macOS /bin/bash 3.2 with set -u treats an
@@ -682,6 +750,11 @@ cmd_status() {
     printf "  workspaces:       %s\n" "$(ls /home/agent/work 2>/dev/null | grep -v "^\.pull$" | tr "\n" " ")"
   '
   printf '  host HEAD:        %s\n' "$(host_rev)"
+  local r
+  r=$(unpulled_report 2>/dev/null) || true
+  if [[ -n "$r" ]]; then
+    echo ""; echo "  Work in the VM not yet on the host:"; printf '%s\n' "$r"
+  fi
 }
 
 cmd_delete() {

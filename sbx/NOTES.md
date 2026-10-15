@@ -246,6 +246,15 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
       MCP in the lima port.  If so, we should create a plan to
       transition back to host-side MCP in both sudo and nono modes.
 
+- [ ] **Clipboard shim: use socat in place of bash `/dev/tcp`** if socat is added to the
+  golden image later. `clipboard.GUEST_SHIM` opens the guestfwd with bash's `/dev/tcp`,
+  as the image has neither socat nor nc. socat gives a connect timeout and a clean
+  half-close (`socat -u - TCP:ADDR,connect-timeout=1`). Do not use nc: its variants
+  differ (OpenBSD nc needs `-N` to close after stdin ends). Not a reason to add socat
+  alone: it saves one line, slirp accepts at once, Claude Code kills the shim after 2 s,
+  and a new package changes the image's cache key, so every host rebuilds the image. It
+  may be worth it for paste (`session.native_paste`) or for the no-egress case.
+
 ### From the design documents
 
 - [ ] **Dependency walk, open questions:** a manifest `name` that is not the directory: an
@@ -267,6 +276,12 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
   them.
 
 ### Quality-of-life issues
+- [ ] **`create`'s auto-start hides the "Sandbox NAME is ready" block.** `wmf-sbx create`
+  prints the block (the sandbox name, how to resume it, `wmf-sbx rm NAME`), then runs
+  `wmf-sbx resume`. The block scrolls away under the session, and the last line on the
+  terminal is Claude Code's own `Resume this session with: claude --resume UUID`, which is
+  not how to resume a sandbox. Fix: run the auto-start first, and print the block after
+  the auto-started `wmf-sbx resume` exits (cananian 2026-10-15).
 - [ ] Streamline the process for copying commits from the sandbox to
       the host.  Right now on the host we do something like `git
       safe-reset` (to ensure that there is no unsaved work on the

@@ -479,13 +479,16 @@ would control a paste):
 - A sandbox made before this has no shim, no `nativeCopy` and no
   guestfwd: it gets them when made again.
 
+RAN on the engineer's host (2026-10-15): end to end. `wmf-sbx create` a
+new sandbox, select in Claude Code, then Ctrl+V and middle click in a
+host app; the log line in
+`~/.local/state/wmf-sbx/sandboxes/NAME.clipboard.log`; then exit the
+session and paste again (the host's `wl-copy` keeps the selection).
+Result: it works.
+
 Still to RAN, on the engineer's host:
 
-- end to end: `wmf-sbx create` a new sandbox, select in Claude Code,
-  then Ctrl+V and middle click in a host app; the log line in
-  `~/.local/state/wmf-sbx/sandboxes/NAME.clipboard.log`; then exit the
-  session and paste again (the host's `wl-copy` keeps the selection);
-- the same in a `--sudo` sandbox;
+- end to end, as above, in a `--sudo` sandbox;
 - QUnit (karma's Chrome) and Cypress in a session with
   `WAYLAND_DISPLAY=wmf-sbx` set: a Chromium that picks its platform by
   that variable would look for a compositor. Headless Chrome uses no

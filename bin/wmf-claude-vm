@@ -723,42 +723,80 @@ cmd_shell() {
   exec limactl shell --workdir "$ENGINEER_HOME" "$VM" -- "$@"
 }
 
+# A status row: "  label:  value", the value coloured by class (good/bad/warn),
+# only when stdout is a terminal so a piped or grepped status stays plain.
+_status_color=false
+srow() {  # $1 label  $2 value  $3 class
+  local v="$2"
+  if $_status_color; then
+    case "$3" in good) v=$(green "$2") ;; bad) v=$(red "$2") ;; warn) v=$(yellow "$2") ;; esac
+  fi
+  printf '  %-18s%s\n' "$1:" "$v"
+}
+
 cmd_status() {
   need limactl
+  _status_color=false; [[ -t 1 ]] && _status_color=true
   if ! vm_exists; then
     echo "VM '$VM': not created (bin/wmf-claude-vm create)"
     return 0
   fi
+  if $_status_color; then printf '%s\n' "$(bold "VM $VM")"; else printf 'VM %s\n' "$VM"; fi
   limactl list "$VM"
+  local running=false; [[ "$(vm_status)" == Running ]] && running=true
   if is_contained; then
-    printf '  mode:             contained (token on the host: %s)\n' "$(model_have_token && echo stored || echo MISSING, run login)"
-    if [[ "$(vm_status)" == Running ]]; then printf '  network:          %s\n' "$(contained_phase)"; fi
+    echo ""
+    srow "mode" "contained" good
+    if model_have_token; then srow "token (host)" "stored" good; else srow "token (host)" "MISSING, run login" bad; fi
+    if $running; then
+      case "$(contained_phase)" in
+        locked) srow "network" "locked (no egress)" good ;;
+        open)   srow "network" "open (setup only)" warn ;;
+        *)      srow "network" "$(contained_phase)" bad ;;
+      esac
+    fi
     local hb when=""
     hb=$(host_block_state)
     [[ -f "$HOST_BLOCK_RECORD" ]] && when=$(awk '{print " (" $2 ")"}' "$HOST_BLOCK_RECORD")
     case "$hb" in
-      verified) printf '  host firewall:    verified%s\n' "$when" ;;
-      stale)    printf '  host firewall:    check again: limactl changed%s\n' "$when" ;;
-      failed)   printf '  host firewall:    FAILED%s\n' "$when" ;;
-      *)        printf '  host firewall:    not checked (bin/wmf-claude-vm check-host-block)\n' ;;
+      verified) srow "host firewall" "verified$when" good ;;
+      stale)    srow "host firewall" "check again: limactl changed$when" warn ;;
+      failed)   srow "host firewall" "FAILED$when" bad ;;
+      *)        srow "host firewall" "not checked (bin/wmf-claude-vm check-host-block)" warn ;;
     esac
   fi
-  [[ "$(vm_status)" == Running ]] || return 0
+  if ! $running; then echo ""; srow "state" "stopped (bin/wmf-claude-vm start)" warn; return 0; fi
+
   echo ""
-  guest bash -c '
-    printf "  wmf-claude in VM: %s\n" "$(cat /opt/wmf-claude/.wmf-claude-rev 2>/dev/null || echo not-installed)"
-    printf "  nono:             %s\n" "$(nono --version 2>/dev/null || echo missing)"
-    printf "  docker:           %s\n" "$(docker --version 2>/dev/null || echo missing)"
-    printf "  agent in docker:  %s\n" "$(id -nG agent 2>/dev/null | grep -qw docker && echo YES-FIX-THIS || echo no)"
-    printf "  host mounts:      %s\n" "$(findmnt -rn -t virtiofs,9p,fuse.sshfs 2>/dev/null | wc -l | tr -d " ")"
-    printf "  host block (nft): %s\n" "$(sudo nft list table inet wmf_claude_hostblock >/dev/null 2>&1 && echo loaded || echo MISSING)"
-    printf "  workspaces:       %s\n" "$(ls /home/agent/work 2>/dev/null | grep -v "^\.pull$" | tr "\n" " ")"
-  '
-  printf '  host HEAD:        %s\n' "$(host_rev)"
-  local r
-  r=$(unpulled_report 2>/dev/null) || true
+  local label value cls hrev; hrev=$(host_rev)
+  while IFS=$'\t' read -r label value cls; do
+    [[ -n "$label" ]] || continue
+    if [[ "$label" == "wmf-claude in VM" ]]; then
+      if [[ "$value" == "$hrev" ]]; then cls=good
+      elif [[ "$value" == not-installed ]]; then cls=bad
+      else value="$value (host HEAD $hrev; run update)"; cls=warn; fi
+    fi
+    srow "$label" "$value" "$cls"
+  done < <(guest bash -c '
+    printf "wmf-claude in VM\t%s\tinfo\n" "$(cat /opt/wmf-claude/.wmf-claude-rev 2>/dev/null || echo not-installed)"
+    printf "nono\t%s\tinfo\n" "$(nono --version 2>/dev/null || echo missing)"
+    printf "docker\t%s\tinfo\n" "$(docker --version 2>/dev/null | sed "s/,.*//" || echo missing)"
+    if id -nG agent 2>/dev/null | grep -qw docker; then printf "agent in docker\tYES-FIX-THIS\tbad\n"; else printf "agent in docker\tno\tgood\n"; fi
+    m=$(findmnt -rn -t virtiofs,9p,fuse.sshfs 2>/dev/null | wc -l | tr -d " ")
+    if [ "$m" = 0 ]; then printf "host mounts\t0\tgood\n"; else printf "host mounts\t%s\tbad\n" "$m"; fi
+    if sudo nft list table inet wmf_claude_hostblock >/dev/null 2>&1; then printf "host block (nft)\tloaded\tgood\n"; else printf "host block (nft)\tMISSING\tbad\n"; fi
+    printf "workspaces\t%s\tinfo\n" "$(ls /home/agent/work 2>/dev/null | grep -v "^\.pull$" | tr "\n" " ")"
+  ')
+  srow "host HEAD" "$hrev" info
+
+  echo ""
+  local r; r=$(unpulled_report 2>/dev/null) || true
   if [[ -n "$r" ]]; then
-    echo ""; echo "  Work in the VM not yet on the host:"; printf '%s\n' "$r"
+    if $_status_color; then printf '  %s\n' "$(bold "$(yellow "Work in the VM not yet on the host:")")"
+    else echo "  Work in the VM not yet on the host:"; fi
+    printf '%s\n' "$r"
+  else
+    srow "VM work" "all on the host" good
   fi
 }
 

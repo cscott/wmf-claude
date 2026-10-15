@@ -225,6 +225,12 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
 
 ### Session, credentials, Claude Code
 
+- [ ] **Track L5: a full `/login` in the sandbox, captured by the host egress proxy**
+  (HANDOFF-LIMA, track L, L5). Planned with track A, not carried over when it closed.
+  Run `lima-port/checks/oauth-l5.sh` on the host; then choose nono's `oauth_capture`
+  in the host proxy (A1) or our own capture (A2), and build it narrowly. Decision
+  (cananian, 2026-10-15): the host egress path, not the in-guest nono session, so it
+  works in `--sudo`; `setup-token` stays for `--no-egress-proxy`.
 - [x] **The "update installed, restart to update" message on the first resume**: gone
   since `wmf-claude-setup` skips `claude update` (`WMF_CLAUDE_SKIP_UPDATE=1`) and the
   version is pinned (cananian, 2026-10-16).

@@ -71,6 +71,10 @@ CLIP_PORT = 3130
 FORWARD_PORT = 3128
 FORWARD_KEY = "egressForward"
 PROFILE = os.path.join(kit.REPO_ROOT, "profiles", "wmf-engineer.json")
+# The host's own variable that replaces PROFILE for the egress proxy: for
+# measurements (track L5: a profile with nono's OAuth capture provider,
+# lima-port/checks/oauth-l5.sh), read when the proxy is started.
+PROFILE_VAR = "WMF_SBX_EGRESS_PROFILE"
 # The guest's apt sources (/etc/apt/mirrors/debian*.list in the image's
 # Debian 13 cloud base) are all on this host.
 DEBIAN_DOMAINS = ("deb.debian.org",)
@@ -328,7 +332,8 @@ def proxy_argv(name, env=None, nono="nono"):
     # Imported here: session and nested import vm, which imports this module.
     from . import nested as nested_mod
     from . import session as session_mod
-    argv = [nono, "proxy", "-v", "--no-auth", "--listen", "127.0.0.1", "--profile", PROFILE]
+    profile = (os.environ if env is None else env).get(PROFILE_VAR) or PROFILE
+    argv = [nono, "proxy", "-v", "--no-auth", "--listen", "127.0.0.1", "--profile", profile]
     domains = (list(session_mod.REGISTRY_DOMAINS) + list(DEBIAN_DOMAINS)
                + list(SETUP_DOMAINS))
     # A nested sandbox's inner VMs reach the network through the session's

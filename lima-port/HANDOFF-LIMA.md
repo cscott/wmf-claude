@@ -1599,6 +1599,80 @@ Candidates (L1 measures them):
   in either VM (grep the environment, `/proc`, the disk), a session of
   several hours across a token refresh, and a blind run. On macOS too
   (the keychain source).
+- **L5. A full login through the host egress proxy** (planned with track
+  A as Docker-sbx-style `/login` capture, not built, and not carried
+  into the open items when track A closed; restored 2026-10-15).
+  Goal: `/login` inside the sandbox gives a normal, short-lived Claude
+  login (access token of hours, refresh token), the real tokens stay on
+  the host, and the guest holds only phantoms. Today's sources are
+  `setup-token` (one year, `user:inference` only) or an API key; the
+  host's live login is no source in practice (it expires when the host
+  is idle, L3 `long`).
+
+  Decision (cananian, 2026-10-15): capture on the **host egress path**,
+  not in the in-guest nono session layer. Reasons: it works in `--sudo`
+  mode (no nono in the guest there), and it is the start of removing
+  `--no-egress-proxy` if vz on macOS gets an egress solution. Build it
+  narrowly: `--no-egress-proxy` keeps the `setup-token` path, so L5
+  need not cover every Claude Code feature.
+
+  Options, recorded in case we backtrack or a later change supports
+  more than one:
+  - **A. Capture in the host egress path (CHOSEN).** The host egress
+    proxy is already `nono proxy` (track A). nono 0.78 has an
+    `oauth_capture` credential provider, `claude_code`, in its profile
+    guide (`nono profile guide`): token endpoint
+    `https://platform.claude.com/v1/oauth/token`; it captures
+    `access_token` (phantom `sk-ant-oat01-{}`), `refresh_token` and
+    `id_token` (jwt); `request_nonce_fields` rewrite the guest's refresh
+    request back to the real tokens; `api_hosts` is
+    `https://api.anthropic.com`; the store keeps real tokens up to 90
+    days, owner-only; token hosts are forced to HTTP/1.1. The guide's
+    `credential_routes` example denies by default and allows only
+    `POST /v1/messages`. A1: put this provider in the host proxy's
+    profile (leading candidate, little code). A2: wmf-sbx's own capture
+    (an extension of `credproxy.py`) chained with the egress proxy, if
+    A1 does not work in standalone `nono proxy` mode.
+  - **B. nono `oauth_capture` or `--credential` in the guest's nono
+    session.** Rejected for the MVP: there is no nono session in
+    `--sudo` mode, and the real token would be in the VM (the
+    supervisor's memory; see N in L1).
+  - **C. `setup-token`** (L4): kept as the `--no-egress-proxy` and vz
+    path.
+  - **D. `apiKeyHelper`** (K in L1): needs a short-lived credential
+    from somewhere; no gain over A.
+  - **E. Copy `.credentials.json` or `CLAUDE_CODE_OAUTH_REFRESH_TOKEN`
+    into the guest.** Rejected: the real refresh token is in the VM, and
+    refresh-token rotation can invalidate the copy another sandbox or
+    the host holds.
+
+  Local result (cloud container, no VM, 2026-10-15): `nono profile
+  validate` accepts `wmf-engineer.json` plus the provider and the narrow
+  route; a standalone `nono proxy` with it lists
+  `https://api.anthropic.com | creds: none | intercept: on |
+  endpoint_policy: on`, but prints no route for `platform.claude.com`.
+  So it is not known whether capture runs in standalone proxy mode.
+
+  Measure (`lima-port/checks/oauth-l5.sh`; the host variable
+  `WMF_SBX_EGRESS_PROFILE` gives the egress proxy the L5 profile, for
+  sandboxes created with it; the default does not change):
+  1. Does `/login` in the guest go through, and does the guest's
+     `.credentials.json` hold phantoms, not real tokens?
+  2. Does a `claude -p` turn work on the phantom (`POST /v1/messages`)?
+  3. Refresh: with `expiresAt` set to 0, does Claude Code refresh
+     through the proxy, and does the guest get a new phantom?
+  4. Sharing: does the login copied to a second sandbox work? Each
+     sandbox's proxy has its own capture store (`XDG_STATE_HOME` per
+     sandbox), so expect no; then decide: one login per sandbox, or a
+     shared store (and what rotation does to it).
+  5. What the narrow policy breaks: `/status`, `/usage`, Remote
+     Control. Allow more paths only where needed.
+  6. `scan`: no real token in the guest (credentials, `~/.claude`,
+     every process's environment).
+  Exit: results in `sbx/NOTES.md`; a choice between A1 and A2; then
+  build it (the profile in `egress.py`, the session without the
+  credential proxy's variables when the sandbox has the egress proxy
+  and a login, the README's "Sign-in").
 
 **Track C: develop wmf-sbx inside a sandbox (nested Lima)**
 

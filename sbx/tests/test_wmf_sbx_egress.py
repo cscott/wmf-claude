@@ -140,6 +140,11 @@ class ConfigTests(unittest.TestCase):
         self.assertNotIn("--port", argv)
         self.assertNotIn("--upstream-proxy", argv)
 
+    def test_the_host_can_name_another_profile(self):
+        # For measurements (track L5): the host's own variable, read at start.
+        argv = egress.proxy_argv("demo", dict(self.env, WMF_SBX_EGRESS_PROFILE="/x/l5.json"))
+        self.assertEqual(argv[argv.index("--profile") + 1], "/x/l5.json")
+
     def test_a_nested_sandbox_allows_what_its_inner_vms_need(self):
         def allowed():
             argv = egress.proxy_argv("demo", self.env)

@@ -290,6 +290,41 @@ shim would confirm it in a live session.
 | Clipboard reads attempted? | Yes. Text paste: `wl-paste --no-newline`, then `xclip -selection clipboard -o`, then `xsel --clipboard --output`, then the addon; the first exit 0 wins. Image paste (shell lines): `xclip -selection clipboard -t TARGETS -o \|\| wl-paste -l`, then `xclip ... -t image/png -o \|\| wl-paste --type image/png` (and `image/bmp`). A shim that exits 1 for these makes them fail fast. |
 | Other writes | The screenshot copy (`/screenshot`-style) runs `xclip -selection clipboard -t image/png -i FILE`, **xclip only**, and reports failure. A `wl-copy`-only shim leaves it failing as it does now. |
 
+How a paste reaches Claude Code (READ in 2.1.292):
+
+- **Keyboard paste** (Ctrl+Shift+V, or Edit > Paste, in the terminal):
+  the terminal reads the host's clipboard and types the text into the
+  pty between bracketed-paste markers (`ESC [200~` ... `ESC [201~`),
+  which Claude Code reads as `paste-start` and `paste-end`. Claude Code
+  reads no clipboard, so this works in a sandbox today.
+- **Mouse paste**: with Claude Code's mouse capture on, the terminal
+  sends the clicks to Claude Code and does not paste itself. Claude Code
+  does it in their place, on Linux: a middle click reads PRIMARY, and a
+  right click with no selection reads CLIPBOARD (`wl-paste`, `xclip -o`,
+  `xsel --output`, then the addon), and the text goes in as a paste. In
+  a sandbox the read fails, so middle and right click paste nothing.
+  Shift+middle click goes to the terminal, which pastes PRIMARY itself.
+  A write-only channel cannot fix these.
+- **Ctrl+V** (`chat:imagePaste`): reads the clipboard for an image, and
+  falls back to a text read. Same as the mouse: it needs a read.
+
+Why `wl-copy` and not `xclip` or `xsel`: any one of them works, and the
+host's tool does not have to match the shim's name. `wl-copy` because:
+
+- it needs `WAYLAND_DISPLAY`, which little in a headless VM reads. The
+  `xclip`/`xsel` path needs `DISPLAY`, which X clients in the sandbox
+  (Chrome for the QUnit and selenium tests, Cypress, `xdg-open`) read as
+  "a display is here": Cypress, for one, then uses it instead of starting
+  its own Xvfb, and fails;
+- its arguments are simple (none, or `--primary`). An `xclip` shim also
+  gets the screenshot copy (`-t image/png -i FILE`: a file, and an
+  image), and `xsel`'s `-p` means PRIMARY, not "paste";
+- Claude Code calls it once per selection and waits for it before the
+  `--primary` call; `xclip` and `xsel` are called twice at once.
+
+What `xclip` would add is the screenshot copy, which would need an
+image-capable channel to the host.
+
 Consequences for the design above:
 
 - The shim needs the name `wl-copy` and a dummy `WAYLAND_DISPLAY`
@@ -363,10 +398,13 @@ Open questions:
   child of Claude Code, connect to `192.168.5.2:PORT` with only
   `--open-port`? It does for Claude Code's own credential-proxy
   traffic; check it for a child process.
-- Is OSC 52 still unimplemented in the engineer's VTE?
-  gitlab.gnome.org is off this sandbox's allowlist, so
-  https://gitlab.gnome.org/GNOME/vte/-/issues/2495 was not read again.
-  If VTE has it now, a newer GNOME Terminal fixes this with no code.
+- VTE: https://gitlab.gnome.org/GNOME/vte/-/issues/2495 is still open
+  (READ 2026-10-15, last updated 2026-09-25; the API lists comments
+  only with a login). If VTE implements it, GNOME Terminal fixes the
+  copy with no code.
+- Paste with the mouse, and Ctrl+V, need a clipboard read (above).
+  Keep them broken (keyboard paste and Shift+middle click work), or
+  add a read channel that the engineer controls?
 - The pastejacking note in "Security notes" applies as written. A
   per-write desktop notification would also show a write that the
   engineer did not make.

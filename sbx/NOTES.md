@@ -970,14 +970,28 @@ Plan: `lima-port/PLAN-SUDO.md`. A2.0 results so far (in the nested `dev` VM, non
 - Local ports (DECIDED, engineer): Landlock grants bind/connect per port and cannot tell
   loopback from other hosts, so the guest's ephemeral range is narrowed to 49152–53247
   (`tcp_tw_reuse`) and each session opens 4000, 9876 and that window plus `--listen-port 0`;
-  the VM's nftables limits off-VM TCP to 80/443. Bookmark: revisit when external egress control
-  arrives (track A). With it, the guest needs no DNS (the host proxy resolves names), so the
-  same change closes contained mode's DNS residual (lookups through Lima's resolver can
-  tunnel data). If the unification slips, the separate fix is a filtering DNS forwarder in
-  the VM (dnsmasq or unbound, as root) that answers only for nono's allowlist (the profile's
-  domains plus `session.REGISTRY_DOMAINS`): only nono's proxy needs DNS, because nft and
-  Landlock keep the agent's other traffic off the network. DNS over HTTPS does not help:
-  any recursive resolver forwards `<data>.evil.example` to its name server.
+  the VM's nftables limits off-VM TCP to 80/443. Bookmark (reviewed 2026-10-14, after track
+  A): a sandbox behind the egress proxy has no DNS residual (the guest's resolver is
+  `fakedns.py`, which asks no real resolver). There, the guest's network filtering is a
+  second layer: `restrict=on` gives the guest no route, the session's nono passes every host
+  (`--allow-domain '*'`) to the host proxy, which is the only allowlist and also applies
+  the endpoint rules. Contained mode on that path could keep nono for the filesystem and
+  drop its network half: `--landlock-only` (needed only for nono#1786), the port window,
+  the narrowed ephemeral range, `--upstream-proxy`, and nft's agent 80/443 rule. The cost:
+  nono with `--allow-net` removes the proxy variables from the child (A2.0 item 9), so the
+  launcher (`bin/claude` or `launch-claude.sh`, shared with wmf-claude outside wmf-sbx)
+  must export them again inside the sandbox. It is not worth doing while `vz` and
+  `--no-egress-proxy` sandboxes exist: they keep all of the guest filtering, so the change
+  adds an egress/no-egress branch to provisioning, the session launch, the invariants and
+  the tests, and removes no code. It pays only if `vz` gets an equivalent of `restrict=on`
+  (a macOS engineer can find out): then `--no-egress-proxy` and the fallback go, and with
+  them the guest's network filtering. For a sandbox not behind the proxy, the DNS residual
+  stays (lookups through Lima's resolver can tunnel data); its separate fix is a filtering
+  DNS forwarder in the VM (dnsmasq or unbound, as root) that answers only for nono's
+  allowlist (the profile's domains plus `session.REGISTRY_DOMAINS`): only nono's proxy
+  needs DNS, because nft and Landlock keep the agent's other traffic off the network. DNS
+  over HTTPS does not help: any recursive resolver forwards `<data>.evil.example` to its
+  name server.
 - Browsers without sudo: the image has the Chrome/Cypress libraries, Xvfb and xauth;
   `/usr/bin/chromium`/`chromedriver` wrap links in `~/.cache/wmf-sbx-browser`; the wrapper
   adds `--no-sandbox`, a temporary `--user-data-dir` (headless Chrome will not start without

@@ -436,8 +436,13 @@ RAN on the engineer's host, after step 6 (2026-10-14, `create --sudo --nested
 
 ## Later, not in this track
 
-- Contained mode on the same proxy (NOTES "Local ports" bookmark): the
-  local-port window, `--landlock-only` and the DNS residual could go.
-  The QEMU half only; `vz` sandboxes keep nft + nono.
+- If `vz` gets an equivalent of QEMU's `restrict=on` (for an engineer
+  with a Mac), then every sandbox can be behind the egress proxy, and
+  `--no-egress-proxy`, the fallback and the guest's network filtering go:
+  nft, nono's network half, `--landlock-only`, the local-port window. The
+  main cost is in the launcher: nono with `--allow-net` drops the proxy
+  variables, so it must export them again inside the sandbox. Until
+  then, doing it for QEMU only adds a branch and removes no code (NOTES
+  "Local ports" bookmark).
 - A Lima feature request for a native `restrict`/egress-proxy option, to
   drop the wrapper.

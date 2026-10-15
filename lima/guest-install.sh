@@ -1,5 +1,5 @@
 #!/bin/bash
-# Install or refresh wmf-claude inside the Lima guest. bin/wmf-claude-vm
+# Install or refresh wmf-claude inside the Lima guest. bin/claude-vm
 # uploads the checkout's HEAD (submodules included, no .git) and runs this
 # script as the engineer from that staged copy. Rerun it to update; each step
 # is idempotent.
@@ -191,7 +191,7 @@ fi
 # it. It asks for the Phabricator username once; an update keeps the
 # answer, and WMF_CLAUDE_PHAB_USER (from the host command) sets it.
 step "Per-user setup for $AGENT"
-# A contained VM (root-owned marker, written by bin/wmf-claude-vm create --contained)
+# A contained VM (root-owned marker, written by bin/claude-vm create --contained)
 # gets no MCP servers: it has no egress for them.
 CONTAINED_ENV=()
 [[ -f /etc/wmf-claude/contained ]] && CONTAINED_ENV=(WMF_CLAUDE_CONTAINED=1)

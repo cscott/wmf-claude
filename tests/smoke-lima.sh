@@ -3,7 +3,7 @@
 # the files; this script checks what a running VM enforces. Run it on the
 # host, outside nono: limactl needs ~/.lima, which the sandbox denies.
 #
-# The VM must exist and run (bin/wmf-claude-vm create). The script creates a
+# The VM must exist and run (bin/claude-vm create --isolated). The script creates a
 # throwaway repository, pushes it as workspace smoke-<pid>, and removes the
 # workspace at the end. It does not change your other workspaces or repos.
 #
@@ -12,14 +12,14 @@
 #              broker as the engineer, mwdocker as the agent inside nono
 #              (pulls the image on first use)
 #   --claude   also run one sandboxed `claude -p` turn in the VM (needs
-#              bin/wmf-claude-vm login first; costs one short model call).
+#              bin/claude-vm login first; costs one short model call).
 #              With --docker, also one turn that runs mwdocker.
 #
 #   WMF_CLAUDE_VM=<name>   Lima instance name (default: wmf-claude)
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-VMCMD="$REPO_ROOT/bin/wmf-claude-vm"
+VMCMD="$REPO_ROOT/bin/claude-vm"
 VM="${WMF_CLAUDE_VM:-wmf-claude}"
 WITH_CLAUDE=false
 WITH_DOCKER=false
@@ -48,7 +48,7 @@ if ! limactl list >/dev/null 2>&1; then
   exit 1
 fi
 if [[ "$(limactl list --format '{{.Status}}' "$VM" 2>/dev/null)" != Running ]]; then
-  red "VM '$VM' is not running. Create or start it: bin/wmf-claude-vm create | start"
+  red "VM '$VM' is not running. Create or start it: claude-vm create --isolated | start"
   exit 1
 fi
 
@@ -78,7 +78,7 @@ echo "--- install ---"
 want_rev=$(git -C "$REPO_ROOT" rev-parse --short=12 HEAD)
 have_rev=$(g cat /opt/wmf-claude/.wmf-claude-rev 2>/dev/null | tr -d '\r')
 if [[ "$have_rev" == "$want_rev" ]]; then pass "VM runs host HEAD ($want_rev)"
-else fail "VM runs '${have_rev:-nothing}', host HEAD is $want_rev (bin/wmf-claude-vm update)"; fi
+else fail "VM runs '${have_rev:-nothing}', host HEAD is $want_rev (claude-vm update)"; fi
 want_nono=$(tr -d '[:space:]' < "$REPO_ROOT/.nono-version")
 have_nono=$(g nono --version 2>/dev/null | awk '{print $2}' | tr -d '\r')
 if [[ "$have_nono" == "$want_nono" ]]; then pass "nono $want_nono (pinned)"

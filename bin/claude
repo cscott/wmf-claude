@@ -259,7 +259,7 @@ if [[ -n "$PROXY_PORT" ]]; then
   [[ -n "$ALLOW_POST_HOSTS" ]] && contained_refused+=" --allow-post"
   # Managed mode would start the broker as the agent, which cannot reach the
   # Docker socket in the VM.
-  [[ -n "$DOCKER_SERVICE" ]] && contained_refused+=" --docker=$DOCKER_SERVICE (use bin/wmf-claude-vm claude NAME --docker=SERVICE)"
+  [[ -n "$DOCKER_SERVICE" ]] && contained_refused+=" --docker=$DOCKER_SERVICE (use claude-vm claude NAME --docker=SERVICE)"
   # --chrome is not refused: in the VM, lima/guest-claude.sh runs the browser
   # headless under the lock, and the flag only opens 9222 and loads the MCP.
   { $WANT_IDE || [[ -n "${CLAUDE_CODE_SSE_PORT:-}" ]]; } && contained_refused+=" --ide"
@@ -1252,7 +1252,13 @@ if $WANT_LOCAL_WEB && { ! $WANT_CHROME || [[ -n "$LOCAL_WEB_PORTS" ]]; }; then
   session+=("--local-web${LOCAL_WEB_PORTS:+=$LOCAL_WEB_PORTS}")
 fi
 $WANT_CHROME && session+=(--chrome)
-[[ -n "$PROXY_PORT" ]] && session+=("contained (model API via host proxy only)")
+# lima/guest-claude.sh sets WMF_CLAUDE_IN_VM for every VM session; without the
+# proxy port the VM is isolated. Say so: else the line looks like a host session.
+if [[ -n "$PROXY_PORT" ]]; then
+  session+=("contained (model API via host proxy only)")
+elif [[ -n "${WMF_CLAUDE_IN_VM:-}" ]]; then
+  session+=("isolated VM")
+fi
 $WANT_MINIMAX && session+=(--minimax)
 [[ -n "$ALLOW_POST_HOSTS" ]] && session+=("--allow-post=$ALLOW_POST_HOSTS")
 if $WANT_DOCKER; then

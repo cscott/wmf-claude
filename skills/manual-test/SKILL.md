@@ -72,7 +72,7 @@ Only when Tier 1 can't answer it: visual output, accessibility tree, console err
 ### Prerequisites
 
 1. **MCP loaded.** Only present when launched with `bin/claude --chrome`. If `mcp__chrome-devtools__*` tools aren't available, stop and tell the engineer to relaunch with `--chrome` (and to have run `setup.sh`'s chrome-devtools step).
-2. **Chrome running in attach mode.** Chrome can't run inside the sandbox (IOKit denied — it segfaults). The engineer must run `bin/launch-test-chrome` in another terminal first; it starts a dedicated Chrome with a fresh `mktemp -d` user-data-dir on `--remote-debugging-port=9222`. If the MCP can't connect, ask them to start it. In a Lima VM (`WMF_CLAUDE_CHROME_IN_VM` set), `bin/wmf-claude-vm claude NAME --chrome` already started a headless Chromium for the session; it reaches loopback only, so the local wiki works and external sites do not.
+2. **Chrome running in attach mode.** Chrome can't run inside the sandbox (IOKit denied — it segfaults). The engineer must run `bin/launch-test-chrome` in another terminal first; it starts a dedicated Chrome with a fresh `mktemp -d` user-data-dir on `--remote-debugging-port=9222`. If the MCP can't connect, ask them to start it. In a Lima VM (`WMF_CLAUDE_CHROME_IN_VM` set), `claude-vm claude NAME --chrome` already started a headless Chromium for the session; it reaches loopback only, so the local wiki works and external sites do not.
 3. **A running local wiki** and its base URL + credentials (project `CLAUDE.md`, else ask).
 
 ### Frugality rules (this is where the token cost lives)

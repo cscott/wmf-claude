@@ -2,7 +2,7 @@
   "meta": {
     "name": "wmf-contained",
     "version": "0.1.0",
-    "description": "Claude Code in a contained Lima VM: no egress of its own. The model API is reached only through the host-side proxy that bin/wmf-claude-vm forwards to a localhost port; the token stays on the host.",
+    "description": "Claude Code in a contained Lima VM: no egress of its own. The model API is reached only through the host-side proxy that bin/claude-vm forwards to a localhost port; the token stays on the host.",
     "author": "Kosta Harlan <kharlan@wikimedia.org>"
   },
   "extends": "claude-code",

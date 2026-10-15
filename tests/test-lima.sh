@@ -1,5 +1,5 @@
 #!/bin/bash
-# Static checks for the optional Lima VM mode (bin/wmf-claude-vm, lima/):
+# Static checks for the optional Lima VM mode (bin/claude-vm, lima/):
 # the template stays closed (no mounts, no port forwards, a pinned image with
 # digests), the guest scripts pin and verify what they install, the agent
 # user never joins `docker`, and the scripts parse. The real behaviour needs a
@@ -21,7 +21,7 @@ fail() { red   "FAIL: $*"; ((FAIL++)); }
 skip() { printf 'SKIP: %s\n' "$*"; }
 
 Y="$REPO_ROOT/lima/wmf-claude.yaml"
-VM="$REPO_ROOT/bin/wmf-claude-vm"
+VM="$REPO_ROOT/bin/claude-vm"
 GI="$REPO_ROOT/lima/guest-install.sh"
 GC="$REPO_ROOT/lima/guest-claude.sh"
 VM_CLAUDE="$REPO_ROOT/bin/claude"
@@ -150,7 +150,7 @@ absent "the agent user is never touched"                 "$GD" '(usermod|gpasswd
 check  "docs: PHPUnit in the VM"                         "$REPO_ROOT/docs/lima-vm.md" '^## PHPUnit in the VM$'
 
 echo ""
-echo "--- bin/wmf-claude-vm: copies, not mounts ---"
+echo "--- bin/claude-vm: copies, not mounts ---"
 absent "no --rosetta"                               "$VM" '--rosetta'
 absent "no --mount flag to limactl"                 "$VM" '--mount'
 absent "no --port-forward flag to limactl"          "$VM" '--port-forward'
@@ -174,7 +174,7 @@ check  "guest-install passes it to setup"             "$GI" 'PHAB_ENV=\("WMF_CLA
 check  "setup keeps the recalled username in the VM"  "$REPO_ROOT/bin/wmf-claude-setup" '-n "\$DEFAULT_PHAB_USER" && \( -n "\$\{WMF_CLAUDE_IN_VM:-\}" \|\| ! -t 0 \)'
 
 echo ""
-echo "--- bin/wmf-claude-vm: what a session left in the VM ---"
+echo "--- bin/claude-vm: what a session left in the VM ---"
 claude_fn=$(awk '/^cmd_claude\(\) \{/,/^\}/' "$VM")
 if grep -q 'after_session' <<<"$claude_fn" && ! grep -q 'exec limactl' <<<"$claude_fn"; then
   pass "claude keeps the launcher for the report after the session"
@@ -227,7 +227,7 @@ else
 fi
 
 echo ""
-echo "--- bin/wmf-claude-vm logs: reads the host artifacts ---"
+echo "--- bin/claude-vm logs: reads the host artifacts ---"
 # logs reads host files only: it must never need a VM (retention outlives it).
 logs_src="$(awk '/^logs_request\(\) \{/,/^\}/' "$VM")
 $(awk '/^logs_transcript\(\) \{/,/^\}/' "$VM")
@@ -316,7 +316,95 @@ if grep -q 'stream ended without message_stop' <<<"$eb"; then fail "logs --text 
 if grep -q 'capture truncated' <<<"$eb"; then pass "logs --text flags a part-captured body"; else fail "logs --text did not flag response_truncated"; fi
 if grep -q 'result error' <<<"$eb"; then pass "logs --text marks a failed tool_result"; else fail "logs --text did not mark is_error"; fi
 if grep -q 'unrenderable record bad' <<<"$eb" && grep -q 'SURVIVED' <<<"$eb"; then pass "logs --text isolates a bad record; later records still render"; else fail "logs --text: a bad record blanked the rest"; fi
+# --vm selects the VM, and wins over WMF_CLAUDE_VM.
+out=$(XDG_STATE_HOME="$LG" WMF_CLAUDE_VM=nonesuch bash "$VM" --vm wmf-claude logs 2>/dev/null)
+if grep -q 'allow' <<<"$out"; then pass "--vm selects the VM (over WMF_CLAUDE_VM)"; else fail "--vm did not select the VM"; fi
 rm -rf "$LG"
+
+echo ""
+echo "--- bin/claude-vm: modes, --vm and list ---"
+MD=$(mktemp -d); mkdir -p "$MD/bin" "$MD/cfg/wmf-claude" "$MD/lima/old" "$MD/lima/other"
+# A fake limactl: it logs each call, lists four instances (none with
+# FAKE_LIMA_EMPTY), and fails `create`, so a test that gets that far stops.
+cat > "$MD/bin/limactl" <<'FAKE'
+#!/bin/bash
+echo "$*" >> "$FAKE_LIMA_LOG"
+case "$1" in
+  list)
+    [[ -n "${FAKE_LIMA_EMPTY:-}" ]] && exit 0
+    if [[ "$*" == *'{{.Dir}}'* ]]; then
+      d="$FAKE_LIMA_DIR"
+      printf 'wmf-claude\tRunning\t%s\nold\tStopped\t%s\nother\tRunning\t%s\nwmf-claude-contained\tStopped\t%s\n' \
+        "$d/wmf-claude" "$d/old" "$d/other" "$d/c"
+    else
+      printf 'wmf-claude\nold\nother\nwmf-claude-contained\n'
+    fi ;;
+  create) exit 1 ;;
+esac
+exit 0
+FAKE
+chmod +x "$MD/bin/limactl"
+C="$MD/cfg/wmf-claude"
+date > "$C/vm-wmf-claude-created"
+printf 'core\t/x/core\nwmf-claude\t/x/w\nnotes\t/x/n\nextra\t/x/e\n' > "$C/vm-wmf-claude-workspaces"
+date > "$C/vm-wmf-claude-contained-contained"
+# "old": made before the created record, found by the template in its config.
+echo '    nft add table inet wmf_claude_hostblock' > "$MD/lima/old/lima.yaml"
+echo 'images: []' > "$MD/lima/other/lima.yaml"
+vmc() { : > "$MD/calls"; env -u WMF_CLAUDE_VM XDG_CONFIG_HOME="$MD/cfg" FAKE_LIMA_LOG="$MD/calls" FAKE_LIMA_DIR="$MD/lima" \
+  PATH="$MD/bin:$PATH" bash "$VM" "$@" </dev/null 2>&1; }
+called() { grep -qE "^$1( |$)" "$MD/calls"; }
+
+out=$(vmc --vm newvm create)
+if grep -q 'choose a mode' <<<"$out" && ! called create; then pass "create: no mode and no terminal refuses before limactl create"
+else fail "create: no mode did not refuse first ($out)"; fi
+out=$(vmc --vm newvm create --isolated --contained)
+if grep -q 'not both' <<<"$out" && ! called create; then pass "create: --isolated with --contained refuses"; else fail "create: both modes accepted"; fi
+out=$(FAKE_LIMA_EMPTY=1 vmc create --contained)
+if grep -q 'its own name' <<<"$out" && ! called create; then pass "create --contained: the default name refuses"; else fail "create --contained took the default name ($out)"; fi
+out=$(vmc --vm newvm create --isolated --cpus 2)
+if grep -qE '^create .*--name newvm --cpus 2 ' "$MD/calls" && ! grep -q -- '--isolated' "$MD/calls"; then pass "create: the mode flag never reaches limactl create"
+else fail "create: limactl create got: $(grep '^create' "$MD/calls")"; fi
+if [[ -f "$C/vm-newvm-created" && ! -f "$C/vm-newvm-contained" ]]; then pass "create --isolated marks the VM, with no contained record"; else fail "create --isolated: wrong host records"; fi
+out=$(vmc --vm newc create --contained)
+if [[ -f "$C/vm-newc-contained" ]]; then pass "create --contained: a create that fails part way stays contained"; else fail "create --contained: no contained record after a failed create"; fi
+out=$(WMF_CLAUDE_VM=wmf-claude FAKE_LIMA_EMPTY=1 vmc create --contained)
+if grep -q 'its own name' <<<"$out"; then pass "create --contained: the default name refuses, also when set by name"; else fail "create --contained took WMF_CLAUDE_VM=wmf-claude"; fi
+out=$(vmc list)
+row() { grep -E "^. $1 " <<<"$out"; }
+if row wmf-claude | grep -qE '^\* wmf-claude +Running +isolated +4 \(core, wmf-claude, notes, \.\.\.\)'; then pass "list: the selected VM, its mode and workspaces"
+else fail "list: wrong row for wmf-claude: $(row wmf-claude)"; fi
+if row wmf-claude-contained | grep -q 'contained (no token)'; then pass "list: a contained VM without a token"; else fail "list: wrong row for the contained VM"; fi
+if row old | grep -q isolated; then pass "list: finds an older VM by its template"; else fail "list: missed the older VM"; fi
+if row other >/dev/null; then fail "list: shows a VM that is not wmf-claude"; else pass "list: leaves out other Lima VMs"; fi
+out=$(vmc --vm old list)
+if row old | grep -q '^\*'; then pass "list: --vm moves the selection"; else fail "list: --vm did not move the selection"; fi
+out=$(FAKE_LIMA_EMPTY=1 vmc list)
+if grep -q 'No wmf-claude VMs' <<<"$out"; then pass "list: says when there is none"; else fail "list: no message for an empty list"; fi
+# The reset checks last: the fake still lists a VM after its delete, so
+# they leave host records that the list checks above do not expect.
+# reset reads the confirmation from stdin; give it, so a delete can happen.
+vmr() { : > "$MD/calls"; env -u WMF_CLAUDE_VM XDG_CONFIG_HOME="$MD/cfg" FAKE_LIMA_LOG="$MD/calls" FAKE_LIMA_DIR="$MD/lima" \
+  PATH="$MD/bin:$PATH" bash "$VM" "${@:2}" <<<"$1" 2>&1; }
+out=$(vmr wmf-claude reset --isolated)
+if called delete; then pass "reset: a valid mode reaches the delete (control)"; else fail "reset: the delete is not reachable, so the next checks prove nothing"; fi
+out=$(vmr wmf-claude reset --isolated --contained)
+if grep -q 'not both' <<<"$out" && ! called delete; then pass "reset: a bad mode refuses before the delete"; else fail "reset deleted before it checked the mode"; fi
+out=$(vmr wmf-claude reset --contained)
+if grep -q 'its own name' <<<"$out" && ! called delete; then pass "reset --contained: refuses to make the default VM contained"; else fail "reset --contained made the default VM contained"; fi
+out=$(vmr wmf-claude-contained --vm wmf-claude-contained reset)
+if called delete && ! grep -q 'its own name' <<<"$out"; then pass "reset keeps a contained VM contained"; else fail "reset of a contained VM failed: $out"; fi
+out=$(vmr x --vm nonesuch reset)
+if grep -q 'does not exist' <<<"$out" && ! called delete && ! called create; then pass "reset: no VM and no mode refuses"; else fail "reset of a missing VM went on"; fi
+
+rm -rf "$MD"
+
+echo ""
+echo "--- bin/wmf-claude-vm: the old name still works ---"
+if [[ "$(bash "$REPO_ROOT/bin/wmf-claude-vm" --help 2>&1)" == "$(bash "$VM" --help 2>&1)" && -x "$REPO_ROOT/bin/wmf-claude-vm" ]]; then
+  pass "bin/wmf-claude-vm runs bin/claude-vm"
+else fail "bin/wmf-claude-vm does not run bin/claude-vm"; fi
+check  "setup accepts a claude-vm alias to the old name" "$REPO_ROOT/bin/wmf-claude-setup" 'install_alias claude-vm "\$ROOT/bin/claude-vm" .* "\$ROOT/bin/wmf-claude-vm"$'
 
 echo ""
 echo "--- scripts parse ---"
@@ -388,7 +476,7 @@ check  "~/.local/bin is last on the agent PATH"     "$GC" 'AGENT_PATH="/usr/loca
 
 echo ""
 echo "--- contained mode: launchers ---"
-check  "guest-claude: contained marker requires --model-proxy-port"   "$GC" 'this is a contained VM; start sessions with bin/wmf-claude-vm claude'
+check  "guest-claude: contained marker requires --model-proxy-port"   "$GC" 'this is a contained VM; start sessions with claude-vm claude'
 check  "guest-claude: --model-proxy-port requires the marker"   "$GC" 'this VM is not a contained VM'
 check  "guest-claude: passes WMF_CLAUDE_MODEL_PROXY_PORT"        "$GC" 'ENV_ARGS\+=\("WMF_CLAUDE_MODEL_PROXY_PORT=\$PROXY_PORT"\)'
 check  "guest-install: no MCP servers in a contained VM"      "$GI" 'CONTAINED_ENV=\(WMF_CLAUDE_CONTAINED=1\)'
@@ -399,7 +487,7 @@ check  "vm: model proxy bridge off Lima's shared connection"     "$VM" 'ssh -n -
 check  "vm: model proxy bridge binds guest loopback, free port"  "$VM" '-R "127.0.0.1:0:\$sock"'
 check  "vm: pull from a shallow workspace bundles past the boundary" "$VM" 'bundle create -q "\$2" --branches HEAD --not \$\(cat "\$shallow"\)'
 check  "install: nftables.service stop no longer flushes Docker's rules" "$GI" 'ExecStop=.*/etc/systemd/system/nftables.service.d/wmf-claude.conf'
-check  "vm: reset keeps a contained VM a contained VM"               "$VM" 'if is_contained; then set -- --contained "\$@"; fi'
+check  "vm: reset keeps a contained VM a contained VM"               "$VM" 'if is_contained; then CREATE_MODE=contained; else CREATE_MODE=isolated; fi'
 # cmd_login_contained must never run claude auth login (that puts the token in the VM).
 login_contained=$(awk '/^cmd_login_contained\(\) \{/,/^\}/' "$VM")
 if [[ -n "$login_contained" ]] && ! grep -q 'claude auth login' <<<"$login_contained"; then pass "vm: contained login never signs Claude in inside the VM"

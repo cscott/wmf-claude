@@ -146,8 +146,9 @@ the checkout and `php` runs arbitrary code. The host is the boundary.
 
 ### Lima VM mode (opt-in)
 
-`bin/wmf-claude-vm` puts a VM around all of the above for SRE and security
-work. Inside the guest nothing changes: the same profile, the same tool layer,
+`claude-vm` puts a VM around all of the above for SRE and security
+work. An **isolated VM** (`create --isolated`) moves where a sandbox escape
+lands; it does not limit egress. Inside the guest nothing changes: the same profile, the same tool layer,
 the same broker. What the VM adds is a kernel boundary with **no host mounts,
 no port forwards**, no agent or X11 forwarding, a root-owned nftables rule
 that blocks the host, the LAN and other private ranges, and a split into two guest users —
@@ -160,7 +161,7 @@ address, Docker is rootful — is in [`docs/lima-vm.md`](docs/lima-vm.md#known-l
 `tests/test-lima.sh` asserts the template's shape; `tests/smoke-lima.sh`
 checks a running VM.
 
-A **contained VM** (`bin/wmf-claude-vm create --contained`) also keeps the
+A **contained VM** (`claude-vm create --contained`) also keeps the
 agent from reaching anything but the model API. The Claude token stays on the
 host, in a model proxy that allows only Messages API requests, refuses those
 that would make the API fetch from the internet, and logs each one; the

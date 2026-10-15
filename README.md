@@ -136,13 +136,17 @@ bundles. PHP, Composer and MariaDB are in the guest, so PHPUnit runs there as
 on the host. Opt-in; plain `claude` is unchanged.
 
 ```bash
-bin/wmf-claude-vm create                    # once; asks for your Phabricator username
-bin/wmf-claude-vm login                     # once: open the URL on the host, paste the code
-bin/wmf-claude-vm push ~/src/mediawiki/core
-bin/wmf-claude-vm claude core
-bin/wmf-claude-vm pull core                 # the agent's branches land in vm/* of your checkout
-bin/wmf-claude-vm review core <branch>      # then checkout or discard it
+claude-vm create --isolated         # once; asks for your Phabricator username
+claude-vm login                     # once: open the URL on the host, paste the code
+claude-vm push ~/src/mediawiki/core
+claude-vm claude core
+claude-vm pull core                 # the agent's branches land in vm/* of your checkout
+claude-vm review core <branch>      # then checkout or discard it
+claude-vm list                      # your VMs and the mode of each
 ```
+
+This is an **isolated VM**: an escape lands in the VM, not on your machine,
+but the VM has internet access and holds the Claude login.
 
 When the agent must reach nothing but the model API and never see the
 credential (Anthropic CVP work, for example), use a **contained VM**
@@ -152,7 +156,8 @@ network is locked during sessions. It needs a token from
 the host.
 
 Which mode to use, and how: [`docs/lima-vm.md`](docs/lima-vm.md). `./setup.sh`
-installs a `claude-vm` alias for `bin/wmf-claude-vm`.
+installs a `claude-vm` alias for `bin/claude-vm` (the old name,
+`bin/wmf-claude-vm`, still works).
 
 ## Bugs and questions
 

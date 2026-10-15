@@ -7,8 +7,8 @@
 #
 # Run on the host, outside nono, against a contained VM made from this checkout:
 #
-#   WMF_CLAUDE_VM=wmf-claude-contained bin/wmf-claude-vm create --contained
-#   WMF_CLAUDE_VM=wmf-claude-contained bin/wmf-claude-vm login
+#   claude-vm --vm wmf-claude-contained create --contained
+#   claude-vm --vm wmf-claude-contained login
 #   ./tests/smoke-contained.sh
 #
 #   ./tests/smoke-contained.sh --reboot       # first stop and start the VM: the
@@ -39,7 +39,7 @@ for a in "$@"; do
     *) echo "usage: $0 [--reboot] [--host-block] [--docker]" >&2; exit 2 ;;
   esac
 done
-VMCMD="$REPO_ROOT/bin/wmf-claude-vm"
+VMCMD="$REPO_ROOT/bin/claude-vm"
 
 PASS=0
 FAIL=0
@@ -71,11 +71,11 @@ sandboxed() {
 
 if ! limactl list >/dev/null 2>&1; then red "limactl cannot list instances. Run this outside the nono sandbox."; exit 1; fi
 if [[ "$(limactl list --format '{{.Status}}' "$VM" 2>/dev/null)" != Running ]]; then
-  red "VM '$VM' is not running. Create it: WMF_CLAUDE_VM=$VM bin/wmf-claude-vm create --contained"
+  red "VM '$VM' is not running. Create it: claude-vm --vm $VM create --contained"
   exit 1
 fi
-ga test -f "$P" || { red "$P is not in the VM. Run: WMF_CLAUDE_VM=$VM bin/wmf-claude-vm update"; exit 1; }
-ga grep -q deny-all.invalid "$P" || { red "the VM has an older wmf-contained profile. Run: WMF_CLAUDE_VM=$VM bin/wmf-claude-vm update"; exit 1; }
+ga test -f "$P" || { red "$P is not in the VM. Run: claude-vm --vm $VM update"; exit 1; }
+ga grep -q deny-all.invalid "$P" || { red "the VM has an older wmf-contained profile. Run: claude-vm --vm $VM update"; exit 1; }
 ga mkdir -p "$W"
 VMDIR=$(limactl list --format '{{.Dir}}' "$VM")
 SOCK="$VMDIR/sock/model-smoke.sock"
@@ -99,12 +99,12 @@ fi
 echo "--- contained VM and token ---"
 CONTAINED_RECORD="${XDG_CONFIG_HOME:-$HOME/.config}/wmf-claude/vm-$VM-contained"
 if [[ -f "$CONTAINED_RECORD" ]]; then pass "the host records $VM as a contained VM"
-else fail "$VM is not a contained VM on this host. Recreate it: WMF_CLAUDE_VM=$VM bin/wmf-claude-vm reset --contained"; exit 1; fi
+else fail "$VM is not a contained VM on this host. Recreate it: claude-vm --vm $VM reset --contained"; exit 1; fi
 if g test -f /etc/wmf-claude/contained && [[ "$(g stat -c %U /etc/wmf-claude/contained | tr -d '\r')" == root ]]; then pass "the guest marker exists and belongs to root"
 else fail "no root-owned /etc/wmf-claude/contained in the guest"; fi
 if [[ -s "$MODEL_TOKEN_FILE" && "$(stat -f '%Lp' "$MODEL_TOKEN_FILE" 2>/dev/null || stat -c '%a' "$MODEL_TOKEN_FILE" 2>/dev/null)" == 600 ]]; then
   pass "token is in a 0600 host file ($MODEL_TOKEN_FILE), not the keychain"
-else fail "no 0600 token file at $MODEL_TOKEN_FILE. Store one: WMF_CLAUDE_VM=$VM bin/wmf-claude-vm login"; exit 1; fi
+else fail "no 0600 token file at $MODEL_TOKEN_FILE. Store one: claude-vm --vm $VM login"; exit 1; fi
 bad=$(ga bash -c 'ls -d /home/agent/.config/wmf-claude/claude-oauth-token /home/agent/.claude/.credentials.json 2>/dev/null;
   grep -rIl "sk-ant-o" /home/agent/.config /home/agent/.claude 2>/dev/null | grep -v projects/ |
     while read -r f; do grep -v -q "sk-ant-oat01-wmf-claude-placeholder" "$f" && echo "$f"; done' | tr -d '\r')
@@ -112,7 +112,7 @@ if [[ -z "$bad" ]]; then pass "no token in the agent's config"
 else fail "the VM holds token material: $bad. Delete it and revoke that token."; fi
 if [[ "$(ga bash -c 'jq -r .hasCompletedOnboarding "$(readlink -f ~/.claude.json)"' 2>/dev/null | tr -d '\r')" == true ]]; then
   pass "first-run onboarding is marked done (no connectivity check)"
-else fail "onboarding is not marked done; run: WMF_CLAUDE_VM=$VM bin/wmf-claude-vm login"; fi
+else fail "onboarding is not marked done; run: claude-vm --vm $VM login"; fi
 mcps=""
 for server in phabricator gerrit gitlab; do
   ga bash -c "claude mcp get $server" >/dev/null 2>&1 && mcps+=" $server"
@@ -125,7 +125,7 @@ echo "--- the VM's network: locked ---"
 NETCMD=/usr/local/sbin/wmf-claude-contained-net
 net=$(g sudo -n "$NETCMD" status 2>&1 | tr -d '\r')
 if [[ "$net" == locked ]]; then pass "the VM's network is locked"
-else fail "the VM's network is '$net', not locked. Run: WMF_CLAUDE_VM=$VM bin/wmf-claude-vm lock"; exit 1; fi
+else fail "the VM's network is '$net', not locked. Run: claude-vm --vm $VM lock"; exit 1; fi
 # Egress for each user, outside nono. The lock is root's, so root too. The
 # address comes from the host, so a DNS failure in the VM cannot pass this.
 EGRESS_IP=$(python3 -c 'import socket; print(socket.gethostbyname("deb.debian.org"))')
@@ -155,18 +155,18 @@ host_block_check() {
 RELOCK=false
 if $HOST_BLOCK; then
   echo ""
-  echo "--- the host-side block (--host-block: bin/wmf-claude-vm check-host-block) ---"
+  echo "--- the host-side block (--host-block: claude-vm check-host-block) ---"
   host_block_check
 else
   info "host-side block not checked (run with --host-block once LuLu blocks limactl)"
 fi
 
 echo ""
-echo "--- the launcher: bin/wmf-claude-vm claude ---"
+echo "--- the launcher: claude-vm claude ---"
 before=0; [[ -f "$LOG" ]] && before=$(wc -l < "$LOG")
 out=$("$VMCMD" claude smoke-contained -- -p 'Reply with exactly MODEL-OK and nothing else.' 2>&1 | tr -d '\r')
-if grep -q 'MODEL-OK' <<<"$out"; then pass "claude -p through bin/wmf-claude-vm (proxy and bridge started and stopped)"
-else fail "bin/wmf-claude-vm claude: $(tail -n8 <<<"$out")"; fi
+if grep -q 'MODEL-OK' <<<"$out"; then pass "claude -p through claude-vm (proxy and bridge started and stopped)"
+else fail "claude-vm claude: $(tail -n8 <<<"$out")"; fi
 if tail -n +"$((before + 1))" "$LOG" | grep -q '"decision": "allow".*"/v1/messages"'; then pass "the host proxy logged the model call"
 else fail "no allowed /v1/messages in the host log"; fi
 if ! pgrep -f "wmf-claude-model-proxy.*$VM" >/dev/null && ! ls "$VMDIR"/sock/model-*.sock >/dev/null 2>&1; then

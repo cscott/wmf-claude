@@ -1,0 +1,1249 @@
+#!/bin/bash
+# Run wmf-claude inside a Lima VM: a VM boundary around the nono sandbox, for
+# SRE and security work. Opt-in; plain bin/claude stays the default. The VM
+# has no host mounts and no port forwards, so code moves by explicit copy.
+# Read docs/lima-vm.md first.
+#
+# Usage: claude-vm [--vm NAME] COMMAND ...
+#
+#   claude-vm create --isolated|--contained [limactl create flags]  # create the VM, install wmf-claude into it
+#                                            # isolated: a nono escape lands in the VM; the VM has internet
+#                                            # contained: egress to the model API only, via a host proxy;
+#                                            # the token stays on the host. Give it its own --vm NAME.
+#   claude-vm list                           # the wmf-claude VMs on this machine, with their mode
+#   claude-vm update                         # refresh the in-VM wmf-claude from this checkout's HEAD
+#   claude-vm login                          # sign Claude Code in, as the agent (once per VM);
+#                                            # contained VM: store a setup-token token on the host
+#   claude-vm lock | unlock                  # contained VM: no egress (sessions run) | egress (setup)
+#   claude-vm check-host-block               # contained VM: prove the host blocks it without its lock
+#   claude-vm push DIR [NAME]                # copy a git repo into the agent's workspace (git bundle)
+#   claude-vm claude NAME [bin/claude args]  # run sandboxed Claude Code in workspace NAME; on exit, list what is not pulled yet
+#   claude-vm pull NAME [DEST]               # fetch the agent's branches into vm/* of the repo NAME was pushed from (or DEST)
+#   claude-vm review NAME BRANCH             # show what vm/BRANCH adds (git log -p)
+#   claude-vm checkout NAME BRANCH           # create local BRANCH from vm/BRANCH, switch to it
+#   claude-vm discard NAME BRANCH            # delete vm/BRANCH
+#   claude-vm shell [--agent] [-- CMD...]    # engineer shell in the VM (or as the agent); or run CMD
+#   claude-vm status | start | stop
+#   claude-vm logs [--all | -f]              # contained VM: the host request log (newest session; --all or -f for more)
+#   claude-vm logs --transcript [--text|--raw] [F]  # contained VM: a transcript (newest, or F): summary, --text (readable), or --raw JSON
+#   claude-vm delete                         # remove the VM
+#   claude-vm reset [--isolated|--contained] # remove the VM and create it again (same mode unless given)
+#
+#   --vm NAME                    the VM to use (default: $WMF_CLAUDE_VM, else wmf-claude)
+#   WMF_CLAUDE_VM=<name>         the VM to use when --vm is not given
+#   WMF_CLAUDE_PHAB_USER=<name>  create/update: the Phabricator username, no prompt
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=bin/lib-output.sh
+source "$ROOT/bin/lib-output.sh"
+
+# --vm NAME selects the VM, as WMF_CLAUDE_VM does. It comes before the
+# command, because claude and shell pass the rest of their arguments on.
+DEFAULT_VM=wmf-claude
+VM="${WMF_CLAUDE_VM:-$DEFAULT_VM}"
+case "${1:-}" in
+  --vm)   [[ -n "${2:-}" ]] || { echo "error: --vm needs a VM name" >&2; exit 1; }
+          VM="$2"; shift 2 ;;
+  --vm=*) VM="${1#--vm=}"; shift
+          [[ -n "$VM" ]] || { echo "error: --vm needs a VM name" >&2; exit 1; } ;;
+esac
+TEMPLATE="$ROOT/lima/wmf-claude.yaml"
+# Paths inside the guest. The engineer is the Lima default user (see the
+# template); /opt/wmf-claude is a symlink to the installed tree.
+INSTALL=/opt/wmf-claude
+ENGINEER_HOME=/home/engineer
+AGENT=agent
+AGENT_HOME=/home/agent
+
+usage() {
+  sed -n '2,/^set -euo/{/^set -euo/d;s/^# \{0,1\}//;p;}' "$0"
+}
+
+die() { printf 'error: %s\n' "$1" >&2; exit 1; }
+need() {
+  local c
+  for c in "$@"; do
+    command -v "$c" >/dev/null 2>&1 || die "$c is required (see docs/lima-vm.md)"
+  done
+}
+# Workspace names are paths under ~agent/work: letters, digits, . _ - and /.
+valid_name() { [[ "$1" =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ && "$1" != *..* ]]; }
+
+[[ "$VM" =~ ^[A-Za-z0-9_.-]+$ ]] || die "'$VM' is not a valid VM name (letters, digits, . _ -)"
+
+# grep reads the whole list, no -q: with pipefail, an early exit would let
+# a later line hit a closed pipe, and Go exits limactl on SIGPIPE, so the
+# check would fail at random whenever another VM is listed after this one.
+vm_exists() { limactl list --format '{{.Name}}' 2>/dev/null | grep -Fx "$VM" >/dev/null; }
+vm_status() { limactl list --format '{{.Status}}' "$VM" 2>/dev/null || true; }
+require_running() {
+  vm_exists || die "VM '$VM' does not exist; see claude-vm list"
+  [[ "$(vm_status)" == Running ]] || die "VM '$VM' is not running; start it: claude-vm start"
+}
+# A command in the guest as the engineer. limactl shell quotes each argument.
+guest() { limactl shell --workdir "$ENGINEER_HOME" "$VM" -- "$@"; }
+# The same, as the agent. sudo passes the arguments to execve unchanged.
+guest_agent() { guest sudo -H -u "$AGENT" -- "$@"; }
+# mktemp -d in the guest. Strip a CR in case limactl gives the command a
+# terminal, and refuse any output that is not a path from the template.
+guest_mktemp() {  # $1 template ending in XXXXXX
+  local d
+  d=$(guest mktemp -d "$1" | tr -d '\r')
+  [[ "$d" == "${1%XXXXXX}"?????? && "$d" != *[[:space:]]* ]] || die "mktemp in the guest failed: '$d'"
+  printf '%s\n' "$d"
+}
+host_rev() { git -C "$ROOT" rev-parse --short=12 HEAD; }
+
+# Which host repository each workspace came from, so pull, review, checkout
+# and discard need only the workspace name. One "NAME<TAB>PATH" line each, per VM.
+# The host files of a VM: vm_file NAME KIND. list reads them for every VM.
+HOST_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/wmf-claude"
+vm_file() { printf '%s/vm-%s-%s\n' "$HOST_DIR" "$1" "$2"; }
+WS_FILE=$(vm_file "$VM" workspaces)
+
+# Contained mode (docs/lima-vm.md#contained-mode). The host record says which VMs are contained
+# VMs; it is the authority, as the guest's marker is in reach of VM root.
+CONTAINED_RECORD=$(vm_file "$VM" contained)
+# create marks every VM it makes, so list can find it. It holds no mode: the
+# contained record above is the only host record of the mode.
+CREATED_RECORD=$(vm_file "$VM" created)
+# The token stays on the host in a 0600 file, never in the login keychain: a
+# host bin/claude session is granted ~/Library/Keychains (and `security -w`
+# reads a generic-password item with no prompt), so the keychain would be in
+# the sandbox's reach. ~/.config/wmf-claude is not in any sandbox grant, and
+# the profiles deny it as well. The directory is 0700 (login/create).
+MODEL_TOKEN_FILE=$(vm_file "$VM" model-token)
+CONTAINED_GUEST_MARKER=/etc/wmf-claude/contained
+is_contained() { [[ -f "$CONTAINED_RECORD" ]]; }
+contained_check_guest() {
+  guest test -f "$CONTAINED_GUEST_MARKER" \
+    || die "the host records '$VM' as a contained VM, but $CONTAINED_GUEST_MARKER is missing in the guest. Recreate it: claude-vm reset"
+}
+# The contained VM's network phase, from the root-owned script in the guest:
+# locked, open, broken, or none before lima/guest-install.sh installed it.
+contained_net() { guest sudo -n /usr/local/sbin/wmf-claude-contained-net "$@" 2>/dev/null | tr -d '\r'; }
+contained_phase() {
+  if guest test -x /usr/local/sbin/wmf-claude-contained-net; then contained_net status; else echo none; fi
+}
+# A contained session for this VM runs while its host proxy does.
+# The host-side block (a firewall on the host that blocks limactl, so that VM
+# root cannot undo the lock) is outside this script's control. check-host-block
+# proves it and records the result, with the limactl binary it held for: a
+# Lima upgrade moves the binary, and the rule may no longer match.
+HOST_BLOCK_RECORD=$(vm_file "$VM" host-block)
+limactl_binary() { python3 -c 'import os, shutil; print(os.path.realpath(shutil.which("limactl") or ""))'; }
+# Prints verified, stale (limactl changed since), failed or unchecked.
+host_block_state() {
+  [[ -f "$HOST_BLOCK_RECORD" ]] || { echo unchecked; return; }
+  local result _when binary
+  read -r result _when binary < "$HOST_BLOCK_RECORD"
+  if [[ "$result" != ok ]]; then echo failed
+  elif [[ "$binary" != "$(limactl_binary)" ]]; then echo stale
+  else echo verified; fi
+}
+# A loud warning for a host firewall that is not verified: what it means and
+# what to do. $1: unchecked, stale or failed.
+host_block_warning() {
+  local why
+  case "$1" in
+    failed)    why="FAILED: with the VM's lock off, the VM reached the internet." ;;
+    stale)     why="NOT VERIFIED: limactl changed since the last check (a Lima upgrade?)." ;;
+    *)         why="NOT VERIFIED: claude-vm check-host-block has not run." ;;
+  esac
+  {
+    echo ""
+    echo "  $(red "$(bold "WARNING: host firewall $why")")"
+    echo "  $(red "Only the in-VM lock stops egress now. If something gets root in the VM, it")"
+    echo "  $(red "can remove that lock and reach the internet.")"
+    echo "  Fix: block the real limactl binary in your host firewall (LuLu: docs/lima-vm.md):"
+    echo "         $(limactl_binary)"
+    echo "       then run: claude-vm check-host-block"
+    echo ""
+  } >&2
+}
+contained_session_running() { pgrep -f "wmf-claude-model-proxy.*vm-$VM-model-token" >/dev/null 2>&1; }
+model_have_token() { [[ -s "$MODEL_TOKEN_FILE" ]]; }
+ws_save() {  # $1 NAME  $2 host repository (top level)
+  [[ "$2" != *$'\t'* && "$2" != *$'\n'* ]] || die "cannot record a path with a tab or newline: $2"
+  mkdir -p "$(dirname "$WS_FILE")"
+  { awk -F'\t' -v n="$1" '$1 != n' "$WS_FILE" 2>/dev/null || true
+    printf '%s\t%s\n' "$1" "$2"; } > "$WS_FILE.new"
+  mv "$WS_FILE.new" "$WS_FILE"
+}
+ws_dest() {  # $1 NAME; prints the recorded host repository, or dies
+  local p
+  p=$(awk -F'\t' -v n="$1" '$1 == n { print $2 }' "$WS_FILE" 2>/dev/null | tail -n1)
+  [[ -n "$p" ]] || die "no host repository recorded for '$1'. Name it once: claude-vm pull $1 ~/src/some-repo"
+  git -C "$p" rev-parse --git-dir >/dev/null 2>&1 || die "$p (recorded for '$1') is not a git repository"
+  printf '%s\n' "$p"
+}
+
+# What the agent has that the host does not, for every workspace: branches
+# whose tip is not the host's vm/<branch> (pull brings them), and files the
+# agent changed but did not commit (a bundle carries commits only, so pull
+# never brings them). Read-only, as the agent, hooks off; one guest call.
+# Prints the report to stdout, nothing when the host has it all. A workspace
+# with no host record counts as not pulled. Names come from the agent's
+# directories: control characters are dropped before they reach a terminal.
+unpulled_report() {
+  local lines kind name f3 f4 f5 branch sha ahead dirty dest have out="" pull="" uncommitted=false
+  # Per branch: B NAME BRANCH SHA AHEAD; then per workspace: W NAME DIRTY-FILES,
+  # where AHEAD counts the commits no remote of the workspace has (host/*
+  # for a pushed one, origin/* for a clone made in the VM). Tab-separated.
+  lines=$(guest_agent bash -c '
+    cd "$HOME/work" 2>/dev/null || exit 0
+    g() { git -c core.hooksPath=/dev/null -c core.fsmonitor=false -c core.pager=cat -C "$1" "${@:2}"; }
+    find . -mindepth 2 -maxdepth 6 -name .git -not -path "./.pull/*" -prune -print 2>/dev/null | sort | while read -r d; do
+      w="${d#./}"; w="${w%/.git}"
+      g "$w" for-each-ref --format="%(refname:short) %(objectname)" refs/heads/ 2>/dev/null | while read -r b s; do
+        printf "B\t%s\t%s\t%s\t%s\n" "$w" "$b" "$s" "$(g "$w" rev-list --count "$s" --not --remotes 2>/dev/null || echo 0)"
+      done
+      printf "W\t%s\t%s\n" "$w" "$(g "$w" status --porcelain 2>/dev/null | wc -l | tr -d " ")"
+    done
+  ' | LC_ALL=C tr -d '\000-\010\013-\037\177')
+  [[ -n "$lines" ]] || return 0
+  while IFS=$'\t' read -r kind name f3 f4 f5; do
+    case "$kind" in
+      W)
+        dirty="$f3"
+        [[ "$dirty" =~ ^[0-9]+$ && "$dirty" != 0 ]] || continue
+        out+=$(printf '    %-20s %-20s %s uncommitted file%s' "$name" "(working tree)" "$dirty" "$([[ "$dirty" == 1 ]] || echo s)")$'\n'
+        uncommitted=true
+        ;;
+      B)
+        branch="$f3"; sha="$f4"; ahead="$f5"
+        [[ "$ahead" =~ ^[0-9]+$ && "$ahead" != 0 ]] || continue
+        dest=$(awk -F'\t' -v n="$name" '$1 == n { print $2 }' "$WS_FILE" 2>/dev/null | tail -n1)
+        have=""
+        [[ -n "$dest" ]] && have=$(git -C "$dest" rev-parse -q --verify "refs/remotes/vm/$branch" 2>/dev/null || true)
+        [[ "$have" != "$sha" ]] || continue
+        out+=$(printf '    %-20s %-20s %s commit%s not pulled' "$name" "$branch" "$ahead" "$([[ "$ahead" == 1 ]] || echo s)")$'\n'
+        case " $pull " in *" $name "*) ;; *) pull+="${pull:+ }$name" ;; esac
+        ;;
+    esac
+  done <<< "$lines"
+  [[ -n "$out" ]] || return 0
+  printf '%s' "$out"
+  if [[ -n "$pull" ]]; then
+    printf '  Pull with: claude-vm pull %s\n' "${pull// /; claude-vm pull }"
+  fi
+  $uncommitted && echo "  Uncommitted files do not travel: commit them in the VM first."
+  return 0
+}
+
+# After a session: what is still only in the VM, on stderr so a -p run's
+# stdout stays clean. Exit output is visible, unlike startup output.
+after_session() {
+  local r
+  r=$(unpulled_report 2>/dev/null) || return 0
+  [[ -n "$r" ]] || return 0
+  { echo ""; echo "  Work in the VM not yet on the host:"; printf '%s\n' "$r"; } >&2
+}
+
+# HEAD of this checkout with the submodules at their recorded commits, as one
+# tarball: no .git, no working-tree files, no node_modules or venvs.
+make_tree_tarball() {  # $1 output path
+  local stage mode type sha path
+  stage=$(mktemp -d)
+  git -C "$ROOT" archive --format=tar HEAD | tar -x -C "$stage"
+  # Each submodule at the commit that HEAD records, not the index. An
+  # uninitialized submodule has no such commit, so stop here, not in the
+  # guest build.
+  while read -r mode type sha path; do
+    [[ "$type" == commit ]] || continue
+    if ! git -C "$ROOT/$path" cat-file -e "$sha^{commit}" 2>/dev/null; then
+      rm -rf "$stage"
+      die "submodule $path does not have commit $sha; run: git submodule update --init"
+    fi
+    mkdir -p "$stage/$path"
+    git -C "$ROOT/$path" archive --format=tar "$sha" | tar -x -C "$stage/$path"
+  done < <(git -C "$ROOT" ls-tree -r HEAD)
+  host_rev > "$stage/.wmf-claude-rev"
+  # No extended attributes: macOS tar stores them (com.apple.provenance) as
+  # headers that GNU tar in the guest warns about, once per file.
+  COPYFILE_DISABLE=1 tar --no-xattrs -czf "$1" -C "$stage" .
+  rm -rf "$stage"
+}
+
+print_next_steps() {
+  echo ""
+  echo "  $(green "The $CREATE_MODE VM is ready.") Next:"
+  echo ""
+  if is_contained; then
+    echo "    $(bold "command claude setup-token")                    $(dim "on the host, outside the sandbox: a long-lived token")"
+    echo "    $(bold "claude-vm login")                       $(dim "store it on the host (0600 file); the VM never holds it")"
+    echo "    $(bold "claude-vm push ~/src/some-repo")        $(dim "copy a repo in (git bundle)")"
+    echo "    $(bold "claude-vm claude some-repo")            $(dim "Claude Code there; the model API via the host proxy only")"
+    echo ""
+    echo "  $(dim "See docs/lima-vm.md#contained-mode.")"
+    echo ""
+    return
+  fi
+  echo "    $(bold "claude-vm login")                       $(dim "sign Claude Code in (once)")"
+  echo "    $(bold "claude-vm push ~/src/some-repo")        $(dim "copy a repo in (git bundle)")"
+  echo "    $(bold "claude-vm claude some-repo")            $(dim "run Claude Code there, sandboxed")"
+  echo "    $(bold "claude-vm pull some-repo ~/src/some-repo") $(dim "fetch its commits back for review")"
+  echo ""
+  echo "  $(dim "login prints a URL: open it on the host and paste the code back. See docs/lima-vm.md.")"
+  echo ""
+}
+
+# Set CREATE_MODE (isolated or contained) and CREATE_ARGS (the flags for
+# limactl create). $1 is create or reset. reset calls this before it deletes
+# the VM, so a refusal here never leaves the engineer without a VM.
+create_mode() {
+  local cmdname="$1" arg reply; shift
+  CREATE_MODE=""; CREATE_ARGS=()
+  for arg in "$@"; do
+    case "$arg" in
+      --isolated|--contained)
+        [[ -z "$CREATE_MODE" || "$CREATE_MODE" == "${arg#--}" ]] \
+          || die "$cmdname: give --isolated or --contained, not both"
+        CREATE_MODE="${arg#--}" ;;
+      *) CREATE_ARGS+=("$arg") ;;
+    esac
+  done
+  # reset keeps the mode of the VM, unless a flag changes it. Without a flag
+  # the VM must exist: else reset would be a create that chose a mode.
+  if [[ -z "$CREATE_MODE" && "$cmdname" == reset ]]; then
+    vm_exists || die "VM '$VM' does not exist; create it: claude-vm create --isolated|--contained"
+    if is_contained; then CREATE_MODE=contained; else CREATE_MODE=isolated; fi
+  fi
+  if [[ -z "$CREATE_MODE" ]]; then
+    [[ -t 0 && -t 1 ]] \
+      || die "$cmdname: choose a mode, --isolated or --contained (see docs/lima-vm.md#which-mode-do-i-need)"
+    cat <<'EOF'
+Which kind of VM?
+  isolated   A nono escape lands in the VM, not on this machine. The VM has
+             internet access and holds the Claude login. MCP servers work.
+  contained  The only egress is the model API, through a proxy on this
+             machine, and the token stays here. No MCP servers. Needs a host
+             firewall rule, and an unlock/lock cycle for setup.
+See docs/lima-vm.md#which-mode-do-i-need.
+EOF
+    [[ "$VM" != "$DEFAULT_VM" ]] || echo "A contained VM needs its own name: run again with --vm NAME."
+    read -rp "Mode [isolated/contained]: " reply
+    case "$reply" in
+      i|isolated)  CREATE_MODE=isolated ;;
+      c|contained) CREATE_MODE=contained ;;
+      *) die "not a mode: '$reply'" ;;
+    esac
+  fi
+  # The default name stays an isolated VM, so the name tells the mode. reset
+  # may keep a contained VM that has the default name, but not make one.
+  if [[ "$CREATE_MODE" == contained && "$VM" == "$DEFAULT_VM" ]] \
+     && { [[ "$cmdname" == create ]] || ! is_contained; }; then
+    die "give a contained VM its own name, for example: claude-vm --vm wmf-claude-contained create --contained"
+  fi
+}
+
+cmd_create() {
+  need limactl
+  vm_exists && die "VM '$VM' exists; use update, or reset to recreate it"
+  create_mode create "$@"
+  create_vm
+}
+
+# Create the VM that create_mode chose.
+create_vm() {
+  need limactl git tar
+  [[ -f "$TEMPLATE" ]] || die "template missing: $TEMPLATE"
+  vm_exists && die "VM '$VM' exists; use update, or reset to recreate it"
+  local contained=false
+  [[ "$CREATE_MODE" == contained ]] && contained=true
+  set -- ${CREATE_ARGS[@]+"${CREATE_ARGS[@]}"}
+  mkdir -p "$HOST_DIR"
+  date -u +%FT%TZ > "$CREATED_RECORD"
+  # Record a contained VM before anything can fail, so a create that stops
+  # part way stays contained: status, list and reset then treat it as one.
+  # An isolated create removes a record left by a deleted contained VM.
+  if $contained; then
+    chmod 0700 "$HOST_DIR" 2>/dev/null || true
+    date -u +%FT%TZ > "$CONTAINED_RECORD"
+  else
+    rm -f "$CONTAINED_RECORD"
+  fi
+  step "Creating $CREATE_MODE VM $VM"
+  dim "    Debian 13, no host mounts, no port forwards. The first boot downloads the"; echo ""
+  dim "    image and installs Docker; this takes a few minutes."; echo ""
+  limactl create --tty=false --name "$VM" "$@" "$TEMPLATE"
+  limactl start --tty=false --timeout 20m "$VM"
+  # The readiness probe waits for the provisioning marker; check it here too.
+  local i
+  for i in $(seq 60); do
+    guest test -f /run/wmf-claude/provisioned 2>/dev/null && break
+    sleep 5
+  done
+  guest test -f /run/wmf-claude/provisioned 2>/dev/null \
+    || die "provisioning did not finish; in the VM run: sudo cat /var/log/cloud-init-output.log"
+  # Restart once. Provisioning added the engineer to `docker`, but Lima keeps
+  # one SSH connection open and reuses it, so new shells still have the old
+  # groups. The restart opens a new connection.
+  limactl stop "$VM" >/dev/null
+  limactl start --tty=false "$VM"
+  ok "VM is up"
+  if $contained; then
+    # Before cmd_update: lima/guest-install.sh reads the marker. The setup
+    # needs egress, so start open; lock when it is done.
+    guest sudo install -d -m 0755 /etc/wmf-claude
+    guest sudo sh -c "date -u +%FT%TZ > $CONTAINED_GUEST_MARKER && chmod 0644 $CONTAINED_GUEST_MARKER"
+    guest sudo sh -c "echo open > /etc/wmf-claude/net-phase && chmod 0644 /etc/wmf-claude/net-phase"
+    ok "contained VM: the model API is reachable only through the host proxy"
+  fi
+  cmd_update
+  if $contained; then
+    [[ "$(contained_net lock)" == locked ]] || die "could not lock the VM's network; see claude-vm status"
+    ok "network locked: no egress from the VM (claude-vm unlock for setup)"
+  fi
+  print_next_steps
+}
+
+cmd_update() {
+  need limactl git tar
+  require_running
+  if is_contained && [[ "$(contained_phase)" == locked ]]; then
+    die "the VM's network is locked, and the update needs egress. Run: claude-vm unlock, then update, then lock"
+  fi
+  if ! git -C "$ROOT" diff --quiet --ignore-submodules=dirty HEAD -- 2>/dev/null; then
+    printf 'note: uncommitted changes in %s are not part of the update; HEAD is\n' "$ROOT" >&2
+  fi
+  step "Uploading wmf-claude $(host_rev) to $VM"
+  local tarball updir
+  tarball=$(mktemp)
+  make_tree_tarball "$tarball"
+  # The engineer runs this tree with sudo, so it goes to a new 0700 directory
+  # in the engineer's home, which the agent cannot enter. Never a fixed /tmp
+  # path: the agent can create one first.
+  updir=$(guest_mktemp "$ENGINEER_HOME/.wmf-claude-update.XXXXXX")
+  limactl copy "$tarball" "$VM:$updir/tree.tgz"
+  rm -f "$tarball"
+  ok "uploaded"
+  # Extract next to the tarball and run the guest installer from the
+  # uploaded tree itself. It asks for the Phabricator username the first
+  # time only; WMF_CLAUDE_PHAB_USER on the host command answers it.
+  guest env ${WMF_CLAUDE_PHAB_USER:+WMF_CLAUDE_PHAB_USER="$WMF_CLAUDE_PHAB_USER"} bash -c '
+    set -e
+    mkdir "$1/tree"
+    tar -xzf "$1/tree.tgz" -C "$1/tree"
+    rc=0
+    "$1/tree/lima/guest-install.sh" "$1/tree" || rc=$?
+    rm -rf "$1"
+    exit "$rc"
+  ' _ "$updir"
+}
+
+cmd_push() {
+  need limactl git
+  local dir="${1:-}" name="${2:-}" top bundle updir remote
+  [[ -n "$dir" ]] || die "usage: claude-vm push DIR [NAME]"
+  top=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null) || die "$dir is not a git repository"
+  [[ -n "$name" ]] || name=$(basename "$top")
+  valid_name "$name" || die "invalid NAME '$name' (letters, digits, . _ - and / only)"
+  require_running
+  step "Bundling $top"
+  # A bundle carries commits and refs only: no .git/config, hooks or untracked files.
+  bundle=$(mktemp)
+  git -C "$top" bundle create "$bundle" --branches --tags HEAD >/dev/null 2>&1 \
+    || { rm -f "$bundle"; die "git bundle failed in $top (no commits?)"; }
+  ok "$(du -h "$bundle" | cut -f1) bundle of $(git -C "$top" rev-parse --abbrev-ref HEAD) @ $(git -C "$top" rev-parse --short HEAD)"
+  # A new directory (mktemp -d), readable by the agent, writable only by the
+  # engineer. A fixed /tmp path could be a symlink that the agent made.
+  updir=$(guest_mktemp /tmp/wmf-claude-push.XXXXXX)
+  guest chmod 0755 "$updir"
+  remote="$updir/push.bundle"
+  limactl copy "$bundle" "$VM:$remote"
+  rm -f "$bundle"
+  step "Importing into $AGENT_HOME/work/$name (as $AGENT)"
+  # Runs as the agent, in the agent's own repository. An existing workspace
+  # gets the refs under the `host` remote; nothing is checked out over the
+  # agent's work.
+  guest_agent bash -c '
+    set -e
+    b="$1"; dest="$HOME/work/$2"
+    g() { git -c core.hooksPath=/dev/null -c core.fsmonitor=false -c init.defaultBranch=main -c advice.defaultBranchName=false "$@"; }
+    if [ -e "$dest" ]; then
+      [ -d "$dest/.git" ] || { echo "error: $dest exists and is not a git repository" >&2; exit 1; }
+      g -C "$dest" bundle verify "$b" >/dev/null
+      g -C "$dest" fetch --quiet --no-tags "$b" "+refs/heads/*:refs/remotes/host/*"
+      echo "    + updated remote host/* in $dest; in the VM: git checkout -B <branch> host/<branch>"
+    else
+      mkdir -p "$(dirname "$dest")"
+      g clone --quiet --origin host "$b" "$dest"
+      echo "    + cloned into $dest"
+    fi
+  ' _ "$remote" "$name"
+  guest rm -rf "$updir"
+  ws_save "$name" "$top"
+  echo "  Next: $(bold "claude-vm claude $name")"
+}
+
+cmd_pull() {
+  need limactl git
+  local name="${1:-}" dest="${2:-}" flat remote bundle
+  [[ -n "$name" ]] || die "usage: claude-vm pull NAME [DEST]"
+  valid_name "$name" || die "invalid NAME '$name'"
+  if [[ -n "$dest" ]]; then
+    dest=$(git -C "$dest" rev-parse --show-toplevel 2>/dev/null) || die "$2 is not a git repository"
+    ws_save "$name" "$dest"
+  else
+    dest=$(ws_dest "$name")
+  fi
+  require_running
+  step "Exporting $name from the VM (as $AGENT, hooks off)"
+  # The bundle is written by the agent in the agent's home; the engineer
+  # copies it out. Git never runs in the agent's repository as the engineer.
+  flat="${name//\//_}"
+  remote="$AGENT_HOME/work/.pull/$flat.bundle"
+  # A shallow workspace (a --depth clone made in the VM) cannot bundle its
+  # history: bundle only what follows the shallow boundary. The host
+  # repository must have the boundary commits.
+  guest_agent bash -c '
+    set -e
+    mkdir -p "$HOME/work/.pull"
+    g() { git -c core.hooksPath=/dev/null -c core.fsmonitor=false -c core.pager=cat -C "$HOME/work/$1" "${@:2}"; }
+    shallow=$(g "$1" rev-parse --git-path shallow)
+    case "$shallow" in /*) ;; *) shallow="$HOME/work/$1/$shallow" ;; esac
+    if [ -s "$shallow" ]; then
+      g "$1" bundle create -q "$2" --branches HEAD --not $(cat "$shallow")
+    else
+      g "$1" bundle create -q "$2" --branches --tags HEAD
+    fi
+    chmod 0644 "$2"
+  ' _ "$name" "$remote"
+  bundle=$(mktemp)
+  limactl copy "$VM:$remote" "$bundle"
+  guest_agent rm -f "$remote"
+  step "Fetching into vm/* of $dest"
+  git -C "$dest" bundle verify "$bundle" >/dev/null 2>&1 \
+    || { rm -f "$bundle"; die "the bundle does not verify against $dest (from a shallow workspace, $dest needs the commit the clone starts at: git -C $dest fetch)"; }
+  # Remote-tracking refs, as if from a remote named `vm`, so git branch -r,
+  # log and switch work on them as usual. --prune drops the vm/* branches
+  # that no longer exist in the VM. No remote goes into .git/config.
+  git -C "$dest" fetch --quiet --no-tags --prune "$bundle" "+refs/heads/*:refs/remotes/vm/*"
+  rm -f "$bundle"
+  ok "fetched; nothing was checked out or merged"
+  echo ""
+  git -C "$dest" for-each-ref --format='      %(refname:lstrip=2)  %(objectname:short)  %(contents:subject)' refs/remotes/vm/
+  echo ""
+  dim "    The agent wrote these commits. Treat them as untrusted: review the diff"; echo ""
+  dim "    before you merge, and look for files that run on build or commit."; echo ""
+  echo ""
+  dim "    claude-vm review|checkout|discard $name <branch>"; echo ""
+}
+
+# review, checkout and discard: thin wrappers over git in the workspace's host
+# repository, for the vm/* branches that pull fetched. Only checkout changes
+# the working tree.
+vm_branch() {  # $1 NAME  $2 BRANCH; sets dest, dies if vm/BRANCH is missing
+  [[ -n "$1" && -n "$2" ]] || die "usage: claude-vm $cmd NAME BRANCH"
+  dest=$(ws_dest "$1")
+  git -C "$dest" rev-parse -q --verify "refs/remotes/vm/$2" >/dev/null && return 0
+  die "no vm/$2 in $dest. It has: $(git -C "$dest" branch -r --list 'vm/*' | tr -d ' ' | tr '\n' ' ')"
+}
+cmd_review() {
+  local dest
+  vm_branch "${1:-}" "${2:-}"
+  # What the agent's branch has that the checkout's HEAD does not.
+  git -C "$dest" log -p --stat "HEAD..vm/$2"
+}
+cmd_checkout() {
+  local dest
+  vm_branch "${1:-}" "${2:-}"
+  if git -C "$dest" rev-parse -q --verify "refs/heads/$2" >/dev/null; then
+    die "$2 exists in $dest. Update it yourself, e.g. git merge --ff-only vm/$2"
+  fi
+  git -C "$dest" switch -c "$2" --no-track "vm/$2"
+}
+cmd_discard() {
+  local dest
+  vm_branch "${1:-}" "${2:-}"
+  git -C "$dest" branch -rd "vm/$2"
+}
+
+cmd_claude() {
+  need limactl
+  local name="${1:-}"
+  [[ -n "$name" ]] || die "usage: claude-vm claude NAME [bin/claude args...]  (NAME: a pushed workspace)"
+  valid_name "$name" || die "invalid NAME '$name'"
+  shift
+  require_running
+  # Not exec: the launcher stays to report what the session left in the VM.
+  # SESSION_RC, not a return value: a function called in a `||` list runs
+  # with errexit off, and contained_session relies on it.
+  SESSION_RC=0
+  if is_contained; then
+    contained_session "$name" "$@"
+  else
+    limactl shell --workdir "$ENGINEER_HOME" "$VM" -- "$INSTALL/lima/guest-claude.sh" "$name" "$@" || SESSION_RC=$?
+  fi
+  after_session
+  return "$SESSION_RC"
+}
+
+# A contained session: bin/wmf-claude-model-proxy on the host, with the token, on a
+# Unix socket in the instance directory; ssh -R forwards it into the guest as
+# 127.0.0.1:PORT (sshd picks a free port, so sessions can run side by side);
+# lima/guest-claude.sh --model-proxy-port PORT runs bin/claude in contained mode. Both host
+# processes stop with the session. ControlMaster=no keeps the forward off
+# Lima's shared SSH connection.
+contained_session() {
+  local name="$1"; shift
+  need ssh python3
+  contained_check_guest
+  model_have_token || die "no model token for '$VM'; store one: claude-vm login"
+  local net
+  net=$(contained_phase)
+  [[ "$net" == locked ]] || die "the VM's network is not locked ($net); sessions run only without egress. Run: claude-vm lock"
+  local hb
+  hb=$(host_block_state)
+  if [[ "$hb" != verified ]]; then
+    host_block_warning "$hb"
+    [[ -z "${WMF_CLAUDE_REQUIRE_HOST_BLOCK:-}" ]] \
+      || die "WMF_CLAUDE_REQUIRE_HOST_BLOCK is set: no session until the host firewall is verified"
+    # Claude Code redraws the terminal as it starts, so an interactive
+    # session would hide the warning. Wait for a key; not with -p.
+    local a interactive=true
+    for a in "$@"; do [[ "$a" == -p || "$a" == --print ]] && interactive=false; done
+    if $interactive && [[ -t 0 && -t 2 ]]; then
+      read -rp "  Press Enter to start the session anyway, or Ctrl-C to stop: " _ </dev/tty
+    fi
+  fi
+  local dir sock log capture errf sshlog port i src
+  dir=$(limactl list --format '{{.Dir}}' "$VM")
+  sock="$dir/sock/model-$$.sock"
+  log="${XDG_STATE_HOME:-$HOME/.local/state}/wmf-claude/model-proxy-$VM.log"
+  # A per-session transcript on the host, out of the VM's reach: the proxy
+  # writes the agent's requests and the responses here. Kept until deleted.
+  capture="${XDG_STATE_HOME:-$HOME/.local/state}/wmf-claude/transcript-$VM-$(date -u +%Y%m%dT%H%M%SZ)-$$.jsonl.gz"
+  MODEL_PROXY_PID=""; MODEL_SSH_PID=""
+  errf=$(mktemp); sshlog=$(mktemp)
+  MODEL_TMP=("$errf" "$sshlog")
+  src=(--token-file "$MODEL_TOKEN_FILE")
+  trap 'model_proxy_stop' EXIT
+  trap 'exit 130' INT TERM
+  python3 -B "$ROOT/bin/wmf-claude-model-proxy" --socket "$sock" --log "$log" --capture "$capture" "${src[@]}" </dev/null 2>"$errf" &
+  MODEL_PROXY_PID=$!
+  # No fixed limit while the proxy lives (it only reads a local 0600 file).
+  while [[ ! -S "$sock" ]] && kill -0 "$MODEL_PROXY_PID" 2>/dev/null; do sleep 0.1; done
+  [[ -S "$sock" ]] || die "the model proxy did not start: $(cat "$errf")"
+  # -n: stdin from /dev/null, so the forward never reads the session's terminal.
+  ssh -n -F "$dir/ssh.config" -o ControlMaster=no -o ControlPath=none -o ExitOnForwardFailure=yes \
+    -o ServerAliveInterval=15 -o LogLevel=INFO -N -R "127.0.0.1:0:$sock" "lima-$VM" 2>"$sshlog" &
+  MODEL_SSH_PID=$!
+  port=""
+  for i in $(seq 100); do
+    port=$(sed -nE 's/.*Allocated port ([0-9]+).*/\1/p' "$sshlog" | head -n1)
+    [[ -n "$port" ]] && break
+    kill -0 "$MODEL_SSH_PID" 2>/dev/null || break
+    sleep 0.1
+  done
+  [[ -n "$port" ]] || die "the SSH forward to the guest did not start: $(cat "$sshlog")"
+  dim "    model API: host proxy -> guest 127.0.0.1:$port; log: $log"; echo ""
+  limactl shell --workdir "$ENGINEER_HOME" "$VM" -- "$INSTALL/lima/guest-claude.sh" --model-proxy-port "$port" "$name" "$@" || SESSION_RC=$?
+  # After the session: Claude Code's redraw wipes anything printed before it.
+  # A plain if, not `[[ ]] &&`: a false test as the last command would make
+  # contained_session return 1 under errexit and skip the caller's report.
+  if [[ -f "$capture" ]]; then echo ""; dim "    transcript (host, kept until deleted): $capture"; dim "    view it: claude-vm logs --transcript \"$capture\""; echo ""; fi
+}
+# The EXIT trap. Stop the processes first: nothing after them may keep them
+# alive. The ${a[@]+...} form: macOS /bin/bash 3.2 with set -u treats an
+# empty array as unset.
+model_proxy_stop() {
+  if [[ -n "${MODEL_SSH_PID:-}" ]]; then kill "$MODEL_SSH_PID" 2>/dev/null || true; fi
+  if [[ -n "${MODEL_PROXY_PID:-}" ]]; then kill "$MODEL_PROXY_PID" 2>/dev/null || true; fi
+  wait 2>/dev/null || true
+  rm -f ${MODEL_TMP[@]+"${MODEL_TMP[@]}"}
+}
+
+# /login cannot run in the sandbox on Linux: Claude Code binds an ephemeral
+# callback port, and nono allows no bind without a port grant. `claude auth
+# login` signs in without a model or tools, so it runs outside nono, as the
+# agent, with the same fixed PATH as lima/guest-claude.sh. It does not mark
+# the first-run onboarding as done, and the onboarding asks for a login
+# again, in the sandbox. So set hasCompletedOnboarding too. ~/.claude.json
+# is a symlink; edit its target.
+cmd_login() {
+  need limactl
+  require_running
+  if is_contained; then
+    cmd_login_contained
+    return
+  fi
+  # The reverse of contained_check_guest: without the host record, a contained guest
+  # must still never get a login inside the VM.
+  if guest test -f "$CONTAINED_GUEST_MARKER"; then
+    die "'$VM' is a contained VM, but this host has no record of it ($CONTAINED_RECORD). Recreate it: claude-vm reset --contained"
+  fi
+  guest_agent env -C "$AGENT_HOME" \
+    PATH="/usr/local/bin:/usr/bin:/bin:$AGENT_HOME/.local/bin" claude auth login
+  guest_agent bash -c '
+    set -e
+    umask 077
+    f=$(readlink -f "$HOME/.claude.json")
+    jq ".hasCompletedOnboarding = true" "$f" > "$f.new"
+    chmod 0600 "$f.new"
+    mv "$f.new" "$f"
+  '
+  ok "signed in; sandboxed sessions skip the first-run screens"
+}
+
+# Contained VM network phases (lima/guest-contained-net.sh). Locked: no egress, and
+# sessions may run. Open: egress for setup (update, packages, images), and
+# sessions are refused. Lock when no session runs: connections opened
+# before the lock stay up.
+cmd_lock() {
+  need limactl
+  require_running
+  is_contained || die "'$VM' is not a contained VM"
+  contained_check_guest
+  guest test -x /usr/local/sbin/wmf-claude-contained-net || die "the network phase script is missing; run claude-vm update"
+  ! contained_session_running || die "a contained session for '$VM' is running; lock after it ends"
+  [[ "$(contained_net lock)" == locked ]] || die "could not lock the VM's network"
+  ok "network locked: no egress from the VM"
+}
+cmd_unlock() {
+  need limactl
+  require_running
+  is_contained || die "'$VM' is not a contained VM"
+  contained_check_guest
+  ! contained_session_running || die "a contained session for '$VM' is running; unlock after it ends"
+  [[ "$(contained_net open)" == open ]] || die "could not open the VM's network"
+  # Unlock is the setup phase, when the host firewall rule is typically turned
+  # off (docs/lima-vm.md#contained-mode). A host-block verification recorded
+  # while the rule was on no longer reflects reality, so drop it: the next
+  # session shows the "not verified" warning until check-host-block runs again.
+  # Without this, "host firewall: verified" survives an unlock and a session
+  # could start believing a backstop that is currently off.
+  if [[ -f "$HOST_BLOCK_RECORD" ]]; then
+    rm -f "$HOST_BLOCK_RECORD"
+    echo "  Cleared the host-firewall verification (unlock changes the host rule)."
+  fi
+  ok "network open: the VM has egress, and contained sessions are refused until: claude-vm lock"
+  echo "  If a host firewall blocks limactl (docs/lima-vm.md#contained-mode), allow it for the setup,"
+  echo "  then after you re-enable the rule and lock: claude-vm check-host-block."
+}
+
+# Remove the VM's own lock for one request, as root, and check that the
+# request still fails: then the host blocks the VM by itself. The lock comes
+# back at once, and from the EXIT trap if this stops in between. Any host
+# firewall that blocks limactl will do (LuLu on macOS, OpenSnitch or nftables
+# on Linux).
+cmd_check_host_block() {
+  need limactl python3
+  require_running
+  is_contained || die "'$VM' is not a contained VM"
+  contained_check_guest
+  [[ "$(contained_phase)" == locked ]] || die "lock the VM first: claude-vm lock"
+  ! contained_session_running || die "a contained session for '$VM' is running; check after it ends"
+  local ip binary result dns
+  ip=$(python3 -c 'import socket; print(socket.gethostbyname("deb.debian.org"))') \
+    || die "cannot resolve deb.debian.org on the host"
+  binary=$(limactl_binary)
+  step "Checking that the host blocks $VM without its lock"
+  RELOCK=true
+  trap 'if ${RELOCK:-false}; then contained_net lock >/dev/null; fi' EXIT
+  guest sudo -n nft delete table inet wmf_claude_contained_lock
+  if guest sudo -n curl -sS -m 8 -o /dev/null --resolve "deb.debian.org:443:$ip" https://deb.debian.org/ >/dev/null 2>&1; then
+    result=fail
+  else
+    result=ok
+  fi
+  guest sudo -n resolvectl flush-caches >/dev/null 2>&1 || true
+  if guest getent hosts example.org >/dev/null 2>&1; then dns=resolves; else dns=blocked; fi
+  [[ "$(contained_net lock)" == locked ]] || die "could not restore the VM's lock; run: claude-vm lock"
+  RELOCK=false
+  mkdir -p "$(dirname "$HOST_BLOCK_RECORD")"
+  printf '%s %s %s\n' "$result" "$(date -u +%FT%TZ)" "$binary" > "$HOST_BLOCK_RECORD"
+  if [[ "$result" == ok ]]; then
+    ok "the host blocks the VM's egress without its lock (limactl: $binary)"
+  else
+    fail "with its lock off, the VM reached the internet: no host-side block for $binary"
+    host_block_warning failed
+  fi
+  if [[ "$dns" == resolves ]]; then
+    echo "  DNS from the VM still resolves through the host's resolver (docs/lima-vm.md)."
+  else
+    echo "  DNS from the VM is blocked as well."
+  fi
+  echo "  The VM's lock is back."
+  [[ "$result" == ok ]]
+}
+
+# Contained VM: the token never enters the VM. Store a long-lived token from
+# `claude setup-token` (run on the host, outside the sandbox) where the host
+# proxy reads it, and mark the first-run onboarding as done in the VM: its
+# connectivity check would need platform.claude.com, which the VM cannot
+# reach. Remove any login that an earlier version left in the VM.
+cmd_login_contained() {
+  contained_check_guest
+  echo "Create a long-lived token on the host, outside the wmf-claude sandbox:"
+  echo "    command claude setup-token"
+  local token
+  read -rsp "Token (not echoed): " token; echo ""
+  [[ -n "$token" ]] || die "no token given"
+  mkdir -p "$(dirname "$MODEL_TOKEN_FILE")"
+  chmod 0700 "$(dirname "$MODEL_TOKEN_FILE")" 2>/dev/null || true
+  (umask 077; printf '%s' "$token" > "$MODEL_TOKEN_FILE")
+  guest_agent bash -c '
+    set -e
+    umask 077
+    rm -f "$HOME/.claude/.credentials.json"
+    [ -e "$HOME/.claude.json" ] || echo "{}" > "$HOME/.claude.json"
+    f=$(readlink -f "$HOME/.claude.json")
+    jq ".hasCompletedOnboarding = true" "$f" > "$f.new"
+    chmod 0600 "$f.new"
+    mv "$f.new" "$f"
+  '
+  ok "token stored on the host ($MODEL_TOKEN_FILE, 0600); the VM holds none"
+}
+
+# shell [--agent] [-- CMD...]: an interactive shell, or one command, in the
+# VM as the engineer (or as the agent).
+cmd_shell() {
+  need limactl
+  require_running
+  local as_agent=false
+  if [[ "${1:-}" == "--agent" ]]; then as_agent=true; shift; fi
+  [[ "${1:-}" == "--" ]] && shift
+  if (( $# == 0 )); then
+    if $as_agent; then exec limactl shell --workdir "$ENGINEER_HOME" "$VM" -- sudo -H -u "$AGENT" -i; fi
+    exec limactl shell --workdir "$ENGINEER_HOME" "$VM"
+  fi
+  if $as_agent; then exec limactl shell --workdir "$ENGINEER_HOME" "$VM" -- sudo -H -u "$AGENT" -- "$@"; fi
+  exec limactl shell --workdir "$ENGINEER_HOME" "$VM" -- "$@"
+}
+
+# list: the wmf-claude VMs on this machine, with the mode of each. A VM
+# counts when this host has a record of it, or when Lima's copy of its
+# config holds this template's host block (a VM made before create wrote the
+# created record). It reads limactl list and host files only, never the guest,
+# so a stopped VM costs nothing.
+cmd_list() {
+  need limactl
+  local name status dir mode ws count names any=false seen=false
+  while IFS=$'\t' read -r name status dir; do
+    [[ -n "$name" ]] || continue
+    if [[ ! -f "$(vm_file "$name" created)" && ! -f "$(vm_file "$name" contained)" \
+          && ! -f "$(vm_file "$name" workspaces)" ]]; then
+      grep -F wmf_claude_hostblock "$dir/lima.yaml" >/dev/null 2>&1 || continue
+    fi
+    if ! $any; then
+      printf '  %-26s %-9s %-22s %s\n' NAME STATUS MODE WORKSPACES
+      any=true
+    fi
+    # The contained record is the authority. Without it the VM is isolated:
+    # create --contained always writes the record.
+    if [[ -f "$(vm_file "$name" contained)" ]]; then
+      mode=contained
+      [[ -s "$(vm_file "$name" model-token)" ]] || mode="contained (no token)"
+    else
+      mode=isolated
+    fi
+    ws=$(vm_file "$name" workspaces)
+    count=0; names=""
+    if [[ -f "$ws" ]]; then
+      count=$(awk 'END { print NR }' "$ws")
+      # One awk, no head: under pipefail, head would end the pipe early.
+      names=$(awk -F'\t' 'NR <= 3 { printf "%s%s", (NR > 1 ? ", " : ""), $1 }' "$ws")
+      (( count > 3 )) && names="$names, ..."
+    fi
+    [[ "$name" == "$VM" ]] && seen=true
+    printf '%s %-26s %-9s %-22s %s\n' "$([[ "$name" == "$VM" ]] && echo '*' || echo ' ')" \
+      "$name" "$status" "$mode" "$count${names:+ ($names)}"
+  done < <(limactl list --format $'{{.Name}}\t{{.Status}}\t{{.Dir}}' 2>/dev/null)
+  if ! $any; then
+    echo "No wmf-claude VMs. Create one: claude-vm create --isolated (or --contained)"
+    return 0
+  fi
+  echo ""
+  $seen || echo "  The selected VM, '$VM', does not exist."
+  echo "  * is the selected VM. Select another with: claude-vm --vm NAME COMMAND"
+}
+
+# A status row: "  label:  value", the value coloured by class (good/bad/warn),
+# only when stdout is a terminal so a piped or grepped status stays plain.
+_status_color=false
+srow() {  # $1 label  $2 value  $3 class
+  local v="$2"
+  if $_status_color; then
+    case "$3" in good) v=$(green "$2") ;; bad) v=$(red "$2") ;; warn) v=$(yellow "$2") ;; esac
+  fi
+  printf '  %-18s%s\n' "$1:" "$v"
+}
+
+cmd_status() {
+  need limactl
+  _status_color=false; [[ -t 1 ]] && _status_color=true
+  if ! vm_exists; then
+    echo "VM '$VM': not created (claude-vm list shows the VMs on this machine)"
+    return 0
+  fi
+  if $_status_color; then printf '%s\n' "$(bold "VM $VM")"; else printf 'VM %s\n' "$VM"; fi
+  limactl list "$VM"
+  local running=false; [[ "$(vm_status)" == Running ]] && running=true
+  echo ""
+  if is_contained; then
+    srow "mode" "contained" good
+    if model_have_token; then srow "token (host)" "stored" good; else srow "token (host)" "MISSING, run login" bad; fi
+    local phase=""
+    if $running; then
+      phase=$(contained_phase)
+      case "$phase" in
+        locked) srow "network" "locked (no egress)" good ;;
+        open)   srow "network" "open (setup only)" warn ;;
+        *)      srow "network" "$phase" bad ;;
+      esac
+    fi
+    local hb when=""
+    hb=$(host_block_state)
+    [[ -f "$HOST_BLOCK_RECORD" ]] && when=$(awk '{print " (" $2 ")"}' "$HOST_BLOCK_RECORD")
+    case "$hb" in
+      verified) srow "host firewall" "verified$when" good ;;
+      stale)    srow "host firewall" "check again: limactl changed$when" warn ;;
+      failed)   srow "host firewall" "FAILED$when" bad ;;
+      *)        srow "host firewall" "not checked (claude-vm check-host-block)" warn ;;
+    esac
+    # What the settings above give, in one line. Say no more than is true:
+    # the host firewall check is a past result, and the rule is off during
+    # setup.
+    if ! $running; then
+      srow "protection" "the token stays on this machine; the network phase shows when the VM runs" info
+    elif [[ "$phase" == open ]]; then
+      srow "protection" "the VM has egress now; sessions start only after lock" warn
+    elif [[ "$phase" != locked ]]; then
+      srow "protection" "the lock is broken; sessions are refused" bad
+    elif [[ "$hb" == verified ]]; then
+      srow "protection" "no egress but the model API, also if VM root is lost (host check passed$when)" good
+    else
+      srow "protection" "no egress but the model API, while VM root holds; the host firewall is not verified" warn
+    fi
+  else
+    srow "mode" "isolated" info
+    srow "protection" "a nono escape lands in the VM, not on this machine; the VM has internet and holds the Claude login" info
+    printf '  %-18s%s\n' "" "for no egress and the token on this machine, use a contained VM (docs/lima-vm.md)"
+  fi
+  if ! $running; then echo ""; srow "state" "stopped (claude-vm start)" warn; return 0; fi
+
+  echo ""
+  local label value cls hrev; hrev=$(host_rev)
+  while IFS=$'\t' read -r label value cls; do
+    [[ -n "$label" ]] || continue
+    if [[ "$label" == "wmf-claude in VM" ]]; then
+      if [[ "$value" == "$hrev" ]]; then cls=good
+      elif [[ "$value" == not-installed ]]; then cls=bad
+      else value="$value (host HEAD $hrev; run update)"; cls=warn; fi
+    fi
+    srow "$label" "$value" "$cls"
+  done < <(guest bash -c '
+    printf "wmf-claude in VM\t%s\tinfo\n" "$(cat /opt/wmf-claude/.wmf-claude-rev 2>/dev/null || echo not-installed)"
+    printf "nono\t%s\tinfo\n" "$(nono --version 2>/dev/null || echo missing)"
+    printf "docker\t%s\tinfo\n" "$(docker --version 2>/dev/null | sed "s/,.*//" || echo missing)"
+    if id -nG agent 2>/dev/null | grep -qw docker; then printf "agent in docker\tYES-FIX-THIS\tbad\n"; else printf "agent in docker\tno\tgood\n"; fi
+    m=$(findmnt -rn -t virtiofs,9p,fuse.sshfs 2>/dev/null | wc -l | tr -d " ")
+    if [ "$m" = 0 ]; then printf "host mounts\t0\tgood\n"; else printf "host mounts\t%s\tbad\n" "$m"; fi
+    if sudo nft list table inet wmf_claude_hostblock >/dev/null 2>&1; then printf "host block (nft)\tloaded\tgood\n"; else printf "host block (nft)\tMISSING\tbad\n"; fi
+    printf "workspaces\t%s\tinfo\n" "$(ls /home/agent/work 2>/dev/null | grep -v "^\.pull$" | tr "\n" " ")"
+  ')
+  srow "host HEAD" "$hrev" info
+
+  echo ""
+  local r; r=$(unpulled_report 2>/dev/null) || true
+  if [[ -n "$r" ]]; then
+    if $_status_color; then printf '  %s\n' "$(bold "$(yellow "Work in the VM not yet on the host:")")"
+    else echo "  Work in the VM not yet on the host:"; fi
+    printf '%s\n' "$r"
+  else
+    srow "VM work" "all on the host" good
+  fi
+}
+
+# logs: read a contained session's host-side audit artifacts. The request log
+# and the transcripts are on the host, out of the VM's reach, and are kept after
+# the VM is deleted (see cmd_delete). So this reads files only: it needs jq, not
+# limactl or a running VM. The default shows the most recent session of the
+# request log; --all shows every session; -f follows it live. --transcript shows
+# a session transcript (the newest, or FILE): a summary line per record, or the
+# decoded JSON with --raw.
+logs_request() {  # $1 state-dir  $2 all  $3 follow  $4 dim  $5 green  $6 red  $7 reset
+  local state="$1" all="$2" follow="$3" d="$4" g="$5" r="$6" z="$7"
+  local log="$state/model-proxy-$VM.log"
+  if [[ ! -f "$log" ]]; then
+    echo "no request log for VM '$VM' at $log" >&2
+    # Point at any VM that does have one: the usual mistake is the default name.
+    local other n found=false
+    shopt -s nullglob
+    for other in "$state"/model-proxy-*.log; do
+      $found || { echo "  request logs exist for:" >&2; found=true; }
+      n="${other##*/model-proxy-}"; n="${n%.log}"
+      echo "    claude-vm --vm $n logs" >&2
+    done
+    shopt -u nullglob
+    return 1
+  fi
+
+  # One line per record: time, decision (coloured), status, method, path, extra.
+  local defs='
+    def rpad($n): . + (" " * ([$n-(length),0]|max));
+    def lpad($n): (" " * ([$n-(length),0]|max)) + .;
+    def deccol: if .=="allow" then $g elif (.=="deny" or .=="error") then $r else $d end;
+    def fmt:
+      ((.decision) // "?") as $dec
+      | (.reason // (if (.req_bytes!=null or .resp_bytes!=null)
+                     then "req=\(.req_bytes // 0) resp=\(.resp_bytes // 0)" else "" end)) as $x
+      | "\($d)\(.ts // "")\($z) \($dec|deccol)\($dec|rpad(6))\($z) \((.status//""|tostring)|lpad(3)) \((.method//"")|rpad(4)) \((.path//"")|rpad(16)) \($x)"
+      | sub(" +$";"");
+  '
+
+  if $follow; then
+    # Stream the live file; each line is one record. -R + fromjson? tolerates a
+    # torn final line while the proxy writes.
+    tail -n 0 -f "$log" \
+      | jq -Rr --unbuffered --arg d "$d" --arg g "$g" --arg r "$r" --arg z "$z" \
+          "$defs"'fromjson? // empty | fmt'
+    return 0
+  fi
+
+  # The log accumulates across sessions. Show the most recent one (from the last
+  # "start"); --all shows every session. fromjson? drops a torn final line.
+  jq -Rrn --argjson all "$all" --arg d "$d" --arg g "$g" --arg r "$r" --arg z "$z" \
+    "$defs"'
+    [inputs | fromjson? // empty] as $recs
+    | ($recs | (reduce range(0;length) as $i (0; if $recs[$i].decision=="start" then $i else . end))) as $s
+    | (if $all then $recs else $recs[$s:] end)
+    | .[] | fmt' "$log"
+}
+
+logs_transcript() {  # $1 state-dir  $2 file  $3 mode(summary|raw|text)  $4 dim  $5 green  $6 red  $7 reset
+  local state="$1" file="$2" mode="$3" d="$4" g="$5" r="$6" z="$7"
+  local f="$file"
+  if [[ -z "$f" ]]; then
+    # The newest transcript for this VM. Anchor on the timestamp, so VM
+    # 'wmf-claude' does not also match 'wmf-claude-contained-*'.
+    shopt -s nullglob
+    local m=( "$state"/transcript-"$VM"-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9]*Z-[0-9]*.jsonl.gz )
+    shopt -u nullglob
+    if [[ ${#m[@]} -eq 0 ]]; then
+      echo "no transcripts for VM '$VM' in $state" >&2
+      # Point at any VM that does have one, as the request-log path does.
+      local base rest othervm; local -a names=()
+      shopt -s nullglob
+      local gg
+      for gg in "$state"/transcript-*-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T*Z-*.jsonl.gz; do
+        base="${gg##*/}"; rest="${base#transcript-}"
+        othervm="${rest%-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T*Z-*.jsonl.gz}"
+        names+=("$othervm")
+      done
+      shopt -u nullglob
+      if [[ ${#names[@]} -gt 0 ]]; then
+        echo "  transcripts exist for:" >&2
+        printf '%s\n' "${names[@]}" | sort -u | while read -r othervm; do
+          echo "    claude-vm --vm $othervm logs --transcript" >&2
+        done
+      fi
+      return 1
+    fi
+    # Globs sort up and the UTC stamp sorts in time order: the last is newest.
+    f="${m[${#m[@]}-1]}"
+    [[ ${#m[@]} -gt 1 ]] && { dim "showing the newest of ${#m[@]} transcripts; pass a path to view another"; echo; } >&2
+  else
+    [[ -f "$f" ]] || die "logs: no such transcript '$f'"
+  fi
+  { dim "$f"; echo; } >&2
+
+  # Reconstruct each turn as readable text. A response is usually an SSE stream
+  # of content blocks (text, extended thinking, and tool_use — the tool calls
+  # the model requested; their results arrive in the next request). It can also
+  # be a plain JSON body: an error, or a count_tokens reply. A request shows its
+  # last turn. A header and a footer frame each record; a cut-off stream or a
+  # part-captured body is flagged. A tool_use is a request to run a command, not
+  # proof it ran: the outcome is the next request's tool_result.
+  local textprog='
+    # Parse JSON, or give null. Collect the try in an array: in jq 1.6, a
+    # bare fromjson? also catches the errors of the code that comes after
+    # it, and drops the rest of the record without a marker.
+    def parse: [fromjson?] | .[0];
+    def events($s): ($s // "") | split("\n\n")
+      | map((split("\n") | map(select(startswith("data:"))) | first // "") | sub("^data: ?";"") | fromjson?)
+      | map(select(. != null));
+    def id8: (.id // "-")[0:8];
+    def hdr: $d + "[\(.kind // "?") \(id8) \(.decision // "?")\(if .status then " " + (.status|tostring) else "" end)\(if .reason then " — " + .reason else "" end)]" + $z;
+    def truncnote: if (.response_truncated == true) or (.request_truncated == true)
+                   then $d + "[capture truncated: body stored only in part]" + $z else empty end;
+    def toolline($name; $args):   # $args is a string (streamed JSON) or an object
+      ($args | if type=="string" then parse else . end) as $i
+      | (if ($i|type)=="object" then ($i.command // $i.file_path // $i.path // $i.url // ($i|tojson))
+         elif ($args|type)=="string" then $args else ($args|tojson) end) as $v
+      | "→ " + ($name // "tool") + ": " + ($v | tostring);
+    # Reassemble streamed content blocks (text / thinking / tool_use) by index.
+    def blocks($e):
+      reduce $e[] as $ev ({};
+        if $ev.type=="content_block_start" then
+          .[$ev.index|tostring] = {type: $ev.content_block.type, name: $ev.content_block.name, text: ""}
+        elif $ev.type=="content_block_delta" then
+          .[$ev.index|tostring] = ((.[$ev.index|tostring] // {type:"text", text:""})
+            | .text += ($ev.delta.text // $ev.delta.thinking // $ev.delta.partial_json // ""))
+        else . end)
+      | to_entries | sort_by(.key|tonumber) | map(.value);
+    def renderblock:
+      if .type=="tool_use" then toolline(.name; .text)
+      elif .type=="thinking" then $d + "[thinking]" + $z + " " + .text
+      else .text end;
+    fromjson? // empty
+    | . as $rec
+    # Collect the lines of a record in an array, so a record that throws
+    # prints only the marker.
+    | (try [
+        if .response != null then
+          (.response | parse) as $j
+          | if ($j|type)=="object" then
+              # A plain JSON body: an error, a count_tokens reply, or a non-stream message.
+              ( hdr, truncnote,
+                (if $j.type=="error" then $r + "error: \($j.error.type // "?") — \($j.error.message // "")" + $z
+                 elif ($j.input_tokens != null) then $d + "count_tokens: input_tokens \($j.input_tokens)" + $z
+                 elif ($j.content != null) then ($j.content | map(if .type=="text" then .text elif .type=="tool_use" then toolline(.name; (.input // {})) else "[\(.type)]" end) | join("\n"))
+                 else ($j | tojson) end),
+                "" )
+            else
+              (events(.response)) as $e
+              | ( hdr, truncnote,
+                  (($e | map(select(.type=="message_start") | .message.model) | first) as $m
+                   | if $m then $d + "model: \($m)" + $z else empty end),
+                  "",
+                  (blocks($e) | map(renderblock) | join("\n")),
+                  "",
+                  $d + ($e | map(select(.type=="message_delta")) | last
+                        | if . then "[stop: \(.delta.stop_reason // "none") · output_tokens \(.usage.output_tokens // "?")]"
+                          else "[stream ended without message_stop]" end) + $z,
+                  "" )
+            end
+        elif .request != null then
+          (.request | parse) as $req
+          | ( hdr, truncnote,
+              (if $req != null then $d + "model: \($req.model // "?")  ·  \(($req.messages // []) | length) messages" + $z
+               else $d + "(request body not JSON)" + $z end),
+              (if ($req != null) and (($req.messages // []) | length) > 0 then
+                 (($req.messages // []) | last) as $last
+                 | ("last turn — \($last.role // "?"):"),
+                   ( $last.content
+                     | if type=="string" then "  " + .
+                       elif type=="array" then
+                         (map(if .type=="text" then "  " + .text
+                              elif .type=="tool_use" then "  " + toolline(.name; (.input // {}))
+                              elif .type=="tool_result" then "  [result" + (if .is_error==true then " error" else "" end) + "] "
+                                + (( .content | if type=="string" then . elif type=="array" then (map(.text // "") | join(" ")) else "" end) | .[0:200])
+                              else "  [\(.type)]" end) | join("\n"))
+                       else "" end )
+               else empty end),
+              "" )
+        else hdr end
+      ]
+      catch [$d + "[unrenderable record \($rec.id // "?")]" + $z]) | .[]
+  '
+  local summaryprog='
+    def rpad($n): . + (" " * ([$n-(length),0]|max));
+    def deccol: if .=="allow" then $g elif (.=="deny" or .=="error") then $r else $d end;
+    fromjson? // empty
+    | ((.decision) // "?") as $dec
+    | (if .request then "req=\(.request|length)" elif .response then "resp=\(.response|length)" else "" end) as $sz
+    | "\($d)\(.ts // "")\($z) \((.id // "-")[0:8]) \((.kind//"?")|rpad(8)) \($dec|deccol)\($dec|rpad(7))\($z) \((.status//""|tostring)) \($sz)"
+  '
+
+  # One gzip member per record. A crash truncates only the last member, so
+  # tolerate a non-zero gzip exit (the good records already printed) and note it.
+  # pipefail and errexit off here, so a partial last member cannot abort: the
+  # exit status is gzip's, read from PIPESTATUS.
+  local rc jqc=-M; [[ -t 1 ]] && jqc=-C
+  set +o pipefail; set +e
+  case "$mode" in
+    raw)  gzip -dc "$f" 2>/dev/null | jq "$jqc" . ;;
+    text) gzip -dc "$f" 2>/dev/null | jq -Rr --arg d "$d" --arg g "$g" --arg r "$r" --arg z "$z" "$textprog" ;;
+    *)    gzip -dc "$f" 2>/dev/null | jq -Rr --arg d "$d" --arg g "$g" --arg r "$r" --arg z "$z" "$summaryprog" ;;
+  esac
+  rc=${PIPESTATUS[0]}
+  set -e; set -o pipefail
+  [[ "$rc" -eq 0 ]] || { dim "(the last record is truncated: the session is still live, or it crashed)"; echo; } >&2
+}
+
+cmd_logs() {
+  need jq
+  local mode=log all=false follow=false tview=summary file=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --transcript) mode=transcript ;;
+      --all)        all=true ;;
+      -f|--follow)  follow=true ;;
+      --raw)        tview=raw ;;
+      --text)       tview=text ;;
+      -*)           die "logs: unknown option '$1' (see claude-vm --help)" ;;
+      *)            [[ -z "$file" ]] || die "logs: give at most one transcript path"; file="$1" ;;
+    esac
+    shift
+  done
+  local state="${XDG_STATE_HOME:-$HOME/.local/state}/wmf-claude"
+  # Colour only on a terminal, so a pipe or a redirect stays plain.
+  local d="" g="" r="" z=""
+  if [[ -t 1 ]]; then d=$'\033[2m'; g=$'\033[32m'; r=$'\033[31m'; z=$'\033[0m'; fi
+
+  if [[ "$mode" == transcript ]]; then
+    $follow && die "logs: -f applies to the request log, not --transcript"
+    logs_transcript "$state" "$file" "$tview" "$d" "$g" "$r" "$z"
+  else
+    [[ -z "$file" ]] || die "logs: a FILE is only for --transcript"
+    [[ "$tview" == summary ]] || die "logs: --raw and --text apply to --transcript, not the request log"
+    $follow && $all && die "logs: -f and --all do not combine"
+    logs_request "$state" "$all" "$follow" "$d" "$g" "$r" "$z"
+  fi
+}
+
+cmd_delete() {
+  need limactl
+  if ! vm_exists; then
+    echo "VM '$VM' does not exist"
+    return 0
+  fi
+  echo "This deletes VM '$VM': Claude's login, every workspace and every image in it."
+  echo "Pull what you need first: claude-vm pull NAME"
+  local reply
+  read -rp "Type the VM name to confirm: " reply
+  [[ "$reply" == "$VM" ]] || die "not confirmed"
+  limactl delete --force "$VM"
+  rm -f "$CREATED_RECORD"
+  if is_contained; then
+    rm -f "$CONTAINED_RECORD"
+    echo "The model token stays in $MODEL_TOKEN_FILE; delete it if you are done."
+    echo "The request log and transcripts in ${XDG_STATE_HOME:-$HOME/.local/state}/wmf-claude"
+    echo "are on the host and are kept; delete them when you no longer need the audit trail."
+    echo "View them with: claude-vm --vm $VM logs [--transcript]."
+  fi
+}
+
+cmd="${1:-help}"
+shift || true
+case "$cmd" in
+  create) cmd_create "$@" ;;
+  update) cmd_update ;;
+  login)  cmd_login ;;
+  push)   cmd_push "$@" ;;
+  pull)   cmd_pull "$@" ;;
+  review) cmd_review "$@" ;;
+  checkout) cmd_checkout "$@" ;;
+  discard) cmd_discard "$@" ;;
+  claude) cmd_claude "$@" ;;
+  shell)  cmd_shell "$@" ;;
+  status) cmd_status ;;
+  list)   cmd_list ;;
+  logs)   cmd_logs "$@" ;;
+  start)  need limactl; vm_exists || die "VM '$VM' does not exist; see claude-vm list"; limactl start --tty=false "$VM" ;;
+  stop)   need limactl; limactl stop "$VM" ;;
+  delete) cmd_delete ;;
+  lock)   cmd_lock ;;
+  check-host-block) cmd_check_host_block ;;
+  unlock) cmd_unlock ;;
+  reset)
+    need limactl
+    create_mode reset "$@"
+    cmd_delete; create_vm ;;
+  -h|--help|help) usage ;;
+  *) die "unknown command '$cmd' (see claude-vm --help)" ;;
+esac

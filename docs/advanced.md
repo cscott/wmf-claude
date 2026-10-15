@@ -56,9 +56,9 @@ threat model, so there is no supported way to pass them.
 | `WMF_CLAUDE_SKIP_CHROME` | Skip building the chrome-devtools MCP during setup |
 | `WMF_CLAUDE_SKIP_BUILD` | `bin/wmf-claude-setup` only: skip `bin/wmf-claude-build`. The Lima guest uses it, where the tree belongs to another user |
 | `WMF_DOCKER_HANDSHAKE` | Bare `--docker` (attach mode): read the broker handshake from this path instead of the runtime dir. Set by the Lima guest launcher; unset before the sandbox starts |
-| `WMF_CLAUDE_VM` | `bin/wmf-claude-vm`: the Lima instance name (default `wmf-claude`) |
-| `WMF_CLAUDE_REQUIRE_HOST_BLOCK` | `bin/wmf-claude-vm claude` on a contained VM: refuse to start unless `check-host-block` passed for the current `limactl` binary (otherwise it only warns) |
-| `WMF_CLAUDE_PHAB_USER` | The Phabricator username for the MCP, with no prompt: `./setup.sh`, and `bin/wmf-claude-vm create` or `update`. An update keeps the known username without it |
+| `WMF_CLAUDE_VM` | `claude-vm`: the Lima instance name (default `wmf-claude`) |
+| `WMF_CLAUDE_REQUIRE_HOST_BLOCK` | `claude-vm claude` on a contained VM: refuse to start unless `check-host-block` passed for the current `limactl` binary (otherwise it only warns) |
+| `WMF_CLAUDE_PHAB_USER` | The Phabricator username for the MCP, with no prompt: `./setup.sh`, and `claude-vm create` or `update`. An update keeps the known username without it |
 | `WMF_CLAUDE_MODEL_PROXY_PORT` | `bin/claude` contained mode: profile `wmf-contained`, no egress, the model API only via the host proxy on this localhost port. Set by `lima/guest-claude.sh` in a contained VM |
 
 ## Startup notices and the status line
@@ -96,13 +96,14 @@ pack.
 
 ## Lima VM mode
 
-`bin/wmf-claude-vm` runs everything inside a Lima VM with no host mounts and
+`claude-vm` runs everything inside a Lima VM with no host mounts and
 no port forwards — a second boundary around nono for SRE and security work.
 It is a separate entry point, not a `bin/claude` flag:
 
 | Command | Effect |
 |---|---|
-| `create [--contained] [limactl create flags]` | Create the VM from `lima/wmf-claude.yaml`, then `update`. `--contained`: a contained VM, whose sessions reach the model API only through the host proxy ([lima-vm.md#contained-mode](lima-vm.md#contained-mode)) |
+| `create --isolated\|--contained [limactl create flags]` | Create the VM from `lima/wmf-claude.yaml`, then `update`. The mode is required (on a terminal, `create` asks). `--isolated`: an escape lands in the VM, which has internet access and holds the login. `--contained`: sessions reach the model API only through the host proxy, and the token stays on the host ([lima-vm.md#contained-mode](lima-vm.md#contained-mode)); it refuses the default VM name |
+| `list` | The wmf-claude VMs on this machine: state, mode, workspaces; `*` marks the selected one |
 | `update` | Upload this checkout's HEAD (submodules included) and reinstall it in the guest |
 | `login` | Sign Claude Code in as `agent` (`claude auth login`, outside nono); once per VM. On a contained VM: store a `claude setup-token` token in the host keychain instead |
 | `push DIR [NAME]` | Git-bundle a repo into `/home/agent/work/NAME` |
@@ -112,7 +113,9 @@ It is a separate entry point, not a `bin/claude` flag:
 | `lock`, `unlock` | Contained VM: no egress (sessions run only then) or egress for setup ([lima-vm.md#network-phases-locked-and-open](lima-vm.md#network-phases-locked-and-open)) |
 | `check-host-block` | Contained VM: remove its lock for one request and check that a firewall on the host still blocks it; `status` shows the result. `WMF_CLAUDE_REQUIRE_HOST_BLOCK=1` makes sessions refuse until it passes for the current `limactl` |
 | `shell [--agent] [-- CMD...]` | Engineer shell (sudo, docker), or a shell as `agent`; with `-- CMD`, run just that command |
-| `status`, `start`, `stop`, `delete`, `reset` | Lifecycle; `status` also lists what is not pulled yet; `delete` asks for the VM name |
+| `status`, `start`, `stop`, `delete`, `reset` | Lifecycle; `status` shows the mode and what it protects, and lists what is not pulled yet; `delete` asks for the VM name; `reset` keeps the mode unless `--isolated` or `--contained` changes it |
+
+`--vm NAME` before the command selects the VM (`claude-vm --vm wmf-claude-contained status`); `WMF_CLAUDE_VM` does the same; the default is `wmf-claude`.
 
 Threat model, first login, Docker inside the VM and the smoke test: [`lima-vm.md`](lima-vm.md).
 

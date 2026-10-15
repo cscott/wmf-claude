@@ -405,6 +405,10 @@ if grep -qx "NONO_ARG: $FAKE_REPO/profiles/wmf-contained.json" <<<"$out" && grep
   pass "contained: loads wmf-contained and opens the proxy port"
 else fail "contained: wrong profile or no --open-port 7319"; fi
 if grep -q 'contained (model API via host proxy only)' <<<"$out"; then pass "contained: shows in WMF_CLAUDE_SESSION"; else fail "contained: missing from WMF_CLAUDE_SESSION"; fi
+out="$(WMF_CLAUDE_IN_VM=1 run_contained)"
+if grep -q 'isolated VM' <<<"$out"; then fail "contained VM session: shows 'isolated VM'"; else pass "contained VM session: not shown as isolated"; fi
+out="$(env -u WMF_CLAUDE_PROFILE WMF_CLAUDE_IN_VM=1 FAKE_UNAME=Linux FAKE_NONO_VERSION=0.80.0 PATH="$FAKE_REPO/bin:$PATH" bash "$FAKE_REPO/bin/claude" 2>&1)"
+if grep -q 'isolated VM' <<<"$out"; then pass "isolated VM session: shows in WMF_CLAUDE_SESSION"; else fail "isolated VM session: missing from WMF_CLAUDE_SESSION"; fi
 for args in "--docker=mediawiki" "--minimax" "--allow-post=en.wikipedia.org" "--ide" "--allow-domain example.org --" "--network-profile minimal --" "--sandbox-policy landlock --" "--credential anthropic --" "--allow-endpoint anthropic:GET:/x --" "--open-port 9000 --"; do
   # shellcheck disable=SC2086
   out="$(run_contained $args)"

@@ -203,12 +203,16 @@ class GuestTests(unittest.TestCase):
         self.assertEqual(variables["https_proxy"], "http://127.0.0.1:3128")
         self.assertEqual(variables["HTTP_PROXY"], "http://127.0.0.1:3128")
 
-    def test_apt_and_git_use_the_proxy(self):
+    def test_apt_uses_the_proxy(self):
         files = egress.guest_files("demo", self.env)
         self.assertIn('Acquire::https::Proxy "http://192.168.5.100:3128";',
                       files["/etc/apt/apt.conf.d/90wmf-sbx-proxy"])
-        self.assertIn("git config --system http.proxy http://192.168.5.100:3128",
-                      egress.guest_provision())
+
+    def test_git_takes_the_proxy_from_the_variables(self):
+        # A system http.proxy would win over nono's proxy in a session.
+        script = egress.guest_provision()
+        self.assertIn("git config --system --unset-all http.proxy || true", script)
+        self.assertNotIn("git config --system http.proxy", script)
 
     def test_the_provisioning_points_glibc_at_the_resolver_over_tcp(self):
         script = egress.guest_provision()

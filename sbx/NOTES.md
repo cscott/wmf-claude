@@ -583,6 +583,20 @@ A2.0 results (in the nested `dev` VM, nono 0.78.0, 2026-10-13):
   install`, `pip install`, `git clone https://…` (RAN). Two need settings: git aborts the
   CONNECT until `http.proxyAuthMethod=basic` (put it in `/etc/gitconfig`); Node's `fetch`
   ignores the variables unless `NODE_USE_ENV_PROXY=1`. `mw-install-browser`: not run.
+  - RAN 2026-10-15, git to Gerrit in a contained session failed (a new sbx-parsoid):
+    `cb6fc0c` put the egress proxy in `/etc/gitconfig` (`http.proxy`), which wins over
+    the variables, and since `cfdb74d` a contained session's variables name nono's
+    proxy, with nono refusing a direct connection to 192.168.5.100:3128 ("Failed to
+    connect"). Through nono's proxy, git aborted the CONNECT ("Proxy CONNECT aborted":
+    its URL has credentials; `f066dba` had dropped `proxyAuthMethod=basic` with the
+    egress proxy's password). And Gerrit's edge now refuses git's own user agent (403,
+    "Please set a user-agent"), also with no nono. Reproduced with `nono run
+    --sandbox-policy landlock --upstream-proxy 192.168.5.100:3128` and fixed: the
+    provisioning removes `http.proxy` (every git in the guest has the variables), and
+    the session's `env` gives git `http.proxyAuthMethod=basic` and, with GERRITUA,
+    `http.https://gerrit.wikimedia.org/.userAgent` (GIT_CONFIG_COUNT/KEY/VALUE, after
+    any from settings.yaml; `wmf-sbx exec` gets them too). Both are written at create:
+    a sandbox made before needs a re-create. Not yet RAN in a new sandbox.
 - Claude Code through `HTTPS_PROXY` reaches `api.anthropic.com` (a turn fails only with
   "Invalid API key": no credentials given); its telemetry host is denied, harmlessly (RAN).
 - **Opening a host under a running VM works** (item 8, RAN): the guestfwd reads

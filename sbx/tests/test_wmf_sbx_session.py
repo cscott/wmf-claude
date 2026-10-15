@@ -614,6 +614,37 @@ class GitIdentityTests(unittest.TestCase):
         plan = session.session_plan("demo", [], preferences={"ste": False})
         self.assertEqual(plan["env"]["SANDBOX_NAME"], "demo")
 
+    def git_config(self, env):
+        return [(env[f"GIT_CONFIG_KEY_{i}"], env[f"GIT_CONFIG_VALUE_{i}"])
+                for i in range(int(env["GIT_CONFIG_COUNT"]))]
+
+    def test_git_sends_the_proxy_credentials_at_once(self):
+        # nono's proxy: git aborts the CONNECT otherwise. No GERRITUA, no
+        # user agent.
+        env = session.session_plan("demo", [])["env"]
+        self.assertEqual(self.git_config(env), [("http.proxyAuthMethod", "basic")])
+
+    def test_git_gives_gerritua_to_gerrit_only(self):
+        env = session.session_plan("demo", [], environment={"GERRITUA": "ua"})["env"]
+        self.assertEqual(self.git_config(env), [
+            ("http.proxyAuthMethod", "basic"),
+            ("http.https://gerrit.wikimedia.org/.userAgent", "ua")])
+
+    def test_git_config_from_settings_yaml_is_kept(self):
+        env = session.session_plan("demo", [], environment={
+            "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.pager",
+            "GIT_CONFIG_VALUE_0": "cat"})["env"]
+        self.assertEqual(self.git_config(env), [
+            ("core.pager", "cat"), ("http.proxyAuthMethod", "basic")])
+
+    def test_a_bad_git_config_count_is_refused(self):
+        with self.assertRaises(session.SessionError):
+            session.session_plan("demo", [], environment={"GIT_CONFIG_COUNT": "x"})
+
+    def test_wmf_sbx_exec_gets_the_git_config(self):
+        env = session.session_plan("demo", [], environment={"GERRITUA": "ua"})["env"]
+        self.assertEqual(session.exec_env(env)["GIT_CONFIG_COUNT"], "2")
+
     def test_the_plan_ships_the_sbx_pull_skill(self):
         # A user skill, so its command is /sbx-pull; CLAUDE.md names it.
         plan = session.session_plan("demo", [])

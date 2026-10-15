@@ -423,7 +423,13 @@ def guest_provision(name=None, env=None):
     for path, content in sorted(guest_files(name, env).items()):
         lines += [f"install -d -m 0755 {os.path.dirname(path)}",
                   f"cat > {path} <<'WMF_SBX_FILE'", content.rstrip("\n"), "WMF_SBX_FILE"]
-    lines += [f"git config --system http.proxy {proxy_url()}",
+    # git takes the proxy from the variables, as every other client does:
+    # a system http.proxy wins over them, and in a contained session nono
+    # gives git its own proxy and refuses a connection to this one (RAN:
+    # "Failed to connect to 192.168.5.100 port 3128"). The session's git
+    # config (session.git_config_env) makes nono's proxy work.
+    # --unset-all: a sandbox made before this had http.proxy.
+    lines += ["git config --system --unset-all http.proxy || true",
               "if systemctl list-unit-files systemd-resolved.service >/dev/null 2>&1; then",
               "  systemctl disable --now systemd-resolved.service >/dev/null 2>&1 || true",
               "  systemctl mask systemd-resolved.service >/dev/null 2>&1 || true",

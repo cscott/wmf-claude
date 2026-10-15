@@ -597,6 +597,34 @@ def check_environment(environment):
     return out
 
 
+GERRIT_URL = "https://gerrit.wikimedia.org/"
+
+
+def git_config_env(env):
+    """GIT_CONFIG_COUNT/KEY_n/VALUE_n that `env` gets, after any that
+    settings.yaml `environment:` sets, so that git reaches Gerrit from a
+    session:
+    - http.proxyAuthMethod=basic: nono's proxy URL has credentials, and
+      git aborts the CONNECT unless it sends them at once (RAN). A proxy
+      with none (the egress proxy) is not changed.
+    - Gerrit's user agent, GERRITUA, when it is set: Gerrit refuses
+      git's own (RAN 2026-10-15: 403, "Please set a user-agent"). Only
+      for Gerrit's URL, so that no other host gets it."""
+    try:
+        count = int(env.get("GIT_CONFIG_COUNT") or 0)
+    except ValueError:
+        raise SessionError("settings.yaml: `environment:` GIT_CONFIG_COUNT: want a number")
+    pairs = [("http.proxyAuthMethod", "basic")]
+    if env.get("GERRITUA"):
+        pairs.append((f"http.{GERRIT_URL}.userAgent", env["GERRITUA"]))
+    out = {}
+    for i, (key, value) in enumerate(pairs, start=count):
+        out[f"GIT_CONFIG_KEY_{i}"] = key
+        out[f"GIT_CONFIG_VALUE_{i}"] = value
+    out["GIT_CONFIG_COUNT"] = str(count + len(pairs))
+    return out
+
+
 def clipboard_env():
     """The settings `env` of a sandbox with native_copy: Claude Code finds
     the `wl-copy` shim, and the shim finds the listener (clipboard.py)."""
@@ -630,6 +658,7 @@ def session_plan(name, resolved_for_kit, readonly=(), identity=None, preferences
     env = session_env(resolved_for_kit, readonly, identity)
     env.update(check_environment(environment))
     env.update(settings.pop("env", {}))
+    env.update(git_config_env(env))
     env[SANDBOX_NAME_VAR] = name
     files = [
         {"path": "~/.claude/CLAUDE.md", "content": home_claude_md(name, sudo=sudo)},

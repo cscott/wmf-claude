@@ -434,19 +434,31 @@ shim, a child of Claude Code, gets the same.
 - The guestfwd (a host `socat` per connection) costs a few ms: far
   inside Claude Code's 2-second timeout.
 
-Still to measure before building (the egress-proxy case first):
+The logging shim in a live session (step 1a), RAN 2026-10-15: the shim
+at `/home/agent/.local/bin/wl-copy`, and `"env": {"WAYLAND_DISPLAY":
+"wmf-sbx"}` in the agent's `~/.claude/settings.json`, nothing set by
+the launcher. One mouse selection gave two calls, 6 ms apart, from the
+same parent: no arguments, then `--primary`. Both had
+`WAYLAND_DISPLAY=wmf-sbx`, stdin not a terminal, and the selected text
+on stdin.
 
-- the logging shim in a live session (step 1a), with `WAYLAND_DISPLAY`
-  from the agent's settings `env`: the toast says "copied", and two
-  calls arrive (plain, then `--primary`). If settings `env` comes after
-  Claude Code's probe, the launcher must set the variable;
+- Settings `env` is applied before Claude Code's probe: a settings
+  entry is enough, and the launcher need not set the variable. (The
+  launcher can still set it, for an engineer who edits their settings.)
+- Claude Code calls `wl-copy` once per selection for each of
+  CLIPBOARD and PRIMARY, in sequence, as READ in the code. The host
+  listener sees two connections per selection.
+- The probe found `wl-copy`, so the toast is the native one: the probe
+  decides it, not the result.
+
+Nothing is left to measure before building the egress-proxy case.
 
 Open questions:
 
-- Does nono (`--landlock-only` and the proxy mode) let the shim, a
-  child of Claude Code, connect to `192.168.5.2:PORT` with only
-  `--open-port`? It does for Claude Code's own credential-proxy
-  traffic; check it for a child process.
+- Without the egress proxy, the shim connects to `192.168.5.2:PORT`
+  (loopback on the host). The nono measurement above was on
+  `192.168.5.100`; the same port-only Landlock rule applies, but it is
+  not RAN.
 - VTE: https://gitlab.gnome.org/GNOME/vte/-/issues/2495 is still open
   (READ 2026-10-15, last updated 2026-09-25; the API lists comments
   only with a login). If VTE implements it, GNOME Terminal fixes the

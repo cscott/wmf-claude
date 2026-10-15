@@ -343,49 +343,78 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
   3. As 2, but from a WIP commit on the host's `master` (after `git safe-reset`), not on
      Gerrit.
 
-  Design: one command, `git sbx pull`, on both sides, and a skill in the sandbox.
+  Design: one command, `git sbx-pull` (`sbx/bin/git-sbx-pull`), on both sides, and the
+  skill `/wmf-claude:sbx-pull` in the sandbox: one name to remember (cananian
+  2026-10-15).
   - Upstreams stay on Gerrit (`git pull`, `git review`, release branches). Host branch
     config `branch.B.wmfsbx = NAME`, `branch.B.wmfsbxBranch` (the sandbox's name for
     it), `branch.B.wmfsbxSha` (the tip at the last pull), which no other git command reads.
-  - **Host `git sbx pull [[NAME/]BRANCH] [--onto X] [--force]`.**
+  - `-f`/`--force` means "I know this is not upstream yet, do it anyway", on both sides
+    and as in `git safe-reset` (a better long name is welcome; `-f` stays).
+  - **Host `git sbx-pull [[NAME/]BRANCH] [--onto X] [-f]`.**
     - Which: `NAME/BRANCH`; `BRANCH`, if one sandbox of this repo has it (it fetches each
       running sandbox first); none: the current branch's record, else the only sandbox's
-      only branch that is not named like a branch of `origin` (master, main, REL1_*).
-    - Leaving the current branch (when it is not the target): stops on a dirty tree, as
-      `git safe-reset`. Commits are not lost by a switch, so the Gerrit check
-      (`git-review-check`) only warns here ("master: 1 commit not on Gerrit, kept").
+      only *new* branch: not named like a branch of `origin` (master, main, REL1_*), and
+      not at a tip that the host gave it (a hand-off it has not changed). So in case 2,
+      when the agent starts its own branch from the `review/...` one, that branch is the
+      one taken; the `review/...` branch, unchanged, is not.
+    - Leaving the current branch (when it is not the target): a dirty tree stops it; so
+      does a `git-review-check` failure, unless `-f`. With the check below, case 3's WIP
+      commit on `master` passes once the agent has fetched it.
     - The target's local branch L: the one recorded for that sandbox branch, else one of
       the same name, else a new one. Switch to it (`git checkout L`), then move it to the
       sandbox's tip (`git reset --keep`) when nothing is lost: L's tip is in the new tip,
-      or is L's `wmfsbxSha`, or is on Gerrit (case 2, first pull), or the sandbox has
-      fetched it (the sandbox's seen-ref, below: the agent amended the engineer's edits).
-      Else stop: "commits on L the sandbox has not seen; /sbx-update there, or --force"
+      or is L's `wmfsbxSha`, or is on Gerrit (case 2, first pull), or the agent fetched it
+      (seen-ref, below: the agent amended the engineer's edits). Else stop, unless `-f`
       (the old tip stays in L's reflog, and is printed).
-    - A new L's upstream: the sandbox branch's upstream when it is `origin/X` (read with
-      `wmf-sbx exec`; checked to exist on the host), or when it is `local/Y`, Y's upstream
-      on the host (case 2 and 3: `origin/master`); else the guess (fewest commits); else
-      `--onto`. It says which.
-  - **In the sandbox, `/wmf-claude:sbx-update`** (a skill; or `!git sbx pull`): runs
-    `git sbx pull` in guest mode (`$SANDBOX_NAME` set), then reads `git range-diff
-    OLD...NEW` to learn what the engineer changed, and goes on from there.
+    - A new L's upstream, the first that applies (said aloud): the sandbox branch's
+      upstream when it is `origin/X` (read with `wmf-sbx exec`, checked to exist on the
+      host); when it is `local/Y`, Y's upstream on the host; the upstream of the host
+      branch the work sits on (case 2, an agent branch made from `review/...`, which has
+      no upstream: the review branch's `origin/master`); the guess (fewest commits);
+      `--onto`.
+  - **`git-review-check` learns "fetched by the agent".** Today it checks the sandbox side
+    only when its argument is a sandbox remote. Added: in a repo with sandbox remotes, HEAD
+    is safe when the agent has it: in `refs/remotes/NAME/*` (an agent branch) or
+    `refs/remotes/NAME-seen/*` (a hand-off the agent took), for a sandbox of this repo
+    (`wmf-sbx-ls-remotes`). So `git safe-reset` after a hand-off does not complain, and
+    leaving the branch before the hand-off still does: the explicit hand-off is wanted.
+  - **`git safe-reset NAME/BRANCH`** where NAME is a sandbox remote: prints that
+    `git sbx-pull` is the command now, and execs `git sbx-pull NAME/BRANCH`.
+  - **In the sandbox, `/wmf-claude:sbx-pull`** (or `!git sbx-pull`): runs `git sbx-pull`
+    in guest mode (`$SANDBOX_NAME` set), then reads `git range-diff OLD...NEW` to learn
+    what the engineer changed, and goes on from there. The skill also says: to start a new
+    branch, branch from the hand-off branch (the host's pull finds its upstream).
     - Which: the argument; else the host's current branch (`git ls-remote --symref local
       HEAD`; the agent cannot read the host's `.git/config`, and need not), when it is
-      not named like an `origin` branch; else, with the host on such a branch, the host's
-      commits on it that are not on `origin` (case 3: a guest branch `wip/<subject>`);
-      else stop.
+      not named like an `origin` branch; else, with the host on such a branch and commits
+      on it that are not on `origin` (case 3), it stops and asks for `--as NAME`. The
+      skill then has the agent read those commits and messages (`git log -p
+      origin/master..local/master`) and choose a short branch name for the work, and run
+      `git sbx-pull --as NAME`. Else stop.
     - Gates: the guest tree is clean; the guest branch's commits are on the host (in
       `refs/remotes/$SANDBOX_NAME/*` there, which `git fetch local` brings with an extra
-      refspec), or on Gerrit; else stop and report: the engineer has not pulled them.
+      refspec), or on Gerrit; else stop and report: the engineer has not pulled them
+      (`-f` exists, but the skill does not use it without the engineer's say).
     - Then `git checkout -B B local/B`, upstream `local/B`, and a seen-ref
       `refs/sbx/seen/B` at the tip it took, which the host's fetch brings to
-      `refs/remotes/NAME-seen/` for the host's move gate.
-  - **No `git sbx push`** for these cases: the hand-off is "stay on the branch, type
-    `/sbx-update` in the sandbox". A new sandbox (no `--reset-all`) starts on the host's
-    branch already. Add `push` later only for a hand-off while the host has moved on.
+      `refs/remotes/NAME-seen/` for the host's gates.
+  - **No push command** (cananian 2026-10-15): the hand-off is "stay on the branch, type
+    `/sbx-pull` in the sandbox". A new sandbox (no `--reset-all`) starts on the host's
+    branch already. Leaving the branch before that makes `git safe-reset` complain, which
+    is wanted: an explicit hand-off.
   - `wmf-sbx rm NAME` unsets the `branch.*.wmfsbx*` entries that name it.
-  - Bash completion (`_git_sbx`): sandbox names, then `NAME/` branches.
-  - Open: `git safe-reset NAME/BRANCH` (which makes a branch that tracks the sandbox):
-    keep, or stop and point at `git sbx pull`? Where the host install puts the completion.
+  - **Bash completion** (READ 2026-10-15, Debian's `/usr/share/bash-completion/
+    completions/git`): `git sbx<TAB>` completes already (git lists the `git-*` commands
+    on PATH). For the arguments, git's completion calls `_git_sbx_pull` and, when that is
+    not defined, has bash-completion lazy-load a file named `git-sbx-pull`, which
+    bash-completion 2 also looks for in `~/.local/share/bash-completion/completions/`. So:
+    ship `sbx/completion/git-sbx-pull` (defines `_git_sbx_pull`: sandbox names from
+    `wmf-sbx-ls-remotes`, then `NAME/` branches from `refs/remotes/NAME/*`) and link it
+    there at install; no `.bashrc` change. README "Getting started" says how. To check:
+    macOS (Homebrew `bash-completion@2`; zsh is the default shell there, and zsh's git
+    completion is another mechanism).
+  - Open: whether Claude Code takes `/sbx-pull` for the plugin's `/wmf-claude:sbx-pull`.
   - READ 2026-10-15, why upstreams to a sandbox seemed to vanish: `wmf-sbx rm` runs
     `git remote remove NAME` (remotes.py), which deletes `refs/remotes/NAME/*` and
     unsets `branch.*.remote`/`merge` for every branch that tracked NAME. The local

@@ -49,7 +49,13 @@ At `sbx create` time:
   QUnit runs from core and does not need it.
 - Every extension and skin in the closure is symlinked into
   `$MW_INSTALL_PATH/extensions/` or `$MW_INSTALL_PATH/skins/`, and
-  `LocalSettings.php` loads it.
+  `LocalSettings.php` loads it. CI clones them into core instead, and one
+  test sees the difference: AbuseFilter's `AbuseFilterSchemaTest` (11
+  failures, `-- Source:` with an absolute path), and any other extension
+  test built on `AbstractSchemaTestBase`. For the same reason,
+  `generateSchemaSql.php` here writes an absolute `-- Source:` path: do not
+  commit it. Core change [1355223](https://gerrit.wikimedia.org/r/c/mediawiki/core/+/1355223)
+  fixes both.
 - A SQLite wiki is installed, as a *docroot* install: URLs look like
   `http://localhost:4000/index.php?...`, with no `/w` prefix. The admin
   account is `Admin` / `adminpassword`.
@@ -138,12 +144,29 @@ again after the set of extensions changes.
 | `--testsuite=extensions` | every loaded extension's PHPUnit, with their parser tests and Parsoid's integrated ones (`ParserTest_<Extension>_*`, `ParserTest_Parsoid_*`) | 11745 tests, 140 s |
 | `--testsuite=includes`, `integration`, `maintenance_suite`, `tests`, `docs` | the rest of core (the names are in the generated `phpunit.xml`) | `includes` 18069 tests, 210 s; the others under 25 s |
 
-With extensions loaded, `--testsuite=includes` fails tests that core's own
-CI never sees, because CI runs core alone: Translate adds namespaces 1198
-and 1199 (`ApiQueryLanguageinfoTest`, `SpecialWatchlistTest`), an
-extension's library shows up in `ApiQuerySiteinfoTest::testInstalledLibraries`,
-and Cite without cldr breaks `SignatureValidatorTest`. Compare with the
-pristine run from §1 before you report one.
+With extensions loaded, core's suites fail tests that core's own CI never
+sees, because CI runs core alone. Compare with the pristine run from §1
+before you report one. Seen with Translate, Cite and Parsoid and their
+dependencies (2026-10-14):
+
+- `--testsuite=includes`: Translate adds namespaces 1198 and 1199
+  (`ApiQueryLanguageinfoTest`, `SpecialWatchlistTest`, `NamespaceInfoTest`);
+  an extension's library shows up in
+  `ApiQuerySiteinfoTest::testInstalledLibraries`; `SignatureValidatorTest`
+  fails with Cite, with or without cldr; VisualEditor's hook breaks
+  `ActionEntryPointTest::testForceSafeMode`; TimedMediaHandler's
+  `SpecialOrphanedTimedText` uses MySQL's `substring_index` on SQLite
+  (`QueryAllSpecialPagesTest`); and `WikiPageDbTest`, `SkinTemplateTest`,
+  `MWDebugTest`, `UserBlockedErrorTest` and `ParserOptionsTest` fail too.
+- `--testsuite=integration`: `UndoIntegrationTest::testMcrUndoAction`
+  (4 errors, EventLogging's `JsonSchemaHooks.php` calls `inNamespace()` on
+  the test's missing title). Core change
+  [1355229](https://gerrit.wikimedia.org/r/c/mediawiki/core/+/1355229)
+  fixes the test.
+- `--testsuite=maintenance_suite`: `WikiBirthdayTest` (2 failures: cldr's
+  `GetHumanTimestamp` hook makes the date relative). Core change
+  [1355230](https://gerrit.wikimedia.org/r/c/mediawiki/core/+/1355230)
+  fixes the test.
 
 ### Lint and phan
 
@@ -252,7 +275,8 @@ one the sandbox was made for, or a real `extensions/` directory already
 sat where the link would go. Read `.phan/config.php` to see which names it
 expects, and either ignore errors that name exactly those classes or run
 phan once before your change and diff. A missing sibling can also make a `@phan-suppress` unused:
-Translate reports `UnusedPluginSuppression` at
+Translate, in a sandbox without Elastica (`--no-phan-deps`, for one),
+reports `UnusedPluginSuppression` at
 `src/TtmServer/ElasticSearchTtmServer.php:177`, because without Elastica
 phan cannot type the loop that defines the variable.
 
@@ -315,17 +339,14 @@ Common names are `jest`, `test:unit` and `test:jest`; some repos call Jest
 from `npm test`. Measured: Vector `npm run test:unit`, 79 tests, 7.8 s.
 
 Some repos run QUnit tests under Node, not in a browser, with
-`mw-node-qunit` (Popups: `npm run test:unit`, also part of its `npm test`).
-**On this sandbox's Node (24) it crashes and still exits 0.** Node 21 and
-later have a read-only global `navigator`, `mw-node-qunit` 7.0.0 assigns to it, and the
-script pipes the output into `tap-mocha-reporter`, whose exit status is
-the one you see. The log shows `Cannot set property navigator of
-#<Object> which has only a getter` and ends with `0 passing (NaNms)`. Turn
-the global off and the tests run:
-
-```bash
-NODE_OPTIONS=--no-experimental-global-navigator npm run test:unit   # Popups: 203 tests, 2 s
-```
+`mw-node-qunit` (Popups: `npm run test:unit`, also part of its `npm test`;
+203 tests, 2 s). Before `mw-node-qunit` 7.11.0 it crashed on Node 21 and
+later (a read-only global `navigator`) and **still exited 0**, because the
+script pipes the output into `tap-mocha-reporter`, whose exit status is the
+one you see. Popups now has 7.11.0. A repo that still pins an older one
+shows `Cannot set property navigator of #<Object> which has only a getter`
+and `0 passing (NaNms)`; run it with
+`NODE_OPTIONS=--no-experimental-global-navigator`.
 
 Read the count at the end, not only the exit status, of any script that
 pipes into a reporter.
@@ -616,7 +637,16 @@ it.
 6. **A Cypress run with 0 specs that "passes"** — §5.6. Specs whose
    extension is not loaded do not run. Do not substitute a different
    harness for Cypress and report it as equivalent.
-7. **17 REST failures in core's full `npm run api-testing`**, all in
+7. **18 failures in core's full `npm run api-testing`.** One is
+   `action/ReparseDependentPages.js`: since Parsoid renders read views
+   (core `87bc95497cb`), a red link here is
+   `/index.php/Template:X?action=edit&redlink=1`, which the test's regex
+   does not accept. Core changes
+   [1355226](https://gerrit.wikimedia.org/r/c/mediawiki/core/+/1355226)
+   (the test) and
+   [1355227](https://gerrit.wikimedia.org/r/c/mediawiki/core/+/1355227)
+   (`$wgUsePathInfo` in DevelopmentSettings) address it. The other **17
+   are REST failures**, all in
    `tests/api-testing/REST/Creation.js` and `Update.js`: `expected 400 to
    equal 201` (or 403, 409). Mocha shows only the status; the response
    body, which a direct `curl` shows, is `The "Content-Type" parameter must
@@ -632,7 +662,7 @@ it.
 8. **Other sibling-extension failures** — §3: a structure test, skipped
    selenium tests, an unused phan suppression.
 9. **A script that pipes into a reporter exits 0 when the tests crash** —
-   §3 (Popups' `mw-node-qunit` on Node 21 and later).
+   §3 (`mw-node-qunit` before 7.11.0 on Node 21 and later).
 10. **Do not build a jsdom or hand-made stand-in for a browser suite.** A
    harness that loads the sources directly has a different set of modules
    registered than the real page, and it quietly disagrees with the real

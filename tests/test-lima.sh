@@ -24,6 +24,7 @@ Y="$REPO_ROOT/lima/wmf-claude.yaml"
 VM="$REPO_ROOT/bin/wmf-claude-vm"
 GI="$REPO_ROOT/lima/guest-install.sh"
 GC="$REPO_ROOT/lima/guest-claude.sh"
+GD="$REPO_ROOT/lima/guest-dev-stack.sh"
 
 # `-e`: several patterns start with `--`.
 check()  { if grep -qE -e "$3" "$2"; then pass "$1"; else fail "$1"; fi; }   # $1 desc  $2 file  $3 must match
@@ -91,7 +92,7 @@ check  "nftables enabled at boot"                   "$Y" 'systemctl enable nftab
 
 echo ""
 echo "--- no permissive profile ---"
-for f in "$Y" "$GI" "$GC" "$VM"; do
+for f in "$Y" "$GI" "$GC" "$GD" "$VM"; do
   n="${f#"$REPO_ROOT"/}"
   absent "$n: no api.minimax.io"                    "$f" 'minimax'
   absent "$n: no network_profile"                   "$f" 'network_profile'
@@ -131,11 +132,27 @@ check  "server.log handed to the agent"             "$GI" 'sudo chown "\$AGENT:\
 check  "wmf-claude-setup honors WMF_CLAUDE_SKIP_BUILD" "$REPO_ROOT/bin/wmf-claude-setup" 'WMF_CLAUDE_SKIP_BUILD'
 
 echo ""
+echo "--- guest-dev-stack.sh: PHP and MariaDB ---"
+check  "guest-install runs it as root from the new tree" "$GI" 'sudo bash "\$NEW/lima/guest-dev-stack.sh"'
+check  "refuses to run as non-root"                      "$GD" '\[\[ "\$\(id -u\)" == 0 \]\]'
+check  "Debian packages, no recommends"                  "$GD" 'apt-get install -y -q --no-install-recommends "\$\{MISSING\[@\]\}"'
+absent "no third-party apt source, key or download"      "$GD" 'sources\.list|/etc/apt/keyrings|https?://'
+check  "MariaDB binds loopback only"                     "$GD" '^bind-address = 127\.0\.0\.1$'
+check  "restart only when the config changed"            "$GD" 'cmp -s "\$NEWCNF" "\$CNF"'
+check  "rights on the wiki database only"                "$GD" 'GRANT ALL PRIVILEGES ON \\`\$DB_NAME\\`\.\* TO'
+absent "no grant on *.*"                                 "$GD" 'ON \*\.\*'
+absent "root keeps unix_socket authentication"           "$GD" "'root'|ALTER USER"
+absent "agent joins no group"                            "$GD" 'usermod|gpasswd|adduser'
+check  "docs: PHPUnit in the VM"                         "$REPO_ROOT/docs/lima-vm.md" '^## PHPUnit in the VM$'
+
+echo ""
 echo "--- bin/wmf-claude-vm: copies, not mounts ---"
 absent "no --rosetta"                               "$VM" '--rosetta'
 absent "no --mount flag to limactl"                 "$VM" '--mount'
 absent "no --port-forward flag to limactl"          "$VM" '--port-forward'
 check  "limactl runs non-interactively"             "$VM" '--tty=false'
+check  "vm_exists reads the whole list (no grep -q: SIGPIPE under pipefail)" "$VM" '^vm_exists\(\) \{ limactl list [^|]*\| grep -Fx "\$VM" >/dev/null; \}$'
+absent "no limactl output piped into grep -q"       "$VM" 'limactl [^|]*\| *grep -q'
 check  "push uses git bundle"                       "$VM" 'git -C "\$top" bundle create'
 check  "pull exports with hooks and fsmonitor off"  "$VM" 'core\.hooksPath=/dev/null -c core\.fsmonitor=false'
 check  "pull fetches into remote-tracking vm/*"     "$VM" '\+refs/heads/\*:refs/remotes/vm/\*'
@@ -188,7 +205,7 @@ fi
 
 echo ""
 echo "--- scripts parse ---"
-for f in "$VM" "$GI" "$GC"; do
+for f in "$VM" "$GI" "$GC" "$GD"; do
   if bash -n "$f" 2>/dev/null; then pass "bash -n ${f#"$REPO_ROOT"/}"; else fail "bash -n ${f#"$REPO_ROOT"/}"; fi
   if [[ -x "$f" ]]; then pass "executable: ${f#"$REPO_ROOT"/}"; else fail "not executable: ${f#"$REPO_ROOT"/}"; fi
 done
@@ -203,7 +220,7 @@ else
 fi
 rm -f "$PROV"
 if command -v shellcheck >/dev/null 2>&1; then
-  for f in "$VM" "$GI" "$GC"; do
+  for f in "$VM" "$GI" "$GC" "$GD"; do
     if shellcheck -x "$f" >/dev/null 2>&1; then pass "shellcheck ${f#"$REPO_ROOT"/}"; else fail "shellcheck ${f#"$REPO_ROOT"/}"; shellcheck -x "$f" | sed 's/^/        /'; fi
   done
 else

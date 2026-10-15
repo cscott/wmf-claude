@@ -132,7 +132,8 @@ throwaway dev-wiki accounts only**.
 When an escape from the sandbox must not reach your machine, run everything
 (nono, Claude Code, the MCP servers, the Docker broker) inside one persistent
 Lima VM, with no host mounts or port forwards; code moves in and out as git
-bundles. Opt-in; plain `claude` is unchanged.
+bundles. PHP, Composer and MariaDB are in the guest, so PHPUnit runs there as
+on the host. Opt-in; plain `claude` is unchanged.
 
 ```bash
 bin/wmf-claude-vm create                    # once; asks for your Phabricator username

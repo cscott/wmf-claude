@@ -79,9 +79,11 @@ a per-session copy of the profile with `signal_mode: allow_all`, because Claude
 Code checks the IDE is alive with `kill(pid, 0)` and `isolated` answers EPERM.
 The copy is written to `~/.config/wmf-claude/ide-profiles/`, which no sandbox
 grant covers, so a session cannot rewrite it before nono reads it — unless you
-launched from `~` or passed an `--allow` that covers it. Beyond the workdir the profile hardcodes three
+launched from `~` or passed an `--allow` that covers it. Beyond the workdir the profile hardcodes four
 read grants — `~/.local/state/fnm_multishells`, `~/.local/state/claude/locks`,
-and `~/.agents/skills` — and `bin/claude` adds `--read` for the bundled MCP
+`~/.agents/skills`, and `/etc/php` (PHP's ini and module list; without it PHP
+starts with no extensions in the Lima guest, and it does not exist on macOS) —
+and `bin/claude` adds `--read` for the bundled MCP
 checkouts plus a single-file write grant on the Gerrit server's `server.log`.
 
 The tool layer also **allows** some commands outright, which auto-approves them

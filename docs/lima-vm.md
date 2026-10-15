@@ -166,6 +166,36 @@ bin/wmf-claude-vm discard NAME BRANCH    # git branch -rd vm/BRANCH
   The first `pull NAME DEST` then sends only the agent's new commits; DEST
   must have the commit the clone starts at (`git fetch` it first).
 
+## PHPUnit in the VM
+
+The guest has PHP, Composer and MariaDB, so tests and maintenance scripts
+run as on the host: no Docker, and no emulated images on Apple Silicon.
+MariaDB listens on 127.0.0.1 only; `wikiuser` (password `wikipass`) owns the
+database `wikidb`.
+
+```bash
+bin/wmf-claude-vm shell --agent -- composer install -d /home/agent/work/core   # needs the network: a contained VM while open
+bin/wmf-claude-vm shell --agent -- php /home/agent/work/core/maintenance/install.php \
+  --dbserver 127.0.0.1 --dbname wikidb --dbuser wikiuser --dbpass wikipass \
+  --pass 'change-me-adminpass' DevWiki admin
+bin/wmf-claude-vm claude core --local-db
+```
+
+- `composer install` needs packagist, which nono's allowlist does not
+  include, so it runs outside nono as the agent, and `vendor` is the
+  agent's. Run it again when a push changes `composer.json`.
+- `install.php` writes `LocalSettings.php` once per workspace. For pushed
+  extensions add `wfLoadExtension` lines, or pass `--with-extensions`.
+- `--local-db` opens the port for the session, as on the host. In the VM the
+  database is in the agent's reach anyway: nono does not mediate Unix socket
+  connects on Linux, and `LocalSettings.php` holds the password. It is test
+  data, in a VM nothing outside reaches.
+- No service: `--dbtype sqlite --dbpath /home/agent/work/core/data` gives a
+  wiki that needs no `--local-db`. Use MariaDB when a finding depends on
+  MySQL behaviour.
+- `update` adds the packages to an existing VM (contained: unlock first).
+- Docker stays for the full dev stack: the services, and a wiki in a browser.
+
 ## Docker inside the VM
 
 You drive Docker from an engineer shell; Claude reaches it only through the
@@ -234,20 +264,16 @@ update path.
   images (`docker-registry.wikimedia.org/dev/...`) are amd64 only. QEMU
   emulation crashes their `php-fpm`; Rosetta would run them but needs a host
   share, which this VM does not allow. Use multi-arch images, or a VM on an
-  amd64 Linux host.
+  amd64 Linux host. PHPUnit does not need them:
+  [PHPUnit in the VM](#phpunit-in-the-vm).
 - **Contained: what the host firewall may miss.** Should something with root
   in the VM remove the lock, the block on `limactl` stops the VM's traffic,
   but maybe not DNS (`check-host-block` reports whether it does) and not the
   host's own loopback services. The in-VM lock covers both; closing them on
   the host needs a VM with no network at all, which Lima does not offer yet.
-- **Lima VM: no `--chrome`, and tests need a wiki in the VM.** `--chrome` is
-  refused: Chrome runs on the host today, and the VM cannot reach it.
-  PHPUnit runs through the Docker broker (`--docker=mediawiki`), so it needs
-  the dev stack in the VM, which the amd64-only images rule out on Apple
-  Silicon (above). `--local-db` passes through, but only meets a database
-  that listens in the VM. Follow-up: headless Chromium in the guest, started
-  by `guest-claude.sh` as the engineer with the MCP built there, and a
-  multi-arch compose for the dev stack.
+- **Lima VM: no `--chrome`.** Chrome runs on the host today, and the VM
+  cannot reach it. Follow-up: headless Chromium in the guest, started by
+  `guest-claude.sh` as the engineer, with the MCP built there.
 - **Contained: not done yet.** Transcript and log retention outside the
   agent's reach, and a per-engagement scope prompt.
 - **Linux hosts: contained mode is untested.** The token store (a 0600 file

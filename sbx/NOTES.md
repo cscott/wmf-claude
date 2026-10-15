@@ -355,9 +355,9 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
     - Which: `NAME/BRANCH`; `BRANCH`, if one sandbox of this repo has it (it fetches each
       running sandbox first); none: the current branch's record, else the only sandbox's
       only *new* branch: not named like a branch of `origin` (master, main, REL1_*), and
-      not at a tip that the host gave it (a hand-off it has not changed). So in case 2,
-      when the agent starts its own branch from the `review/...` one, that branch is the
-      one taken; the `review/...` branch, unchanged, is not.
+      not at a tip that the host gave it (a hand-off it has not changed). The skill keeps
+      the agent on the hand-off branch, so this is for case 1's first pull, and for an
+      agent that made a branch anyway.
     - Leaving the current branch (when it is not the target): a dirty tree stops it; so
       does a `git-review-check` failure, unless `-f`. With the check below, case 3's WIP
       commit on `master` passes once the agent has fetched it.
@@ -370,8 +370,8 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
     - A new L's upstream, the first that applies (said aloud): the sandbox branch's
       upstream when it is `origin/X` (read with `wmf-sbx exec`, checked to exist on the
       host); when it is `local/Y`, Y's upstream on the host; the upstream of the host
-      branch the work sits on (case 2, an agent branch made from `review/...`, which has
-      no upstream: the review branch's `origin/master`); the guess (fewest commits);
+      branch the work sits on (an agent branch made from `review/...` anyway, with no
+      upstream: the review branch's `origin/master`); the guess (fewest commits);
       `--onto`.
   - **`git-review-check` learns "fetched by the agent".** Today it checks the sandbox side
     only when its argument is a sandbox remote. Added: in a repo with sandbox remotes, HEAD
@@ -383,8 +383,10 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
     `git sbx-pull` is the command now, and execs `git sbx-pull NAME/BRANCH`.
   - **In the sandbox, `/wmf-claude:sbx-pull`** (or `!git sbx-pull`): runs `git sbx-pull`
     in guest mode (`$SANDBOX_NAME` set), then reads `git range-diff OLD...NEW` to learn
-    what the engineer changed, and goes on from there. The skill also says: to start a new
-    branch, branch from the hand-off branch (the host's pull finds its upstream).
+    what the engineer changed, and goes on from there. The skill also says: keep working
+    on the hand-off branch, under its name (cananian 2026-10-15: a new branch at each
+    hand-off leaves the engineer to remember which branch is the latest). Only a hand-off
+    from `master`/`main` (case 3) gets a new branch, named by the agent with `--as`.
     - Which: the argument; else the host's current branch (`git ls-remote --symref local
       HEAD`; the agent cannot read the host's `.git/config`, and need not), when it is
       not named like an `origin` branch; else, with the host on such a branch and commits

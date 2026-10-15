@@ -99,23 +99,39 @@ class Log:
 
 INLINE_SOURCES = {"base64", "text", "content"}
 
+# The API fetches a content block's "source" when its type is not inline
+# (base64/text/content), so the policy scans the whole body and refuses a url
+# or file source anywhere -- including a new top-level field, which a key
+# allowlist would have to list first. These keys instead hold a JSON schema or
+# the model's own tool arguments, which the API does not fetch as content, so
+# the scan skips them; a schema property named "source" is a field name, not a
+# content source. A field the scan does not know still passes, because the
+# refusal targets the fetch (a non-inline source), not the field name.
+#   input_schema  -- a custom tool's JSON Schema (a parameter can be "source")
+#   output_config -- structured-output schema, effort and token budgets
+SKIP_SCAN_KEYS = {"input_schema", "output_config"}
 
-def find_remote_source(node):
-    """Return the type of the first non-inline content source, or None."""
+
+def find_remote_source(node, path="body"):
+    """Return (path, type) of the first non-inline content source, or None.
+
+    Scans the whole request body. SKIP_SCAN_KEYS and a tool_use block's input
+    hold schemas or the model's own arguments, which the API does not fetch, so
+    they are not scanned. The path names where a hit is, so a false positive is
+    one more SKIP_SCAN_KEYS entry, not a hunt."""
     if isinstance(node, dict):
         src = node.get("source")
         if isinstance(src, dict) and src.get("type") not in INLINE_SOURCES:
-            return repr(src.get("type"))
-        # A tool call's input is the model's own arguments, not content the
-        # API fetches; a tool may have a parameter called "source".
-        children = [v for k, v in node.items()
-                    if not (k == "input" and str(node.get("type", "")).endswith("tool_use"))]
+            return (f"{path}.source", src.get("type"))
+        items = [(f"{path}.{k}", v) for k, v in node.items()
+                 if k not in SKIP_SCAN_KEYS
+                 and not (k == "input" and str(node.get("type", "")).endswith("tool_use"))]
     elif isinstance(node, list):
-        children = node
+        items = [(f"{path}[{i}]", v) for i, v in enumerate(node)]
     else:
         return None
-    for child in children:
-        found = find_remote_source(child)
+    for child_path, child in items:
+        found = find_remote_source(child, child_path)
         if found:
             return found
     return None
@@ -140,16 +156,18 @@ def body_policy(body):
         return "body is not JSON, or has a duplicate key"
     if not isinstance(doc, dict):
         return "body is not a JSON object"
-    if doc.get("mcp_servers"):
+    if "mcp_servers" in doc:
         return "mcp_servers is not allowed (the API would connect to them)"
     if "container" in doc:
         return "container is not allowed (server-side code execution)"
     try:
-        remote = find_remote_source(doc.get("messages")) or find_remote_source(doc.get("system"))
+        remote = find_remote_source(doc)
     except RecursionError:
         return "body is nested too deeply"
     if remote:
-        return f"content source {remote} is not allowed (only inline sources; the API would fetch a URL)"
+        where, kind = remote
+        return (f"content source {kind!r} at {where} is not allowed "
+                "(only inline sources; the API would fetch a URL)")
     tools = doc.get("tools") or []
     if not isinstance(tools, list):
         return "tools is not a list"

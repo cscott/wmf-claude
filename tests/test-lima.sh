@@ -251,7 +251,7 @@ check  "lock: forward policy drop (containers)"          "$NET" 'type filter hoo
 n_accept=$(grep -c ' accept$' <<<"$lock_rules")
 if [[ "$n_accept" == 8 ]]; then pass "lock: exactly the 8 expected accept rules"
 else fail "lock: $n_accept accept rules, want 8 (lo, established x2, docker0 x2, br-* x2, DHCP)"; fi
-for r in 'oifname "lo" accept' 'ct state established,related accept' 'oifname "docker0" accept' 'oifname "br-\*" accept' 'udp sport 68 udp dport 67 accept'; do
+for r in 'oifname "lo" accept' 'ct state established,related ct direction reply accept' 'oifname "docker0" accept' 'oifname "br-\*" accept' 'udp sport 68 udp dport 67 accept'; do
   if grep -qE -e "$r" <<<"$lock_rules"; then pass "lock: allows only $r"; else fail "lock: missing $r"; fi
 done
 check  "install: unit runs before the network"           "$GI" '^Before=network-pre.target$'
@@ -266,6 +266,7 @@ check  "vm: check-host-block restores the lock on exit" "$VM" "trap 'if \\\$\\{R
 check  "vm: check-host-block tests by IP, not by name"  "$VM" '--resolve "deb.debian.org:443:\$ip"'
 check  "vm: sessions honour WMF_CLAUDE_REQUIRE_HOST_BLOCK" "$VM" 'WMF_CLAUDE_REQUIRE_HOST_BLOCK:-'
 check  "vm: an interactive session waits on the warning" "$VM" 'Press Enter to start the session anyway'
+check  "vm: unlock clears the host-block verification"  "$VM" 'rm -f "\$HOST_BLOCK_RECORD"'
 # host_block_state: verified only for an ok record of the current limactl.
 HB=$(mktemp -d); mkdir -p "$HB/bin"; printf '#!/bin/sh\n' > "$HB/bin/limactl"; chmod +x "$HB/bin/limactl"
 hb_fns="$(grep '^limactl_binary()' "$VM")

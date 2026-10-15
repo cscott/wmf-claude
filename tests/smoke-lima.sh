@@ -90,6 +90,13 @@ else fail "nft host block missing"; fi
 tiocsti=$(g cat /proc/sys/dev/tty/legacy_tiocsti 2>/dev/null | tr -d '\r')
 if [[ "$tiocsti" == 0 ]]; then pass "TIOCSTI off"
 else fail "dev.tty.legacy_tiocsti is '${tiocsti:-missing}', want 0"; fi
+# The profile asks for signal_mode: isolated and shared-memory-only IPC. nono
+# enforces those through Landlock scoping only on ABI V6 (kernel 6.12+); below
+# that it drops them silently, with no error. Assert the guest kernel has it.
+kver=$(g uname -r | tr -d '\r'); kmaj=${kver%%.*}; krest=${kver#*.}; kmin=${krest%%.*}
+if [[ "$kmaj" =~ ^[0-9]+$ && "$kmin" =~ ^[0-9]+$ ]] && { (( kmaj > 6 )) || { (( kmaj == 6 )) && (( kmin >= 12 )); }; }; then
+  pass "guest kernel $kver has Landlock ABI V6 (signal + IPC scoping enforce)"
+else fail "guest kernel '${kver:-missing}' is below 6.12; signal_mode/ipc scoping silently does not enforce"; fi
 
 echo ""
 echo "--- host boundary ---"

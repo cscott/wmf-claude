@@ -97,9 +97,29 @@ b, h = body(system=[{"type": "text", "text": "x"}, {"type": "image", "source": {
 check("URL source in system", req("POST", "/v1/messages", b, h), "403")
 b, h = body(container="c1")
 check("container", req("POST", "/v1/messages", b, h), "403")
+b, h = body(attachments=[{"type": "document", "source": {"type": "url", "url": "https://e/x.pdf"}}])
+out = check("URL source in a non-message field (whole-body scan)", req("POST", "/v1/messages", b, h), "403")
+path_ok = b"body.attachments[0].source" in out
+fails += not path_ok; print(f"{'PASS' if path_ok else 'FAIL'}: deny reason names the source path")
+b, h = body(future_shaping_field="anything")
+check("allowed: unknown top-level field with no fetchable source", req("POST", "/v1/messages", b, h), "200")
+b, h = body(mcp_servers=[])
+check("empty mcp_servers refused (key present)", req("POST", "/v1/messages", b, h), "403")
 b, h = body(messages=[{"role": "user", "content": [{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AA=="}}]},
                       {"role": "assistant", "content": [{"type": "tool_use", "id": "t", "name": "X", "input": {"source": {"type": "url"}}}]}])
 check("allowed: base64 image, tool input with a 'source' key", req("POST", "/v1/messages", b, h), "200")
+b, h = body(context_management={"edits": [{"type": "clear_tool_uses_20250919"}]},
+            safeguards=[{"type": "auto", "classifier_context": "x"}],
+            speed="fast", thread={"type": "continue", "previous_message_id": "m1"},
+            diagnostics={"previous_message_id": None},
+            output_config={"effort": "high", "format": {"type": "json_schema",
+                "schema": {"type": "object", "properties": {"source": {"type": "string"}}}}})
+check("allowed: shaping fields; a schema 'source' property is not a content source",
+      req("POST", "/v1/messages", b, h), "200")
+b, h = body(tools=[{"name": "cp", "input_schema": {"type": "object", "properties": {
+    "source": {"type": "string"}, "dest": {"type": "string"}}}}])
+check("allowed: tool input_schema with a 'source' property (schema, not content)",
+      req("POST", "/v1/messages", b, h), "200")
 dup = b'{"model":"m","max_tokens":1,"messages":[],"tools":[{"type":"web_search_20250305","name":"w"}],"tools":[]}'
 check("duplicate key (tools)", req("POST", "/v1/messages", dup, [("Content-Length", str(len(dup)))]), "403")
 deep = b'{"model":"m","max_tokens":1,"messages":' + b"[" * 100000 + b"]" * 100000 + b"}"

@@ -11,9 +11,13 @@
 # Locked, the table below drops every new packet that leaves the VM, for
 # every user and every container, except on loopback (the ssh -R forward of
 # the host's model API proxy arrives there), on the Docker bridges (between
-# the guest and its containers), DHCP, and replies to connections that came
-# in (the host's SSH session). It does not depend on an interface name, so
-# it works before the network is up. A missing or unknown phase is locked.
+# the guest and its containers), DHCP, and reply-direction traffic on
+# connections that came in (the host's SSH session). The established accept is
+# scoped to `ct direction reply` on purpose: a connection the guest opened
+# itself before the lock (an open-phase install, a planted process) sends
+# original-direction packets, so it is dropped once the lock loads, not kept
+# alive by conntrack. It does not depend on an interface name, so it works
+# before the network is up. A missing or unknown phase is locked.
 set -euo pipefail
 
 # The override exists for tests/test-lima.sh only. sudo resets the
@@ -37,7 +41,7 @@ table inet $TABLE {
   chain output {
     type filter hook output priority -10; policy drop;
     oifname "lo" accept
-    ct state established,related accept
+    ct state established,related ct direction reply accept
     oifname "docker0" accept
     oifname "br-*" accept
     udp sport 68 udp dport 67 accept
@@ -45,7 +49,7 @@ table inet $TABLE {
   }
   chain forward {
     type filter hook forward priority -10; policy drop;
-    ct state established,related accept
+    ct state established,related ct direction reply accept
     oifname "docker0" accept
     oifname "br-*" accept
     counter drop

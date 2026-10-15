@@ -524,14 +524,16 @@ What the broker enforces:
 - A 256-bit per-session bearer token from a `0600` handshake file, compared
   constant-time.
 - Refuses a container that is a path to host root: `--privileged`, host-root caps
-  (`SYS_ADMIN`, `SYS_PTRACE`, ...), device passthrough, host `PidMode`/`IpcMode`,
-  or a bind/mount of the socket or a host-root path (`/`, `/var/run`, `/run`,
-  `/var/lib/docker`, `/proc`, `/sys`). Also refuses a bind/mount of host
-  credentials — a `$HOME` dotfile/dotdir (`~/.ssh`, `~/.aws`, `~/.config/*`,
-  `~/.gitconfig`, ...) or the forwarded `$SSH_AUTH_SOCK` — which the agent could
-  read and exfiltrate over the container network. Inspects every replica.
-  Best-effort: it can't inspect a container that isn't up, and a container
-  recreated after the check is a TOCTOU gap.
+  (`SYS_ADMIN`, `SYS_PTRACE`, ..., and `NET_ADMIN`/`NET_RAW`), device passthrough,
+  host `PidMode`/`IpcMode`, host or another container's `NetworkMode`, or a
+  bind/mount of the socket or a host-root path (`/`, `/var/run`, `/run`,
+  `/var/lib/docker`, `/proc`, `/sys`). Every other host-path bind must resolve
+  inside the checkout (the compose file's directory); a bind outside it — a
+  `$HOME` dotfile, `$SSH_AUTH_SOCK`, `/etc`, `/usr/local/sbin` (the contained
+  lock script) — is refused, since the agent could read it and exfiltrate over
+  the container network. Named volumes are not host-path binds and pass.
+  Inspects every replica. Best-effort: it can't inspect a container that isn't
+  up, and a container recreated after the check is a TOCTOU gap.
 - Logs every exec and applies a per-command timeout (default 900s). Caps the
   request body (1 MiB) and the output relayed per stream (8 MiB, spooled to
   disk, truncation noted), so one command can't pin the broker's memory.
@@ -570,12 +572,12 @@ dir, or privileged config. There a rogue agent can read and exfiltrate the
 checkout (dev `LocalSettings.php`, `.env`) over the container network and reach
 the dev database, but does not get host root, your home dir, SSH keys, or git
 credentials (not mounted). It cannot escape to the host short of a kernel
-exploit. The container-safety check refuses the common credential-widening
-mounts — a `$HOME` dotfile/dotdir (`~/.ssh`, `~/.aws`, `~/.composer`, ...) or
-`$SSH_AUTH_SOCK` — but it is a denylist, not an allowlist: a non-dot secret path
-mounted by name, a non-dot sibling dir it can't distinguish from a code mount,
-or a `user: root` container still slip through. Keep secrets out of dev checkouts
-and mounts limited to the checkout.
+exploit. The container-safety check allowlists host-path binds to the checkout:
+a bind whose source resolves outside the compose file's directory — a secret
+path, a sibling directory, `$SSH_AUTH_SOCK` — is refused, so only the code the
+container is meant to build gets in. A `user: root` container, or a secret
+copied into the checkout, still slips through, and the check sees only a running
+container. Keep secrets out of dev checkouts.
 
 ## Lima VM mode
 
@@ -597,7 +599,14 @@ How `bin/wmf-claude-vm` builds its boundary. The user guide is
   a VPN's ranges. DNS and DHCP to Lima's subnet pass. It applies to the guest
   and its containers. It also limits the `agent` user to TCP 80 and 443, a
   second layer under nono's allowlist. User-mode networking is NAT through the
-  host, so a host service on a public address stays reachable.
+  host, so a host service on a public address stays reachable. This second
+  layer does not catch a raced `--open-port` connect: nono's seccomp
+  destination check approves with `SECCOMP_USER_NOTIF_FLAG_CONTINUE` and a
+  second thread can rewrite the address to an outside host on 80 or 443 (a
+  known nono limitation). A normal VM already permits public egress from the
+  guest, so the residual risk is the model token in that guest; contained
+  mode's lock, which drops every non-loopback packet, is the real control, and
+  the token is not in the VM there.
 - **Two users.** `engineer` (the Lima default user) has sudo and is in
   `docker`; Claude runs as `agent`, which has neither. nono does not mediate
   `connect()` to pathname AF_UNIX sockets on Linux, so the socket's
@@ -636,9 +645,11 @@ How `bin/wmf-claude-vm` builds its boundary. The user guide is
 ### Contained mode
 
 - **The token never enters the VM.** `login` on a contained VM stores a
-  `claude setup-token` token in the host's login keychain (a 0600 file under
-  `~/.config/wmf-claude/` on a Linux host) and never runs `claude auth login`.
-  The session holds a placeholder OAuth token.
+  `claude setup-token` token in a 0600 file under `~/.config/wmf-claude/` on
+  the host — not the login keychain, which a host `bin/claude` session is
+  granted (`security -w` reads an item there with no prompt); the profiles also
+  deny `~/.config/wmf-claude` to the sandbox. `login` never runs
+  `claude auth login`. The session holds a placeholder OAuth token.
 - **The model proxy.** `bin/wmf-claude-vm claude` starts
   `bin/wmf-claude-model-proxy` on the host for each session, on a 0600 Unix
   socket in the instance directory, and forwards it into the guest with

@@ -92,7 +92,8 @@
       "~/.local/share/keyrings",
       "~/.config/hub",
       "~/.gitcookies",
-      "~/.config/glab-cli"
+      "~/.config/glab-cli",
+      "~/.config/wmf-claude"
     ],
     "suppress_save_prompt": [
       "/"

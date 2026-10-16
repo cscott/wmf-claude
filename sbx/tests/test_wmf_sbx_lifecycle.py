@@ -1612,6 +1612,14 @@ class RmTests(Env):
         self.assertIn("wmf-sbx-sbx-demo", lima.vms)
         self.assertIsNotNone(state_mod.load("sbx-demo", self.env))
 
+    def test_enter_is_no(self):
+        lima = self.sandbox()
+        asked = []
+        self.assertEqual(self.quiet(rm.main, ["sbx-demo"], lima=lima, env=self.env,
+                                    confirm=lambda q: asked.append(q) or ""), 1)
+        self.assertTrue(asked[-1].endswith("[y/N] "), asked)
+        self.assertIn("wmf-sbx-sbx-demo", lima.vms)
+
     def test_yes_deletes_the_vm_and_the_state(self):
         lima = self.sandbox()
         self.assertEqual(self.quiet(rm.main, ["sbx-demo"], lima=lima, env=self.env,

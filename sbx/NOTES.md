@@ -476,10 +476,12 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
     The golden image's "another build is running" question is now a `pick` (Enter
     waits, as before; no terminal aborts). Defaults chosen: `rm`'s "Fetch them now?"
     is yes (a fetch only adds to the host); `git sbx-pull`'s "update which?" is the
-    branch with the sandbox branch's own name, when it is one of them. No default:
-    remove a sandbox, leave or move unsaved work (destructive); which sandbox,
-    project or new branch (nothing makes one the obvious choice). `create`'s "Clone
-    them there now?" stays no: it writes to the engineer's disk.
+    branch with the sandbox branch's own name, when it is one of them. A destructive
+    question takes the safe answer on Enter: remove a sandbox, leave or move unsaved
+    work are [y/N] (`default=False`, said at each call); the busy image waits. No
+    default: which sandbox, project or new branch (nothing makes one the obvious
+    choice). `create`'s "Clone them there now?" stays no: it writes to the engineer's
+    disk.
   - READ 2026-10-15, why upstreams to a sandbox seemed to vanish: `wmf-sbx rm` runs
     `git remote remove NAME` (remotes.py), which deletes `refs/remotes/NAME/*` and
     unsets `branch.*.remote`/`merge` for every branch that tracked NAME. The local

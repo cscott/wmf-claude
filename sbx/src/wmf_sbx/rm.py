@@ -40,9 +40,10 @@ def remove_sandbox(name, force=False, lima=None, confirm=None):
     """Delete the sandbox's VM after a y/N question (unless `force`).
     Returns True if the VM is gone. `confirm` is input()-like; the default
     asks on the terminal, and with no terminal the answer is no."""
+    # Destructive: Enter is no.
     if not force and not prompt_mod.Prompt(ask=confirm).confirm(
             f"Remove sandbox {name!r} and its VM {vm_mod.instance_name(name)}? "
-            f"This cannot be undone."):
+            f"This cannot be undone.", default=False):
         return False
     print(f"+ limactl delete --force {vm_mod.instance_name(name)}", file=sys.stderr)
     vm_mod.delete(name, lima=lima)

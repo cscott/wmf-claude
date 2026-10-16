@@ -891,7 +891,8 @@ def busy_prompt(interactive=None, prompt=None, err=None):
 
     def choose(key, name):
         i = asker.pick(f"Another wmf-sbx is building golden image {key} "
-                       f"(its builder is {name}).", list(BUSY_LABELS), default=0)
+                       f"(its builder is {name}).", list(BUSY_LABELS),
+                       default=0)  # wait: not "delete its builder"
         return "abort" if i is None else BUSY_CHOICES[i]
     return choose
 

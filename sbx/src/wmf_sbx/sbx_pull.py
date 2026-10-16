@@ -453,8 +453,9 @@ def pull(args, env, run, sandbox_upstream_fn, gerrit_has_fn, say, cwd=None, prom
                 f"branch.{current}.{SHA_KEY}") else is_saved(git, head, sandbox_refs,
                                                              gerrit_has_fn))
             what = f"{current or 'HEAD'} ({head[:12]}) is not on Gerrit, origin or a sandbox"
+            # The two safety stops: Enter is no.
             if not why and not (prompt and prompt.confirm(
-                    f"{what}. Leave it anyway (it stays as it is)?")):
+                    f"{what}. Leave it anyway (it stays as it is)?", default=False)):
                 raise PullError(f"{what}; upload it (git review), or -f to leave it anyway")
 
     if exists:
@@ -467,7 +468,8 @@ def pull(args, env, run, sandbox_upstream_fn, gerrit_has_fn, say, cwd=None, prom
             what = (f"{local} ({old[:12]}) has commits that {remote}/{branch} does not "
                     f"have and are saved nowhere else")
             if not ok and not (prompt and prompt.confirm(
-                    f"{what}. Move {local} anyway (the old tip stays in its reflog)?")):
+                    f"{what}. Move {local} anyway (the old tip stays in its reflog)?",
+                    default=False)):
                 raise PullError(f"{what}; -f to move {local} anyway "
                                 f"(the old tip stays in its reflog)")
         if local != current:

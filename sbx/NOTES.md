@@ -474,6 +474,16 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
     own `git fetch REMOTE SHA` advice does, too) is left unreferenced, for gc to
     prune. A local branch keeps it (`git sbx-pull`). Open: should `rm` keep such
     tips under a ref of their own?
+  - Built after: Prompt defaults (cananian: useful for prompts in general). Enter takes
+    `pick(..., default=I)` or `confirm(..., default=True)` ("[Y/n]"); Ctrl-D and no
+    terminal never do. `pick` also takes the start of one label ("w" for "wait ...").
+    The golden image's "another build is running" question is now a `pick` (Enter
+    waits, as before; no terminal aborts). Defaults chosen: `rm`'s "Fetch them now?"
+    is yes (a fetch only adds to the host); `git sbx-pull`'s "update which?" is the
+    branch with the sandbox branch's own name, when it is one of them. No default:
+    remove a sandbox, leave or move unsaved work (destructive); which sandbox,
+    project or new branch (nothing makes one the obvious choice). `create`'s "Clone
+    them there now?" stays no: it writes to the engineer's disk.
   - READ 2026-10-15, why upstreams to a sandbox seemed to vanish: `wmf-sbx rm` runs
     `git remote remove NAME` (remotes.py), which deletes `refs/remotes/NAME/*` and
     unsets `branch.*.remote`/`merge` for every branch that tracked NAME. The local

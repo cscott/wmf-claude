@@ -46,6 +46,7 @@ from . import cli as cli_mod
 from . import disk as disk_mod
 from . import kit
 from . import lima as lima_mod
+from . import prompt as prompt_mod
 from . import state as state_mod
 
 SBX_ROOT = kit.SBX_ROOT
@@ -876,20 +877,22 @@ def build_lock_path(key, env=None):
     return os.path.join(cache_root(env), f".build-{key}.lock")
 
 
-def busy_prompt(interactive, prompt=input, err=sys.stderr):
-    """A `busy` for build(): ask on a terminal, abort otherwise."""
+BUSY_LABELS = ("wait for it, and use the image it builds",
+               "delete its builder (that build fails) and build here",
+               "abort")
+
+
+def busy_prompt(interactive=None, prompt=None, err=None):
+    """A `busy` for build(): ask on a terminal (Enter waits), abort
+    otherwise. `interactive` overrides the terminal check, `prompt` is
+    input()-like (prompt.Prompt's `ask`)."""
+    asker = prompt_mod.Prompt(ask=prompt, out=err,
+                              isatty=None if interactive is None else lambda: interactive)
+
     def choose(key, name):
-        if not interactive:
-            return "abort"
-        print(f"Another wmf-sbx is building golden image {key} (its builder is {name}).\n"
-              f"  [w] wait for it, and use the image it builds (the default)\n"
-              f"  [d] delete its builder (that build fails) and build here\n"
-              f"  [a] abort", file=err)
-        while True:
-            answer = (prompt("Wait, delete or abort? [W/d/a] ") or "w").strip().lower()
-            for choice in BUSY_CHOICES:
-                if answer in (choice, choice[0]):
-                    return choice
+        i = asker.pick(f"Another wmf-sbx is building golden image {key} "
+                       f"(its builder is {name}).", list(BUSY_LABELS), default=0)
+        return "abort" if i is None else BUSY_CHOICES[i]
     return choose
 
 
@@ -1097,7 +1100,7 @@ def main(argv=None, env=None, lima=None, run=subprocess.run, out=sys.stdout):
                                indent=2, sort_keys=True))
                 return 0
             build(inputs, lima=lima, run=run, env=env, log=say,
-                  keep_builder=args.keep_builder, busy=busy_prompt(sys.stdin.isatty()))
+                  keep_builder=args.keep_builder, busy=busy_prompt())
         elif args.cmd == "ls":
             from . import snapshot as snapshot_mod
             used = images_in_use(env)

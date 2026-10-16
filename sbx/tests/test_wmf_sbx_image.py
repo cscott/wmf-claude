@@ -837,9 +837,15 @@ class BuildTests(TempEnv):
 
     def test_the_busy_prompt(self):
         self.assertEqual(image.busy_prompt(False)("k", "b"), "abort")
-        for answers, want in ((["", ], "wait"), (["d"], "delete"), (["x", "abort"], "abort")):
+        for answers, want in ((["", ], "wait"), (["d"], "delete"), (["x", "abort"], "abort"),
+                              (["2"], "delete"), ([], "abort")):
             it = iter(answers)
-            choose = image.busy_prompt(True, prompt=lambda q: next(it), err=io.StringIO())
+            def ask(q):
+                try:
+                    return next(it)
+                except StopIteration:
+                    raise EOFError from None
+            choose = image.busy_prompt(True, prompt=ask, err=io.StringIO())
             self.assertEqual(choose("k", "b"), want, answers)
 
     def test_a_builder_that_does_not_start_is_deleted(self):

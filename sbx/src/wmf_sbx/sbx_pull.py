@@ -60,10 +60,11 @@ GUESS_RE = re.compile(r"^(master|main|REL\d+_\d+)$")
 GERRIT_TIMEOUT = 15
 
 
-def pick(prompt, question, choices, labels, error):
-    """choices[i] for the label the user picks; else PullError(error)."""
+def pick(prompt, question, choices, labels, error, default=None):
+    """choices[i] for the label the user picks (Enter: choices[default]);
+    else PullError(error)."""
     if prompt:
-        i = prompt.pick(question, labels)
+        i = prompt.pick(question, labels, default=default)
         if i is not None:
             return choices[i]
     raise PullError(error)
@@ -315,7 +316,9 @@ def local_branch(git, sandbox, branch, current, prompt=None):
         return pick(prompt, f"Branches {', '.join(mine)} all record {sandbox}/{branch}. "
                     f"Update which?", mine, mine,
                     f"branches {', '.join(mine)} all record {sandbox}/{branch}; "
-                    f"check out the one to update first"), True
+                    f"check out the one to update first",
+                    # The one with the sandbox branch's own name.
+                    default=mine.index(branch) if branch in mine else None), True
     if git.sha(f"refs/heads/{branch}"):
         other = git.config(f"branch.{branch}.{SANDBOX_KEY}")
         if other and other != sandbox:

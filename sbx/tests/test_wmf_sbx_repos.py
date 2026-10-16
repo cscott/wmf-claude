@@ -630,14 +630,18 @@ class FetchThroughHelperTests(Tmp):
     def test_the_rm_guard_fetches_on_yes(self):
         ok, asked, err = self.rm_check("y")
         self.assertTrue(ok, err)
-        self.assertEqual(asked, ["Fetch them now? [y/N] "])
+        self.assertEqual(asked, ["Fetch them now? [Y/n] "])
         self.assertEqual(git(self.host, "rev-parse", "demo/main"), git(self.vm, "rev-parse", "HEAD"))
 
     def test_the_rm_guard_refuses_on_no(self):
-        ok, asked, err = self.rm_check("")
+        ok, asked, err = self.rm_check("n")
         self.assertFalse(ok)
         self.assertIn("unfetched tip(s) on demo", err)
         self.assertNotEqual(self.host_git("rev-parse", "-q", "--verify", "demo/main").returncode, 0)
+
+    def test_the_rm_guard_fetches_on_enter(self):
+        ok, _asked, err = self.rm_check("")
+        self.assertTrue(ok, err)
 
     def test_push_is_refused(self):
         res = self.host_git("push", "demo", "main:refs/heads/x")

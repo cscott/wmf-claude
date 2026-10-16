@@ -408,12 +408,14 @@ class FakePrompt:
         self.answers = list(answers)
         self.asked = []
 
-    def pick(self, question, labels):
+    def pick(self, question, labels, default=None):
         self.asked.append((question, labels))
+        self.default = default
         return self.answers.pop(0)
 
-    def confirm(self, question):
+    def confirm(self, question, default=False):
         self.asked.append((question, None))
+        self.default = default
         return self.answers.pop(0)
 
 
@@ -470,6 +472,7 @@ class PromptPullTests(PullCase):
         prompt = FakePrompt(1)
         self.assertEqual(self.pull("fix-thing", prompt=prompt), 0, self.said())
         self.assertEqual(prompt.asked[0][1], ["fix-copy", "fix-thing"])
+        self.assertEqual(prompt.default, 1)  # the sandbox branch's own name
         self.assertEqual((self.branch(), self.head()), ("fix-thing", tip))
 
     def test_leaving_unsaved_work_asks(self):

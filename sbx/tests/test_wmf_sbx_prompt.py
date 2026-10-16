@@ -58,6 +58,27 @@ class PromptTests(unittest.TestCase):
                 self.assertEqual(self.prompt(answer).confirm("Go?"), want)
         self.assertFalse(self.prompt().confirm("Go?"))
 
+    def test_pick_by_the_start_of_one_label(self):
+        self.assertEqual(self.prompt("w").pick("Which?", ["wait", "delete"]), 0)
+        self.assertIsNone(self.prompt("fix", "", "").pick("Which?", ["fix-a", "fix-b"]))
+
+    def test_pick_enter_takes_the_default_and_eof_does_not(self):
+        self.assertEqual(self.prompt("").pick("Which?", ["a", "b"], default=1), 1)
+        self.assertIn("2) b (the default)", self.err.getvalue())
+        asked = []
+        prompt_mod.Prompt(ask=lambda q: asked.append(q) or "", out=io.StringIO()).pick(
+            "Which?", ["a", "b"], default=1)
+        self.assertEqual(asked, ["Which one? [1-2, Enter for 2] "])
+        self.assertIsNone(self.prompt().pick("Which?", ["a", "b"], default=1))
+
+    def test_confirm_with_a_yes_default(self):
+        self.assertTrue(self.prompt("").confirm("Go?", default=True))
+        self.assertFalse(self.prompt("n").confirm("Go?", default=True))
+        self.assertFalse(self.prompt().confirm("Go?", default=True))  # Ctrl-D
+        asked = []
+        prompt_mod.Prompt(ask=lambda q: asked.append(q) or "").confirm("Go?", default=True)
+        self.assertEqual(asked, ["Go? [Y/n] "])
+
     def test_the_default_ask_writes_to_stderr_and_reads_stdin(self):
         stdin = sys.stdin
         sys.stdin = io.StringIO("y\n")
@@ -81,7 +102,8 @@ class TerminalTests(unittest.TestCase):
                 p = prompt_mod.Prompt()
                 self.assertFalse(p.available)
                 self.assertFalse(p.confirm("Go?"))
-                self.assertIsNone(p.pick("Which?", ["a"]))
+                self.assertIsNone(p.pick("Which?", ["a"], default=0))
+                self.assertFalse(p.confirm("Go?", default=True))
                 self.assertEqual(p.ask("Name?"), "")
             self.assertEqual(sys.stdin.read(), "y\n1\n")
         finally:

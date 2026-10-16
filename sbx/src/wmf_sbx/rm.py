@@ -72,7 +72,8 @@ def check_unfetched(state, run=subprocess.run, env=None, lima=None, confirm=None
     findings, unreachable = remotes_mod.unfetched_tips(state, run=run)
     if findings and not unreachable:
         report_unfetched(findings)
-        if not prompt_mod.Prompt(ask=confirm).confirm("Fetch them now?"):
+        # A fetch only adds to the host: yes is the default.
+        if not prompt_mod.Prompt(ask=confirm).confirm("Fetch them now?", default=True):
             return False
         for host_dir, remote, _shas in findings:
             print(f"+ git -C {host_dir} fetch {remote}", file=sys.stderr)

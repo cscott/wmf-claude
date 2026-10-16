@@ -10,10 +10,9 @@ wmf_sbx/remotes.py's sync_remotes(), not just one that happens to be
 named like a sandbox remote.
 
 Written so `git-review-check` (sbx/bin/git-review-check) has a real
-answer to "is REMOTE actually a sandbox remote for this repo", replacing
-the name-prefix guess (`sandbox-*`) it used to make -- see sbx/NOTES.md
-§48/§48.1. Also useful stand-alone: run in any repo to list the sandbox
-remotes wmf-sbx thinks it registered there.
+answer to "is REMOTE actually a sandbox remote for this repo", not a
+guess from the remote's name. Also useful stand-alone: run in any repo
+to list the sandbox remotes wmf-sbx thinks it registered there.
 """
 
 import argparse

@@ -4,13 +4,12 @@
 This is the project's first *durable* host-side state -- everything else
 `wmf-claude` writes is session-scoped and reaped on exit. It exists
 because `wmf-sbx-create` adds `<name>` git remotes to host repos
-(see wmf_sbx/remotes.py), and those remotes outlive the sandbox: `sbx rm`
-destroys the sandbox and leaves every `.git/config` entry behind. Worse,
-host ports are recycled (confirmed on the host, 2026-09-07), so a leaked
+(see wmf_sbx/remotes.py), and those remotes outlive the VM: a plain
+`limactl delete` leaves every `.git/config` entry behind. A leaked
 remote doesn't merely clutter a config -- it can later fetch from an
-unrelated sandbox that happened to be handed the same port. Reliable
-cleanup is therefore a correctness requirement, and cleanup needs a
-record of what we touched.
+unrelated sandbox that is given the same name. Reliable cleanup is
+therefore a correctness requirement, and cleanup needs a record of what
+we touched.
 
 One JSON file per sandbox rather than a single registry, so two
 concurrent `wmf-sbx-create` runs can never read-modify-write the same
@@ -29,7 +28,7 @@ from . import prompt as prompt_mod
 
 SCHEMA_VERSION = 1
 
-# `sbx` sandbox names are already this shape; validating anyway means an
+# Lima instance names are already this shape; validating anyway means an
 # explicit --name that isn't gets rejected before it's ever used as a
 # filename, rather than escaping the state directory via '..' or a '/'.
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -60,23 +59,17 @@ def state_path(name, env=None):
     return os.path.join(state_dir(env), f"{validate_name(name)}.json")
 
 
-def new_state(name, daemon_port=None, host_port=None, created=None, attached=False,
+def new_state(name, created=None, attached=False,
               primary_dir=None, image=None, vm_type=None, repos=None, read_only=None):
     """A fresh, empty state dict. `created` is passed in rather than
     stamped here so callers stay testable without freezing the clock.
 
-    `attached` defaults to False, but `wmf-sbx-create` passes True: its
-    caller only reaches `new_state()` after the real interactive `sbx
-    create ... claude ...` attach already completed successfully (see
-    add_host_remotes() in wmf_sbx/create.py), and that attach IS the
-    sandbox's first conversation. MEASURED, cananian, 2026-09-08: leaving
-    this False meant the very next `wmf-sbx-resume` always saw
-    attached=False and stripped `--continue`, forcing a fresh session with
-    nothing to continue even though one had already run.
+    `attached` is False for a new sandbox: resume.set_attached sets it
+    when an interactive session exits (resume.py).
 
     `primary_dir` is the realpath'd host directory of the sandbox's
-    *primary* repo -- the one `sbx create`'s positional argument named,
-    not an extra. It is what `resolve_name_arg()` below matches a path
+    *primary* repo -- the first one `wmf-sbx create` named, not an
+    extra. It is what `resolve_name_arg()` below matches a path
     shortcut (`.`, `..`, an absolute path, ...) against, so a sandbox
     created before this field existed simply isn't reachable that way;
     it is still reachable by its plain name."""
@@ -84,8 +77,6 @@ def new_state(name, daemon_port=None, host_port=None, created=None, attached=Fal
         "schemaVersion": SCHEMA_VERSION,
         "name": validate_name(name),
         "created": created,
-        "daemonPort": daemon_port,
-        "hostPort": host_port,
         # Has an agent ever run in this sandbox? `wmf-sbx-resume` uses it
         # to decide whether `--continue` has anything to continue: on the
         # very first attach it doesn't, and claude exits 1 rather than
@@ -95,11 +86,10 @@ def new_state(name, daemon_port=None, host_port=None, created=None, attached=Fal
         "primaryDir": primary_dir,
         "remotes": [],
         "skipped": [],
-        # The Lima backend (lima-port/HANDOFF-LIMA.md): the golden image
-        # the VM was made from (image.py's key; `image rm` refuses an
-        # image that a state file names), the Lima driver, and the host
-        # repositories of the sandbox (phase 4 mounts their git dirs).
-        "backend": "lima",
+        # The golden image the VM was made from (image.py's key; `image
+        # rm` refuses an image that a state file names), the Lima driver,
+        # and the host repositories of the sandbox (their git dirs are
+        # mounted).
         "image": image,
         "vmType": vm_type,
         "repos": list(repos or []),
@@ -151,12 +141,6 @@ def require(name, env=None):
         raise StateError(
             f"{name!r} is not a wmf-sbx sandbox (no {state_path(name, env)}). "
             f"`wmf-sbx ls` lists them; `limactl list` lists every Lima VM."
-        )
-    if state.get("backend") != "lima":
-        raise StateError(
-            f"{name!r} is a Docker sbx sandbox. This wmf-sbx uses Lima only; "
-            f"use the sbx-docker-final branch to manage it, or remove its "
-            f"state file {state_path(name, env)}."
         )
     return state
 

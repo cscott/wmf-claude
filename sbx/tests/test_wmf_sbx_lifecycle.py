@@ -226,11 +226,9 @@ class Env(unittest.TestCase):
                 os.chmod(os.path.join(dirpath, f), 0o644)
         shutil.rmtree(self.tmp)
 
-    def sandbox(self, name="sbx-demo", status="Running", primary="/home/me/src/demo", lima=None,
-                backend="lima"):
+    def sandbox(self, name="sbx-demo", status="Running", primary="/home/me/src/demo", lima=None):
         st = state_mod.new_state(name, created="2026-10-09T00:00:00+00:00", primary_dir=primary,
                                  image=self.KEY, vm_type="qemu", repos=[primary])
-        st["backend"] = backend
         state_mod.save(st, self.env)
         lima = lima or FakeLima()
         if status:
@@ -343,12 +341,9 @@ class VmTests(Env):
         with self.assertRaisesRegex(vm.VmError, "exists already"):
             vm.create("dup", {"x": 1}, lima=lima, log=lambda m: None)
 
-    def test_resolve_requires_a_lima_state_file(self):
+    def test_resolve_requires_a_state_file(self):
         with self.assertRaisesRegex(state_mod.StateError, "not a wmf-sbx sandbox"):
             vm.resolve("nobody", env=self.env)
-        self.sandbox(name="old", backend=None)
-        with self.assertRaisesRegex(state_mod.StateError, "Docker sbx sandbox"):
-            vm.resolve("old", env=self.env)
 
 
 # -- create ---------------------------------------------------------------
@@ -466,7 +461,6 @@ class CreateTests(Env):
     def test_a_create_saves_the_state_first_then_makes_and_checks_the_vm(self):
         self.assertEqual(self.create("--name", "demo"), 0, self.err)
         st = state_mod.load("demo", self.env)
-        self.assertEqual(st["backend"], "lima")
         self.assertEqual(st["image"], self.KEY)
         self.assertEqual(st["primaryDir"], os.path.realpath(self.repo))
         self.assertEqual(st["repos"], [os.path.realpath(self.repo)])
@@ -1265,10 +1259,8 @@ class StartStopStatusTests(Env):
 
     def test_ls_shows_lima_sandboxes(self):
         lima = self.sandbox()
-        self.sandbox(name="old", backend=None, lima=lima)
         self.assertEqual(self.quiet(ls.main, [], lima=lima, env=self.env), 0)
         self.assertIn("sbx-demo", self.out)
-        self.assertNotIn("old", self.out)
 
 
 # -- exec -----------------------------------------------------------------

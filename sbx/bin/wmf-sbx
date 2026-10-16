@@ -2,9 +2,7 @@
 # wmf-sbx: MediaWiki development sandboxes in Lima VMs.
 #
 # A plain dispatcher: `wmf-sbx VERB ARGS...` runs the wmf-sbx-VERB script
-# next to this file. There is no Docker sbx any more
-# (lima-port/HANDOFF-LIMA.md §4; the sbx-docker-final branch keeps the
-# Docker backend). Every verb that acts on a sandbox requires its state
+# next to this file. Every verb that acts on a sandbox requires its state
 # file, so wmf-sbx never touches a Lima VM it did not make.
 #
 #   wmf-sbx create PRIMARY [EXTRA...]   make a sandbox (a Lima VM)
@@ -24,12 +22,10 @@
 # from settings.yaml"); --no-settings after the verb ignores them, and
 # --config PATH reads another file.
 set -euo pipefail
-# Kept from the Docker backend: an SSH agent socket has no business in
-# any command this starts.
+# An SSH agent socket has no business in any command this starts.
 unset SSH_AUTH_SOCK
 
 VERBS="allow cp create exec image login logs ls ls-remotes resolve resume rm start status stop"
-RETIRED="refresh-claude-md settings ports policy kit secret"
 
 usage() {
   sed -n '2,/^set -euo/{/^set -euo/d;s/^# \{0,1\}//;p;}' "${BASH_SOURCE[0]}"
@@ -51,13 +47,6 @@ case " $VERBS " in
       }
     fi
     exec "$sibling" "$@"
-    ;;
-esac
-
-case " $RETIRED " in
-  *" $verb "*)
-    echo "wmf-sbx: '$verb' belonged to the Docker sbx backend and is retired." >&2
-    exit 1
     ;;
 esac
 

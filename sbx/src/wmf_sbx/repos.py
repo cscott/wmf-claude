@@ -10,7 +10,7 @@ sees the new objects at once (`git fetch local`).
 VM to host: the host repository gets a remote with the sandbox's name and
 the URL wmfsbx://NAME/PATH, which git-remote-wmfsbx (remote_helper.py)
 serves with `git upload-pack` in the VM. remotes.py adds the remote and
-suspends gc, as with Docker sbx.
+suspends gc.
 
 The git dir is `git rev-parse --git-common-dir`, so that a worktree
 mounts the repository's git dir. The clone is on the branch that the

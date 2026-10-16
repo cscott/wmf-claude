@@ -3,7 +3,6 @@
   python3 -m unittest discover -s sbx/tests -v
 """
 
-import contextlib
 import io
 import os
 import sys
@@ -74,129 +73,6 @@ class ColorTests(unittest.TestCase):
                 self.assertEqual(color.dim("x"), "\x1b[38;2;128;128;128mx\x1b[m")
                 self.assertEqual(color.highlight("x"), "\x1b[38;2;122;162;247mx\x1b[m")
                 self.assertEqual(color.error("x"), "\x1b[38;2;247;118;142mx\x1b[m")
-
-
-def _ptys_work():
-    """True when this process can make a pty that is a terminal. Under
-    nono it cannot (RAN, N3: the child saw no terminal)."""
-    try:
-        import pty
-        master, slave = pty.openpty()
-    except (ImportError, OSError):
-        return False
-    try:
-        return os.isatty(slave)
-    finally:
-        os.close(master)
-        os.close(slave)
-
-
-@contextlib.contextmanager
-def _real_stdout_fd_capture():
-    # pty._copy relays the child through the raw fd (os.write(1, ...)),
-    # bypassing sys.stdout entirely -- so capturing it needs a real fd
-    # swap, not a mock.patch.object(sys, "stdout", ...).
-    r, w = os.pipe()
-    saved = os.dup(1)
-    os.dup2(w, 1)
-    os.close(w)
-    try:
-        yield r
-    finally:
-        os.dup2(saved, 1)  # closes the dup'd write end that lived at fd 1
-        os.close(saved)
-
-
-def _read_all(fd):
-    chunks = []
-    while True:
-        data = os.read(fd, 4096)
-        if not data:
-            break
-        chunks.append(data)
-    return b"".join(chunks).decode()
-
-
-class RunWithColorTests(unittest.TestCase):
-    def test_falls_back_to_the_injected_run_when_not_a_tty(self):
-        calls = []
-
-        def fake_run(cmd, **kw):
-            calls.append((cmd, kw))
-            return "fake-result"
-
-        result = color.run_with_color(
-            ["true"], env={"X": "1"}, run=fake_run, stream=io.StringIO(),
-        )
-        self.assertEqual(result, "fake-result")
-        self.assertEqual(calls, [(["true"], {"env": {"X": "1"}})])
-
-    def test_falls_back_when_no_color_is_set_even_on_a_tty(self):
-        calls = []
-        with mock.patch.dict(os.environ, {"NO_COLOR": "1"}):
-            color.run_with_color(
-                ["true"], run=lambda cmd, **kw: calls.append(cmd), stream=FakeTty(),
-            )
-        self.assertEqual(calls, [["true"]])
-
-    def test_falls_back_when_pty_is_not_importable(self):
-        calls = []
-
-        def fake_run(cmd, **kw):
-            calls.append(cmd)
-            return "fake-result"
-
-        with mock.patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("NO_COLOR", None)
-            with mock.patch.dict(sys.modules, {"pty": None}):
-                result = color.run_with_color(
-                    ["true"], run=fake_run, stream=FakeTty(),
-                )
-        self.assertEqual(result, "fake-result")
-        self.assertEqual(calls, [["true"]])
-
-    def test_falls_back_when_pty_fork_fails(self):
-        calls = []
-
-        def fake_run(cmd, **kw):
-            calls.append(cmd)
-            return "fake-result"
-
-        with mock.patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("NO_COLOR", None)
-            with mock.patch("pty.fork", side_effect=OSError("no ptys")):
-                result = color.run_with_color(
-                    ["true"], run=fake_run, stream=FakeTty(),
-                )
-        self.assertEqual(result, "fake-result")
-        self.assertEqual(calls, [["true"]])
-
-    @unittest.skipUnless(_ptys_work(), "a new pty is not a terminal here (nono)")
-    def test_real_pty_gives_the_child_a_terminal(self):
-        with mock.patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("NO_COLOR", None)
-            with _real_stdout_fd_capture() as r:
-                result = color.run_with_color(
-                    ["/bin/sh", "-c", "test -t 1 && echo tty || echo notty"],
-                    stream=FakeTty(),
-                )
-            output = _read_all(r)
-        os.close(r)
-        self.assertEqual(result.returncode, 0)
-        self.assertEqual(output.strip(), "tty")
-
-    def test_real_pty_passes_env_through_to_the_child(self):
-        with mock.patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("NO_COLOR", None)
-            env = dict(os.environ, SOME_VAR="hi-from-run-with-color")
-            with _real_stdout_fd_capture() as r:
-                result = color.run_with_color(
-                    ["/bin/sh", "-c", "echo $SOME_VAR"], env=env, stream=FakeTty(),
-                )
-            output = _read_all(r)
-        os.close(r)
-        self.assertEqual(result.returncode, 0)
-        self.assertEqual(output.strip(), "hi-from-run-with-color")
 
 
 if __name__ == "__main__":

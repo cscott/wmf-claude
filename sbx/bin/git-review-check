@@ -34,7 +34,7 @@ REMOTE="$1"
 #   - `local` only qualifies when we can tell we're actually running
 #     inside a sandbox, via $SANDBOX_NAME -- set by the sandbox, not by
 #     the host: wmf-sbx puts it in the session's settings `env` and in
-#     `wmf-sbx exec`'s environment (Docker Sandboxes set it too), and a
+#     `wmf-sbx exec`'s environment, and a
 #     host repo's remote naming cannot spoof it.
 #   - any other REMOTE qualifies only if wmf-sbx's own host-side state
 #     (~/.local/state/wmf-sbx/sandboxes/*.json, one file per sandbox --

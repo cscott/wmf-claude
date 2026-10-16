@@ -3,18 +3,15 @@
 the same as the sandbox itself, e.g. `sbx-cite` (see remote_name_for) --
 that make a sandbox's clones fetchable from the host. The URL is
 wmfsbx://NAME/PATH, served by git-remote-wmfsbx (remote_helper.py,
-lima-port/HANDOFF-LIMA.md §6.2); the Docker backend used a git daemon on
-a published port.
+lima-port/HANDOFF-LIMA.md §6.2).
 
 Two things here are load-bearing and non-obvious:
 
 **Ownership is a config marker, not the URL.** A remote is ours iff
 `remote.<remote>.wmfSbxSandbox` equals the sandbox name. The marker is a
 two-sided record: the state file says where to look, the repo itself
-says "yes, this one is ours." (With Docker it also had to survive a URL
-change: the daemon's host port changed after `sbx stop`, and host ports
-are recycled. A wmfsbx:// URL does not change, but a leaked remote named
-like a later sandbox would still reach that sandbox.)
+says "yes, this one is ours." (A wmfsbx:// URL does not change, but a
+leaked remote named like a later sandbox would still reach that sandbox.)
 
 **`--no-tags`.** Tags live in one flat namespace per repository, so a
 default fetch from a sandbox would drop the sandbox's tags straight into
@@ -506,15 +503,14 @@ def _parse_ls_remote(stdout):
 
 def prune_dead(live_names, run=subprocess.run, warn=None, dry_run=False, env=None):
     """Clean up after sandboxes that went away without us -- a plain
-    `sbx rm`, `sbx logout`, or a machine that lost its Docker state. Takes
+    `limactl delete`, or a machine that lost its Lima state. Takes
     the set of still-live sandbox names as an argument rather than
     shelling out for it, so this module stays free of any dependency on
     wmf_sbx_create (which imports *this*).
 
-    Never destroys a sandbox and never prompts, so it is safe to run
-    opportunistically -- `wmf-sbx-create` does, on every launch, which is
-    what keeps a leaked remote from surviving long enough for its host
-    port to be recycled onto somebody else's sandbox.
+    Never destroys a sandbox and never prompts (`wmf-sbx rm --prune`
+    runs it). A leaked remote must not survive until a later sandbox
+    takes its name.
 
     Returns [(name, results), ...] with results as from remove_remotes.
     """

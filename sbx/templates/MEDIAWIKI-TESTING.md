@@ -30,7 +30,7 @@ run it again with `-- --testTimeout=60000` before you report it.
 
 ## 0. What the sandbox already did for you
 
-At `sbx create` time:
+At `wmf-sbx create` time:
 
 - Each repo you were named was cloned from the engineer's own checkout, at
   the branch and commit they had. Repos pulled in only as dependencies were

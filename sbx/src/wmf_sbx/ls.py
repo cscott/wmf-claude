@@ -28,7 +28,7 @@ def main(argv=None, lima=None, env=None):
             state = state_mod.load(name, env) or {}
         except state_mod.StateError:
             state = {}
-        if state.get("backend") != "lima":
+        if not state:
             continue
         st = instances.get(vm_mod.PREFIX + name, "MISSING")
         print(f"{name:24} {st:10} {'sudo' if state.get('sudo') else '':4} "

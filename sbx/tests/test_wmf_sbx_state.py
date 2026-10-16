@@ -64,7 +64,7 @@ class RoundTripTests(unittest.TestCase):
         self.env = {"XDG_STATE_HOME": self.tmp.name}
 
     def test_save_then_load(self):
-        state = s.new_state("mw-cite", daemon_port=9418, host_port=49281, created="2026-09-07T00:00:00+00:00")
+        state = s.new_state("mw-cite", created="2026-09-07T00:00:00+00:00")
         state["remotes"].append({"hostDir": "/h/Cite", "remote": "sandbox-mw-cite", "url": "git://x/y"})
         path = s.save(state, env=self.env)
         self.assertEqual(path, s.state_path("mw-cite", self.env))
@@ -84,9 +84,9 @@ class RoundTripTests(unittest.TestCase):
         self.assertEqual(entries, ["mw-cite.json"])
 
     def test_save_overwrites_atomically(self):
-        s.save(s.new_state("mw-cite", host_port=1), env=self.env)
-        s.save(s.new_state("mw-cite", host_port=2), env=self.env)
-        self.assertEqual(s.load("mw-cite", env=self.env)["hostPort"], 2)
+        s.save(s.new_state("mw-cite", image="one"), env=self.env)
+        s.save(s.new_state("mw-cite", image="two"), env=self.env)
+        self.assertEqual(s.load("mw-cite", env=self.env)["image"], "two")
 
     def test_load_missing_returns_none(self):
         self.assertIsNone(s.load("nope", env=self.env))
@@ -111,10 +111,6 @@ class RoundTripTests(unittest.TestCase):
         self.assertFalse(s.new_state("mw-cite")["attached"])
 
     def test_new_state_attached_true_is_honored(self):
-        # wmf-sbx-create passes attached=True: by the time it calls
-        # new_state(), the real interactive `sbx create ... claude ...`
-        # attach already succeeded, so this sandbox's first conversation
-        # already happened. See wmf_sbx_create.add_host_remotes().
         self.assertTrue(s.new_state("mw-cite", attached=True)["attached"])
 
 

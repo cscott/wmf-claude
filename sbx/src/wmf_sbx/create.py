@@ -9,8 +9,7 @@ the VM (vm.py).
 
 The helpers here that are not main() are what later phases need: the
 upstream and link plans for the in-VM setup (phase 5), and the
-Phabricator username for the session (phase 6). The Docker sbx code is
-gone (C1a); the sbx-docker-final branch keeps it.
+Phabricator username for the session (phase 6).
 """
 
 import argparse
@@ -339,7 +338,7 @@ def expand_dependencies(resolved, split, config, config_path, include_dev=True,
     of it that happens to already be on disk.
 
     Discovered repos are always extras (the primary stays whatever was
-    named first, and `sbx create` requires the primary be read/write
+    named first, and `wmf-sbx create` requires the primary be read/write
     anyway) and never ':ro' -- you may well need to edit a dependency.
     """
     warn = warn or _warn

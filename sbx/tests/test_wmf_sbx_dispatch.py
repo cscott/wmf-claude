@@ -171,13 +171,6 @@ class DispatchTests(unittest.TestCase):
         self.assertEqual([e["name"] for e in read_log(self.sibling_log)], ["wmf-sbx-resume"])
         self.assertEqual(read_log(self.sbx_log), [])
 
-    def test_docker_only_verbs_are_retired(self):
-        for verb in ("refresh-claude-md", "settings", "ports"):
-            with self.subTest(verb=verb):
-                r = self.run_wmf_sbx([verb])
-                self.assertEqual(r.returncode, 1)
-                self.assertIn("retired", r.stderr)
-
     def test_an_unknown_verb_is_an_error(self):
         r = self.run_wmf_sbx(["frobnicate"])
         self.assertEqual(r.returncode, 1)

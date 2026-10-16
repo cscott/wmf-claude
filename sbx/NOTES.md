@@ -32,15 +32,13 @@ Shims for old names and old local state:
   `phabricator_username`, step 3, "for a host whose last install predates" config.json):
   remove it if upstream's installer has written config.json for long enough.
 
-Docker sbx leftovers:
-- [ ] **`state.new_state` still writes `daemonPort`/`hostPort`**, which nothing reads.
-- [ ] **`bin/wmf-sbx`'s `RETIRED` verbs** and their "belonged to the Docker sbx backend"
-  message.
-- [ ] **Docstrings and comments that name Docker sbx or `sbx create`/`sbx run`**:
-  `__init__.py` ("host-side tooling for Docker Sandboxes"), color.py (the palette "the
-  real `sbx create` uses"), create.py (`sbx create` requires ...), repos.py ("as with
-  Docker sbx"), ls_remotes.py ("the name-prefix guess it used to make", "NOTES §48").
-  `git grep -n -i -E 'docker sbx|sbx (create|run)|Docker Sandboxes' sbx`.
+Docker sbx leftovers (cananian removed the last Docker sandboxes, 2026-10-16):
+- [x] **`state.new_state` wrote `daemonPort`/`hostPort`** and `"backend": "lima"`: gone,
+  with the Docker-state refusal in `state.require` (`ls` now skips only an empty state).
+- [x] **`bin/wmf-sbx`'s `RETIRED` verbs**: gone; such a verb is now an unknown verb.
+- [x] **`color.run_with_color`** (the pty wrapper for `sbx`) and its tests: gone.
+- [x] **Docstrings and comments that named Docker sbx or `sbx create`/`sbx rm`**, and the
+  unused `patch_host_probes` in the create tests.
 - [ ] **`sbx/reference/Secure_use_guidelines.wt`** recommends `docker sbx`: it is a copy of
   a wiki page; refresh the copy (or the page) or drop it.
 
@@ -199,7 +197,6 @@ Copy-on-write disks and warm snapshots (HANDOFF-LIMA.md D12, B1 to B4) are done 
   (N3: `mw-install-browser` got ENETUNREACH to googlechromelabs.github.io).
 - `TMPDIR` must be the session's (`/tmp/claude-UID`, launch-claude.sh): `/tmp` is
   write-only under nono, and Lima builds its cloud-init ISO in TMPDIR.
-- In a nested session a new pty is not a terminal; `test_real_pty_*` skips.
 
 ### The egress proxy and `--sudo` (after track A)
 
@@ -228,10 +225,9 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
 
 ### Session, credentials, Claude Code
 
-- [ ] **Check the "update installed, restart to update" message on the first resume** in a
-  new sandbox. Its likely cause, `claude update` in `wmf-claude-setup` at create time (an
-  agent-owned 2.1.296 beside the image's pinned version), is now skipped
-  (`WMF_CLAUDE_SKIP_UPDATE=1`); close this if the message is gone.
+- [x] **The "update installed, restart to update" message on the first resume**: gone
+  since `wmf-claude-setup` skips `claude update` (`WMF_CLAUDE_SKIP_UPDATE=1`) and the
+  version is pinned (cananian, 2026-10-16).
 - [ ] **Upstream: grant the Linux system paths the tools read**. Propose `read`
   entries for `/opt/claude-code`, `/etc/php`, `/etc/gitconfig`, `/etc/bash.bashrc`,
   `/opt/node`, `/etc/fonts` in `profiles/wmf-engineer.json` (today the lima-sbx launcher

@@ -65,8 +65,6 @@ def write_sandbox_state(state_home, sandbox_name, host_dir, remote):
         "schemaVersion": 1,
         "name": sandbox_name,
         "created": None,
-        "daemonPort": None,
-        "hostPort": None,
         "attached": True,
         "remotes": [{
             "hostDir": os.path.realpath(host_dir),

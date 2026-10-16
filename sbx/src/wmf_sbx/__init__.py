@@ -1,4 +1,4 @@
-"""wmf-sbx: host-side tooling for Docker Sandboxes ("sbx") MediaWiki dev.
+"""wmf-sbx: host-side tooling for MediaWiki development sandboxes in Lima VMs.
 
 Not installed as a package (no pyproject.toml/setup.py) -- sbx/bin's thin
 wrapper scripts and sbx/tests both add sbx/src to sys.path by hand before

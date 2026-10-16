@@ -183,6 +183,17 @@ def proxy_stale(name, env=None):
     return started < changed
 
 
+def mark_fresh(name, env=None):
+    """Make the sandbox's proxy count as started after the capture store
+    last changed (proxy_stale is then False). The time is given, not the
+    kernel's: a file time from os.utime(path) comes from the kernel's
+    coarse clock and can be before a time.time() a moment earlier."""
+    t = time.time()
+    with contextlib.suppress(OSError):
+        t = max(t, os.stat(store_file(env)).st_mtime)
+    os.utime(egress_mod.port_file(name, env), (t, t))
+
+
 def refresh_proxy(name, env=None, swap=None):
     """Restart the sandbox's proxy if it is stale, so that it reads the
     store again. Returns True when it was restarted."""
@@ -583,7 +594,7 @@ class Coordinator:
             # This sandbox's proxy captured the new login, so it knows the
             # phantoms: no restart (refresh_proxy) before the push here.
             with contextlib.suppress(OSError):
-                os.utime(egress_mod.port_file(self.name, self.env))
+                mark_fresh(self.name, self.env)
         self.refreshed += 1
         notify(self.env, skip=self.path)
         self._sync()

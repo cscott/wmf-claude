@@ -342,6 +342,13 @@ class SyncTests(Base):
         self.assertFalse(authproxy.refresh_proxy("demo", self.env, swap=swap))
         self.assertEqual(swapped, ["demo"])
 
+    def test_mark_fresh_is_not_before_the_store(self):
+        # A store time after the clock (the coarse-clock case, made large).
+        self.touch(egress.port_file("demo", self.env), 100)
+        self.touch(authproxy.store_file(self.env), time.time() + 60)
+        authproxy.mark_fresh("demo", self.env)
+        self.assertFalse(authproxy.proxy_stale("demo", self.env))
+
     def test_the_store_is_where_nono_puts_it(self):
         self.assertEqual(authproxy.store_file(self.env),
                          os.path.join(authproxy.nono_state_dir(self.env), "nono",

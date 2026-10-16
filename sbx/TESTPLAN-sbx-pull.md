@@ -378,7 +378,8 @@ git status -sb | head -1
 git switch master
 wmf-sbx rm sbx-multititle        # everything was pulled, so it must not refuse
 git remote | grep sbx-multititle                      # nothing
-git config --get-regexp 'wmfsbx'                      # nothing
+git config --get-regexp '^(branch|remote)\..*\.wmfsbx'   # nothing
+                     # (wmfsbx.* keys are the image snapshot's: they stay)
 git for-each-ref refs/remotes/sbx-multititle-seen/    # nothing
 git branch --list 'mt-*' NAME                         # the branches stay
 ```

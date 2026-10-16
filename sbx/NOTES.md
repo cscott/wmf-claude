@@ -448,8 +448,19 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
     sandbox remotes (`local` in a sandbox) first, in parallel, in a subshell (no job
     lines; `wait` leaves the user's jobs alone), at most once a minute per remote
     (a stamp in `.git/wmf-sbx-completion/`); a failed fetch is silent. No time limit:
-    macOS has no `timeout`, and Ctrl-C ends a slow TAB. Not yet RAN: the fetch on
-    the host, and `/sbx-pull` in a new sandbox. Open: zsh (its own `_git` and git's
+    macOS has no `timeout`, and Ctrl-C ends a slow TAB.
+  - RAN 2026-10-16, `TESTPLAN-sbx-pull.md` with MultiTitle, every step passed: the new
+    image has `git-sbx-pull` and `/sbx-pull`; Gerrit's user agent in a new sandbox
+    (`git fetch origin`, `git safe-reset origin`: no 403); the completion's fetch
+    (a TAB found a branch that no fetch had seen); a bare host pull of the only new
+    branch, with the sandbox branch's upstream; the next pull with no argument;
+    `review-check` on agent and seen refs; `safe-reset NAME/BRANCH`; the hand-off on
+    a named branch (the agent read the change, and saw that a host amend with `-m`
+    dropped its Change-Id); both stops and `-f`; the leave gate; `--as` from master,
+    and its upstream through host master; the REL1_46 guess and `--onto`; `rm`. Seen
+    then: the completion offers the sandbox's `master` (bare and qualified), which
+    a bare pull never takes; the `wmfsbx.*` keys left after `rm` are the snapshot's gc
+    borrower, not the pull records (the plan said "nothing": its error). Open: zsh (its own `_git` and git's
     `git-completion.zsh` find subcommands in different ways), and macOS bash 3.2
     (bash-completion 2 needs bash 4).
   - READ 2026-10-15, why upstreams to a sandbox seemed to vanish: `wmf-sbx rm` runs

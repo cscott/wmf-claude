@@ -57,7 +57,8 @@ class CompletionTests(unittest.TestCase):
         self.git("-c", "user.name=T", "-c", "user.email=t@example.invalid",
                  "commit", "-q", "--allow-empty", "-m", "first")
         for ref in ("origin/master", "origin/REL1_46", "origin/HEAD", "local/fix-thing",
-                    "sbx-cite/fix-thing", "sbx-cite/other", "sbx-echo/fix-thing"):
+                    "local/master", "sbx-cite/fix-thing", "sbx-cite/other",
+                    "sbx-cite/master", "sbx-echo/fix-thing", "sbx-echo/REL1_46"):
             self.git("update-ref", f"refs/remotes/{ref}", "HEAD")
         # A stand-in for wmf-sbx-ls-remotes: this repo's sandbox remotes.
         bindir = os.path.join(tmp.name, "bin")
@@ -119,6 +120,11 @@ class CompletionTests(unittest.TestCase):
         subprocess.run(["git", "-C", host, "branch", "handed-off"], check=True)
         self.assertIn("handed-off", self.complete("h", sandbox="sbx-cite"))
 
+    def test_the_host_leaves_out_branches_named_like_origin_branches(self):
+        words = self.complete("")
+        for word in ("master", "sbx-cite/master", "REL1_46", "sbx-echo/REL1_46"):
+            self.assertNotIn(word, words)
+
     def test_a_prefix_narrows_the_list(self):
         self.assertEqual(self.complete("sbx-c"), ["sbx-cite/fix-thing", "sbx-cite/other"])
 
@@ -130,7 +136,8 @@ class CompletionTests(unittest.TestCase):
         self.assertEqual(self.complete("--"), ["--force", "--onto="])
 
     def test_a_sandbox_offers_the_hosts_branches_and_its_own_options(self):
-        self.assertEqual(self.complete("", sandbox="sbx-cite"), ["fix-thing"])
+        # The host's master is a hand-off too (with --as): it stays.
+        self.assertEqual(self.complete("", sandbox="sbx-cite"), ["fix-thing", "master"])
         self.assertEqual(self.complete("--", sandbox="sbx-cite"), ["--as=", "--force"])
 
 

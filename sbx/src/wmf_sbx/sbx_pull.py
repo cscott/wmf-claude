@@ -224,12 +224,15 @@ def choose(git, target, remotes, fetched):
                 raise PullError(f"{remote} has no branch {branch}")
             return remote, branch
         have = [r for r in sorted(fetched) if target in branches_of(git, r)]
+        rec = record_of(git, target)
+        if len(have) > 1 and rec and rec[1] == target:
+            # The host's branch of that name came from one of them.
+            have = [r for r in have if remotes[r]["sandbox"] == rec[0]] or have
         if len(have) > 1:
             raise PullError(f"more than one sandbox has {target}; name one: " +
                             ", ".join(f"{r}/{target}" for r in have))
         if have:
             return have[0], target
-        rec = record_of(git, target)
         if rec:
             return remote_for(rec[0], remotes, fetched), rec[1]
         raise PullError(f"no sandbox of this repo has a branch {target}")

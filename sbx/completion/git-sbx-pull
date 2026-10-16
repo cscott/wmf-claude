@@ -69,15 +69,24 @@ _git_sbx_pull ()
 		return
 	fi
 	# On the host: BRANCH and NAME/BRANCH, for each sandbox of this repo.
-	local ls top remote remotes list=""
+	# Not a branch named like an origin branch (the sandbox's master): a
+	# bare `git sbx-pull` never takes one, and a hand-off is on its own
+	# branch.
+	local ls top remote remotes branch list=""
+	local -A is_origin=()
+	for branch in $origin; do
+		is_origin[$branch]=1
+	done
 	ls=$(command -v wmf-sbx-ls-remotes) || return
 	top=$(__git rev-parse --show-toplevel) || return
 	remotes=$("$ls" --path "$top" 2>/dev/null)
 	__git_sbx_pull_fetch $remotes
 	for remote in $remotes; do
-		list+=$(__git for-each-ref --format="%(refname:lstrip=2)
-%(refname:lstrip=3)" "refs/remotes/$remote/" | grep -v '\(^\|/\)HEAD$')
-		list+=$'\n'
+		while read -r branch; do
+			[ -n "$branch" ] && [ "$branch" != HEAD ] && [ -z "${is_origin[$branch]-}" ] ||
+				continue
+			list+="$remote/$branch"$'\n'"$branch"$'\n'
+		done < <(__git for-each-ref --format='%(refname:lstrip=3)' "refs/remotes/$remote/")
 	done
 	__gitcomp_nl "$(printf '%s' "$list" | sort -u)"
 }

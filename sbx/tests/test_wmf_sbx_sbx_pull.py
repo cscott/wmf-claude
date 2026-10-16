@@ -168,6 +168,16 @@ class PullTests(unittest.TestCase):
         self.assertEqual(self.pull("sbx-q/fix-thing"), 0, self.said())
         self.assertEqual(self.head(), tip)
 
+    def test_a_branch_in_two_sandboxes_takes_the_sandbox_of_the_hosts_branch(self):
+        self.agent_branch(self.sandbox("sbx-p"), "fix-thing")
+        sb_q = self.sandbox("sbx-q")
+        self.agent_branch(sb_q, "fix-thing", message="other")
+        self.assertEqual(self.pull("sbx-q/fix-thing"), 0, self.said())
+        tip = commit(sb_q, "more")
+        git(self.host, "checkout", "-q", "master")
+        self.assertEqual(self.pull("fix-thing"), 0, self.said())
+        self.assertEqual((self.branch(), self.head()), ("fix-thing", tip))
+
     def test_no_new_branch(self):
         self.sandbox("sbx-p")
         self.assertEqual(self.pull(), 1)

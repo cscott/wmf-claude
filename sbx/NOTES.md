@@ -460,9 +460,13 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
     and its upstream through host master; the REL1_46 guess and `--onto`; `rm`. Seen
     then: the completion offers the sandbox's `master` (bare and qualified), which
     a bare pull never takes; the `wmfsbx.*` keys left after `rm` are the snapshot's gc
-    borrower, not the pull records (the plan said "nothing": its error). Open: zsh (its own `_git` and git's
-    `git-completion.zsh` find subcommands in different ways), and macOS bash 3.2
-    (bash-completion 2 needs bash 4).
+    borrower, not the pull records (the plan said "nothing": its error). Fixed
+    after: the host completion leaves out origin-named branches, in both forms
+    (the sandbox completion keeps the host's master, a hand-off with `--as`);
+    `git sbx-pull BRANCH` in two sandboxes takes the one that the host's branch
+    BRANCH records, and stops only when no record decides. Open: zsh (its own
+    `_git` and git's `git-completion.zsh` find subcommands in different ways), and
+    macOS bash 3.2 (bash-completion 2 needs bash 4).
   - READ 2026-10-15, why upstreams to a sandbox seemed to vanish: `wmf-sbx rm` runs
     `git remote remove NAME` (remotes.py), which deletes `refs/remotes/NAME/*` and
     unsets `branch.*.remote`/`merge` for every branch that tracked NAME. The local

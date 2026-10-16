@@ -225,10 +225,9 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
 
 ### Session, credentials, Claude Code
 
-- [ ] **Track L6: measure the shared login** (HANDOFF-LIMA, track L, L6): run
-  `lima-port/checks/oauth-l6.sh` on the host again, from `use l6-b`, with the proxy
-  restart. Rotation and two refreshes at once decide whether the minute's sync is
-  enough or wmf-sbx must be the only refresher.
+- [ ] **Track L6: one refresher for the shared login** (HANDOFF-LIMA, track L, L6). The
+  sync is not enough (a refresh revokes the old tokens; two refreshes at once lose
+  one). Run `oauth-l6.sh live` and `trigger`, then build the refresher.
 - [ ] **Upstream: file `sbx/upstream/NONO-ISSUE-1.md`** (nono's capture store is read
   once and written whole). When nono reloads and merges, remove
   `authproxy.refresh_proxy`.
@@ -1237,6 +1236,21 @@ A2.0 results (in the nested `dev` VM, nono 0.78.0, 2026-10-13):
   than the store file (`allow.swap`) before the sandbox gets phantoms;
   `sbx/upstream/NONO-ISSUE-1.md` for nono. The `rotation` result of that run does not
   count: l6-b's proxy could not resolve even the old phantoms.
+- L6, second run (engineer's host, 2026-10-16, with the proxy restart): l6-b and l6-c
+  (sudo) used l6-a's login with no `/login`. Then:
+  - **A refresh revokes the old refresh token and the old access token.** After l6-a
+    refreshed (200), l6-b's refresh with the old refresh phantom got 400; and the old,
+    unexpired access phantom, put back into l6-b by the sync (its proxy restarted, so
+    it knew the phantom), got 401.
+  - **Two refreshes at once: one wins.** l6-a and l6-b, both expired, refreshed with the
+    same refresh phantom in the same second: one 200, one 400. The loser's Claude Code
+    emptied its credentials file ("OAuth session expired and could not be refreshed").
+  - So a sync can push a dead login: after the race the host copy was the login that
+    the winner's refresh had revoked (the refreshes ran by `exec`, outside a resume's
+    sync), and l6-a failed with it until the winner's login was pulled.
+  - Consequence: every sandbox refreshing for itself does not work for a shared login.
+    Two active sessions reach the same `expiresAt` and refresh together every 8 hours;
+    and any refresh breaks the other sandboxes until their files have the new phantoms.
 - Other denials in the login session, not ours to allow: `downloads.claude.ai` (Claude
   Code's update and plugin downloads), `http-intake.logs.us5.datadoghq.com` (telemetry),
   `raw.githubusercontent.com`.

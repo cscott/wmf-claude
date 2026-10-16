@@ -10,6 +10,8 @@
 #   lima-port/checks/oauth-l6.sh use l6-c          # the same in the sudo sandbox
 #   lima-port/checks/oauth-l6.sh rotation l6-a l6-b  # refresh in a, then in b with the old phantoms
 #   lima-port/checks/oauth-l6.sh race l6-a l6-b    # both refresh at once
+#   lima-port/checks/oauth-l6.sh live l6-a l6-b    # b's session runs across a's refresh
+#   lima-port/checks/oauth-l6.sh trigger l6-a      # a refresh in a throwaway config dir
 #   lima-port/checks/oauth-l6.sh rc l6-a           # interactive: Remote Control, /status, /usage
 #   lima-port/checks/oauth-l6.sh scan l6-a         # real tokens in the guest? (want 0)
 #   lima-port/checks/oauth-l6.sh long l6-a l6-b [H]  # two sessions for H hours (default 9)
@@ -147,6 +149,67 @@ phase_race() {  # A B
   phase_use "$1"; phase_use "$2"
 }
 
+# authproxy.sync of one sandbox, from the host, outside a resume.
+host_sync() {  # NAME
+  PYTHONPATH="$REPO/sbx/src" python3 -c \
+    'import sys; from wmf_sbx import authproxy; print(authproxy.sync(sys.argv[1]))' "$1"
+}
+
+phase_live() {  # A B: B's session runs while A refreshes
+  # Does a running Claude Code pick up the new phantoms that resume's
+  # sync writes into its credentials file, after another sandbox's
+  # refresh revoked its access token?
+  phase_use "$1" >/dev/null; phase_use "$2" >/dev/null
+  echo "-- both on: $(phantom "$1")"
+  local n=${WMF_SBX_L6_LIVE_MESSAGES:-12} gap=${WMF_SBX_L6_LIVE_GAP:-20}
+  : > "$LOGS/live-$2.log"
+  for i in $(seq "$n"); do
+    printf '{"type":"user","message":{"role":"user","content":"Reply with exactly: tick-%s"}}\n' "$i"
+    echo "$(date -u +%T) message $i" >> "$LOGS/live-$2.log"
+    [ "$i" -lt "$n" ] && sleep "$gap"
+  done | "$WMF_SBX" resume --no-continue "$2" -- -p --input-format stream-json \
+    --output-format stream-json --verbose --model haiku > "$LOGS/live-$2.jsonl" 2>&1 &
+  local pb=$!
+  sleep $(( gap * 2 + 10 ))
+  echo "-- $(date -u +%T) refresh in $1 (exec), then sync $1 to the host"
+  expire "$1"; exec_turn "$1" "$LOGS/live-$1.log"; echo "   $1 rc $?, now $(phantom "$1")"
+  echo "   sync $1: $(host_sync "$1"); host copy: $(host_copy)"
+  wait $pb
+  echo "-- $2: session rc $?, replies $(grep -o '"result":"tick-[0-9]*' "$LOGS/live-$2.jsonl" | wc -l) of $n"
+  grep -o '"result":"[^"]*"\|"is_error":true\|Failed to authenticate[^"]*\|OAuth[^"]*' \
+    "$LOGS/live-$2.jsonl" | uniq -c | sed 's/^/   | /'
+  echo "-- $2 now: $(phantom "$2")"
+  echo "-- $2: token endpoint and 401s:"
+  grep -E 'oauth/token|status=401' "$(proxy_log "$2")" | tail -8 | sed 's/^/   | /'
+  sed 's/^/   | /' "$LOGS/live-$2.log" | tail -4
+}
+
+phase_trigger() {  # NAME: a refresh that wmf-sbx could start itself
+  # In a throwaway CLAUDE_CONFIG_DIR, from a copy of the guest's login with
+  # expiresAt 0: does `claude auth status` refresh it, or only a turn?
+  # The new login is then put in ~/.claude and synced to the host, so the
+  # other sandboxes stay on the current one.
+  phase_use "$1" >/dev/null
+  echo "-- before: $(phantom "$1")"
+  "$WMF_SBX" exec "$1" -- sh -c '
+    d=$(mktemp -d); umask 077
+    jq ".claudeAiOauth.expiresAt = 0" "$HOME/.claude/.credentials.json" > "$d/.credentials.json"
+    show() { jq -r ".claudeAiOauth | \"\(.accessToken[0:20]) expires \(.expiresAt)\"" "$d/.credentials.json"; }
+    echo "   auth status: $(CLAUDE_CONFIG_DIR=$d claude auth status --json < /dev/null 2>&1 | tr -d "\n" | cut -c1-200)"
+    echo "   after auth status: $(show)"
+    if [ "$(jq .claudeAiOauth.expiresAt "$d/.credentials.json")" = 0 ]; then
+      CLAUDE_CONFIG_DIR=$d claude -p ok --model haiku < /dev/null > "$d/turn.log" 2>&1
+      echo "   a turn: rc $?, $(tail -1 "$d/turn.log" | cut -c1-120)"
+      echo "   after a turn: $(show)"
+    fi
+    if [ "$(jq .claudeAiOauth.expiresAt "$d/.credentials.json")" != 0 ]; then
+      cp "$d/.credentials.json" "$HOME/.claude/.credentials.json"
+    fi
+    rm -rf "$d"'
+  echo "-- sync $1: $(host_sync "$1"); host copy: $(host_copy)"
+  token_lines "$1"
+}
+
 phase_rc() {  # NAME
   local before; before=$(wc -l < "$(proxy_log "$1")" 2>/dev/null || echo 0)
   echo "-- In the session: /status (note Login method, Organization policy), /usage,"
@@ -227,8 +290,10 @@ case "${1:-}" in
   create|rm) "phase_$1" ;;
   login|inspect|use|rc|scan) [ -n "${2:-}" ] || { echo "usage: $0 $1 NAME"; exit 2; }
                              "phase_$1" "$2" ;;
-  rotation|race) [ -n "${3:-}" ] || { echo "usage: $0 $1 A B"; exit 2; }; "phase_$1" "$2" "$3" ;;
+  rotation|race|live) [ -n "${3:-}" ] || { echo "usage: $0 $1 A B"; exit 2; }
+                     "phase_$1" "$2" "$3" ;;
+  trigger) [ -n "${2:-}" ] || { echo "usage: $0 trigger NAME"; exit 2; }; phase_trigger "$2" ;;
   long) [ -n "${3:-}" ] || { echo "usage: $0 long A B [HOURS]"; exit 2; }
         phase_long "$2" "$3" "${4:-9}" ;;
-  *) sed -n '2,23p' "$0"; exit 2 ;;
+  *) sed -n '2,25p' "$0"; exit 2 ;;
 esac

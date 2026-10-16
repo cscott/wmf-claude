@@ -1699,7 +1699,11 @@ Candidates (L1 measures them):
   use it, because `nono proxy` reads its capture store only at start
   (sbx/NOTES.md, "Shared login"). Fixed by restarting a stale proxy
   (`authproxy.refresh_proxy`); nono issue drafted
-  (`sbx/upstream/NONO-ISSUE-1.md`). To run again from item 1:
+  (`sbx/upstream/NONO-ISSUE-1.md`). Second run (2026-10-16): items 1
+  pass (l6-b, l6-c sudo); item 2: **a refresh revokes the old refresh
+  and access tokens**; item 3: two refreshes at once, one gets 400 and
+  its Claude Code empties its credentials. So wmf-sbx must be the only
+  refresher (below, L7). Items 4 to 6 still to run.
   1. A second sandbox, and a `--sudo` one, work with no `/login`.
   2. Rotation: after a refresh in one sandbox, does the other's old
      refresh phantom still work? If not, the minute's sync is what keeps
@@ -1713,6 +1717,19 @@ Candidates (L1 measures them):
   5. `scan`: no real token in any guest.
   6. `long`: two sessions for 9 hours, across an 8-hour access token's
      refresh.
+  7. `live`: does a running session pick up phantoms that the sync
+     writes into its file, after another sandbox's refresh revoked its
+     access token? `trigger`: can a refresh run in a throwaway
+     `CLAUDE_CONFIG_DIR` (`claude auth status`, or one turn)?
+- **L7. One refresher** (proposed 2026-10-16, after L6): the guests never
+  refresh (the sync writes `expiresAt` far ahead into each guest; the
+  host copy keeps the real one). Before the real expiry, one `resume`'s
+  syncer, under a host-wide lock, refreshes in its own guest in a
+  throwaway `CLAUDE_CONFIG_DIR` (the `trigger` phase), takes the new
+  phantoms as the host copy, and the syncers push them at once (they
+  watch the host copy's mtime every few seconds, not every minute). With
+  no session running, the next `resume` refreshes first if the login
+  has expired. Depends on L6 item 7.
 
 **Track C: develop wmf-sbx inside a sandbox (nested Lima)**
 

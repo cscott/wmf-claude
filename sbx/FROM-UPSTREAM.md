@@ -2,9 +2,10 @@
 
 Upstream wmf-claude `main` 70712f6..21bc986 (2026-10-16) adds the Lima VM
 work, `claude-vm` with its two modes, and a few general changes.
-`lima-port` is rebased on it. `upstream-review.md` is the full review,
-with file and line references (written at 835242c, before the rebase;
-its "breaks us" items are done in the rebase and in 9339a31).
+`lima-port` is rebased on it. What broke us is fixed in the rebase and in
+9339a31 (`--landlock-only`). A review agent's full review, written before
+the rebase, is in git history (`git show 5da4418:sbx/upstream-review.md`);
+this file keeps what is still to do.
 
 These items are not done. Each one is a to-do (`NOTES.md`, "To do").
 Do them in this order, and ask the engineer first where an item says so.
@@ -39,6 +40,18 @@ allowlist, as in an isolated VM with a narrower network.
 upstream's contained mode. Rename ours (for example "nono mode", against
 "sudo mode"), and say in `sbx/README.md` how wmf-sbx compares with
 upstream's two modes.
+
+## 0. A session on nono 0.80 (first)
+
+The pin is now 0.80.0 (7097fb9), so the next `create` builds a new golden
+image (`.nono-version` is in the image key). Without `--landlock-only`,
+nono's proxy-mode seccomp layer is active again in our sessions. Nothing
+of ours has run under it yet: `--upstream-proxy` with `--allow-domain "*"`
+(`session.py`), `--listen-port 0`, and the `--local-web` port range. On a
+new sandbox, run one session and record it as RAN: a wiki curl in the port
+window, a Gerrit fetch, a read-only POST that gets 403, the `/login`
+callback, and a browser suite. The host's `nono proxy` (egress, auth
+proxy) should be 0.80 too; check NONO-ISSUE-1 (`upstream/`) on it.
 
 ## 1. Small fixes
 
@@ -102,6 +115,13 @@ boot, so the gain is small. Test it in a sandbox (RAN) before adopting it.
   the full check a setting.
 
 ## Keep ours (overlaps)
+
+- **Do not set `WMF_CLAUDE_IN_VM` in a session.** Upstream's
+  `session-start.sh` then advises `php -S 127.0.0.1:8080` and MariaDB
+  (we use `composer serve` and SQLite), and `bin/claude` shows
+  "isolated VM" in the status line. We set it only for the
+  `wmf-claude-setup` call, where it stops the username prompt and the
+  `claude-vm` alias.
 
 - Upstream's contained-mode proxy and our credproxy/authproxy: both keep
   the token on the host. Keep ours; take the policy ideas in item 5.

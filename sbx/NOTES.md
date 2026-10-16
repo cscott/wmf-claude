@@ -495,7 +495,7 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
 ### Upstream work and repo hygiene
 
 - [ ] **Adopt what upstream added (`sbx/FROM-UPSTREAM.md`)**: more to-dos, from the
-  review of upstream 70712f6..21bc986 (`sbx/upstream-review.md`). In order: rename our
+  review of upstream 70712f6..21bc986. In order: a session on nono 0.80, rename our
   "contained" mode (upstream's contained mode is a different thing), the long project
   directory names in `resume.py`, `WMF_CLAUDE_PHAB_USER`, the terminal variables, the
   uncommitted-work report, memory and session carry, `ct direction reply`; then, after

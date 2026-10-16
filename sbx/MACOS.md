@@ -375,7 +375,7 @@ proxy, the fake-address resolver and the credential proxy on the host
 (README.md, Architecture). The QEMU wrapper owns that network, and the
 proxy's lifetime with it. `vz` has no QEMU to wrap, so a `vz` sandbox
 falls back to the guest's own policy: nftables, the session's nono with
-its own proxy, `--landlock-only` (nolabs-ai/nono#1786), a narrowed
+its own proxy, a narrowed
 ephemeral port range for the local ports, and DNS through Lima's
 resolver (a residual: lookups can carry data out). It gets no `--sudo`,
 no `wmf-sbx allow` and no `wmf-sbx logs`.
@@ -385,7 +385,7 @@ egress proxy, and a lot goes:
 
 - `--no-egress-proxy` and `create`'s fallback;
 - the guest's network filtering: the agent's rules in nftables, nono's
-  network half (`--landlock-only`, `--upstream-proxy`, the port window,
+  network half (`--upstream-proxy`, the port window,
   the narrowed ephemeral range), and the DNS residual;
 - the egress/no-egress branches in the provisioning, the session's
   launch line, the invariants and the tests;

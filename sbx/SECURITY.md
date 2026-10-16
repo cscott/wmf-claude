@@ -113,14 +113,15 @@ wikis and docs) plus, per session, the package registries and the
 browser and Cypress download hosts (`session.REGISTRY_DOMAINS`). Behind
 a host proxy, nono chains to it (`--upstream-proxy`).
 
-**`--landlock-only`.** On Linux, nono's seccomp layer denies every
-localhost connect except to its own proxy (nolabs-ai/nono#1786), so
-`bin/claude --landlock-only` runs nono with Landlock alone. That allows
-UDP to any host, and TCP to any host on an opened port. In the VM the
-nftables rules close most of that again: off the VM, the agent gets
-TCP 80 and 443 only, and nono does not open those ports, so HTTP and
-HTTPS still go through the allowlist proxy. UDP leaves the VM only as
-DNS to Lima's resolver.
+**nono's network layer stays on.** Before nono 0.80, its seccomp layer
+denied every localhost connect except to its own proxy
+(nolabs-ai/nono#1786), and sessions ran with `bin/claude --landlock-only`
+(Landlock alone: UDP to any host, TCP to any host on an opened port).
+The image now has nono 0.80 (`.nono-version`), which opens the
+session's local ports with the seccomp layer on, and `bin/claude`
+refuses `--landlock-only`. In the VM the nftables rules are a second
+layer: off the VM, the agent gets TCP 80 and 443 only, and UDP leaves
+the VM only as DNS to Lima's resolver.
 
 **Local ports.** A session opens 4000 (the wiki), 9876 (karma), and
 the guest's ephemeral port window, 49152-53247, with bind-to-port-0:

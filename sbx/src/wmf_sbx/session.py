@@ -355,7 +355,7 @@ def launcher_argv(state, cred_path=None, launcher_flags=(), claude_args=(),
         grants += ["--upstream-proxy", proxy]
     if state.get("nested"):
         grants += nested_mod.session_grants(state.get("nestedSrc"))
-    claude = ([LAUNCHER, f"--local-web={local_ports()}", "--landlock-only",
+    claude = ([LAUNCHER, f"--local-web={local_ports()}",
                "--listen-port", "0"] + grants
               + list(launcher_flags) + ["--"] + list(claude_args))
     wrapper = ["bash", "-c", CREDENTIAL_WRAPPER, "_", cred_path or ""] + claude
@@ -674,7 +674,7 @@ def phabricator_config(username):
     return {"phabricatorUsername": username} if username else {}
 
 
-def wmf_claude_setup(name, username, lima=None, env=None, quiet=True):
+def wmf_claude_setup(name, username, lima=None, env=None):
     """Run bin/wmf-claude-setup in the VM as the agent: it pulls nono's base
     pack and registers the MCP servers in the agent's ~/.claude.json, as
     lima/guest-install.sh does. Root first gives the agent the one file
@@ -687,13 +687,8 @@ def wmf_claude_setup(name, username, lima=None, env=None, quiet=True):
     config = json.dumps(phabricator_config(username)) + "\n"
     # The cache directories too: nono may refuse a grant for a path that
     # does not exist (ALLOW_GRANTS).
-    # landlock-only-ack: bin/claude asks once, per home, to acknowledge
-    # --landlock-only, which every sandbox session uses. In the VM the
-    # nftables host block keeps what that warning is about mostly closed
-    # (sbx/SECURITY.md §3), and a new sandbox would ask every time.
     write = vm_mod.agent_argv(["sh", "-c", "mkdir -p ~/.config/wmf-claude " + " ".join(
         shlex.quote(p) for p in ALLOW_GRANTS + (COMPOSER_HOME,))
-        + (" && touch ~/.config/wmf-claude/landlock-only-ack" if quiet else "")
         + " && cat > ~/.config/wmf-claude/config.json"])
     vm_mod.shell(name, write, lima=lima, input=config, check=False)
     proxy = vm_mod.guest_proxy_env(name, env)

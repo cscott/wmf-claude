@@ -1059,7 +1059,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
             name, phabricator_username(
                 run=run, env=env,
                 config_path=os.path.join(home, ".config", "wmf-claude", "config.json")),
-            lima=lima, env=env, quiet=quiet)
+            lima=lima, env=env)
         mediawiki_mod.run_setup(name, plan, lima=lima, env=env)
     except (mediawiki_mod.SetupError, session_mod.SessionError, lima_mod.LimaError) as e:
         print(color_mod.error(f"error: {e}"), file=sys.stderr)

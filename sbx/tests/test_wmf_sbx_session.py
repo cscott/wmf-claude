@@ -99,7 +99,8 @@ class LauncherTests(unittest.TestCase):
         self.assertIn("--local-web=4000,9876,49152-53247", launcher)
         self.assertIn(("--listen-port", "0"), list(zip(launcher, launcher[1:])))
         self.assertIn("WMF_CLAUDE_NO_PAUSE=1", a)
-        self.assertIn("--landlock-only", launcher)
+        # nono 0.80 opens localhost ports itself; bin/claude refuses the flag.
+        self.assertNotIn("--landlock-only", launcher)
         pairs = list(zip(launcher, launcher[1:]))
         self.assertIn(("--allow", "/home/me/src/core"), pairs)
         self.assertIn(("--read", "/home/me/src/Vector"), pairs)
@@ -1269,7 +1270,6 @@ class CreateSessionTests(Env):
         self.assertFalse(session.first_run_seen(self.env))
         shells, inputs = self.create_demo()
         self.assertIn("first wmf-sbx sandbox", self.err)
-        self.assertFalse(any("landlock-only-ack" in " ".join(s) for s in shells))
         self.assertEqual(self.plan_of(inputs)["session"]["claude_json"], {})
 
     def test_create_runs_wmf_claude_setup_and_sends_the_session(self):
@@ -1277,8 +1277,8 @@ class CreateSessionTests(Env):
         shells, inputs = self.create_demo()
         self.assertNotIn("first wmf-sbx sandbox", self.err)
         self.assertTrue(any(session.WMF_CLAUDE_SETUP in s for s in shells))
-        # bin/claude's one-time --landlock-only acknowledgement is made at create.
-        self.assertTrue(any("landlock-only-ack" in " ".join(s) for s in shells))
+        # bin/claude no longer has --landlock-only, nor its acknowledgement.
+        self.assertFalse(any("landlock-only-ack" in " ".join(s) for s in shells))
         # The image pins Claude Code; setup must not install another one.
         self.assertTrue(any(session.WMF_CLAUDE_SETUP in s and "WMF_CLAUDE_SKIP_UPDATE=1" in s
                             for s in shells))

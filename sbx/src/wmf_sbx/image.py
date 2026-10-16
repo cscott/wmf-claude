@@ -792,7 +792,7 @@ def check_submodules(root=REPO_ROOT, run=subprocess.run):
 
 def make_tree_tarball(dest, rev, root=REPO_ROOT, run=subprocess.run):
     """HEAD of the checkout, with the submodules at their recorded commits,
-    as one tarball (no .git), as bin/wmf-claude-vm does it."""
+    as one tarball (no .git), as bin/claude-vm does it."""
     check_submodules(root, run=run)
     stage = tempfile.mkdtemp(prefix="wmf-sbx-tree.")
     try:

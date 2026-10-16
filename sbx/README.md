@@ -255,9 +255,8 @@ sandbox keeps the settings it was made with; change them in it with
 
 **Your first sandbox shows every first-run question and warning**:
 Claude Code's onboarding (the theme and the security notes), "Do you
-trust the files in this folder?", `bin/claude`'s `--landlock-only`
-warning, and the bypass-mode confirmation. After its first session,
-`resume` writes `~/.local/state/wmf-sbx/first-run-seen`, and from then on
+trust the files in this folder?", and the bypass-mode confirmation.
+After its first session, `resume` writes `~/.local/state/wmf-sbx/first-run-seen`, and from then on
 `create` answers them in every new sandbox, so its first session starts
 at the prompt: onboarding done, each repo of the sandbox trusted, the
 warning acknowledged (`SECURITY.md` §3 says why that is safe in a

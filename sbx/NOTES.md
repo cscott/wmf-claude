@@ -494,8 +494,12 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
 
 ### Upstream work and repo hygiene
 
-- [ ] **Follow MRs !131, !132 and !134**: `lima-port` is rebased on upstream `main` 70712f6
-  (!130 and !133 merged) and carries their commits. Check their state with:
+- [ ] **Follow MRs !131, !132 and !134**: `lima-port` is rebased on upstream `main` 21bc986
+  (2026-10-16; !127, !130 and !133 merged) and carries their commits. The rebase
+  changed !131 and !132 to fit upstream's new code: !131 now keeps upstream's
+  `WMF_CLAUDE_PHAB_USER` and contained-VM branches, and !132 moves upstream's new
+  inline browser text to `hooks/context/nono/{chrome,chrome-vm}.txt`. Update the MR
+  branches to match, or withdraw !131 (upstream's `WMF_CLAUDE_PHAB_USER` does most of it). Check their state with:
   ```bash
   P='https://gitlab.wikimedia.org/api/v4/projects/repos%2Fproduct-safety-and-integrity%2Fwmf-claude'
   for m in 131 132 134; do curl -s "$P/merge_requests/$m" \
@@ -505,7 +509,7 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
   in a file the MR changed, take the branch commit's own version, then check that the
   tip's tree did not change) and take upstream's version of its files (!132:
   `bin/session-start.sh`, `hooks/context/nono/`, the seam tests; !131:
-  `bin/wmf-claude-setup`). Keep `hooks/context/lima-sbx/`. A reviewer's change goes to
+  `bin/wmf-claude-setup`). Keep `hooks/context/lima-sbx/` and `hooks/context/lima-sbx-sudo/`. A reviewer's change goes to
   the MR branch.
 - [ ] **Shared-file edits must be upstreamable**. Outside `sbx/` and
   `lima-port/`, the branch now changes `bin/claude` (`--local-web=LO-HI` ranges),
@@ -1117,7 +1121,8 @@ A2.0 results (in the nested `dev` VM, nono 0.78.0, 2026-10-13):
   in the settings env). One turn with a tool: two `POST /v1/messages`, nothing else on the
   base URL. Besides those: `HEAD /api/hello` without a credential (a connectivity probe;
   the proxy forwards it without one). The real key never entered the VM.
-- In a session the proxy port needs `--landlock-only` (already on) and a per-session
+- In a session the proxy port needed `--landlock-only` (removed 2026-10-16 with nono
+  0.80, upstream eb4961d) and a per-session
   `--open-port`; nftables needs an accept for 192.168.5.2:PORT in `block` and
   `agent_egress` (`PROXY_PORTS`).
 - On the engineer's host (Linux, KVM; `credential-l1.sh`) all three sources work through the
@@ -1314,7 +1319,7 @@ A2.0 results (in the nested `dev` VM, nono 0.78.0, 2026-10-13):
   second layer: `restrict=on` gives the guest no route, the session's nono passes every host
   (`--allow-domain '*'`) to the host proxy, which is the only allowlist and also applies
   the endpoint rules. Contained mode on that path could keep nono for the filesystem and
-  drop its network half: `--landlock-only` (needed only for nono#1786), the port window,
+  drop its network half: the port window (`--landlock-only` went with nono 0.80),
   the narrowed ephemeral range, `--upstream-proxy`, and nft's agent 80/443 rule. The cost:
   nono with `--allow-net` removes the proxy variables from the child (A2.0 item 9), so the
   launcher (`bin/claude` or `launch-claude.sh`, shared with wmf-claude outside wmf-sbx)

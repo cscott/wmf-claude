@@ -655,6 +655,12 @@ It stops, unless `-f`/`--force`, when it would leave or move a branch
 with commits that are not saved: not in a sandbox remote, not on origin,
 and not on Gerrit. A dirty tree always stops it.
 
+On a terminal, it asks instead of stopping when the choice is yours: which
+sandbox branch, when more than one could be meant; which host branch, when
+more than one records the same sandbox branch; and y/N before it leaves or
+moves unsaved commits. Enter (or Ctrl-D) is no, and the command stops as
+before. In a script or a pipe it never asks.
+
 `git safe-reset sbx-cite/fix-thing` says to use `git sbx-pull`, then runs
 it. `git review-check` (the pre-review hook) accepts a commit that is in a
 sandbox remote.

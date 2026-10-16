@@ -9,6 +9,7 @@ clone of the host, as sandbox-repos.sh makes it (`local` is the host,
 not wmfsbx://; the guest's upstream is read from the clone directly, and
 Gerrit is a set of shas."""
 
+import io
 import json
 import os
 import shutil
@@ -20,6 +21,7 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import wmf_sbx.sbx_pull as sbx_pull  # noqa: E402
+import wmf_sbx.prompt as prompt_mod  # noqa: E402
 import isolation  # noqa: E402
 
 
@@ -52,8 +54,8 @@ def identity(repo):
     git(repo, "config", "user.name", "Test")
 
 
-@unittest.skipUnless(HAVE_GIT, "git not installed")
-class PullTests(unittest.TestCase):
+class PullCase(unittest.TestCase):
+    """An upstream, the host, and helpers for sandboxes of the host."""
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -99,12 +101,14 @@ class PullTests(unittest.TestCase):
         path = entry["url"][len("wmfsbx://" + entry["sandbox"]):]
         return out(path, "for-each-ref", "--format=%(upstream)", f"refs/heads/{branch}")
 
-    def pull(self, *argv):
+    def pull(self, *argv, prompt=None):
         self.msgs = []
         return sbx_pull.main(list(argv), env=self.env, cwd=self.host,
                              sandbox_upstream_fn=self.upstream_of,
                              gerrit_has_fn=lambda root, sha: sha in self.gerrit,
-                             say=self.msgs.append)
+                             say=self.msgs.append,
+                             # No terminal, even when the tests run on one.
+                             prompt=prompt or prompt_mod.Prompt(isatty=lambda: False))
 
     def said(self):
         return "\n".join(self.msgs)
@@ -134,6 +138,10 @@ class PullTests(unittest.TestCase):
             f.write(message + "\n")
         git(repo, "commit", "-qa", "--amend", "-m", message)
         return self.head(repo)
+
+
+@unittest.skipUnless(HAVE_GIT, "git not installed")
+class PullTests(PullCase):
 
     # case 1
 
@@ -391,6 +399,114 @@ class PullTests(unittest.TestCase):
         g.run = old_git
         self.assertEqual(sbx_pull.guess_upstream(g, tip), "REL1_46")
         self.assertEqual(sbx_pull.guess_upstream(g, self.master), "master")
+
+
+class FakePrompt:
+    """Answers from a list; records the questions."""
+
+    def __init__(self, *answers):
+        self.answers = list(answers)
+        self.asked = []
+
+    def pick(self, question, labels):
+        self.asked.append((question, labels))
+        return self.answers.pop(0)
+
+    def confirm(self, question):
+        self.asked.append((question, None))
+        return self.answers.pop(0)
+
+
+@unittest.skipUnless(HAVE_GIT, "git not installed")
+class PromptPullTests(PullCase):
+    """On a terminal: a choice is asked, not refused."""
+
+    def test_more_than_one_new_branch_is_a_list(self):
+        sb = self.sandbox("sbx-p")
+        self.agent_branch(sb, "aaa")
+        git(sb, "checkout", "-q", "master")
+        tip = self.agent_branch(sb, "bbb")
+        prompt = FakePrompt(1)
+        self.assertEqual(self.pull(prompt=prompt), 0, self.said())
+        self.assertEqual(prompt.asked[0][1], ["sbx-p/aaa", "sbx-p/bbb"])
+        self.assertEqual((self.branch(), self.head()), ("bbb", tip))
+
+    def test_an_empty_answer_is_the_old_stop(self):
+        sb = self.sandbox("sbx-p")
+        self.agent_branch(sb, "aaa")
+        git(sb, "checkout", "-q", "master")
+        self.agent_branch(sb, "bbb")
+        self.assertEqual(self.pull(prompt=FakePrompt(None)), 1)
+        self.assertIn("more than one new branch; name one", self.said())
+        self.assertEqual(self.branch(), "master")
+
+    def test_a_branch_in_two_sandboxes_is_a_list(self):
+        self.agent_branch(self.sandbox("sbx-p"), "fix-thing")
+        tip = self.agent_branch(self.sandbox("sbx-q"), "fix-thing", message="other")
+        prompt = FakePrompt(1)
+        self.assertEqual(self.pull("fix-thing", prompt=prompt), 0, self.said())
+        self.assertEqual(prompt.asked[0][1], ["sbx-p/fix-thing", "sbx-q/fix-thing"])
+        self.assertEqual(self.head(), tip)
+
+    def test_no_new_branch_lists_every_branch_but_origins(self):
+        sb = self.sandbox("sbx-p")
+        tip = self.agent_branch(sb, "fix-thing")
+        self.assertEqual(self.pull(), 0, self.said())
+        git(self.host, "checkout", "-q", "master")
+        prompt = FakePrompt(0)
+        self.assertEqual(self.pull(prompt=prompt), 0, self.said())
+        self.assertEqual(prompt.asked[0][1], ["sbx-p/fix-thing"])
+        self.assertEqual((self.branch(), self.head()), ("fix-thing", tip))
+
+    def test_two_local_branches_of_one_sandbox_branch_is_a_list(self):
+        sb = self.sandbox("sbx-p")
+        self.agent_branch(sb, "fix-thing")
+        self.assertEqual(self.pull(), 0, self.said())
+        git(self.host, "branch", "fix-copy")
+        for key, value in (("wmfsbx", "sbx-p"), ("wmfsbxBranch", "fix-thing")):
+            git(self.host, "config", f"branch.fix-copy.{key}", value)
+        git(self.host, "checkout", "-q", "master")
+        tip = commit(sb, "more")
+        prompt = FakePrompt(1)
+        self.assertEqual(self.pull("fix-thing", prompt=prompt), 0, self.said())
+        self.assertEqual(prompt.asked[0][1], ["fix-copy", "fix-thing"])
+        self.assertEqual((self.branch(), self.head()), ("fix-thing", tip))
+
+    def test_leaving_unsaved_work_asks(self):
+        sb = self.sandbox("sbx-p")
+        tip = self.agent_branch(sb, "fix-thing")
+        wip = commit(self.host, "WIP")
+        prompt = FakePrompt(False)
+        self.assertEqual(self.pull(prompt=prompt), 1)
+        self.assertIn("Leave it anyway", prompt.asked[0][0])
+        self.assertIn("-f to leave it anyway", self.said())
+        self.assertEqual(self.branch(), "master")
+        self.assertEqual(self.pull(prompt=FakePrompt(True)), 0, self.said())
+        self.assertEqual(self.head(), tip)
+        self.assertEqual(out(self.host, "rev-parse", "master"), wip)
+
+    def test_moving_over_unsaved_work_asks(self):
+        sb = self.sandbox("sbx-p")
+        self.agent_branch(sb, "fix-thing")
+        self.assertEqual(self.pull(), 0, self.said())
+        mine = self.amend(self.host, "engineer's edit")
+        theirs = self.amend(sb, "agent's edit, without the hand-off")
+        prompt = FakePrompt(False)
+        self.assertEqual(self.pull(prompt=prompt), 1)
+        self.assertIn("Move fix-thing anyway", prompt.asked[0][0])
+        self.assertEqual(self.head(), mine)
+        self.assertEqual(self.pull(prompt=FakePrompt(True)), 0, self.said())
+        self.assertEqual(self.head(), theirs)
+        self.assertEqual(out(self.host, "rev-parse", "fix-thing@{1}"), mine)
+
+    def test_a_dirty_tree_never_asks(self):
+        sb = self.sandbox("sbx-p")
+        self.agent_branch(sb, "fix-thing")
+        with open(os.path.join(self.host, "file"), "a", encoding="utf-8") as f:
+            f.write("dirty\n")
+        prompt = FakePrompt()
+        self.assertEqual(self.pull(prompt=prompt), 1)
+        self.assertEqual(prompt.asked, [])
 
 
 class GerritTests(unittest.TestCase):

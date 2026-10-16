@@ -26,6 +26,7 @@ import sys
 from . import cli as cli_mod
 from . import egress as egress_mod
 from . import lima as lima_mod
+from . import prompt as prompt_mod
 from . import remotes as remotes_mod
 from . import state as state_mod
 from . import vm as vm_mod
@@ -35,18 +36,14 @@ def warn(msg):
     print(f"warning: {msg}", file=sys.stderr)
 
 
-def remove_sandbox(name, force=False, lima=None, confirm=input):
+def remove_sandbox(name, force=False, lima=None, confirm=None):
     """Delete the sandbox's VM after a y/N question (unless `force`).
-    Returns True if the VM is gone. No answer (EOF: no terminal) is no."""
-    if not force:
-        try:
-            answer = confirm(f"Remove sandbox {name!r} and its VM "
-                             f"{vm_mod.instance_name(name)}? This cannot be undone. (y/N): ")
-        except EOFError:
-            print(file=sys.stderr)
-            return False
-        if answer.strip().lower() not in ("y", "yes"):
-            return False
+    Returns True if the VM is gone. `confirm` is input()-like; the default
+    asks on the terminal, and with no terminal the answer is no."""
+    if not force and not prompt_mod.Prompt(ask=confirm).confirm(
+            f"Remove sandbox {name!r} and its VM {vm_mod.instance_name(name)}? "
+            f"This cannot be undone."):
+        return False
     print(f"+ limactl delete --force {vm_mod.instance_name(name)}", file=sys.stderr)
     vm_mod.delete(name, lima=lima)
     return vm_mod.status(name, lima=lima) is None
@@ -120,7 +117,7 @@ def prune(dry_run=False, run=subprocess.run, env=None, lima=None):
     return [name for name, _results in pruned]
 
 
-def remove_one(name, args, run=subprocess.run, env=None, lima=None, confirm=input):
+def remove_one(name, args, run=subprocess.run, env=None, lima=None, confirm=None):
     """Returns 0 on success, non-zero on failure."""
     original_name = name
     try:
@@ -165,7 +162,7 @@ def remove_one(name, args, run=subprocess.run, env=None, lima=None, confirm=inpu
     return 0
 
 
-def main(argv=None, run=subprocess.run, env=None, lima=None, confirm=input):
+def main(argv=None, run=subprocess.run, env=None, lima=None, confirm=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("name", nargs="*", help="Sandbox(es) to remove")
     parser.add_argument(

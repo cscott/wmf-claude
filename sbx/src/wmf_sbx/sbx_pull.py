@@ -26,6 +26,12 @@ refs/remotes/NAME-seen/*, the hand-offs the agent took, for a sandbox of
 this repo), when origin has it, or when Gerrit has it. Leaving a branch
 whose tip is not saved, or moving a branch over a tip that is not saved,
 stops unless `-f`.
+
+On a terminal (stdin and stderr both TTYs), it asks instead of stopping
+when the answer is a choice: which branch, sandbox or local branch, from
+a list; and, for the two stops above, whether to go on (y/N). A stop that
+needs another command (a dirty tree, a branch name to change) stays a
+stop. The sandbox's git sbx-pull never asks: the agent has no terminal.
 """
 
 import argparse
@@ -39,6 +45,7 @@ import urllib.request
 
 from . import deps as deps_mod
 from . import ls_remotes as ls_remotes_mod
+from . import prompt as prompt_mod
 from . import remotes as remotes_mod
 
 PREFIX = "git sbx-pull"
@@ -51,6 +58,15 @@ SEEN_SUFFIX = remotes_mod.SEEN_SUFFIX
 # For the guess, when git has no %(ahead-behind:) (before 2.41).
 GUESS_RE = re.compile(r"^(master|main|REL\d+_\d+)$")
 GERRIT_TIMEOUT = 15
+
+
+def pick(prompt, question, choices, labels, error):
+    """choices[i] for the label the user picks; else PullError(error)."""
+    if prompt:
+        i = prompt.pick(question, labels)
+        if i is not None:
+            return choices[i]
+    raise PullError(error)
 
 
 class PullError(Exception):
@@ -213,7 +229,7 @@ def sandbox_upstream(entry, branch, lima=None):
     return res.stdout.strip() if res.returncode == 0 else None
 
 
-def choose(git, target, remotes, fetched):
+def choose(git, target, remotes, fetched, prompt=None):
     """(remote, sandbox branch) to pull."""
     if target:
         remote, _, branch = target.partition("/")
@@ -229,8 +245,10 @@ def choose(git, target, remotes, fetched):
             # The host's branch of that name came from one of them.
             have = [r for r in have if remotes[r]["sandbox"] == rec[0]] or have
         if len(have) > 1:
-            raise PullError(f"more than one sandbox has {target}; name one: " +
-                            ", ".join(f"{r}/{target}" for r in have))
+            labels = [f"{r}/{target}" for r in have]
+            return pick(prompt, f"More than one sandbox has {target}.", have, labels,
+                        f"more than one sandbox has {target}; name one: " +
+                        ", ".join(labels)), target
         if have:
             return have[0], target
         if rec:
@@ -244,10 +262,17 @@ def choose(git, target, remotes, fetched):
     if len(new) == 1:
         return new[0]
     if not new:
-        raise PullError("no new branch in a sandbox of this repo; name one: "
-                        f"{PREFIX} NAME/BRANCH")
-    raise PullError("more than one new branch; name one: " +
-                    ", ".join(f"{r}/{b}" for r, b in new))
+        # Every branch, then, to pull one again.
+        every = [(r, b) for r in sorted(fetched) for b in sorted(branches_of(git, r))
+                 if not git.sha(f"refs/remotes/origin/{b}")]
+        error = f"no new branch in a sandbox of this repo; name one: {PREFIX} NAME/BRANCH"
+        if not every:
+            raise PullError(error)
+        return pick(prompt, "No sandbox branch is new. Pull one again?", every,
+                    [f"{r}/{b}" for r, b in every], error)
+    labels = [f"{r}/{b}" for r, b in new]
+    return pick(prompt, "More than one sandbox branch is new.", new, labels,
+                "more than one new branch; name one: " + ", ".join(labels))
 
 
 def record_of(git, local):
@@ -279,16 +304,18 @@ def new_branches(git, fetched):
     return out
 
 
-def local_branch(git, sandbox, branch, current):
+def local_branch(git, sandbox, branch, current, prompt=None):
     """(local branch, whether it exists) for the sandbox branch."""
-    mine = [loc for loc, s, b, _ in recorded(git) if s == sandbox and b == branch]
+    mine = sorted(loc for loc, s, b, _ in recorded(git) if s == sandbox and b == branch)
     if current in mine:
         return current, True
     if len(mine) == 1:
         return mine[0], True
     if len(mine) > 1:
-        raise PullError(f"branches {', '.join(mine)} all record {sandbox}/{branch}; "
-                        f"check out the one to update first")
+        return pick(prompt, f"Branches {', '.join(mine)} all record {sandbox}/{branch}. "
+                    f"Update which?", mine, mine,
+                    f"branches {', '.join(mine)} all record {sandbox}/{branch}; "
+                    f"check out the one to update first"), True
     if git.sha(f"refs/heads/{branch}"):
         other = git.config(f"branch.{branch}.{SANDBOX_KEY}")
         if other and other != sandbox:
@@ -361,7 +388,7 @@ def choose_upstream(git, entry, branch, new, onto, sandbox_upstream_fn, remotes=
 
 
 def main(argv=None, env=None, run=subprocess.run, sandbox_upstream_fn=None,
-         gerrit_has_fn=None, say=None, cwd=None):
+         gerrit_has_fn=None, say=None, cwd=None, prompt=None):
     parser = argparse.ArgumentParser(
         prog=PREFIX, description=__doc__.splitlines()[0],
         epilog="See sbx/README.md (Commit flow).")
@@ -379,14 +406,15 @@ def main(argv=None, env=None, run=subprocess.run, sandbox_upstream_fn=None,
     say = say or (lambda msg: print(msg, file=sys.stderr))
     sandbox_upstream_fn = sandbox_upstream_fn or sandbox_upstream
     gerrit_has_fn = gerrit_has_fn or (lambda root, sha: gerrit_has(root, sha, env))
+    prompt = prompt or prompt_mod.Prompt()  # it asks only on a terminal
     try:
-        return pull(args, env, run, sandbox_upstream_fn, gerrit_has_fn, say, cwd)
+        return pull(args, env, run, sandbox_upstream_fn, gerrit_has_fn, say, cwd, prompt)
     except PullError as e:
         say(f"{PREFIX}: {e}")
         return 1
 
 
-def pull(args, env, run, sandbox_upstream_fn, gerrit_has_fn, say, cwd=None):
+def pull(args, env, run, sandbox_upstream_fn, gerrit_has_fn, say, cwd=None, prompt=None):
     res = run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True,
               stdin=subprocess.DEVNULL, cwd=cwd)
     if res.returncode != 0:
@@ -402,14 +430,14 @@ def pull(args, env, run, sandbox_upstream_fn, gerrit_has_fn, say, cwd=None):
         else sorted(remotes)
     fetched = {r for r in wanted if fetch(git, r, remotes[r]["sandbox"], say)}
 
-    remote, branch = choose(git, args.target, remotes, fetched)
+    remote, branch = choose(git, args.target, remotes, fetched, prompt)
     entry = remotes[remote]
     sandbox = entry["sandbox"]
     new = git.sha(f"refs/remotes/{remote}/{branch}")
     if not new:
         raise PullError(f"{remote} has no branch {branch} now")
     current = git.current_branch()
-    local, exists = local_branch(git, sandbox, branch, current)
+    local, exists = local_branch(git, sandbox, branch, current, prompt)
     sandbox_refs = sorted(remotes)
 
     if local != current:
@@ -421,10 +449,10 @@ def pull(args, env, run, sandbox_upstream_fn, gerrit_has_fn, say, cwd=None):
             why = ("it is what was pulled" if current and head == git.config(
                 f"branch.{current}.{SHA_KEY}") else is_saved(git, head, sandbox_refs,
                                                              gerrit_has_fn))
-            if not why:
-                raise PullError(
-                    f"{current or 'HEAD'} ({head[:12]}) is not on Gerrit, origin or a "
-                    f"sandbox; upload it (git review), or -f to leave it anyway")
+            what = f"{current or 'HEAD'} ({head[:12]}) is not on Gerrit, origin or a sandbox"
+            if not why and not (prompt and prompt.confirm(
+                    f"{what}. Leave it anyway (it stays as it is)?")):
+                raise PullError(f"{what}; upload it (git review), or -f to leave it anyway")
 
     if exists:
         old = git.sha(f"refs/heads/{local}")
@@ -433,11 +461,12 @@ def pull(args, env, run, sandbox_upstream_fn, gerrit_has_fn, say, cwd=None):
                        if record_of(git, local) == (sandbox, branch) else None)
             ok = (git.ok("merge-base", "--is-ancestor", old, new) or old == rec_sha
                   or is_saved(git, old, sandbox_refs, gerrit_has_fn))
-            if not ok:
-                raise PullError(
-                    f"{local} ({old[:12]}) has commits that {remote}/{branch} does not "
-                    f"have and are saved nowhere else; -f to move {local} anyway "
-                    f"(the old tip stays in its reflog)")
+            what = (f"{local} ({old[:12]}) has commits that {remote}/{branch} does not "
+                    f"have and are saved nowhere else")
+            if not ok and not (prompt and prompt.confirm(
+                    f"{what}. Move {local} anyway (the old tip stays in its reflog)?")):
+                raise PullError(f"{what}; -f to move {local} anyway "
+                                f"(the old tip stays in its reflog)")
         if local != current:
             git("checkout", "-q", local)
         if old != new:

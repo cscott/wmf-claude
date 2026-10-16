@@ -22,9 +22,10 @@ import contextlib
 import fcntl
 import json
 import os
-import sys
 import re
 import tempfile
+
+from . import prompt as prompt_mod
 
 SCHEMA_VERSION = 1
 
@@ -286,19 +287,9 @@ def primary_dir_for(name, env=None):
 
 def _ask_which(path, matches, isatty=None, ask=None):
     """On a terminal, let the human pick one of `matches`; else None."""
-    if not (isatty or (lambda: sys.stdin.isatty() and sys.stderr.isatty()))():
-        return None
-    ask = ask or input
-    print(f"{path} is the primary workspace of {len(matches)} sandboxes:", file=sys.stderr)
-    for i, name in enumerate(matches, 1):
-        print(f"  {i}) {name}", file=sys.stderr)
-    try:
-        answer = ask(f"Which one? [1-{len(matches)}] ").strip()
-    except EOFError:
-        return None
-    if answer.isdigit() and 1 <= int(answer) <= len(matches):
-        return matches[int(answer) - 1]
-    return answer if answer in matches else None
+    i = prompt_mod.Prompt(ask=ask, isatty=isatty or prompt_mod.interactive).pick(
+        f"{path} is the primary workspace of {len(matches)} sandboxes:", matches)
+    return None if i is None else matches[i]
 
 
 def resolve_name_arg(arg, env=None, isatty=None, ask=None):

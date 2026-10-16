@@ -467,6 +467,22 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
     BRANCH records, and stops only when no record decides. Open: zsh (its own
     `_git` and git's `git-completion.zsh` find subcommands in different ways), and
     macOS bash 3.2 (bash-completion 2 needs bash 4).
+  - Built after, on the host only (cananian: "build all four list prompts and y/n on
+    the two safety stops"): on a terminal, `git sbx-pull` asks instead of stopping,
+    with a numbered list, when BRANCH is in more than one sandbox and no record
+    decides; when no sandbox branch is new (every branch that is not origin-named);
+    when more than one is new; and when more than one host branch records the
+    sandbox branch. y/N before it leaves or moves unsaved commits (the two `-f`
+    stops). A dirty tree and the rename conflict stay stops: they need another
+    command, not a choice. The guest helper never asks. The questions are
+    `wmf_sbx/prompt.py` (`Prompt.pick`, `Prompt.confirm`), now also used by the
+    path shortcut in `state.py` (a directory with more than one sandbox), `create`'s
+    clone question and `rm`'s y/N. Prompt checks for a terminal itself (stdin and
+    stderr both TTYs; cananian: so that no caller forgets and a script hangs): with
+    none, it asks nothing, `pick()` is None and `confirm()` is False, and the caller
+    keeps its old stop. A caller that passes its own `ask` gives the answers itself.
+    `rm` without `-f` and with no terminal now refuses at once (it used to call
+    `input()`, which read EOF). Not yet RAN on a terminal.
   - READ 2026-10-15, why upstreams to a sandbox seemed to vanish: `wmf-sbx rm` runs
     `git remote remove NAME` (remotes.py), which deletes `refs/remotes/NAME/*` and
     unsets `branch.*.remote`/`merge` for every branch that tracked NAME. The local

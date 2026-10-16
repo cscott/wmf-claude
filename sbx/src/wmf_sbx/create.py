@@ -34,6 +34,7 @@ from . import image as image_mod
 from . import lima as lima_mod
 from . import mediawiki as mediawiki_mod
 from . import nested as nested_mod
+from . import prompt as prompt_mod
 from . import remotes as remotes_mod
 from . import repos as repos_mod
 from . import session as session_mod
@@ -299,11 +300,8 @@ def confirm_clones(missing, clone_missing, interactive, prompt=input):
         return False
     listed = "\n".join(f"  {canonical} -> {path}" for canonical, path in missing)
     print(f"{len(missing)} repo(s) are not on this machine yet:\n{listed}", file=sys.stderr)
-    try:
-        answer = prompt("Clone them there now? [y/N] ")
-    except EOFError:
-        return False
-    return answer.strip().lower() in ("y", "yes")
+    return prompt_mod.Prompt(ask=prompt, isatty=lambda: True).confirm(
+        "Clone them there now?")
 
 
 def find_nested_mount_conflict(dirs):

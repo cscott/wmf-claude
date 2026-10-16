@@ -220,6 +220,55 @@ claude-vm discard NAME BRANCH    # git branch -rd vm/BRANCH
   The first `pull NAME DEST` then sends only the agent's new commits; DEST
   must have the commit the clone starts at (`git fetch` it first).
 
+## Claude memory and sessions
+
+Claude Code keeps a project's memory and session transcripts on the side
+where it ran. To work in the VM with what you built up on the host, and to
+bring the VM's work back:
+
+```bash
+claude-vm push ~/src/mediawiki/core --claude-memory --claude-sessions   # memory, and the newest 5 sessions
+claude-vm claude core                                                   # then /resume, or --continue, in the VM
+claude-vm pull core --claude-sessions --claude-memory                   # and back
+```
+
+- **A pushed transcript carries everything that session saw:** file
+  contents, command output, anything pasted into it. In an isolated VM that
+  is a guest with internet access and the Claude login. Push the sessions
+  the VM's work needs, not all of them.
+- `--claude-sessions=N` takes the newest N (default 5). With `--nested`,
+  each nested repo's own project, if it has one, goes too.
+- Paths are rewritten each way (`~/src/mediawiki/core` and
+  `/home/agent/work/core`, and the project directories), so a session
+  resumes with the paths of the side it runs on.
+- Claude Code appends to a resumed session. So a copy whose lines start
+  with the other side's lines extends it. If both sides changed the same
+  session, neither is changed: the pull says so, and keeps the VM's copy
+  staged for you to compare.
+- `push --claude-memory` merges against what the last push sent, which the
+  VM keeps. A file only the host changed is updated; a file only the VM
+  changed stays as the VM has it; a file both changed takes the host's
+  copy, and the VM's moves to `~/.claude/wmf-claude-aside/` in the VM (out
+  of the memory directory). `MEMORY.md` merges by line: a line removed on
+  either side stays removed, and lines added on either side are kept.
+- `pull --claude-memory` changes nothing on the host. It stages the VM's
+  memory in `~/.local/state/wmf-claude/context/`, which a host `bin/claude`
+  session cannot read, lists what differs from yours, and prints the `cp`
+  (and, for the `MEMORY.md` index, the lines to append) to take it. Read it
+  first: the agent wrote it, and host sessions load memory.
+- `pull --claude-sessions` writes into the host project directory, so the
+  sessions show in `/resume` here. The pull lists each session it added or
+  extended, and gives it a file time older than your other sessions, so
+  `claude --continue` (which takes the newest file) goes on resuming your
+  own last session: pick a pulled one in `/resume`. Resuming one gives agent-written turns to a session with this
+  machine's access; read the transcript first if the VM ran untrusted work.
+- The host accepts only memory file names, session ids and the
+  `subagents/` and `tool-results/` files of a session from the VM; it
+  refuses any other name, a link, or an oversized file. Staged copies stay
+  in `~/.local/state/wmf-claude/context/` until you delete them.
+- Not copied: the prompt history (`~/.claude/history.jsonl`, the up-arrow
+  list) and settings.
+
 ## PHPUnit in the VM
 
 The guest has PHP, Composer and MariaDB, so tests and maintenance scripts

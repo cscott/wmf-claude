@@ -18,9 +18,13 @@
 #   claude-vm check-host-block               # contained VM: prove the host blocks it without its lock
 #   claude-vm push [--nested[=A,B]] DIR [NAME]  # copy a git repo into the agent's workspace (git bundle);
 #                                            # --nested: the repos inside it too (extensions/*, skins/*), or only A,B
+#                                            # --claude-memory, --claude-sessions[=N]: also Claude Code's memory and
+#                                            # newest N (5) sessions for the repo
 #   claude-vm claude NAME [bin/claude args]  # run sandboxed Claude Code in workspace NAME; on exit, list what is not pulled yet
 #   claude-vm pull [--nested] NAME [DEST]    # fetch the agent's branches into vm/* of the repo NAME was pushed from (or DEST);
 #                                            # --nested: also the workspaces pushed with it, each into its own repo
+#                                            # --claude-sessions[=N]: the VM's newest N sessions extend this machine's;
+#                                            # --claude-memory: stage the VM's memory and show how to take it
 #   claude-vm review NAME BRANCH             # show what vm/BRANCH adds (git log -p)
 #   claude-vm checkout NAME BRANCH           # create local BRANCH from vm/BRANCH, switch to it
 #   claude-vm discard NAME BRANCH            # delete vm/BRANCH
@@ -460,6 +464,131 @@ cmd_update() {
   ' _ "$updir"
 }
 
+# Claude Code context (docs/lima-vm.md#claude-memory-and-sessions): the memory
+# and session transcripts of a workspace's project directory, copied with
+# push --claude-memory / --claude-sessions and back with pull.
+# lima/claude-context.py does the work; the guest runs it through python3 -c,
+# so it needs no update. Paths are rewritten each way, so a session resumes
+# with the paths of the side it runs on.
+CTX_PY="$ROOT/lima/claude-context.py"
+host_projects() { printf '%s/projects\n' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; }
+# Claude Code names a project directory after its path: every character that
+# is not a letter or a digit becomes "-".
+# A name over 200 characters gets a hash too: lima/claude-context.py.
+ctx_enc() {
+  local e="${1//[^A-Za-z0-9]/-}"
+  if [[ ${#e} -le 200 ]]; then printf '%s\n' "$e"; else python3 "$CTX_PY" enc "$1"; fi
+}
+
+# Push: stage here, one copy, merge in the guest as the agent. The merge keeps
+# the agent's changes: a memory file it changed moves aside (out of memory/),
+# MEMORY.md takes the lines of both sides, and a transcript is replaced only
+# by one that extends it. Reads rels and wss of cmd_push.
+push_context() {  # $1 top  $2 name  $3 memory (true|false)  $4 sessions
+  local top="$1" gtop="$AGENT_HOME/work/$2" i hp gp hproj gproj stage updir n=0
+  local -a args=()
+  $3 && args+=(--memory)
+  [[ "$4" -gt 0 ]] && args+=(--sessions "$4")
+  stage=$(mktemp -d)
+  : > "$stage/manifest"
+  for (( i = 0; i < ${#rels[@]}; i++ )); do
+    hp="$top${rels[i]:+/${rels[i]}}"; gp="$AGENT_HOME/work/${wss[i]}"
+    hproj="$(host_projects)/$(ctx_enc "$hp")"
+    [[ -d "$hproj" ]] || continue
+    gproj="$AGENT_HOME/.claude/projects/$(ctx_enc "$gp")"
+    python3 "$CTX_PY" stage "$hproj" "$stage/$i" "${args[@]}" \
+      --map "$top" "$gtop" --map "$hp" "$gp" --map "$hproj" "$gproj" >/dev/null || continue
+    [[ -d "$stage/$i" ]] || continue
+    printf '%s\t%s\t%s\n' "$i" "$gproj" "${wss[i]}" >> "$stage/manifest"
+    n=$((n + 1))
+  done
+  step "Claude Code context"
+  if [[ "$n" -eq 0 ]]; then
+    rm -rf "$stage"
+    echo "    No memory or sessions for these repositories in $(host_projects)."
+    return 0
+  fi
+  COPYFILE_DISABLE=1 tar --no-xattrs -cf "$stage.tar" -C "$stage" .
+  rm -rf "$stage"
+  updir=$(guest_mktemp /tmp/wmf-claude-ctx.XXXXXX)
+  limactl copy "$stage.tar" "$VM:$updir/ctx.tar"
+  rm -f "$stage.tar"
+  guest bash -c 'cd "$1" && tar -xf ctx.tar && rm -f ctx.tar && chmod -R a+rX .' _ "$updir"
+  guest_agent bash -c '
+    py="$1"; dir="$2"; aside="$3"; tab=$(printf "\t")
+    while IFS="$tab" read -r i proj ws; do
+      echo "    $ws:"
+      python3 -I -c "$py" merge "$dir/$i" "$proj" --aside "$aside/$ws" 2>&1 | sed "s/^/      /"
+    done < "$dir/manifest"
+  ' _ "$(cat "$CTX_PY")" "$updir" "$AGENT_HOME/.claude/wmf-claude-aside/$(date -u +%Y%m%dT%H%M%SZ)" 2>&1 \
+    | LC_ALL=C tr -d '\000-\010\013-\037\177'   # the agent's output: no control characters
+  guest rm -rf "$updir"
+}
+
+# Pull: one guest call emits every workspace's files as JSON lines, and the
+# host writes only the names it accepts (lima/claude-context.py receive) into
+# a new directory under the host state directory, out of a host session's
+# reach. Sessions then merge into the host project directory (added, or
+# extended); a session that both sides changed stays staged. Memory stays
+# staged, for the engineer to read and take.
+pull_context() {  # $1 memory (true|false)  $2 sessions  $3 top name  $4... workspaces
+  local memory="$1" sessions="$2" top="$3" i ws stage out took=false rc=0 err
+  shift 3
+  local -a wss=() hps=() gps=() hprojs=() gprojs=() maps=() args=()
+  local gtop="$AGENT_HOME/work/$top" htop hp gp
+  htop=$(ws_dest "$top") || return 1
+  maps=(--map "$gtop" "$htop")
+  for ws in "$@"; do
+    # ws_dest dies in the $( ), not here: skip a workspace with no record.
+    hp=$(ws_dest "$ws" 2>/dev/null) || { echo "    $(red "!") $ws: no host repository recorded"; rc=1; continue; }
+    gp="$AGENT_HOME/work/$ws"
+    wss+=("$ws"); hps+=("$hp"); gps+=("$gp")
+    hprojs+=("$(host_projects)/$(ctx_enc "$hp")"); gprojs+=("$AGENT_HOME/.claude/projects/$(ctx_enc "$gp")")
+    maps+=(--map "$gp" "$hp" --map "${gprojs[${#gprojs[@]}-1]}" "${hprojs[${#hprojs[@]}-1]}")
+  done
+  [[ ${#wss[@]} -gt 0 ]] || return 1
+  $memory && args+=(--memory)
+  [[ "$sessions" -gt 0 ]] && args+=(--sessions "$sessions")
+  stage="${XDG_STATE_HOME:-$HOME/.local/state}/wmf-claude/context/vm-$VM-${top//\//_}-$(date -u +%Y%m%dT%H%M%SZ)"
+  mkdir -p "$stage" && chmod 0700 "$(dirname "$stage")" "$stage"
+  step "Claude Code context from the VM (as $AGENT)"
+  err=$(mktemp)
+  # -I: not the agent's site-packages or PYTHON* settings. Its stderr is
+  # dropped; receive reports what arrived.
+  if ! guest_agent python3 -I -c "$(cat "$CTX_PY")" emit "${gprojs[@]}" "${args[@]}" 2>/dev/null \
+       | python3 "$CTX_PY" receive "$stage" --count "${#wss[@]}" "${maps[@]}" 2>"$err"; then
+    echo "    $(red "!") $(tr -d '\n' < "$err"): a name or a size was not allowed, or the copy failed"
+    rc=1
+  else
+    echo "    $(tr -d '\n' < "$err")"
+  fi
+  rm -f "$err"
+  for (( i = 0; i < ${#wss[@]}; i++ )); do
+    [[ -d "$stage/$i" ]] || continue
+    echo "    ${wss[i]}:"
+    if [[ -d "$stage/$i/sessions" ]]; then
+      # Compare in one path space: a path the rewrite could not tell apart
+      # is then not a change.
+      out=$(python3 "$CTX_PY" merge "$stage/$i" "${hprojs[i]}" --no-memory --consume --old \
+              --norm "$htop" "$gtop" --norm "${hps[i]}" "${gps[i]}" --norm "${hprojs[i]}" "${gprojs[i]}") || rc=1
+      printf '%s\n' "$out" | sed 's/^/      /'
+      [[ "$out" == *added* || "$out" == *extended* ]] && took=true
+      [[ -d "$stage/$i/sessions" ]] && echo "      The VM's copies of those sessions are in $stage/$i/sessions"
+    fi
+    if [[ -d "$stage/$i/memory" ]]; then
+      echo "      memory, staged in $stage/$i/memory:"
+      python3 "$CTX_PY" memdiff "$stage/$i/memory" "${hprojs[i]}/memory" | sed 's/^/  /'
+    fi
+    rmdir "$stage/$i" 2>/dev/null || true
+  done
+  rmdir "$stage" 2>/dev/null || true
+  if $took; then
+    dim "    The agent wrote the new turns. Resuming one of these sessions here"; echo ""
+    dim "    gives agent-written text to a session with this machine's access."; echo ""
+  fi
+  return "$rc"
+}
+
 # The git repositories inside $1, as paths relative to it, sorted: the
 # nested repos that push --nested sends (MediaWiki: extensions/*, skins/*).
 # Three levels at most; dependency trees are not searched.
@@ -474,8 +603,13 @@ in_list() { case ",$2," in *",$1,"*|*",${1##*/},"*) return 0 ;; esac; return 1; 
 cmd_push() {
   need limactl git tar
   local dir="" name="" nested=false only="" top rel i ws sha line stage updir rc=0
+  local cmem=false cses=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      --claude-memory)     cmem=true ;;
+      --claude-sessions)   cses=5 ;;
+      --claude-sessions=*) cses="${1#*=}"; [[ "$cses" =~ ^[0-9]+$ ]] || die "push: --claude-sessions=N needs a number"
+                           cses=$((10#$cses)) ;;
       --nested)   nested=true ;;
       --nested=*) nested=true; only="${1#--nested=}"; [[ -n "$only" ]] || die "push: --nested= needs a list" ;;
       -*)         die "push: unknown option '$1'" ;;
@@ -639,6 +773,7 @@ cmd_push() {
     for f in ${failed[@]+"${failed[@]}"}; do [[ "$f" == "$i" ]] && skip=true; done
     $skip || printf '%s\t%s\n' "${wss[i]}" "$top${rels[i]:+/${rels[i]}}"
   done | ws_save_many
+  if $cmem || [[ "$cses" -gt 0 ]]; then push_context "$top" "$name" "$cmem" "$cses"; fi
   [[ "$rc" -eq 0 ]] || die "some repositories did not arrive; see the lines marked !"
   echo "  Next: $(bold "claude-vm claude $name")"
 }
@@ -737,6 +872,8 @@ pull_nested() {  # $1 NAME
 }
 
 # Pull one workspace: all its branches into vm/* of DEST, pruned.
+# Each step checks for failure itself: cmd_pull may run this in ( ) || ...,
+# where errexit is off.
 pull_top() {  # $1 NAME  $2 DEST
   local name="$1" dest="$2" flat remote bundle
   step "Exporting $name from the VM (as $AGENT, hooks off)"
@@ -759,9 +896,9 @@ pull_top() {  # $1 NAME  $2 DEST
       g "$1" bundle create -q "$2" --branches --tags HEAD
     fi
     chmod 0644 "$2"
-  ' _ "$name" "$remote"
+  ' _ "$name" "$remote" || die "could not bundle $name in the VM"
   bundle=$(mktemp)
-  limactl copy "$VM:$remote" "$bundle"
+  limactl copy "$VM:$remote" "$bundle" || { rm -f "$bundle"; die "could not copy the bundle of $name out of the VM"; }
   guest_agent rm -f "$remote"
   step "Fetching into vm/* of $dest"
   git -C "$dest" bundle verify "$bundle" >/dev/null 2>&1 \
@@ -769,7 +906,8 @@ pull_top() {  # $1 NAME  $2 DEST
   # Remote-tracking refs, as if from a remote named `vm`, so git branch -r,
   # log and switch work on them as usual. --prune drops the vm/* branches
   # that no longer exist in the VM. No remote goes into .git/config.
-  git -C "$dest" fetch --quiet --no-tags --prune "$bundle" "+refs/heads/*:refs/remotes/vm/*"
+  git -C "$dest" fetch --quiet --no-tags --prune "$bundle" "+refs/heads/*:refs/remotes/vm/*" \
+    || { rm -f "$bundle"; die "git fetch into $dest failed"; }
   rm -f "$bundle"
   ok "fetched; nothing was checked out or merged"
   echo ""
@@ -783,9 +921,13 @@ pull_top() {  # $1 NAME  $2 DEST
 
 cmd_pull() {
   need limactl git
-  local name="" dest="" nested=false arg
+  local name="" dest="" nested=false arg cmem=false cses=0
   for arg in "$@"; do
     case "$arg" in
+      --claude-memory)     cmem=true ;;
+      --claude-sessions)   cses=5 ;;
+      --claude-sessions=*) cses="${arg#*=}"; [[ "$cses" =~ ^[0-9]+$ ]] || die "pull: --claude-sessions=N needs a number"
+                           cses=$((10#$cses)) ;;
       --nested) nested=true ;;
       -*) die "pull: unknown option '$arg'" ;;
       *) if [[ -z "$name" ]]; then name="$arg"; elif [[ -z "$dest" ]]; then dest="$arg"
@@ -804,14 +946,21 @@ cmd_pull() {
     dest=$(ws_dest "$name")
   fi
   require_running
-  # With --nested, the nested pull runs also when the top one fails.
-  if $nested; then
-    local prc=0
-    ( pull_top "$name" "$dest" ) || prc=1
-    pull_nested "$name" || prc=1
-    return "$prc"
+  local ctx=false; if $cmem || [[ "$cses" -gt 0 ]]; then ctx=true; fi
+  if ! $nested && ! $ctx; then pull_top "$name" "$dest"; return; fi
+  # Each step runs, also when one before it failed; the exit code says so.
+  local prc=0
+  ( pull_top "$name" "$dest" ) || prc=1
+  if $nested; then pull_nested "$name" || prc=1; fi
+  if $ctx; then
+    local -a ctxws=("$name")
+    if $nested; then
+      local n p
+      while IFS=$'\t' read -r n p; do [[ "$n" == "$name"/* ]] && ctxws+=("$n"); done < <(cat "$WS_FILE" 2>/dev/null)
+    fi
+    pull_context "$cmem" "$cses" "$name" "${ctxws[@]}" || prc=1
   fi
-  pull_top "$name" "$dest"
+  return "$prc"
 }
 
 # review, checkout and discard: thin wrappers over git in the workspace's host

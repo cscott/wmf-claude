@@ -106,7 +106,9 @@ primary repo is that directory.
    ln -s /path/to/wmf-claude/sbx/completion/git-sbx-pull "$dir/git-sbx-pull"
    ```
 
-   It needs bash 4 or later and bash-completion 2 (on macOS, Homebrew's
+   A TAB first fetches the sandbox remotes (a remote at most once a
+   minute), so a branch that the agent made since your last fetch is in
+   the list. It needs bash 4 or later and bash-completion 2 (on macOS, Homebrew's
    `bash` and `bash-completion@2`)
    and git's completion. zsh is not supported yet.
 

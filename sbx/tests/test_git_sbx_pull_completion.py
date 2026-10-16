@@ -93,6 +93,32 @@ class CompletionTests(unittest.TestCase):
             "fix-thing", "other", "sbx-cite/fix-thing", "sbx-cite/other",
             "sbx-echo/fix-thing"])
 
+    def add_sandbox_remote(self, name):
+        """A real remote `name`, a plain repo, with the host's refspecs."""
+        path = os.path.join(os.path.dirname(self.repo), name)
+        subprocess.run(["git", "clone", "-q", self.repo, path], check=True,
+                       capture_output=True)
+        self.git("remote", "add", name, path)
+        self.git("config", f"remote.{name}.fetch", f"+refs/heads/*:refs/remotes/{name}/*")
+        return path
+
+    def test_it_fetches_a_branch_that_the_agent_made_since_the_last_fetch(self):
+        sandbox = self.add_sandbox_remote("sbx-cite")
+        subprocess.run(["git", "-C", sandbox, "branch", "brand-new"], check=True)
+        self.assertIn("sbx-cite/brand-new", self.complete("sbx-cite/"))
+        self.assertIn("brand-new", self.complete("b"))
+
+    def test_a_second_tab_in_the_same_minute_does_not_fetch_again(self):
+        sandbox = self.add_sandbox_remote("sbx-cite")
+        self.complete("")
+        subprocess.run(["git", "-C", sandbox, "branch", "later"], check=True)
+        self.assertNotIn("later", self.complete(""))
+
+    def test_a_sandbox_fetches_the_hosts_branches(self):
+        host = self.add_sandbox_remote("local")
+        subprocess.run(["git", "-C", host, "branch", "handed-off"], check=True)
+        self.assertIn("handed-off", self.complete("h", sandbox="sbx-cite"))
+
     def test_a_prefix_narrows_the_list(self):
         self.assertEqual(self.complete("sbx-c"), ["sbx-cite/fix-thing", "sbx-cite/other"])
 

@@ -6,6 +6,35 @@
 # `git-sbx-pull` from its completion directories, which include
 # ~/.local/share/bash-completion/completions/. Link this file there (see
 # sbx/README.md, "Getting started"); nothing goes in ~/.bashrc.
+#
+# It fetches before it lists branches, so that a branch the agent made
+# since the last fetch is there: the sandbox remotes on the host, `local`
+# in a sandbox. A remote fetched in the last minute (by this completion)
+# is not fetched again, so a second TAB is fast. A fetch that fails (a
+# stopped VM, say) is silent; the list is then what the last fetch got.
+
+# Fetch each remote in "$@", in parallel, unless this completion fetched
+# it in the last minute.
+__git_sbx_pull_fetch ()
+{
+	# A subshell, so that the shell prints no job lines ("[1] 1234") for
+	# the fetches, and `wait` waits for them alone, not the user's jobs.
+	(
+		local remote stamp
+		for remote in "$@"; do
+			stamp=$(__git rev-parse --path-format=absolute \
+				--git-path "wmf-sbx-completion/$remote") || continue
+			if [ -n "$(find "$stamp" -mmin -1 2>/dev/null)" ]; then
+				continue
+			fi
+			{
+				GIT_TERMINAL_PROMPT=0 __git fetch -q --no-tags "$remote" </dev/null &&
+					mkdir -p "${stamp%/*}" && touch "$stamp"
+			} &
+		done
+		wait
+	) >/dev/null 2>&1
+}
 
 _git_sbx_pull ()
 {
@@ -34,15 +63,18 @@ _git_sbx_pull ()
 	esac
 	if [ -n "${SANDBOX_NAME-}" ]; then
 		# In a sandbox: the host's branches.
+		__git_sbx_pull_fetch local
 		__gitcomp_nl "$(__git for-each-ref --format='%(refname:lstrip=3)' \
 			refs/remotes/local/ | grep -vx HEAD)"
 		return
 	fi
 	# On the host: BRANCH and NAME/BRANCH, for each sandbox of this repo.
-	local ls top remote list=""
+	local ls top remote remotes list=""
 	ls=$(command -v wmf-sbx-ls-remotes) || return
 	top=$(__git rev-parse --show-toplevel) || return
-	for remote in $("$ls" --path "$top" 2>/dev/null); do
+	remotes=$("$ls" --path "$top" 2>/dev/null)
+	__git_sbx_pull_fetch $remotes
+	for remote in $remotes; do
 		list+=$(__git for-each-ref --format="%(refname:lstrip=2)
 %(refname:lstrip=3)" "refs/remotes/$remote/" | grep -v '\(^\|/\)HEAD$')
 		list+=$'\n'

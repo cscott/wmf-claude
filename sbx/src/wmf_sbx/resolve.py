@@ -27,6 +27,7 @@ import urllib.request
 
 from . import color as color_mod
 from . import deps as deps_mod
+from . import prompt as prompt_mod
 
 try:
     import yaml
@@ -241,13 +242,14 @@ def git_origin_url(path, run=subprocess.run):
     return (result.stdout or "").strip() or None
 
 
-def _pick_exact(rest, scheme, names, archived, warn):
+def _pick_exact(rest, scheme, names, archived, warn, prompt=None):
     """Narrow forge search hits to the one whose final path segment is
     `rest` (case-insensitively; both forges' searches are plain substring
     matches, so "Cite" also returns "CiteDrawer"). Returns the canonical,
-    or None when nothing matches; raises when it is ambiguous. A
-    non-archived hit beats an archived one; `warn` hears about an archived
-    pick."""
+    or None when nothing matches. When it is ambiguous, `prompt` (a
+    prompt.Prompt) lets the engineer pick one; with no prompt, or no
+    choice, it raises. A non-archived hit beats an archived one; `warn`
+    hears about an archived pick."""
     exact = sorted(
         name for name in names
         if name.rsplit("/", 1)[-1].casefold() == rest.casefold()
@@ -256,7 +258,11 @@ def _pick_exact(rest, scheme, names, archived, warn):
         return None
     pool = [name for name in exact if name not in archived] or exact
     if len(pool) > 1:
-        listing = "\n".join(f"  {scheme}:{name}" for name in pool)
+        labels = [f"{scheme}:{name}" for name in pool]
+        i = prompt.pick(f"{rest!r} matches more than one project:", labels) if prompt else None
+        if i is not None:
+            return labels[i]
+        listing = "\n".join(f"  {label}" for label in labels)
         raise ResolutionError(
             f"{rest!r} is ambiguous, matches:\n{listing}\n"
             "Pass one of these full paths instead of the bare name."
@@ -268,7 +274,7 @@ def _pick_exact(rest, scheme, names, archived, warn):
     return f"{scheme}:{chosen}"
 
 
-def resolve_canonical_path(spec, search=gerrit_search, warn=None, gitlab=None):
+def resolve_canonical_path(spec, search=gerrit_search, warn=None, gitlab=None, prompt=None):
     """Step 1. `search` is injectable for testing -- it takes a substring
     and returns (names, archived), see gerrit_search. `warn`, if given, is
     called with a message when the resolved bare name turns out to be an
@@ -287,7 +293,8 @@ def resolve_canonical_path(spec, search=gerrit_search, warn=None, gitlab=None):
     MediaWiki code is and answers in well under a second; GitLab's answer
     takes seconds. A name that is in both must be spelled `gitlab:...`.
     It is off by default so a caller that hands in a fake `search` cannot
-    reach the network by accident; `resolve` turns it on."""
+    reach the network by accident; `resolve` turns it on. `prompt`: see
+    _pick_exact."""
     scheme, rest = split_scheme(spec)
     if scheme is not None:
         # Already fully qualified: used as-is, no lookup.
@@ -297,13 +304,13 @@ def resolve_canonical_path(spec, search=gerrit_search, warn=None, gitlab=None):
         return f"gerrit:{rest}"
 
     names, archived = search(rest)
-    found = _pick_exact(rest, "gerrit", names, archived, warn)
+    found = _pick_exact(rest, "gerrit", names, archived, warn, prompt)
     if found is not None:
         return found
     if gitlab is None:
         raise ResolutionError(f"No Gerrit project found matching {rest!r}.")
     names, archived = gitlab(rest)
-    found = _pick_exact(rest, "gitlab", names, archived, warn)
+    found = _pick_exact(rest, "gitlab", names, archived, warn, prompt)
     if found is None:
         raise ResolutionError(
             f"No Gerrit or GitLab project found matching {rest!r}.")
@@ -568,9 +575,9 @@ def load_config(path=DEFAULT_CONFIG, warn=lambda msg: print(msg, file=sys.stderr
 
 
 def resolve(spec, config_path=DEFAULT_CONFIG, search=gerrit_search, exists=os.path.isdir,
-            warn=lambda msg: print(msg, file=sys.stderr), gitlab=gitlab_search):
+            warn=lambda msg: print(msg, file=sys.stderr), gitlab=gitlab_search, prompt=None):
     """End-to-end convenience entry point. Returns (canonical, path, rule,
-    needs_clone)."""
+    needs_clone). `prompt`: see _pick_exact."""
     config = load_config(config_path)
     if search is gerrit_search:
         # GERRITUA (deps.gerrit_opener), from the shell or the settings.
@@ -579,7 +586,8 @@ def resolve(spec, config_path=DEFAULT_CONFIG, search=gerrit_search, exists=os.pa
         def search(substring):
             return gerrit_search(substring, opener=opener)
 
-    canonical = resolve_canonical_path(spec, search=search, warn=warn, gitlab=gitlab)
+    canonical = resolve_canonical_path(spec, search=search, warn=warn, gitlab=gitlab,
+                                       prompt=prompt)
     path, rule, needs_clone = resolve_directory(canonical, config["repos"], exists=exists)
     return canonical, path, rule, needs_clone
 
@@ -635,7 +643,8 @@ def main(argv=None):
         return 0
 
     try:
-        canonical, path, rule, needs_clone = resolve(args.name, args.config)
+        canonical, path, rule, needs_clone = resolve(args.name, args.config,
+                                                     prompt=prompt_mod.Prompt())
     except ResolutionError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

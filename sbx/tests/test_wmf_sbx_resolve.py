@@ -336,6 +336,26 @@ class ResolveCanonicalPathTests(unittest.TestCase):
         self.assertIn("foo/Widget", str(ctx.exception))
         self.assertIn("bar/Widget", str(ctx.exception))
 
+    def test_bare_name_ambiguous_lets_a_prompt_pick(self):
+        class Pick:
+            def pick(self, question, labels):
+                self.labels = labels
+                return labels.index("gerrit:foo/Widget")
+        prompt = Pick()
+        self.assertEqual(r.resolve_canonical_path(
+            "Widget", search=lambda s: (["foo/Widget", "bar/Widget"], set()), prompt=prompt),
+            "gerrit:foo/Widget")
+        self.assertEqual(prompt.labels, ["gerrit:bar/Widget", "gerrit:foo/Widget"])
+
+    def test_bare_name_ambiguous_with_no_choice_raises(self):
+        class NoChoice:
+            def pick(self, question, labels):
+                return None
+        with self.assertRaises(r.ResolutionError):
+            r.resolve_canonical_path(
+                "Widget", search=lambda s: (["foo/Widget", "bar/Widget"], set()),
+                prompt=NoChoice())
+
     def test_archived_sole_match_still_resolves_and_warns(self):
         # analytics/asana-stats has no live namesake -- it must still
         # resolve by bare name (excluding it outright was a regression),

@@ -55,10 +55,12 @@ def live_sandbox_names(lima=None):
     return {n[len(vm_mod.PREFIX):] for n in lima.instances() if n.startswith(vm_mod.PREFIX)}
 
 
-def check_unfetched(state, run=subprocess.run, env=None, lima=None):
+def check_unfetched(state, run=subprocess.run, env=None, lima=None, confirm=None):
     """True if it's safe to destroy this sandbox. Refuses on unfetched
     commits, and equally on remotes we couldn't probe -- 'can't check'
-    must not read as 'nothing to lose'.
+    must not read as 'nothing to lose'. On a terminal, it offers to fetch
+    the unfetched commits (`confirm`: see remove_sandbox), then checks
+    again.
 
     A sandbox with no host remotes has nothing to check. Otherwise its VM
     must run, because the remotes reach it through `limactl shell`
@@ -68,19 +70,18 @@ def check_unfetched(state, run=subprocess.run, env=None, lima=None):
     vm_mod.ensure_running(state["name"], lima=lima,
                           log=lambda m: print(m, file=sys.stderr))
     findings, unreachable = remotes_mod.unfetched_tips(state, run=run)
+    if findings and not unreachable:
+        report_unfetched(findings)
+        if not prompt_mod.Prompt(ask=confirm).confirm("Fetch them now?"):
+            return False
+        for host_dir, remote, _shas in findings:
+            print(f"+ git -C {host_dir} fetch {remote}", file=sys.stderr)
+            run(["git", "-C", host_dir, "fetch", remote], stdin=subprocess.DEVNULL)
+        findings, unreachable = remotes_mod.unfetched_tips(state, run=run)
     if not findings and not unreachable:
         return True
     if findings:
-        print(
-            "error: the sandbox has commits the host has never fetched. "
-            "removing the VM is unrecoverable -- fetch them first, or pass "
-            "--force to destroy them:",
-            file=sys.stderr,
-        )
-        for host_dir, remote, shas in findings:
-            print(f"  {host_dir}: {len(shas)} unfetched tip(s) on {remote}", file=sys.stderr)
-            for sha in shas:
-                print(f"    git -C {host_dir} fetch {remote} {sha}", file=sys.stderr)
+        report_unfetched(findings)
     if unreachable:
         print(
             "error: could not reach the sandbox's repositories, so there is "
@@ -91,6 +92,19 @@ def check_unfetched(state, run=subprocess.run, env=None, lima=None):
         for host_dir, remote, reason in unreachable:
             print(f"  {host_dir} ({remote}): {reason}", file=sys.stderr)
     return False
+
+
+def report_unfetched(findings):
+    print(
+        "error: the sandbox has commits the host has never fetched. "
+        "removing the VM is unrecoverable -- fetch them first, or pass "
+        "--force to destroy them:",
+        file=sys.stderr,
+    )
+    for host_dir, remote, shas in findings:
+        print(f"  {host_dir}: {len(shas)} unfetched tip(s) on {remote}", file=sys.stderr)
+        for sha in shas:
+            print(f"    git -C {host_dir} fetch {remote} {sha}", file=sys.stderr)
 
 
 def cleanup_remotes(state, dry_run=False, run=subprocess.run):
@@ -129,7 +143,7 @@ def remove_one(name, args, run=subprocess.run, env=None, lima=None, confirm=None
         print(f"+ resolved {original_name!r} to sandbox {name!r}", file=sys.stderr)
 
     if not args.force and not args.keep_remotes:
-        if not check_unfetched(state, run=run, env=env, lima=lima):
+        if not check_unfetched(state, run=run, env=env, lima=lima, confirm=confirm):
             return 1
 
     if args.dry_run:

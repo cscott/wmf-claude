@@ -239,7 +239,7 @@ def is_raw_path(spec):
     return spec in (".", "..") or spec.startswith(("/", "~", "./", "../"))
 
 
-def resolve_repo(spec, config_path):
+def resolve_repo(spec, config_path, prompt=None):
     """Resolve one repo spec. Returns (canonical, realpath'd local dir,
     needs_clone) -- realpath'd per sbx/NOTES.md #1, since sbx does not
     resolve symlinks in bind-mount source paths.
@@ -254,7 +254,7 @@ def resolve_repo(spec, config_path):
         if not os.path.isdir(path):
             raise resolve_mod.ResolutionError(f"{spec!r} is not an existing directory.")
         return None, path, False
-    canonical, path, _rule, needs_clone = resolve_mod.resolve(spec, config_path)
+    canonical, path, _rule, needs_clone = resolve_mod.resolve(spec, config_path, prompt=prompt)
     return canonical, os.path.realpath(os.path.expanduser(path)), needs_clone
 
 
@@ -672,7 +672,8 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
 
     try:
         split = [split_ro_suffix(spec) for spec in [args.primary] + args.extra]
-        resolved = [resolve_repo(spec, args.config) for spec, _is_ro in split]
+        resolved = [resolve_repo(spec, args.config, prompt=prompt_mod.Prompt())
+                    for spec, _is_ro in split]
         origins_by_path = {}
         unreachable = set()
         if args.deps:

@@ -615,6 +615,30 @@ class FetchThroughHelperTests(Tmp):
         self.host_git("fetch", "-q", "demo")
         self.assertEqual(remotes.unfetched_tips(state), ([], []))
 
+    def rm_check(self, answer):
+        state = {"name": "demo", "remotes": [{"hostDir": self.host, "remote": "demo",
+                                              "url": f"wmfsbx://demo{self.vm}"}]}
+        old = os.environ.copy()
+        os.environ.update(self.env)
+        self.addCleanup(lambda: (os.environ.clear(), os.environ.update(old)))
+        asked = []
+        with mock.patch.object(rm.vm_mod, "ensure_running"), \
+                contextlib.redirect_stderr(io.StringIO()) as err:
+            ok = rm.check_unfetched(state, confirm=lambda q: asked.append(q) or answer)
+        return ok, asked, err.getvalue()
+
+    def test_the_rm_guard_fetches_on_yes(self):
+        ok, asked, err = self.rm_check("y")
+        self.assertTrue(ok, err)
+        self.assertEqual(asked, ["Fetch them now? [y/N] "])
+        self.assertEqual(git(self.host, "rev-parse", "demo/main"), git(self.vm, "rev-parse", "HEAD"))
+
+    def test_the_rm_guard_refuses_on_no(self):
+        ok, asked, err = self.rm_check("")
+        self.assertFalse(ok)
+        self.assertIn("unfetched tip(s) on demo", err)
+        self.assertNotEqual(self.host_git("rev-parse", "-q", "--verify", "demo/main").returncode, 0)
+
     def test_push_is_refused(self):
         res = self.host_git("push", "demo", "main:refs/heads/x")
         self.assertNotEqual(res.returncode, 0)

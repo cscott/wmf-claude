@@ -289,28 +289,10 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
   them.
 
 ### Quality-of-life issues
-- [ ] Streamline the process for copying commits from the sandbox to
-      the host.  Right now on the host we do something like `git
-      safe-reset` (to ensure that there is no unsaved work on the
-      local branch which hasn't been pushed to gerrit, and reset to
-      the master/main branch), followed by `git reset --hard <sandbox
-      name>/<arbitrary branch name>`.  `git-review` is very sensitive
-      to the 'remote' recorded for the current working branch and
-      wants it to point to gerrit (check this assumption against the
-      source).  A naive tracking branch points the remote to the
-      sandbox remote, and so we can't `git review` directly from the
-      tracking branch.  I think ideally we'd want to be able to `git
-      safe-reset <sandbox name>/<branch name>` and have it (a)
-      autocomplete the <branch name> once we'd typed the <sandbox
-      name>, (b) do the safety checks for unsaved work on the branch
-      we're about to leave, (c) leave us in a branch tracking the
-      sandbox remote so that `git pull` will pull down the most recent
-      changes, and (d) still have `git review` work to push the
-      changes to gerrit. We might not be able to have all those things
-      at once, and maybe that behavior isn't compatible with the
-	  present behavior of `git safe-reset` and we should choose a
-	  different command name -- or use something other than `git pull`
-	  to get the latest work from the remote? Needs a plan with options.
+- [x] **Copy commits between the sandbox and the host** (cananian: `git safe-reset` then
+  `git reset --hard NAME/BRANCH` was too many steps, and a branch that tracks the
+  sandbox remote breaks `git review`). Done: `git sbx-pull`, on both sides; RAN
+  2026-10-16 (`TESTPLAN-sbx-pull.md`). The findings, the plan and what was built:
   READ 2026-10-15 (git-review 2.4.0, `git_review/cmd.py`): git-review follows the
   current branch's upstream (remote *and* branch) only when `track` is on, and the
   `.gitreview` of mediawiki/core, Cite and Parsoid all set `track=1`. So on a branch
@@ -483,6 +465,15 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
     keeps its old stop. A caller that passes its own `ask` gives the answers itself.
     `rm` without `-f` and with no terminal now refuses at once (it used to call
     `input()`, which read EOF). Not yet RAN on a terminal.
+  - Built after, with the same Prompt: `wmf-sbx create NAME` (and `wmf-sbx resolve`)
+    lets you pick when a bare name matches more than one project (`resolve._pick_exact`;
+    dependencies are full paths, so they never ask); `rm`'s unfetched-commits stop
+    offers "Fetch them now?" (`git fetch REMOTE` in each repo, then the check again).
+    Not yet RAN on a terminal. Found then, not changed: `rm` removes the remote, and
+    with it `refs/remotes/NAME/*`, so a commit that was only fetched (as the stop's
+    own `git fetch REMOTE SHA` advice does, too) is left unreferenced, for gc to
+    prune. A local branch keeps it (`git sbx-pull`). Open: should `rm` keep such
+    tips under a ref of their own?
   - READ 2026-10-15, why upstreams to a sandbox seemed to vanish: `wmf-sbx rm` runs
     `git remote remove NAME` (remotes.py), which deletes `refs/remotes/NAME/*` and
     unsets `branch.*.remote`/`merge` for every branch that tracked NAME. The local

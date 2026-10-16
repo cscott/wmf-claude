@@ -692,6 +692,14 @@ Cypress binary.
 ```bash
 wmf-sbx rm NAME            # asks first; refuses if the agent has unfetched commits
 wmf-sbx rm --force NAME
+```
+
+When the agent has commits that the host has not fetched, `rm` on a
+terminal offers to fetch them. A fetch puts them in `NAME/BRANCH`, which
+`rm` then deletes with the remote: to keep a branch, `git sbx-pull` it
+first.
+
+```bash
 wmf-sbx rm --prune         # remotes and state of sandboxes whose VM is gone
 wmf-sbx rm --scan DIR      # remotes and gc entries, in the repos under DIR, of sandboxes with no state file
 wmf-sbx image gc           # golden images that no sandbox uses, older than imageCache.gcAge

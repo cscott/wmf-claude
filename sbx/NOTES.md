@@ -494,6 +494,15 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
 
 ### Upstream work and repo hygiene
 
+- [ ] **Adopt what upstream added (`sbx/FROM-UPSTREAM.md`)**: more to-dos, from the
+  review of upstream 70712f6..21bc986 (`sbx/upstream-review.md`). In order: rename our
+  "contained" mode (upstream's contained mode is a different thing), the long project
+  directory names in `resume.py`, `WMF_CLAUDE_PHAB_USER`, the terminal variables, the
+  uncommitted-work report, memory and session carry, `ct direction reply`; then, after
+  asking the engineer, headless Chromium and request-body checks.
+- [ ] **Send the new upstreamable commits upstream** (`sbx/upstream/README.md`, "To send"):
+  pipefail on the Claude Code install (c34e8b1), the test environment fix (b525f78, into !132),
+  the `bin/claude-vm` shellcheck fix (2cedd08), and `--local-web=LO-HI` (part of 4dbf3e2).
 - [ ] **Follow MRs !131, !132 and !134**: `lima-port` is rebased on upstream `main` 21bc986
   (2026-10-16; !127, !130 and !133 merged) and carries their commits. The rebase
   changed !131 and !132 to fit upstream's new code: !131 now keeps upstream's
@@ -525,10 +534,11 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
   profile ("Landlock deny-overlap is not enforceable on Linux") because the
   `~/.cargo/credentials(.toml)` deny sits under `group:rust_runtime`'s `~/.cargo` allow.
   A #WMF-Claude task, if not filed yet.
-- [ ] **Seam 2 (optional, upstream): make `bin/wmf-claude-setup` fully non-interactive**. It still `read -rp`s the Phabricator username (line 208); `setup.sh`
-  has a "Press Enter" gate. Proposed: `WMF_CLAUDE_PHAB_USER`, `WMF_CLAUDE_NONINTERACTIVE=1`
-  that turns any prompt into an error. Lima feeds the answer through `config.json` today, so
-  this is a nicety, not a blocker.
+- [ ] **Seam 2 (optional, upstream): make `bin/wmf-claude-setup` fully non-interactive**.
+  Upstream 21bc986 has `WMF_CLAUDE_PHAB_USER`, and keeps the recalled username with no
+  prompt in a VM or with no terminal. Left: `setup.sh`'s "Press Enter" gate, and a
+  `WMF_CLAUDE_NONINTERACTIVE=1` that turns any prompt into an error. A nicety, not a
+  blocker.
 
 ## Decisions and findings
 

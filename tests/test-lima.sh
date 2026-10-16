@@ -511,6 +511,131 @@ rpt=$(env XDG_CONFIG_HOME="$RT/cfg" FAKE_AGENT_HOME="$RT/agent" PATH="$RT/bin:$P
   unpulled_report' _ "$WS" 2>&1)
 if grep -q 'Pull with: claude-vm pull --nested core$' <<<"$rpt"; then pass "the report groups nested workspaces into one pull --nested"
 else fail "the report did not group the nested workspaces: $rpt"; fi
+# Claude Code context: memory and sessions, each way, with paths rewritten.
+CX="$REPO_ROOT/lima/claude-context.py"
+# The resolved path, as git and Claude Code record it (macOS: /var is /private/var).
+HR=$(cd "$H" && pwd -P)
+HP="$RT/hostclaude/projects/${HR//[^A-Za-z0-9]/-}"
+GW="$RT/agent/work/core"
+GP="$RT/agent/.claude/projects/${GW//[^A-Za-z0-9]/-}"
+U1=11111111-1111-4111-8111-111111111111
+mkdir -p "$HP/memory" "$HP/$U1/subagents"
+printf -- '- [A](a.md) - a\n' > "$HP/memory/MEMORY.md"
+echo "a note about $HR/includes" > "$HP/memory/a.md"
+printf '{"type":"user","cwd":"%s","message":{"role":"user","content":"first prompt here"}}\n' "$HR" > "$HP/$U1.jsonl"
+echo '{"x":1}' > "$HP/$U1/subagents/agent-1.jsonl"
+rc_() { CLAUDE_CONFIG_DIR="$RT/hostclaude" XDG_STATE_HOME="$RT/state" rt "$@"; }
+out=$(rc_ push "$H" --claude-memory --claude-sessions)
+if grep -qF "$GW/includes" "$GP/memory/a.md" 2>/dev/null && grep -qF "\"cwd\":\"$GW\"" "$GP/$U1.jsonl" 2>/dev/null \
+   && [[ -f "$GP/$U1/subagents/agent-1.jsonl" ]]; then pass "push --claude-*: memory and a session arrive, with guest paths"
+else fail "push --claude-*: $out"; fi
+before=$(cat "$HP/$U1.jsonl")
+printf '{"type":"assistant","cwd":"%s"}\n' "$GW" >> "$GP/$U1.jsonl"
+echo "vm note" > "$GP/memory/b.md"; printf -- '- [B](b.md) - b\n' >> "$GP/memory/MEMORY.md"
+out=$(rc_ pull core --claude-memory --claude-sessions)
+after=$(cat "$HP/$U1.jsonl")
+if [[ "$after" == "$before"* ]] && tail -n1 "$HP/$U1.jsonl" | grep -qF "\"cwd\":\"$HR\"" && grep -q 'extended  first prompt here' <<<"$out"; then
+  pass "pull --claude-sessions: the VM's turns extend the host session, with host paths"
+else fail "pull --claude-sessions: $out"; fi
+if [[ ! -e "$HP/memory/b.md" ]] && grep -q 'only in the VM: b.md' <<<"$out" && grep -qF -- '- [B](b.md) - b' <<<"$out" \
+   && ls "$RT"/state/wmf-claude/context/*/0/memory/b.md >/dev/null 2>&1; then
+  pass "pull --claude-memory: stages the VM's memory and changes nothing here"
+else fail "pull --claude-memory: $out"; fi
+echo "vm edit" > "$GP/memory/a.md"; echo "host edit about $HR" > "$HP/memory/a.md"
+out=$(rc_ push "$H" --claude-memory)
+if grep -qF "host edit about $GW" "$GP/memory/a.md" && grep -rqx 'vm edit' "$RT/agent/.claude/wmf-claude-aside" \
+   && grep -qF -- '- [A](a.md)' "$GP/memory/MEMORY.md" && grep -qF -- '- [B](b.md)' "$GP/memory/MEMORY.md"; then
+  pass "push --claude-memory: a VM edit moves aside; MEMORY.md keeps the lines of both sides"
+else fail "push --claude-memory merge: $out"; fi
+echo '{"vm":"diverge"}' >> "$GP/$U1.jsonl"; echo '{"host":"diverge"}' >> "$HP/$U1.jsonl"
+out=$(rc_ pull core --claude-sessions)
+if grep -q 'both sides changed it' <<<"$out" && tail -n1 "$HP/$U1.jsonl" | grep -q '"host"'; then pass "pull --claude-sessions: a session both sides changed is left as it was"
+else fail "pull --claude-sessions conflict: $out"; fi
+# Agent-written text reaches the terminal without control characters.
+U2=22222222-2222-4222-8222-222222222222
+# As Claude Code writes it: JSON escapes the control character.
+printf '{"type":"user","cwd":"%s","message":{"role":"user","content":"hi %s[2Jthere"}}\n' "$GW" '\u001b' > "$GP/$U2.jsonl"
+printf -- '- [E](e.md) - \033]0;owned\007esc\n' >> "$GP/memory/MEMORY.md"
+out=$(rc_ pull core --claude-sessions --claude-memory)
+if grep -q 'added  hi \[2Jthere' <<<"$out" && grep -q 'esc' <<<"$out" && ! printf '%s' "$out" | LC_ALL=C grep -q "$(printf '\033')[]2]"; then
+  pass "pull --claude-*: no control characters from the VM reach the terminal"
+else fail "pull --claude-*: control characters passed: $(printf '%s' "$out" | LC_ALL=C tr -d '[:print:]\n' | od -c | head -3)"; fi
+# A half-written last line (a live session) does not travel.
+U3=33333333-3333-4333-8333-333333333333
+printf '{"type":"user","cwd":"%s","message":{"role":"user","content":"whole"}}\n{"partial' "$HR" > "$HP/$U3.jsonl"
+out=$(rc_ push "$H" --claude-sessions=1)
+if [[ -f "$GP/$U3.jsonl" ]] && ! grep -q partial "$GP/$U3.jsonl" && [[ "$(tail -c1 "$GP/$U3.jsonl" | od -An -c | tr -d ' ')" == '\n' ]]; then
+  pass "push --claude-sessions: a half-written last line stays behind"
+else fail "push --claude-sessions sent a partial line: $(cat "$GP/$U3.jsonl" 2>&1)"; fi
+# A crafted transcript line does not stop the pull.
+U4=44444444-4444-4444-8444-444444444444
+printf '[1]\nnull\n{"type":"user","message":{"content":[{"type":"text","text":5}]}}\n' > "$GP/$U4.jsonl"
+out=$(rc_ pull core --claude-sessions); prc=$?
+if [[ -f "$HP/$U4.jsonl" ]] && grep -q 'session 44444444 added' <<<"$out"; then pass "pull --claude-sessions: a crafted transcript line does not stop the pull"
+else fail "pull --claude-sessions with a crafted line (rc $prc): $out"; fi
+# Memory merges three ways, against what the last push sent.
+echo "vm change" > "$GP/memory/a.md"
+out=$(rc_ push "$H" --claude-memory)
+if grep -qx 'vm change' "$GP/memory/a.md" && grep -q 'kept as changed here: a.md' <<<"$out"; then pass "push --claude-memory: a change made only in the VM stays"
+else fail "push --claude-memory overwrote a VM-only change: $out"; fi
+grep -vF -- '- [A](a.md)' "$HP/memory/MEMORY.md" > "$HP/memory/MEMORY.md.new"; mv "$HP/memory/MEMORY.md.new" "$HP/memory/MEMORY.md"
+rc_ push "$H" --claude-memory >/dev/null
+if ! grep -qF -- '- [A](a.md)' "$GP/memory/MEMORY.md"; then pass "push --claude-memory: a line removed on the host stays removed"
+else fail "push --claude-memory: a removed MEMORY.md line came back: $(cat "$GP/memory/MEMORY.md")"; fi
+# receive is the host's trust boundary: names it does not allow never land.
+RX="$RT/rx"; mkdir -p "$RX/outside"
+b64() { printf '%s' "$1" | base64 | tr -d '\n'; }
+mkdir -p "$RX/out/0/memory"; ln -s "$RX/outside" "$RX/out/0/memory/link"
+printf '%s\n' "{\"w\":0,\"p\":\"../evil\",\"b\":\"$(b64 x)\"}" "{\"w\":0,\"p\":\"/tmp/evil\",\"b\":\"$(b64 x)\"}" \
+  "{\"w\":0,\"p\":\"memory/a/b\",\"b\":\"$(b64 x)\"}" "{\"w\":0,\"p\":\"memory/link\",\"b\":\"$(b64 x)\"}" \
+  "{\"w\":0,\"p\":\"memory/ok.md\",\"b\":\"$(b64 ok)\"}" "{\"w\":0,\"p\":\"memory/ok.md\",\"b\":\"$(b64 dup)\"}" \
+  "{\"w\":0,\"p\":\"memory/ok.md\\n\",\"b\":\"$(b64 nl)\"}" "{\"w\":1,\"p\":\"memory/w.md\",\"b\":\"$(b64 x)\"}" \
+  "{\"w\":\"0\",\"p\":\"memory/s.md\",\"b\":\"$(b64 x)\"}" "{\"w\":true,\"p\":\"memory/t.md\",\"b\":\"$(b64 x)\"}" \
+  "{\"w\":0,\"p\":\"sessions/$U1.jsonl\",\"b\":\"!!\"}" '{"w":0,"p":5,"b":""}' 'not json' \
+  | python3 "$CX" receive "$RX/out" --count 1 2>"$RX/err"; rxrc=$?
+if [[ "$rxrc" -ne 0 && -z "$(ls -A "$RX/outside")" && "$(find "$RX/out" -type f | wc -l | tr -d ' ')" == 1 \
+      && "$(cat "$RX/out/0/memory/ok.md")" == ok ]] && grep -q 'refused 12' "$RX/err"; then
+  pass "receive: refuses traversal, absolute paths, symlinks, newlines, duplicates, bad indices and bad data"
+else fail "receive: rc $rxrc, $(cat "$RX/err"), files: $(find "$RX" -type f)"; fi
+# Review fixes: the rewrite, merge edge cases, long names, file times.
+CT="$RT/ct"; mkdir -p "$CT/src/memory" "$CT/out"
+echo 'I edited /h/core. Then /h/core.git and /h/core/x.' > "$CT/src/memory/n.md"
+python3 "$CX" stage "$CT/src" "$CT/out" --memory --map /h/core /g/core >/dev/null
+if [[ "$(cat "$CT/out/memory/n.md")" == 'I edited /g/core. Then /h/core.git and /g/core/x.' ]]; then pass "rewrite: a path before a full stop is rewritten; /core.git is not"
+else fail "rewrite: $(cat "$CT/out/memory/n.md")"; fi
+deep=$(printf '%*s' 100000 '' | tr ' ' '[')
+{ printf '{"w":0,"p":"memory/d.md","b":%s\n' "$deep"; printf '{"w":0,"p":"memory/after.md","b":"%s"}\n' "$(b64 after)"; } \
+  | python3 "$CX" receive "$CT/rx" --count 1 2>"$CT/err"
+if [[ -f "$CT/rx/0/memory/after.md" ]] && grep -q 'refused 1' "$CT/err"; then pass "receive: deeply nested JSON is refused, and the next line still arrives"
+else fail "receive with deep JSON: $(cat "$CT/err")"; fi
+# A session both sides changed: its side files are not written either.
+U5=55555555-5555-4555-8555-555555555555
+mkdir -p "$CT/st/sessions/$U5/subagents" "$CT/dest"
+printf '{"a":1}\n{"vm":1}\n' > "$CT/st/sessions/$U5.jsonl"; echo '{"s":1}' > "$CT/st/sessions/$U5/subagents/agent-1.jsonl"
+printf '{"a":1}\n{"host":1}\n' > "$CT/dest/$U5.jsonl"
+out=$(python3 "$CX" merge "$CT/st" "$CT/dest" --no-memory --consume)
+if grep -q 'both sides changed it' <<<"$out" && [[ ! -e "$CT/dest/$U5/subagents/agent-1.jsonl" && -f "$CT/st/sessions/$U5.jsonl" ]]; then
+  pass "merge: a conflicting session writes no side files, and stays staged"
+else fail "merge conflict wrote side files: $out"; fi
+# A side file that differs on both sides is reported, and the session stays staged.
+printf '{"a":1}\n' > "$CT/dest/$U5.jsonl"; mkdir -p "$CT/dest/$U5/subagents"; echo '{"other":1}' > "$CT/dest/$U5/subagents/agent-1.jsonl"
+out=$(python3 "$CX" merge "$CT/st" "$CT/dest" --no-memory --consume)
+if grep -q 'differ on both sides.*agent-1.jsonl' <<<"$out" && [[ -f "$CT/st/sessions/$U5.jsonl" ]]; then pass "merge: a side file that differs is reported, and the session stays staged"
+else fail "merge side-file conflict: $out"; fi
+# --old: a pulled session is older than every other, so --continue keeps the host's.
+U6=66666666-6666-4666-8666-666666666666
+mkdir -p "$CT/st2/sessions"; echo '{"x":1}' > "$CT/st2/sessions/$U6.jsonl"; echo '{"h":1}' > "$CT/dest/77777777-7777-4777-8777-777777777777.jsonl"
+python3 "$CX" merge "$CT/st2" "$CT/dest" --no-memory --old >/dev/null
+if [[ -f "$CT/dest/$U6.jsonl" && "$(ls -t "$CT/dest"/*.jsonl | tail -1)" == "$CT/dest/$U6.jsonl" ]]; then pass "merge --old: a pulled session is the oldest file, so --continue does not pick it"
+else fail "merge --old: $(ls -lt "$CT/dest")"; fi
+# A long path: 200 characters, "-" and the hash Claude Code uses (checked
+# against a directory Claude Code made).
+LONGP="/home/agent/work/$(printf 'n%.0s' $(seq 1 230))"
+le=$(python3 "$CX" enc "$LONGP")
+if [[ ${#le} -eq 207 && "$le" == *-1gtk8j ]]; then pass "enc: a name over 200 characters is cut and hashed as Claude Code does"
+else fail "enc long: $le"; fi
+check "pull_top: a failed fetch fails the pull, also in ( ) ||" "$VM" 'die "git fetch into \$dest failed"'
+check "the guest python ignores the agent's site-packages (-I)" "$VM" 'guest_agent python3 -I -c'
 # A guest that reports an index out of range, or not a number, gets nothing.
 pn=$(awk '/^pull_nested\(\) \{/,/^\}/' "$VM")
 if grep -qF 'if [[ "$kind" != B || ! "$i" =~ ^(0|[1-9][0-9]*)$ ]] || (( i >= ${#wss[@]} )); then continue; fi' <<<"$pn"; then pass "pull --nested takes only indices in range from the guest"
@@ -531,6 +656,10 @@ for f in "$VM" "$GI" "$GC" "$GD" "$GB"; do
   if bash -n "$f" 2>/dev/null; then pass "bash -n ${f#"$REPO_ROOT"/}"; else fail "bash -n ${f#"$REPO_ROOT"/}"; fi
   if [[ -x "$f" ]]; then pass "executable: ${f#"$REPO_ROOT"/}"; else fail "not executable: ${f#"$REPO_ROOT"/}"; fi
 done
+# The guest runs it with python3 -c; the host may have only Python 3.9.
+CXP="$REPO_ROOT/lima/claude-context.py"
+if python3 -c 'import ast, sys; ast.parse(open(sys.argv[1]).read(), feature_version=(3, 9))' "$CXP" 2>/dev/null; then pass "lima/claude-context.py parses as Python 3.9"
+else fail "lima/claude-context.py does not parse as Python 3.9"; fi
 # The provision script embedded in the template.
 PROV="$(mktemp)"
 awk '/^- mode: system$/{s=1;next} s&&/^  script: \|$/{p=1;next} p&&/^probes:/{exit} p{sub(/^    /,""); print}' "$Y" > "$PROV"

@@ -189,7 +189,7 @@ FORWARD_UNIT = "wmf-sbx-egress-forward"
 def forward_script(target):
     """Bash, as root: the units of the loopback forwarder to `target`
     (host:port, the egress proxy), enabled and started. Root's, so a
-    contained agent cannot change it; nono gives a contained session no
+    nono-mode agent cannot change it; nono gives a nono session no
     connect to its port, and `exec` reaches the proxy itself anyway."""
     unit = f"/etc/systemd/system/{FORWARD_UNIT}"
     desc = "wmf-sbx: the egress proxy on the loopback, for inner VMs"

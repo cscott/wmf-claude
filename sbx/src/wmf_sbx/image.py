@@ -72,7 +72,7 @@ NONO_VERSION_FILE = os.path.join(REPO_ROOT, ".nono-version")
 # zuul/layout.yaml: "our current CI testing targets are Node 24"; Node
 # 26 is experimental only), and MobileFrontend pins exactly 24.18.0
 # (HANDOFF-LIMA.md §11, phase 5). Not Debian's (Debian 13 has Node 20),
-# and not a version manager (nave, fresh-node): a contained agent cannot
+# and not a version manager (nave, fresh-node): a nono-mode agent cannot
 # download a Node, and every shell would have to select one. The
 # tarball's checksum comes from the release's SHASUMS256.txt and goes
 # into the image inputs, so a new version or a changed tarball gives a
@@ -125,7 +125,7 @@ CLAUDE_CHANNELS = ("stable", "latest")
 #   which a sandbox behind the egress proxy cannot (Lima's step runs
 #   before the provisioning gives apt the proxy);
 # - the shared libraries that Chrome for Testing needs on Debian 13
-#   (`ldd`, RAN 2026-10-09). Contained sandboxes cannot apt-get, so
+#   (`ldd`, RAN 2026-10-09). Nono-mode sandboxes cannot apt-get, so
 #   mw-install-browser must find them already here (§5.2).
 IMAGE_PACKAGES = list(kit.BASE_PACKAGES) + [
     "ca-certificates", "curl", "git", "jq", "python3", "python3-venv",

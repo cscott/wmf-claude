@@ -2,7 +2,7 @@
 """The fake-address resolver of a sandbox behind the egress proxy
 (README.md, Architecture: the egress proxy).
 
-Behind `restrict=on` the guest has no DNS, but a contained session's
+Behind `restrict=on` the guest has no DNS, but a nono session's
 nono looks up each name before it CONNECTs to the upstream proxy, and
 fails when the lookup fails (NOTES, A2.0 item 9). It does not use the address:
 the proxy gets the name. So this resolver answers every A query with an

@@ -4,16 +4,17 @@ What the agent in a wmf-sbx sandbox can and cannot reach. The root
 `SECURITY.md` covers wmf-claude under nono on the engineer's own
 machine; this file covers the sandbox VM that `wmf-sbx create` makes.
 
-Scope: two modes. In **contained mode** (the default) the agent has no
+Scope: the modes of `README.md` ("Modes"). In **nono mode**
+(fenced+nono, the default) the agent has no
 root, and Claude Code runs under nono inside the VM; §1 to §6a are about
-it. In **`--sudo` mode** the agent has root in the VM, Claude Code runs
+it. In **`--sudo` mode** (fenced+sudo) the agent has root in the VM, Claude Code runs
 with no nono, and the host's egress proxy is the network boundary; §6b
 says what changes. Their design and threat model are D9 and D11 in
 `../lima-port/HANDOFF-LIMA.md`.
 
 ## The short version
 
-| | nono on the host | wmf-sbx, contained | wmf-sbx, `--sudo` |
+| | nono on the host | wmf-sbx, fenced+nono | wmf-sbx, fenced+sudo |
 |---|---|---|---|
 | Kernel | the host's | a guest kernel, behind a hypervisor (Lima: `vz` or QEMU) | the same; QEMU only |
 | Filesystem | the host's, minus a deny list | the VM's; host repos only as read-only mounts of their git dirs | the same; the host enforces read-only |
@@ -257,7 +258,7 @@ control comes with `--sudo` mode.)
   192.168.5.100:3130 reaches, and gives what comes in to the host's
   `wl-copy`, `xclip` or `pbcopy` (`clipboard.py`). It only writes: it
   sends nothing back, so the VM cannot read your clipboard. Any process
-  in the VM that reaches the port (in a contained sandbox, the agent's
+  in the VM that reaches the port (in a nono-mode sandbox, the agent's
   processes, through nono's proxy; in a `--sudo` one, any) can set CLIPBOARD and PRIMARY while the session runs: check
   a command you paste into a host shell. The listener takes 1 MiB at
   most, and logs a line per write to `~/.local/state/wmf-sbx/sandboxes/NAME.clipboard.log`
@@ -316,7 +317,7 @@ pins. What changes:
   VM's loopback (127.0.0.1:3128) to the host proxy, as a systemd
   `DynamicUser`, for `exec` and `--sudo` sessions (§6b). It adds no
   route: the host proxy's rules apply as they do to the outer VM, and
-  nono gives a contained session no connect to its port.
+  nono gives a nono session no connect to its port.
 - Before a session in a nested sandbox (never in an ordinary one),
   `resume` runs `limactl list` and `limactl stop` as the agent, outside
   nono (an earlier session's inner VMs are out of the new session's

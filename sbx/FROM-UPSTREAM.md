@@ -35,11 +35,18 @@ narrower than isolated and wider than contained. On `vz` or with
 `--no-egress-proxy`, the guest's own nftables and nono enforce the
 allowlist, as in an isolated VM with a narrower network.
 
-**Name clash:** `sbx/README.md` ("Two modes"), `status.py`, `session.py`,
-`resume.py` and `vm.py` call our non-sudo mode "contained". That is not
-upstream's contained mode. Rename ours (for example "nono mode", against
-"sudo mode"), and say in `sbx/README.md` how wmf-sbx compares with
-upstream's two modes.
+**Our names** (decided by cananian, 2026-10-16; done in `sbx/README.md`,
+"Modes", and in `status` and `ls`). A sandbox is **fenced** when the
+host's egress proxy stands as a fence between the VM and the internet,
+and **unfenced** when it is not. The agent's side is **+nono** or
+**+sudo**. So: fenced+nono (the default), fenced+sudo (`--sudo`), and
+unfenced+nono (`vz`, `--no-egress-proxy`; to be removed, so not
+described in detail). Upstream's isolated mode is approximately
+unfenced+nono, with the token in the VM. Before this, we called
+fenced+nono "contained"; that name is upstream's. The flags stay as they
+are (`--egress-proxy`, `--no-egress-proxy`, `--sudo`): each names a
+mechanism. Do not add `--isolated` as a synonym for `--no-egress-proxy`:
+it only removes the fence.
 
 ## 0. A session on nono 0.80 (first)
 
@@ -103,7 +110,30 @@ Upstream's lock accepts `ct state established,related ct direction reply`
 started before the rules loaded from surviving them. Our rules load at
 boot, so the gain is small. Test it in a sandbox (RAN) before adopting it.
 
-## 5. Ask the engineer first
+## 5. `create --contained` (proposed; design first)
+
+cananian is open to it: `create --contained` makes a fenced sandbox
+with a smaller allowlist, compatible with upstream's contained mode
+(only the model API). The fence is on the host, so root in the guest
+cannot remove it, and fenced+sudo contained is possible too; upstream
+has no equivalent. Open questions, to settle before code:
+
+- **What is on the list.** The model API through the auth proxy only,
+  as upstream? Then the MCP servers (Phabricator, Gerrit, GitLab) and
+  `git fetch origin` fail, as in upstream. `create` needs the full list
+  (packages, `composer update`, `npm ci`): use it for `create`, and the
+  small list from the first session, as upstream's open/locked cycle.
+- **`wmf-sbx allow`** on a contained sandbox: refuse it, or allow it
+  and show the sandbox as no longer contained in `status` and `ls`.
+- **The request body.** Without the request-body checks (item 6), the
+  model API can fetch URLs for the agent (server tools, `mcp_servers`,
+  URL content sources), which the fence does not see. Upstream's
+  contained mode refuses these. So `--contained` needs those checks
+  in `authproxy.py`, at least for contained sandboxes.
+- **The record.** As upstream does: the mode is chosen at `create`, kept
+  in the host state, and never inferred from the guest.
+
+## 6. Ask the engineer first
 
 - **Headless Chromium (d7dfe34, `lima/guest-chrome.sh`).** Upstream runs
   Chromium as its own user, with a per-uid nftables rule, for the
@@ -128,7 +158,7 @@ boot, so the gain is small. Test it in a sandbox (RAN) before adopting it.
   `claude-vm` alias.
 
 - Upstream's contained-mode proxy and our credproxy/authproxy: both keep
-  the token on the host. Keep ours; take the policy ideas in item 5.
+  the token on the host. Keep ours; take the policy ideas in item 6.
 - Upstream's `push`/`pull --nested` (bundles) and our `wmfsbx://`
   remotes: in both, the host chooses the names. Do not converge.
 - Upstream's PHP, Composer and MariaDB in the guest, and our golden

@@ -67,8 +67,8 @@ VMTYPE_RE = re.compile(r"^vmType:\s*['\"]?(\w+)", re.M)
 
 
 def qemu_env(vm_type, env=None, arch=None):
-    """The variables for `limactl start` of a QEMU instance in contained
-    mode: the QEMU wrapper, the real QEMU, plain mode (no egress proxy).
+    """The variables for `limactl start` of a QEMU instance: the
+    QEMU wrapper, the real QEMU, plain mode (no egress proxy).
     {} for another vmType, or without QEMU or the wrapper."""
     if vm_type != "qemu":
         return {}
@@ -295,7 +295,7 @@ def shell(name, argv, lima=None, workdir=ENGINEER_HOME, check=True, capture=True
 
 
 # The security invariants that `start` and `status` check in a running
-# sandbox (HANDOFF-LIMA.md §4, contained mode). Each is a shell test that
+# sandbox (HANDOFF-LIMA.md §4). Each is a shell test that
 # prints nothing and exits 0 when the invariant holds.
 NO_SUDO = ("the agent cannot sudo", "! sudo -u agent sudo -n true 2>/dev/null")
 INVARIANTS = [

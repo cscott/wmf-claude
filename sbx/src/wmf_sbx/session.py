@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """The Claude session of a Lima sandbox (lima-port/HANDOFF-LIMA.md §8,
-phase 6). In contained mode the agent runs Claude Code under nono,
+phase 6). In nono mode (README.md, "Modes") the agent runs Claude Code under nono,
 through upstream's bin/claude. In a `sudo` sandbox (README.md, "`--sudo` sessions") it
 runs bin/launch-claude.sh with no nono: the host egress proxy is the
 network boundary.
@@ -49,7 +49,7 @@ SUDO_LAUNCHER = f"{WMF_CLAUDE_DIR}/bin/launch-claude.sh"
 SUDO_SETTINGS = f"{WMF_CLAUDE_DIR}/wiring/settings-merge.json"
 SUDO_SANDBOX_BACKEND = "lima-sbx-sudo"
 # The status line's session segment (bin/statusline.sh), which bin/claude
-# sets in a contained session.
+# sets in a nono session.
 SUDO_SESSION = "sudo · host egress proxy"
 WIKI_PORT = 4000
 KARMA_PORT = 9876
@@ -307,7 +307,7 @@ def sudo_launcher_argv(state, cred_path=None, claude_args=()):
     """argv to run in the guest for one session of a `sudo` sandbox: the
     agent runs bin/launch-claude.sh in the primary clone, with no nono.
     The egress proxy's variables are in the env: `sudo -u agent` drops
-    those of /etc/environment, and nono set its own in a contained
+    those of /etc/environment, and nono set its own in a nono
     session. NODE_EXTRA_CA_CERTS: Node trusts its own CA list, not the
     system's, which has the sandbox's egress CA (Lima's caCerts)."""
     name = state.get("name") or "<this sandbox>"
@@ -330,7 +330,7 @@ def sudo_launcher_argv(state, cred_path=None, claude_args=()):
 def launcher_argv(state, cred_path=None, launcher_flags=(), claude_args=(),
                   proxy=None):
     """argv to run in the guest (as the engineer, Lima's user) for one
-    contained session: the agent runs bin/claude in the primary clone
+    nono session: the agent runs bin/claude in the primary clone
     with the grants for the other clones and the mounts. A `sudo`
     sandbox takes no launcher flags (resume refuses them)."""
     if state.get("sudo"):
@@ -526,9 +526,9 @@ was made for. An undeclared class from an extension that
 """
 
 
-# The mode, in ~/.claude/CLAUDE.md and RUNNING_TESTS_MD: contained, then
+# The mode, in ~/.claude/CLAUDE.md and RUNNING_TESTS_MD: nono mode, then
 # a `sudo` sandbox (no nono, so no --local-web either).
-CONTAINED_MODE = "under nono, with no sudo"
+NONO_MODE = "under nono, with no sudo"
 SUDO_MODE = ("with passwordless sudo. The VM, and the egress proxy\n"
              "on the engineer's machine, are the boundary")
 LOCAL_WEB_LINE = "reaches local web ports (`--local-web`)."
@@ -539,7 +539,7 @@ def home_claude_md(name, sudo=False):
     """The agent's ~/.claude/CLAUDE.md: the sandbox, the repo layout, the
     commit rule, and how to run the tests."""
     head = LIMA_HOME_CLAUDE_MD.replace("@NAME@", name).replace(
-        "@MODE@", SUDO_MODE if sudo else CONTAINED_MODE)
+        "@MODE@", SUDO_MODE if sudo else NONO_MODE)
     tests = RUNNING_TESTS_MD
     if sudo:
         tests = tests.replace(LOCAL_WEB_LINE, SUDO_LOCAL_WEB_LINE)

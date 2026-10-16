@@ -495,11 +495,11 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
 ### Upstream work and repo hygiene
 
 - [ ] **Adopt what upstream added (`sbx/FROM-UPSTREAM.md`)**: more to-dos, from the
-  review of upstream 70712f6..21bc986. In order: a session on nono 0.80, rename our
-  "contained" mode (upstream's contained mode is a different thing), the long project
+  review of upstream 70712f6..21bc986. In order: a session on nono 0.80, the long project
   directory names in `resume.py`, `WMF_CLAUDE_PHAB_USER`, the terminal variables, the
-  uncommitted-work report, memory and session carry, `ct direction reply`; then, after
-  asking the engineer, headless Chromium and request-body checks.
+  uncommitted-work report, memory and session carry, `ct direction reply`, a design
+  for `create --contained`; then, after asking the engineer, headless Chromium and
+  request-body checks.
 - [ ] **Send the new upstreamable commits upstream** (`sbx/upstream/README.md`, "To send"):
   pipefail on the Claude Code install (c34e8b1), the test environment fix (b525f78, into !132),
   the `bin/claude-vm` shellcheck fix (2cedd08), and `--local-web=LO-HI` (part of 4dbf3e2).

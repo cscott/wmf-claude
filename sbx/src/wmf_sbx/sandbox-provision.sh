@@ -34,7 +34,7 @@ done
 # `create --sudo` (D9): passwordless sudo from a sudoers file, never the
 # sudo group, so the group check above holds in both modes. sudo keeps the
 # egress proxy's variables, which it drops by default. The marker tells the
-# invariants (vm.py) which mode they check; a contained sandbox has
+# invariants (vm.py) which mode they check; a nono-mode sandbox has
 # neither file.
 SUDOERS=/etc/sudoers.d/90-wmf-sbx-agent
 if [[ "$AGENT_SUDO" == 1 ]]; then

@@ -6,8 +6,8 @@ free-page reporting. Lima runs it in place of QEMU
 
   WMF_SBX_QEMU_REAL      the real qemu-system-<arch>
   WMF_SBX_EGRESS_CONFIG  the sandbox's proxy.json (egress.write_config)
-  WMF_SBX_QEMU_PLAIN     1 for a sandbox with no egress proxy (contained
-                         mode): the boot call gets only the balloon.
+  WMF_SBX_QEMU_PLAIN     1 for a sandbox with no egress proxy (unfenced,
+                         README.md "Modes"): the boot call gets only the balloon.
                          Without it, a boot with no egress config is
                          refused, so that a --sudo sandbox never boots
                          without its proxy by mistake.

@@ -42,9 +42,13 @@ def main(argv=None, lima=None, env=None):
     print(f"vm        {vm_mod.instance_name(name)}: {vm_status or 'MISSING'} "
           f"({state.get('vmType') or '?'})")
     print(f"primary   {state.get('primaryDir') or '-'}")
-    print("mode      " + ("sudo: the agent has sudo; the VM and the host egress proxy are the boundary"
-                          if state.get("sudo") else
-                          "contained: the agent has no sudo, and Claude Code runs under nono"))
+    mode = egress_mod.mode(state)
+    print(f"mode      {mode}: " + {
+        "fenced+sudo": "the agent has sudo; the VM and the host egress proxy are the boundary",
+        "fenced+nono": "the agent has no sudo, and Claude Code runs under nono, "
+                       "behind the host egress proxy",
+    }.get(mode, "the agent has no sudo, and Claude Code runs under nono; "
+                "the guest enforces its own egress"))
     key = state.get("image")
     try:
         image_mod.verify_entry(key, env)

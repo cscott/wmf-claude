@@ -4,7 +4,8 @@ One command makes a disposable MediaWiki development sandbox: a Lima VM
 with clones of the repos you name and their MediaWiki dependencies, a
 working wiki, and the wmf-claude plugin. Claude Code runs in it as an
 unprivileged user under nono, or, with `create --sudo`, as a user with
-sudo and no nono, behind the host's egress proxy ("Two modes"). The host
+sudo and no nono. On QEMU the host's egress proxy is a fence between the
+VM and the internet ("Modes"). The host
 gets a git remote to fetch the agent's work.
 
 - `SECURITY.md`: what the agent can and cannot reach.
@@ -567,7 +568,7 @@ wmf-sbx create PRIMARY[:ro] [EXTRA[:ro] ...] [options]
 - `--auth-proxy` / `--no-auth-proxy`: sign in with the shared login or
   the inference-only token ("Sign-in"). `--auth-proxy` needs the egress
   proxy.
-- `--sudo`: the agent has passwordless sudo ("Two modes"). It needs the
+- `--sudo`: the agent has passwordless sudo ("Modes"). It needs the
   egress proxy, so QEMU, and cannot be combined with `--no-egress-proxy`.
   `--no-sudo` overrides `create: sudo: true` in `settings.yaml`.
 - `--nested`: **lower security; only for work on wmf-claude or wmf-sbx
@@ -635,9 +636,30 @@ nftables in the VM, as before), when:
 `--no-egress-proxy` asks for that on purpose, with no warning; an
 explicit `--egress-proxy` turns the warning into an error.
 
-## Two modes
+## Modes
 
-**Contained** (the default): the agent has no sudo, and each session
+A sandbox's mode has two parts. Both are chosen at `create`, and
+`status` and `ls` show them:
+
+- **Fenced** or **unfenced**: whether the host's egress proxy stands as
+  a fence between the VM and the internet ("The egress proxy"). On QEMU
+  a sandbox is fenced by default. An unfenced sandbox (on `vz`, or with
+  `--no-egress-proxy`) enforces its own network policy in the guest,
+  where root can change it. Unfenced sandboxes are to be removed.
+- **+nono** or **+sudo**: what is around the agent in the VM.
+
+So there are three modes: **fenced+nono** (the default), **fenced+sudo**
+(`--sudo`) and unfenced+nono. There is no unfenced+sudo: with root in
+the guest and no fence, nothing would limit the agent's egress. In each
+mode, the Claude credential stays on the host.
+
+Upstream's `claude-vm` (`../docs/lima-vm.md`) has two modes, with other
+names. Its **isolated** VM is approximately unfenced+nono, but the model
+token is in the VM. Its **contained** VM can reach only the model API,
+through a proxy on the host: a fence with a smaller allowlist, enforced
+in the guest and by an optional firewall rule on the host.
+
+**fenced+nono** (the default): the agent has no sudo, and each session
 runs upstream's `bin/claude`, so nono, inside the VM. After `resume`'s
 `--`, the words are `bin/claude`'s, by its own rule: its flags before a
 second `--`, Claude Code's after it. So
@@ -650,7 +672,7 @@ does not know it had one), and `resume --no-continue` starts a new
 one. Leave `resume.continue` out of settings.yaml: `true` fails on a
 new sandbox, which has nothing to continue.
 
-**`--sudo`**: the agent has passwordless sudo (a file in
+**fenced+sudo** (`--sudo`): the agent has passwordless sudo (a file in
 `/etc/sudoers.d`; it is in neither the `sudo` nor the `docker` group),
 and each session runs Claude Code with the wmf-claude plugin and the
 tool layer of `wiring/settings-merge.json`, but with no nono. The agent
@@ -834,7 +856,7 @@ DNS) and three `guestfwd`s on 192.168.5.100, and runs QEMU as its child:
 
 - 3128: a `nono proxy` with `profiles/wmf-engineer.json`, the package
   registries, Debian's mirror and the hosts of `wmf-sbx allow`. It is
-  the same policy as a contained session's nono, endpoint rules
+  the same policy as a nono session's nono, endpoint rules
   included, so there is one allowlist. Each sandbox has its own CA
   (`egress.make_ca`), which Lima's `caCerts` puts in the guest at
   create. `egress.proxy_argv` writes the proxy's argv to
@@ -842,7 +864,7 @@ DNS) and three `guestfwd`s on 192.168.5.100, and runs QEMU as its child:
   so a start picks up a new allowlist. When the host itself is behind
   a proxy that needs credentials, `egress.AuthShim` (a thread of the
   wrapper) adds them: `nono proxy --upstream-proxy` sends none.
-- 53: `fakedns.py`, a thread of the wrapper. A contained session's
+- 53: `fakedns.py`, a thread of the wrapper. A nono session's
   nono looks up each name before it sends the name in its upstream
   CONNECT, and fails when the lookup fails. The resolver gives every
   name its own address in 198.18.0.0/15 and keeps the mapping for the
@@ -913,7 +935,7 @@ still applies the profile's endpoint rules.
 
 **`--sudo` sessions** (`session.sudo_launcher_argv`; `SECURITY.md`
 §6b). The provisioning gives the agent a sudoers file and the marker
-`/etc/wmf-sbx/sudo` (a contained sandbox removes both at each boot),
+`/etc/wmf-sbx/sudo` (a nono-mode sandbox removes both at each boot),
 and `vm.invariants` swaps the no-sudo checks for sudo ones. A session
 runs `bin/launch-claude.sh` with the plugin and
 `wiring/settings-merge.json`, with no nono: its network is the egress

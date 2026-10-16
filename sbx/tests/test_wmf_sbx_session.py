@@ -410,14 +410,14 @@ class SessionFilesTests(unittest.TestCase):
             self.assertNotIn(docker, text)
 
     def test_home_claude_md_says_the_mode(self):
-        contained = session.home_claude_md("demo")
-        self.assertIn("`agent`, under nono, with no sudo.", contained)
-        self.assertIn("(`--local-web`)", contained)
+        nono = session.home_claude_md("demo")
+        self.assertIn("`agent`, under nono, with no sudo.", nono)
+        self.assertIn("(`--local-web`)", nono)
         sudo = session.home_claude_md("demo", sudo=True)
         self.assertIn("`agent`, with passwordless sudo.", sudo)
         self.assertNotIn("under nono", sudo)
         self.assertNotIn("--local-web", sudo)
-        self.assertNotIn("@MODE@", sudo + contained)
+        self.assertNotIn("@MODE@", sudo + nono)
 
     def test_write_session_merges_env_and_writes_files(self):
         with tempfile.TemporaryDirectory() as home:

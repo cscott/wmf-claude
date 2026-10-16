@@ -1066,7 +1066,7 @@ class CreateTests(Env):
         # The install runs before the forwarder exists: the proxy itself.
         self.assertIn(f"https_proxy={egress.proxy_url()}", install)
 
-    def test_a_contained_nested_create_gets_the_forwarder_too(self):
+    def test_a_nono_mode_nested_create_gets_the_forwarder_too(self):
         with mock.patch.object(nested, "host_base", return_value="/cache/base/b.qcow2"):
             self.assertEqual(self.egress_create("--nested"), 0, self.err)
         self.assertTrue(state_mod.load("demo", self.env)[egress.FORWARD_KEY])
@@ -1265,12 +1265,20 @@ class StartStopStatusTests(Env):
     def test_status_shows_the_mode(self):
         lima = self.sandbox(status="Stopped")
         self.quiet(status_mod.main, ["sbx-demo"], lima=lima, env=self.env)
-        self.assertIn("mode      contained: the agent has no sudo", self.out)
+        self.assertIn("mode      unfenced+nono: the agent has no sudo", self.out)
         st = state_mod.load("sbx-demo", self.env)
         st["sudo"] = True
         state_mod.save(st, self.env)
         self.quiet(status_mod.main, ["sbx-demo"], lima=lima, env=self.env)
-        self.assertIn("mode      sudo: the agent has sudo", self.out)
+        self.assertIn("mode      unfenced+sudo:", self.out)
+        st[egress.STATE_KEY] = egress.STATE_VALUE
+        state_mod.save(st, self.env)
+        self.quiet(status_mod.main, ["sbx-demo"], lima=lima, env=self.env)
+        self.assertIn("mode      fenced+sudo: the agent has sudo", self.out)
+        del st["sudo"]
+        state_mod.save(st, self.env)
+        self.quiet(status_mod.main, ["sbx-demo"], lima=lima, env=self.env)
+        self.assertIn("mode      fenced+nono: the agent has no sudo", self.out)
 
     def test_status_shows_the_egress_proxy_of_a_sandbox_behind_it(self):
         lima = self.sandbox(status="Stopped")
@@ -1297,6 +1305,7 @@ class StartStopStatusTests(Env):
         lima = self.sandbox()
         self.assertEqual(self.quiet(ls.main, [], lima=lima, env=self.env), 0)
         self.assertIn("sbx-demo", self.out)
+        self.assertIn("unfenced+nono", self.out)
 
 
 # -- exec -----------------------------------------------------------------

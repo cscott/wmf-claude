@@ -7,7 +7,7 @@ at EGRESS_ADDR:EGRESS_PORT, which the QEMU wrapper
 (bin/wmf-sbx-qemu, qemu_wrapper.py) connects to `nono proxy` on the host's loopback.
 `nono proxy` enforces profiles/wmf-engineer.json (endpoint rules
 included) plus the hosts listed here, so the guest gets the same policy
-as a contained session.
+as a fenced+nono session.
 
 Per sandbox, in egress_dir(NAME), all 0600 in a 0700 directory:
   ca.pem, ca.key  the CA `nono proxy` signs intercepted TLS with; made
@@ -35,7 +35,7 @@ needs no route to the host.
 always does), the wrapper runs AuthShim between the two.
 
 The guest gives the proxy no password (`--no-auth`). Only the guest
-reaches the guestfwd, and a contained session's own nono, chained to
+reaches the guestfwd, and a nono session's own nono, chained to
 this proxy, cannot send one (NOTES, item 9).
 """
 
@@ -67,7 +67,7 @@ CLIP_PORT = 3130
 # A nested sandbox's forwarder to the proxy, on the guest's loopback
 # (nested.forward_script). An inner VM's only way out is 192.168.5.2, the
 # outer guest's loopback, where Lima and image.guest_proxy_env point it.
-# A contained session's nono proxy listens there; for a `sudo` session and
+# A nono session's nono proxy listens there; for a `sudo` session and
 # `exec`, which have no nono, the forwarder does (state FORWARD_KEY).
 FORWARD_PORT = 3128
 FORWARD_KEY = "egressForward"
@@ -229,6 +229,13 @@ def remove(name, env=None):
 def enabled(state):
     """Whether the sandbox runs behind the host egress proxy."""
     return bool(state) and state.get(STATE_KEY) == STATE_VALUE
+
+
+def mode(state):
+    """The sandbox's mode (README.md, "Modes"): "fenced" behind the host
+    egress proxy, else "unfenced"; then "+sudo" or "+nono"."""
+    return (("fenced" if enabled(state) else "unfenced")
+            + ("+sudo" if (state or {}).get("sudo") else "+nono"))
 
 
 def qemu_arch(machine=None):
@@ -471,7 +478,7 @@ def guest_provision(name=None, env=None):
         lines += [f"install -d -m 0755 {os.path.dirname(path)}",
                   f"cat > {path} <<'WMF_SBX_FILE'", content.rstrip("\n"), "WMF_SBX_FILE"]
     # git takes the proxy from the variables, as every other client does:
-    # a system http.proxy wins over them, and in a contained session nono
+    # a system http.proxy wins over them, and in a nono session nono
     # gives git its own proxy and refuses a connection to this one (RAN:
     # "Failed to connect to 192.168.5.100 port 3128"). The session's git
     # config (session.git_config_env) makes nono's proxy work.

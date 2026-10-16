@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """List the sandboxes that wmf-sbx owns, with their VM status and image
-(and `sudo` for a `create --sudo` sandbox).
+and mode (README.md, "Modes").
 
 Usage:
   wmf-sbx ls
@@ -10,6 +10,7 @@ import argparse
 import sys
 
 from . import cli as cli_mod
+from . import egress as egress_mod
 from . import lima as lima_mod
 from . import state as state_mod
 from . import vm as vm_mod
@@ -31,7 +32,7 @@ def main(argv=None, lima=None, env=None):
         if not state:
             continue
         st = instances.get(vm_mod.PREFIX + name, "MISSING")
-        print(f"{name:24} {st:10} {'sudo' if state.get('sudo') else '':4} "
+        print(f"{name:24} {st:10} {egress_mod.mode(state):13} "
               f"image {state.get('image') or '?'}  {state.get('primaryDir') or ''}")
     return 0
 

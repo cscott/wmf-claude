@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Start a Claude Code session in a sandbox (lima-port/HANDOFF-LIMA.md §8,
-contained mode).
+"""Start a Claude Code session in a sandbox (lima-port/HANDOFF-LIMA.md §8;
+README.md, "Modes").
 
 Usage:
   wmf-sbx resume [--[no-]continue] NAME [-- [LAUNCHER-FLAG ... --] CLAUDE-ARG ...]

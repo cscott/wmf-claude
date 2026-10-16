@@ -244,7 +244,7 @@ class ProvisionTests(unittest.TestCase):
             self.skipTest(res.stderr.strip())
         self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
 
-    def test_a_contained_sandbox_removes_both(self):
+    def test_a_nono_mode_sandbox_removes_both(self):
         self.assertEqual(self.sudo_block(False), {})
         self.assertIn('AGENT_SUDO=""', self.script())
 

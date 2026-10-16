@@ -11,6 +11,7 @@ import os
 import shutil
 import socket
 import stat
+import subprocess
 import sys
 import tempfile
 import threading
@@ -265,6 +266,59 @@ class SyncTests(Base):
             guest = Guest(refreshed=out)
             self.assertIsNone(authproxy.refresh_in_guest("demo", host, lima=guest,
                                                          env=self.env))
+
+    @unittest.skipUnless(shutil.which("jq"), "needs jq")
+    def test_the_refresh_script_returns_as_soon_as_the_login_is_new(self):
+        # A fake `claude` that refreshes after 0.3 s and then would take
+        # 30 s over its turn.
+        bin_dir = os.path.join(self.tmp, "bin")
+        os.makedirs(bin_dir)
+        new = login(now_ms() + 8 * HOUR_MS, access="sk-ant-oat01-new", refresh="nono_new")
+        with open(os.path.join(bin_dir, "claude"), "w") as f:
+            f.write("#!/bin/sh\nsleep 0.3\n"
+                    f"printf '%s' '{json.dumps({'claudeAiOauth': new})}' "
+                    "> \"$CLAUDE_CONFIG_DIR/.credentials.json\"\nsleep 30\n")
+        os.chmod(os.path.join(bin_dir, "claude"), 0o755)
+        env = dict(os.environ, PATH=bin_dir + os.pathsep + os.environ["PATH"])
+        start = time.monotonic()
+        res = subprocess.run(["sh", "-c", authproxy.REFRESH_SCRIPT, "_", "100"], env=env,
+                             input=json.dumps({"claudeAiOauth": dict(login(1), expiresAt=0)}),
+                             capture_output=True, text=True, timeout=20)
+        self.assertLess(time.monotonic() - start, 5)
+        self.assertEqual(authproxy.phantoms(json.loads(res.stdout)), new)
+
+    @unittest.skipUnless(shutil.which("jq"), "needs jq")
+    def test_the_refresh_script_gives_up(self):
+        bin_dir = os.path.join(self.tmp, "bin")
+        os.makedirs(bin_dir)
+        with open(os.path.join(bin_dir, "claude"), "w") as f:
+            f.write("#!/bin/sh\nsleep 30\n")
+        os.chmod(os.path.join(bin_dir, "claude"), 0o755)
+        env = dict(os.environ, PATH=bin_dir + os.pathsep + os.environ["PATH"])
+        start = time.monotonic()
+        old = {"claudeAiOauth": dict(login(1), expiresAt=0)}
+        res = subprocess.run(["sh", "-c", authproxy.REFRESH_SCRIPT, "_", "5"], env=env,
+                             input=json.dumps(old), capture_output=True, text=True,
+                             timeout=20)
+        self.assertLess(time.monotonic() - start, 5)
+        self.assertEqual(json.loads(res.stdout), old)      # no refresh: the input back
+
+    def test_the_refresher_does_not_restart_its_own_proxy(self):
+        authproxy.write_host(login(now_ms() + 60 * 1000), self.env)
+        new = login(now_ms() + 8 * HOUR_MS, access="sk-ant-oat01-new", refresh="nono_new")
+        self.touch(egress.port_file("a", self.env), 100)
+        swapped = []
+
+        def refresher(name, host, lima=None, env=None):
+            self.touch(authproxy.store_file(self.env), time.time())   # the capture
+            return new
+        a = authproxy.Coordinator("a", lima=Guest(None), env=self.env, refresher=refresher,
+                                  swap=lambda n, e=None: swapped.append(n), backstop=3600,
+                                  rng=lambda lo, hi: 0)
+        a.start()
+        a.stop()
+        self.assertEqual(swapped, [])
+        self.assertEqual(authproxy.read_host(self.env), new)
 
     def touch(self, path, mtime):
         os.makedirs(os.path.dirname(path), exist_ok=True)

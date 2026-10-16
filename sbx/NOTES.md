@@ -225,8 +225,8 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
 
 ### Session, credentials, Claude Code
 
-- [ ] **Track L7: measure the one refresher** (HANDOFF-LIMA, track L, L7): `oauth-l6.sh
-  l7 l6-a l6-b`, then `long l6-a l6-b` (9 hours, the real margin).
+- [ ] **Track L7: measure the one refresher again** (HANDOFF-LIMA, track L, L7): `oauth-l6.sh
+  l7 l6-a l6-b` with the shorter gap, then `long l6-a l6-b` (9 hours, the real margin).
 - [ ] **Upstream: file `sbx/upstream/NONO-ISSUE-1.md`** (nono's capture store is read
   once and written whole). When nono reloads and merges, remove
   `authproxy.refresh_proxy`.
@@ -1265,6 +1265,16 @@ A2.0 results (in the nested `dev` VM, nono 0.78.0, 2026-10-13):
   allowed: `/v1/messages/count_tokens`, `/api/oauth/usage`, the organization's skills,
   plugins and marketplaces, `/api/oauth/account/settings`. `scan`: 0 hits in l6-a, l6-b,
   l6-c (14 token-like values in the store).
+- L7 `l7` (engineer's host, 2026-10-16, refresh every ~8 minutes, 25 minutes): four
+  refreshes, each one 200 from one sandbox, no double refresh, no 400 but one; l6-a's
+  resume refreshed at its start (18:00) and at 18:08, then its session ended and l6-b's
+  resume refreshed at 18:16 and 18:24. l6-b: 50 of 50 replies, across all four. l6-a: 24
+  of 25: its message right after its own 18:08 refresh got 401, then 400 for the old
+  refresh phantom. The gap was longer than it had to be: the refresh script waited for
+  the rest of the Haiku turn after the refresh, and the refresher restarted its own
+  proxy (which had captured the new login) before the push. Now the script stops
+  `claude` once the file has the new login, and the refresher marks its own proxy
+  current.
 - Other denials in the login session, not ours to allow: `downloads.claude.ai` (Claude
   Code's update and plugin downloads), `http-intake.logs.us5.datadoghq.com` (telemetry),
   `raw.githubusercontent.com`.

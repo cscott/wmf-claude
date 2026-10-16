@@ -1744,7 +1744,10 @@ Candidates (L1 measures them):
   nothing refreshes; the next resume refreshes first if the login is
   within the margin. Measure: `oauth-l6.sh l7 l6-a l6-b`
   (`WMF_SBX_AUTH_MARGIN_MINUTES=472`: a refresh every ~8 minutes, two
-  sessions, A's ending half-way).
+  sessions, A's ending half-way). RAN (2026-10-16): one refresher per
+  round, B took over when A ended; 74 of 75 messages; the one lost was
+  the refresher's own, in the gap before its push, now shorter
+  (sbx/NOTES.md, "Shared login").
 
 **Track C: develop wmf-sbx inside a sandbox (nested Lima)**
 

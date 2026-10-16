@@ -344,21 +344,31 @@ def sync(name, lima=None, env=None, now_ms=None):
 
 
 # Refresh in the guest, as the agent, in a throwaway CLAUDE_CONFIG_DIR:
-# the login comes on stdin with expiresAt 0; one turn makes Claude Code
+# the login comes on stdin with expiresAt 0; a turn makes Claude Code
 # refresh it through the egress proxy (RAN, L6 `trigger`: `claude auth
-# status` does not); the new login goes to stdout.
+# status` does not). The refresh revokes the tokens that every sandbox
+# holds, so the script does not wait for the turn: once the file has the
+# new login (an expiry that jq reads as > 0), it stops claude and prints
+# the file (RAN, L7: a session's request in that wait failed). At most
+# REFRESH_TIMEOUT tenths of a second.
+REFRESH_TIMEOUT = 1200
 REFRESH_SCRIPT = (
-    'umask 077; d=$(mktemp -d) || exit 1; trap \'rm -rf "$d"\' EXIT; '
-    'cat > "$d/.credentials.json" && '
-    'CLAUDE_CONFIG_DIR="$d" timeout 120 claude -p ok --model haiku < /dev/null '
-    '> "$d/turn.log" 2>&1; '
-    'rc=$?; cat "$d/.credentials.json"; exit $rc')
+    'umask 077; d=$(mktemp -d) || exit 1; f="$d/.credentials.json"; '
+    'trap \'rm -rf "$d"\' EXIT; cat > "$f" || exit 1; '
+    'CLAUDE_CONFIG_DIR="$d" claude -p ok --model haiku < /dev/null > "$d/turn.log" 2>&1 & '
+    'pid=$!; i=0; '
+    'until jq -e ".claudeAiOauth.expiresAt > 0" "$f" > /dev/null 2>&1; do '
+    '  kill -0 "$pid" 2>/dev/null && [ "$i" -lt "$1" ] || break; '
+    '  sleep 0.1; i=$((i + 1)); '
+    'done; '
+    'kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; cat "$f"')
 
 
 def refresh_in_guest(name, host, lima=None, env=None):
     """Refresh the shared login `host` in the sandbox `name`. Returns the
     new record, or None."""
-    argv = vm_mod.agent_argv(["sh", "-c", REFRESH_SCRIPT], workdir="/tmp",
+    argv = vm_mod.agent_argv(["sh", "-c", REFRESH_SCRIPT, "_", str(REFRESH_TIMEOUT)],
+                             workdir="/tmp",
                              env=vm_mod.guest_proxy_env(name, env))
     res = vm_mod.shell(name, argv, lima=lima, check=False,
                        input=json.dumps({"claudeAiOauth": dict(host, expiresAt=0)}))
@@ -570,6 +580,10 @@ class Coordinator:
                          f"in a session.")
                 return None
             write_host(new, self.env)
+            # This sandbox's proxy captured the new login, so it knows the
+            # phantoms: no restart (refresh_proxy) before the push here.
+            with contextlib.suppress(OSError):
+                os.utime(egress_mod.port_file(self.name, self.env))
         self.refreshed += 1
         notify(self.env, skip=self.path)
         self._sync()

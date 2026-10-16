@@ -814,6 +814,10 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
                                         name, env, flag="--sudo" if sudo else "--egress-proxy")
         if warning:
             print(color_mod.warning(warning), file=sys.stderr)
+        if egress:
+            older = egress_mod.nono_version_warning(image_mod.nono_version(), env)
+            if older:
+                print(color_mod.warning(older), file=sys.stderr)
         auth = authproxy_mod.choose(args.auth_proxy, bool(egress), env)
         if auth:
             say("+ auth proxy: /login in the sandbox; the host egress proxy keeps the "

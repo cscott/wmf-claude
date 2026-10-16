@@ -1320,6 +1320,22 @@ class CreateSessionTests(Env):
         self.assertIn("~/.local/bin/wl-copy", files)
         self.assertEqual(env["WMF_CLAUDE_CLIPBOARD"], "192.168.5.100:3130")
 
+    def test_a_create_behind_the_egress_proxy_warns_of_an_old_host_nono(self):
+        seen = []
+
+        def older(pinned, env=None):
+            seen.append(pinned)
+            return "warning: the host's nono is old"
+        with mock.patch.object(egress, "nono_version_warning", side_effect=older):
+            self.copy_create()
+        self.assertEqual(seen, [image.nono_version()])
+        self.assertIn("warning: the host's nono is old", self.err)
+
+    def test_a_create_off_the_egress_proxy_does_not_check_the_host_nono(self):
+        with mock.patch.object(egress, "nono_version_warning") as check:
+            self.create_demo()
+        check.assert_not_called()
+
     def test_settings_native_copy_false_sends_no_shim(self):
         st, files, env = self.copy_create("session:\n  native_copy: false\n")
         self.assertNotIn("nativeCopy", st)

@@ -45,6 +45,7 @@ import datetime
 import json
 import os
 import platform
+import re
 import shutil
 import socket
 import subprocess
@@ -268,6 +269,39 @@ def missing_tools(env=None, arch=None, which=shutil.which):
     # An env with no PATH finds nothing (not the caller's own PATH).
     return [t for t in (f"qemu-system-{arch}", "nono", "openssl")
             if not which(t, path=env.get("PATH", ""))]
+
+
+NONO_OLDER = ("warning: the host's nono is {have}, older than the pinned {pin} "
+              "(.nono-version) that the guest gets. The egress proxy and the auth "
+              "proxy run on the host's nono, and are tested only with the pinned "
+              "version. Upgrade it: `brew upgrade nono`, or ./setup.sh on Linux.")
+
+
+def version_tuple(text):
+    """(major, minor, patch) from the first x.y.z in `text`, or None."""
+    m = re.search(r"(\d+)\.(\d+)\.(\d+)", text or "")
+    return tuple(int(g) for g in m.groups()) if m else None
+
+
+def nono_version_warning(pinned, env=None, run=subprocess.run, which=shutil.which):
+    """A warning when the host's nono (`nono proxy`) is older than
+    `pinned` (.nono-version, which the golden image has); else None.
+    Says nothing when nono is missing (missing_tools) or its version
+    cannot be read."""
+    env = os.environ if env is None else env
+    nono = which("nono", path=env.get("PATH", ""))
+    pin = version_tuple(pinned)
+    if not nono or not pin:
+        return None
+    try:
+        out = run([nono, "--version"], capture_output=True, text=True,
+                  timeout=10, env=dict(env)).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    have = version_tuple(out)
+    if have is None or have >= pin:
+        return None
+    return NONO_OLDER.format(have=".".join(map(str, have)), pin=".".join(map(str, pin)))
 
 
 TIME_SYNC_DONE = ("Time sync: guest clock adjusted", "Time sync: drift")

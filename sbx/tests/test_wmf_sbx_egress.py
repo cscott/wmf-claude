@@ -301,6 +301,32 @@ class StartTests(unittest.TestCase):
         self.assertEqual(egress.missing_tools({}, arch="aarch64"),
                          ["qemu-system-aarch64", "nono", "openssl"])
 
+    def test_a_host_nono_older_than_the_pin_is_a_warning(self):
+        def which(cmd, path=None):
+            return "/usr/bin/nono" if path == "/usr/bin" else None
+
+        def run_with(out):
+            def run(argv, **kw):
+                self.assertEqual(argv, ["/usr/bin/nono", "--version"])
+                return subprocess.CompletedProcess(argv, 0, stdout=out)
+            return run
+        warn = egress.nono_version_warning("0.80.0\n", self.env,
+                                           run=run_with("nono 0.78.0\n"), which=which)
+        self.assertIn("0.78.0, older than the pinned 0.80.0", warn)
+        # 0.10 is newer than 0.9: the parts compare as numbers
+        self.assertIsNone(egress.nono_version_warning("0.9.0", self.env,
+                                                      run=run_with("nono 0.10.0"), which=which))
+        for out in ("nono 0.80.0", "nono 0.81.2", "garbage"):
+            self.assertIsNone(egress.nono_version_warning("0.80.0", self.env,
+                                                          run=run_with(out), which=which))
+        # no nono on PATH: missing_tools says so, not this
+        self.assertIsNone(egress.nono_version_warning("0.80.0", {}, run=run_with("nono 0.1.0"),
+                                                      which=which))
+
+        def broken(argv, **kw):
+            raise OSError("exec format error")
+        self.assertIsNone(egress.nono_version_warning("0.80.0", self.env, run=broken, which=which))
+
     def test_the_machine_names_map_to_qemu_s(self):
         self.assertEqual(egress.qemu_arch("arm64"), "aarch64")
         self.assertEqual(egress.qemu_arch("AMD64"), "x86_64")

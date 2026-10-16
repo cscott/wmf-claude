@@ -25,6 +25,8 @@ On the host you need:
 - For the egress proxy (QEMU; see "The egress proxy"):
   [nono](https://github.com/nolabs-ai/nono) and `openssl`. Without them,
   `create` warns and makes a sandbox that is not behind the proxy.
+  Use the nono version in `.nono-version`, which the guest gets: `create`
+  warns when the host's nono is older.
 - Python 3 with PyYAML, git and jq.
 - A checkout of this repository with its submodules
   (`git clone --recurse-submodules`). The golden image is built from it.

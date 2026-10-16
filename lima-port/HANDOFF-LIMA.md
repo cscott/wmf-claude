@@ -1703,7 +1703,13 @@ Candidates (L1 measures them):
   pass (l6-b, l6-c sudo); item 2: **a refresh revokes the old refresh
   and access tokens**; item 3: two refreshes at once, one gets 400 and
   its Claude Code empties its credentials. So wmf-sbx must be the only
-  refresher (below, L7). Items 4 to 6 still to run.
+  refresher (below, L7). Then: item 7 `live`: the running session lost
+  one message after the other sandbox's refresh, and took the pushed
+  phantoms for the next (it answered ticks 4 and 5 together);
+  `trigger`: `claude auth status` does not refresh, one turn does;
+  item 4: Remote Control works (sessions under `/v1/code/sessions/...`,
+  with telemetry denied); `/status` "Claude Pro account", the
+  organization loads; `/usage` works; item 5: `scan` 0 in all three.
   1. A second sandbox, and a `--sudo` one, work with no `/login`.
   2. Rotation: after a refresh in one sandbox, does the other's old
      refresh phantom still work? If not, the minute's sync is what keeps
@@ -1721,15 +1727,24 @@ Candidates (L1 measures them):
      writes into its file, after another sandbox's refresh revoked its
      access token? `trigger`: can a refresh run in a throwaway
      `CLAUDE_CONFIG_DIR` (`claude auth status`, or one turn)?
-- **L7. One refresher** (proposed 2026-10-16, after L6): the guests never
-  refresh (the sync writes `expiresAt` far ahead into each guest; the
-  host copy keeps the real one). Before the real expiry, one `resume`'s
-  syncer, under a host-wide lock, refreshes in its own guest in a
-  throwaway `CLAUDE_CONFIG_DIR` (the `trigger` phase), takes the new
-  phantoms as the host copy, and the syncers push them at once (they
-  watch the host copy's mtime every few seconds, not every minute). With
-  no session running, the next `resume` refreshes first if the login
-  has expired. Depends on L6 item 7.
+- **L7. One refresher** (built 2026-10-16, `authproxy.Coordinator`;
+  cananian's design: no leader to lose). The guests never refresh: sync
+  writes them an expiry a year ahead; the host copy keeps the real one.
+  Each running `resume` listens on its own socket in
+  `auth/members/` and plans the refresh for expiry − 10 min ± 30 s. When
+  its time comes it takes `auth/refresh.lock` (flock, waited for at
+  most 180 s; the kernel drops it when its holder dies), reads the host
+  copy again (another resume may have refreshed it: then it only
+  syncs), refreshes in its own guest (a Haiku turn in a throwaway
+  `CLAUDE_CONFIG_DIR`, cut off at 120 s), writes the host copy, and
+  sends `new` to every socket (one that refuses is a dead resume's:
+  removed). A resume that gets `new` syncs at once and 15 s later. Each
+  also syncs every 5 minutes (a guest that emptied its file, or a
+  /login; one that takes a /login sends `new`). With no resume running,
+  nothing refreshes; the next resume refreshes first if the login is
+  within the margin. Measure: `oauth-l6.sh l7 l6-a l6-b`
+  (`WMF_SBX_AUTH_MARGIN_MINUTES=472`: a refresh every ~8 minutes, two
+  sessions, A's ending half-way).
 
 **Track C: develop wmf-sbx inside a sandbox (nested Lima)**
 

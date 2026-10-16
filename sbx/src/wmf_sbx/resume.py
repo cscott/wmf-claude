@@ -35,7 +35,8 @@ VM.
 
 A sandbox with the auth proxy (authproxy.py) uses none of these: its
 login is the shared one, which `/login` in any such sandbox made; the
-host egress proxy keeps it, and the session syncs the phantoms.
+host egress proxy keeps it, and the session syncs the phantoms and takes
+part in its refresh (authproxy.Coordinator).
 
 In a sandbox made with native_copy (behind the egress proxy, and no
 `session: {native_copy: false}` in settings.yaml), a mouse selection in
@@ -224,7 +225,7 @@ def main(argv=None, lima=None, env=None):
     try:
         cred_path = None
         if auth:
-            syncer = authproxy_mod.Syncer(
+            syncer = authproxy_mod.Coordinator(
                 name, lima=lima, env=env,
                 log=lambda m: print(color_mod.warning(m), file=sys.stderr))
             syncer.start()

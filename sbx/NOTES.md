@@ -225,9 +225,8 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
 
 ### Session, credentials, Claude Code
 
-- [ ] **Track L6: one refresher for the shared login** (HANDOFF-LIMA, track L, L6). The
-  sync is not enough (a refresh revokes the old tokens; two refreshes at once lose
-  one). Run `oauth-l6.sh live` and `trigger`, then build the refresher.
+- [ ] **Track L7: measure the one refresher** (HANDOFF-LIMA, track L, L7): `oauth-l6.sh
+  l7 l6-a l6-b`, then `long l6-a l6-b` (9 hours, the real margin).
 - [ ] **Upstream: file `sbx/upstream/NONO-ISSUE-1.md`** (nono's capture store is read
   once and written whole). When nono reloads and merges, remove
   `authproxy.refresh_proxy`.
@@ -1251,6 +1250,21 @@ A2.0 results (in the nested `dev` VM, nono 0.78.0, 2026-10-13):
   - Consequence: every sandbox refreshing for itself does not work for a shared login.
     Two active sessions reach the same `expiresAt` and refresh together every 8 hours;
     and any refresh breaks the other sandboxes until their files have the new phantoms.
+- L6 `live`: a session in l6-b sent a message every 20 s while l6-a refreshed (exec) and
+  was synced to the host. The message right after the refresh failed (401, then the
+  token endpoint's 400 for the old refresh phantom); after the next sync, the session
+  went on with the new phantoms (one reply "tick-4\ntick-5", then all). So a running
+  Claude Code re-reads its credentials file.
+- L6 `trigger`: in a throwaway `CLAUDE_CONFIG_DIR` with `expiresAt` 0, `claude auth
+  status --json` does not refresh; `claude -p ok --model haiku` does.
+- L6 `rc`: Remote Control works with the auth proxy's policy (the telemetry stream
+  denied): `POST /v1/code/sessions`, then `.../bridge`, `.../worker` (PUT, GET),
+  `.../worker/events` (and `/delivery`, `/stream`), `.../worker/heartbeat`,
+  `.../client/presence`, `.../archive`. `/status`: "Claude Pro account", the
+  organization, "Cloud sessions: GitHub connected"; `/usage` shows the limits. Also
+  allowed: `/v1/messages/count_tokens`, `/api/oauth/usage`, the organization's skills,
+  plugins and marketplaces, `/api/oauth/account/settings`. `scan`: 0 hits in l6-a, l6-b,
+  l6-c (14 token-like values in the store).
 - Other denials in the login session, not ours to allow: `downloads.claude.ai` (Claude
   Code's update and plugin downloads), `http-intake.logs.us5.datadoghq.com` (telemetry),
   `raw.githubusercontent.com`.

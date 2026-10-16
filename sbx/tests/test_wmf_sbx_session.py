@@ -942,14 +942,17 @@ class ResumeMainTests(Env):
 
     def test_an_auth_proxy_sandbox_gets_the_shared_login(self):
         authproxy = self.auth_sandbox()
+        import time
         phantom = {"accessToken": "sk-ant-oat01-p", "refreshToken": "nono_p",
-                   "expiresAt": 5}
+                   "expiresAt": int(time.time() * 1000) + 8 * 3600 * 1000}
         authproxy.write_host(phantom, self.env)
         self.assertEqual(self.resume("--", "-p", "hi"), 0, self.err)
         self.assertNotIn("no shared login yet", self.err)
         self.assertNotIn("log in", self.err)
         writes = [i for i in self.inputs if i and "nono_p" in i]
-        self.assertEqual(json.loads(writes[0]), {"claudeAiOauth": phantom})
+        self.assertEqual(json.loads(writes[0]), {"claudeAiOauth": authproxy.for_guest(phantom)})
+        # the session's coordinator has left its socket
+        self.assertEqual(os.listdir(authproxy.members_dir(self.env)), [])
 
     def test_a_broken_invariant_starts_no_session(self):
         self.lima.invariants = [False] * len(vm.INVARIANTS)

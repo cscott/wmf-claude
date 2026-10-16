@@ -9,9 +9,12 @@ nono's OAuth capture ran on the engineer's host (track L5, sbx/NOTES.md,
 import json
 import os
 import shutil
+import socket
 import stat
 import sys
 import tempfile
+import threading
+import time
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
@@ -27,6 +30,13 @@ def setUpModule():
     isolation.isolate()
 
 
+HOUR_MS = 3600 * 1000
+
+
+def now_ms():
+    return int(time.time() * 1000)
+
+
 def login(expires, access="sk-ant-oat01-phantom", refresh="nono_phantom"):
     return {"accessToken": access, "refreshToken": refresh, "expiresAt": expires,
             "scopes": ["user:inference", "user:profile"], "subscriptionType": None}
@@ -40,15 +50,24 @@ class Done:
 class Guest:
     """A guest's ~/.claude/.credentials.json, through FakeLima-style calls."""
 
-    def __init__(self, text=None, rc=0):
+    def __init__(self, text=None, rc=0, refreshed=None):
         self.text, self.rc, self.writes = text, rc, []
+        self.refreshed, self.refresh_inputs = refreshed, []
+        self.lock = threading.Lock()
 
-    def call(self, *args, check=True, capture=True, input=None, **kw):
+    def call(self, *args, **kw):
+        with self.lock:
+            return self._call(*args, **kw)
+
+    def _call(self, *args, check=True, capture=True, input=None, **kw):
         script = args[args.index("-c") + 1] if "-c" in args else ""
         if script == authproxy.WRITE_GUEST:
             self.writes.append(input)
             self.text = input
             return Done()
+        if script == authproxy.REFRESH_SCRIPT:
+            self.refresh_inputs.append(input)
+            return Done(stdout=self.refreshed or "")
         if self.rc:
             return Done(returncode=self.rc)
         if self.text is None:
@@ -169,53 +188,83 @@ class SyncTests(Base):
     def sync(self, guest):
         return authproxy.sync("demo", lima=guest, env=self.env)
 
-    def test_a_login_in_the_guest_goes_to_the_host(self):
-        guest = Guest(json.dumps({"claudeAiOauth": login(10), "mcpOAuth": {"s": "x"}}))
+    def written(self, guest):
+        return json.loads(guest.writes[-1])
+
+    def test_a_login_in_the_guest_goes_to_the_host_and_stops_refreshing_there(self):
+        new = login(now_ms() + 8 * HOUR_MS)
+        guest = Guest(json.dumps({"claudeAiOauth": new, "mcpOAuth": {"s": "x"}}))
         self.assertEqual(self.sync(guest), "pulled")
-        self.assertEqual(authproxy.read_host(self.env), login(10))
+        self.assertEqual(authproxy.read_host(self.env), new)
         path = authproxy.credentials_file(self.env)
         self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
         with open(path) as f:
             self.assertNotIn("mcpOAuth", f.read())
+        # the guest's copy now expires a year later: Claude Code there
+        # does not refresh it
+        doc = self.written(guest)
+        self.assertEqual(doc["claudeAiOauth"]["expiresAt"],
+                         new["expiresAt"] + authproxy.GUEST_EXTRA_MS)
+        self.assertEqual(doc["mcpOAuth"], {"s": "x"})
         self.assertIsNone(self.sync(guest))      # the same: nothing to do
 
-    def test_the_hosts_newer_login_goes_to_the_guest_and_keeps_the_rest(self):
-        authproxy.write_host(login(20, access="sk-ant-oat01-new"), self.env)
-        guest = Guest(json.dumps({"claudeAiOauth": dict(login(10), extra=1),
-                                  "mcpOAuth": {"s": "x"}}))
+    def test_the_hosts_login_goes_to_the_guest_and_keeps_the_rest(self):
+        host = login(now_ms() + HOUR_MS, access="sk-ant-oat01-new")
+        authproxy.write_host(host, self.env)
+        old = dict(login(now_ms() + 30 * 60 * 1000), extra=1)   # an older one
+        guest = Guest(json.dumps({"claudeAiOauth": old, "mcpOAuth": {"s": "x"}}))
         self.assertEqual(self.sync(guest), "pushed")
-        doc = json.loads(guest.writes[-1])
+        doc = self.written(guest)
         self.assertEqual(doc["mcpOAuth"], {"s": "x"})
         self.assertEqual(doc["claudeAiOauth"]["accessToken"], "sk-ant-oat01-new")
-        self.assertEqual(doc["claudeAiOauth"]["expiresAt"], 20)
         self.assertEqual(doc["claudeAiOauth"]["extra"], 1)
+        self.assertEqual(authproxy.read_host(self.env), host)
+
+    def test_a_guests_far_expiry_is_never_taken_as_new(self):
+        # After the leader's refresh the guest still has the old phantoms,
+        # with the far expiry that sync wrote.
+        host = login(now_ms() + 8 * HOUR_MS, access="sk-ant-oat01-new")
+        authproxy.write_host(host, self.env)
+        stale = authproxy.for_guest(login(now_ms() + HOUR_MS))
+        guest = Guest(json.dumps({"claudeAiOauth": stale}))
+        self.assertEqual(self.sync(guest), "pushed")
+        self.assertEqual(authproxy.read_host(self.env), host)
 
     def test_a_new_sandbox_gets_the_login(self):
-        authproxy.write_host(login(20), self.env)
+        host = login(now_ms() + HOUR_MS)
+        authproxy.write_host(host, self.env)
         guest = Guest(None)
         self.assertEqual(self.sync(guest), "pushed")
-        self.assertEqual(json.loads(guest.writes[-1]), {"claudeAiOauth": login(20)})
+        self.assertEqual(self.written(guest), {"claudeAiOauth": authproxy.for_guest(host)})
 
     def test_a_real_login_in_the_guest_is_replaced_not_copied(self):
-        authproxy.write_host(login(20), self.env)
-        guest = Guest(json.dumps({"claudeAiOauth": login(99, refresh="sk-ant-ort01-r")}))
+        host = login(now_ms() + HOUR_MS)
+        authproxy.write_host(host, self.env)
+        real = login(now_ms() + 8 * HOUR_MS, access="sk-ant-oat01-r", refresh="sk-ant-ort01-r")
+        guest = Guest(json.dumps({"claudeAiOauth": real}))
         self.assertEqual(self.sync(guest), "pushed")
-        self.assertEqual(authproxy.read_host(self.env), login(20))
+        self.assertEqual(authproxy.read_host(self.env), host)
 
     def test_nothing_without_a_login_or_a_guest(self):
         self.assertIsNone(self.sync(Guest(None)))
-        authproxy.write_host(login(20), self.env)
+        authproxy.write_host(login(now_ms()), self.env)
         self.assertIsNone(self.sync(Guest(rc=255)))       # a stopped VM
         self.assertIsNone(self.sync(Guest("x" * (authproxy.MAX_GUEST_FILE + 1))))
 
-    def test_the_syncer_syncs_at_start_and_stop(self):
-        authproxy.write_host(login(20), self.env)
-        guest = Guest(None)
-        syncer = authproxy.Syncer("demo", lima=guest, env=self.env, interval=3600)
-        self.assertEqual(syncer.start(), "pushed")
-        guest.text = json.dumps({"claudeAiOauth": login(30)})
-        self.assertEqual(syncer.stop(), "pulled")
-        self.assertEqual(authproxy.read_host(self.env)["expiresAt"], 30)
+    def test_refresh_in_the_guest(self):
+        host = login(now_ms() + HOUR_MS)
+        new = login(now_ms() + 8 * HOUR_MS, access="sk-ant-oat01-new", refresh="nono_new")
+        guest = Guest(refreshed=json.dumps({"claudeAiOauth": new}))
+        self.assertEqual(authproxy.refresh_in_guest("demo", host, lima=guest, env=self.env),
+                         new)
+        sent = json.loads(guest.refresh_inputs[0])["claudeAiOauth"]
+        self.assertEqual(sent, dict(host, expiresAt=0))
+        # no new tokens, no output, or a far expiry: no refresh
+        for out in (json.dumps({"claudeAiOauth": host}), "", "garbage",
+                    json.dumps({"claudeAiOauth": authproxy.for_guest(new)})):
+            guest = Guest(refreshed=out)
+            self.assertIsNone(authproxy.refresh_in_guest("demo", host, lima=guest,
+                                                         env=self.env))
 
     def touch(self, path, mtime):
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -238,30 +287,199 @@ class SyncTests(Base):
         self.assertTrue(authproxy.refresh_proxy("demo", self.env, swap=swap))
         self.assertFalse(authproxy.refresh_proxy("demo", self.env, swap=swap))
         self.assertEqual(swapped, ["demo"])
-        # through the syncer, before the phantoms go in
-        self.touch(authproxy.store_file(self.env), 400)
-        authproxy.write_host(login(20), self.env)
-        guest = Guest(None)
-        syncer = authproxy.Syncer("demo", lima=guest, env=self.env, interval=3600, swap=swap)
-        self.assertEqual(syncer.start(), "pushed")
-        syncer.stop()
-        self.assertEqual(swapped, ["demo", "demo"])
 
     def test_the_store_is_where_nono_puts_it(self):
         self.assertEqual(authproxy.store_file(self.env),
                          os.path.join(authproxy.nono_state_dir(self.env), "nono",
                                       "oauth-capture", "providers.json"))
 
+
+def wait_for(cond, timeout=5):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if cond():
+            return True
+        time.sleep(0.02)
+    return cond()
+
+
+class CoordinatorTests(Base):
+
+    def setUp(self):
+        super().setUp()
+        self.logs = []
+
+    def member(self, name, guest, refresher=None, **kw):
+        kw.setdefault("rng", lambda a, b: 0)
+        c = authproxy.Coordinator(name, lima=guest, env=self.env, log=self.logs.append,
+                                  swap=lambda n, e=None: None,
+                                  refresher=refresher or self.no_refresh, **kw)
+        self.addCleanup(lambda: c._thread and c._thread.is_alive() and c.stop())
+        return c
+
+    def no_refresh(self, name, host, lima=None, env=None):
+        raise AssertionError(f"{name} refreshed")
+
+    def access(self, guest):
+        with guest.lock:
+            return guest.text and json.loads(guest.text)["claudeAiOauth"]["accessToken"]
+
+    def sockets(self):
+        return sorted(os.listdir(authproxy.members_dir(self.env)))
+
+    def test_each_resume_listens_on_its_own_socket(self):
+        authproxy.write_host(login(now_ms() + 8 * HOUR_MS), self.env)
+        a = self.member("a", Guest(None))
+        b = self.member("b", Guest(None))
+        a.start()
+        b.start()
+        self.assertEqual(len(self.sockets()), 2)
+        self.assertEqual(stat.S_IMODE(os.stat(a.path).st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(os.stat(authproxy.members_dir(self.env)).st_mode),
+                         0o700)
+        a.stop()
+        self.assertEqual(self.sockets(), [os.path.basename(b.path)])
+        b.stop()
+        self.assertEqual(self.sockets(), [])
+
+    def test_a_dead_resumes_socket_is_removed(self):
+        d = authproxy.members_dir(self.env)
+        os.makedirs(d)
+        dead = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        dead.bind(os.path.join(d, "x.1.2.sock"))
+        dead.close()                      # the file stays; nothing listens
+        self.assertEqual(authproxy.notify(self.env), 0)
+        self.assertEqual(self.sockets(), [])
+
+    def test_an_expiring_login_is_refreshed_before_the_session(self):
+        old = login(now_ms() + 5 * 60 * 1000)           # inside the margin
+        new = login(now_ms() + 8 * HOUR_MS, access="sk-ant-oat01-new", refresh="nono_new")
+        authproxy.write_host(old, self.env)
+        refreshed = []
+
+        def refresher(name, host, lima=None, env=None):
+            refreshed.append((name, host))
+            return new
+        a = self.member("a", Guest(None), refresher=refresher, backstop=3600)
+        a.start()
+        self.assertEqual(refreshed, [("a", old)])
+        self.assertEqual(authproxy.read_host(self.env), new)
+        self.assertEqual(json.loads(a.lima.text)["claudeAiOauth"], authproxy.for_guest(new))
+        a.stop()
+
+    def test_one_refresh_and_the_others_get_it_without_polling(self):
+        host = login(now_ms() + 8 * HOUR_MS)
+        authproxy.write_host(host, self.env)
+        refreshed = []
+        lock = threading.Lock()
+
+        def refresher(name, h, lima=None, env=None):
+            with lock:
+                refreshed.append(name)
+                n = len(refreshed)
+            time.sleep(0.2)               # a model turn
+            return login(now_ms() + 8 * HOUR_MS, access=f"sk-ant-oat01-n{n}",
+                         refresh=f"nono_n{n}")
+        members = [self.member(n, Guest(None), refresher=refresher, backstop=3600,
+                               recheck=3600) for n in "abc"]
+        for m in members:
+            m.start()
+        writes = [len(m.lima.writes) for m in members]
+        # The login nears its expiry: every timer fires at once (no jitter
+        # here); one refreshes, the others find the new login under the lock.
+        authproxy.write_host(login(now_ms() + 60 * 1000), self.env)
+        for m in members:
+            m._wake_w.send(b"x")
+        self.assertTrue(wait_for(lambda: all(self.access(m.lima) == "sk-ant-oat01-n1"
+                                              for m in members)))
+        time.sleep(0.3)
+        self.assertEqual(len(refreshed), 1)
+        self.assertEqual(sum(m.refreshed for m in members), 1)
+        for m, w in zip(members, writes):
+            self.assertGreater(len(m.lima.writes), w)
+            m.stop()
+
+    def test_a_refresher_that_dies_does_not_stop_the_refresh(self):
+        # Another process holds the lock and dies without a refresh: the
+        # next resume's timer takes the lock and refreshes.
+        import fcntl
+        authproxy.write_host(login(now_ms() + 60 * 1000), self.env)
+        authproxy._make_dir(self.env)
+        fd = os.open(os.path.join(authproxy.auth_dir(self.env), "refresh.lock"),
+                     os.O_RDWR | os.O_CREAT, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        new = login(now_ms() + 8 * HOUR_MS, access="sk-ant-oat01-new", refresh="nono_new")
+        a = self.member("a", Guest(None), refresher=lambda *x, **k: new, backstop=3600)
+        threading.Timer(0.3, os.close, (fd,)).start()   # the holder dies
+        a.start()
+        self.assertEqual(authproxy.read_host(self.env), new)
+        a.stop()
+
+    def test_the_timers_are_spread(self):
+        exp = now_ms() + 8 * HOUR_MS
+        authproxy.write_host(login(exp), self.env)
+        a = self.member("a", Guest(None), rng=lambda lo, hi: hi)
+        b = self.member("b", Guest(None), rng=lambda lo, hi: lo)
+        base = (exp - authproxy.REFRESH_MARGIN_MS - now_ms()) / 1000
+        self.assertAlmostEqual(a._due() - base, 30, delta=1)
+        self.assertAlmostEqual(b._due() - base, -30, delta=1)
+
+    def test_a_login_in_one_reaches_the_others(self):
+        a = self.member("a", Guest(None), backstop=3600, recheck=3600)
+        b = self.member("b", Guest(None), backstop=0.2)
+        c = self.member("c", Guest(None), backstop=3600, recheck=3600)
+        for m in (a, b, c):
+            m.start()
+        new = login(now_ms() + 8 * HOUR_MS, access="sk-ant-oat01-login", refresh="nono_l")
+        with b.lima.lock:
+            b.lima.text = json.dumps({"claudeAiOauth": new})       # /login in b
+        self.assertTrue(wait_for(lambda: self.access(c.lima) == "sk-ant-oat01-login"))
+        self.assertTrue(wait_for(lambda: self.access(a.lima) == "sk-ant-oat01-login"))
+        self.assertEqual(authproxy.read_host(self.env), new)
+        for m in (a, b, c):
+            m.stop()
+
+    def test_the_margin_can_be_set_on_the_host(self):
+        a = authproxy.Coordinator("a", env=dict(self.env, WMF_SBX_AUTH_MARGIN_MINUTES="472"))
+        self.assertEqual(a.margin_ms, 472 * 60 * 1000)
+        self.assertEqual(authproxy.Coordinator("a", env=self.env).margin_ms,
+                         authproxy.REFRESH_MARGIN_MS)
+
+    def test_a_failed_refresh_waits_and_warns(self):
+        authproxy.write_host(login(now_ms() + 60 * 1000), self.env)
+        calls = []
+
+        def refresher(name, host, lima=None, env=None):
+            calls.append(name)
+            return None
+        a = self.member("a", Guest(None), refresher=refresher, retry=3600)
+        a.start()
+        time.sleep(0.3)
+        a.stop()
+        self.assertEqual(calls, ["a"])
+        self.assertTrue(any("could not refresh" in m for m in self.logs))
+
+    def test_a_held_lock_is_waited_for_then_given_up(self):
+        import fcntl
+        authproxy.write_host(login(now_ms() + 60 * 1000), self.env)
+        authproxy._make_dir(self.env)
+        fd = os.open(os.path.join(authproxy.auth_dir(self.env), "refresh.lock"),
+                     os.O_RDWR | os.O_CREAT, 0o600)
+        self.addCleanup(os.close, fd)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        a = self.member("a", Guest(None), lock_wait=0.3, retry=3600)
+        a.start()
+        a.stop()
+        self.assertTrue(any("refresh lock" in m for m in self.logs))
+
     def test_a_failed_sync_does_not_end_the_session(self):
         class Broken:
             def call(self, *a, **kw):
                 raise OSError("gone")
-        logs = []
-        syncer = authproxy.Syncer("demo", lima=Broken(), env=self.env, interval=3600,
-                                  log=logs.append)
-        self.assertIsNone(syncer.start())
-        syncer.stop()
-        self.assertTrue(logs and "gone" in logs[0])
+        a = self.member("a", Broken())
+        self.assertIsNone(a.start())
+        a.stop()
+        self.assertTrue(self.logs and "gone" in self.logs[0])
 
 
 if __name__ == "__main__":

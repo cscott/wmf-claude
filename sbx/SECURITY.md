@@ -179,8 +179,13 @@ control comes with `--sudo` mode.)
   between the guest and the host (only the `claudeAiOauth` record, only
   when its refresh token is one of nono's phantoms); an agent can write
   phantoms of its own there, which reach the other sandboxes, but the
-  store resolves only phantoms it issued. Signing out every sandbox is
-  `rm -r ~/.local/state/wmf-sbx/auth`.
+  store resolves only phantoms it issued. The refresh runs as the agent,
+  in a throwaway `CLAUDE_CONFIG_DIR` in the sandbox of one running
+  `resume` (`authproxy.Coordinator`), through the same proxy: it sees
+  only phantoms; an agent there can make it fail or hand back phantoms
+  of its own, which stops the shared login until the next `/login`, but
+  cannot read the real tokens. Signing out every sandbox is `rm -r
+  ~/.local/state/wmf-sbx/auth`.
 - **A nested sandbox's credential** is its enclosing session's phantom.
   `resume` writes the session's phantom and proxy address into root's
   marker `/etc/wmf-sbx/nested` (0640, group `agent`), and a nested

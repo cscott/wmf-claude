@@ -144,13 +144,23 @@ NAME` shows which one a sandbox uses.
 The real tokens are in nono's capture store under
 `~/.local/state/wmf-sbx/auth/state/`, which every auth-proxy sandbox's
 egress proxy uses, and the current phantoms in
-`~/.local/state/wmf-sbx/auth/credentials.json`. `resume` copies the
-newest phantoms into the sandbox before the session, every minute during
-it, and back to the host after it (only the `claudeAiOauth` record, and
-only when it holds phantoms). nono's proxy reads the store only when it
-starts, so `resume` first restarts a sandbox's egress proxy that started
-before the store last changed (as `wmf-sbx allow` does). `rm -r ~/.local/state/wmf-sbx/auth` signs
-every sandbox out; the next one asks for `/login` again.
+`~/.local/state/wmf-sbx/auth/credentials.json`. `resume` copies them into
+the sandbox (only the `claudeAiOauth` record, and only when it holds
+phantoms), and takes a new login (`/login`) from it.
+
+A refresh revokes the old tokens, so the sandboxes never refresh the
+login themselves: their copy says it expires a year later. Instead, each
+running `resume` plans to refresh it about 10 minutes before it expires
+(give or take 30 seconds); the first to take the lock
+(`auth/refresh.lock`) refreshes it with one short Haiku turn in its
+sandbox, and tells the others at once over their sockets in
+`auth/members/`; they put the new phantoms in their sandboxes. With no
+`resume` running, the login is not refreshed; the next `resume` does it
+first. nono's proxy reads the store only when it starts, so `resume`
+also restarts a sandbox's egress proxy that started before the store
+last changed (as `wmf-sbx allow` does). `rm -r
+~/.local/state/wmf-sbx/auth` signs every sandbox out; the next one asks
+for `/login` again.
 
 ### The inference-only token
 

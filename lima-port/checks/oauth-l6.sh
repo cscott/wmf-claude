@@ -12,6 +12,7 @@
 #   lima-port/checks/oauth-l6.sh race l6-a l6-b    # both refresh at once
 #   lima-port/checks/oauth-l6.sh live l6-a l6-b    # b's session runs across a's refresh
 #   lima-port/checks/oauth-l6.sh trigger l6-a      # a refresh in a throwaway config dir
+#   lima-port/checks/oauth-l6.sh l7 l6-a l6-b [M]  # the one refresher: two sessions, M minutes
 #   lima-port/checks/oauth-l6.sh rc l6-a           # interactive: Remote Control, /status, /usage
 #   lima-port/checks/oauth-l6.sh scan l6-a         # real tokens in the guest? (want 0)
 #   lima-port/checks/oauth-l6.sh long l6-a l6-b [H]  # two sessions for H hours (default 9)
@@ -210,6 +211,48 @@ phase_trigger() {  # NAME: a refresh that wmf-sbx could start itself
   token_lines "$1"
 }
 
+l7_session() {  # NAME N GAP
+  for i in $(seq "$2"); do
+    printf '{"type":"user","message":{"role":"user","content":"Reply with exactly: tick-%s"}}\n' "$i"
+    echo "$(date -u +%T) message $i; host copy: $(host_copy)" >> "$LOGS/l7-$1.log"
+    [ "$i" -lt "$2" ] && sleep "$3"
+  done | "$WMF_SBX" resume --no-continue "$1" -- -p --input-format stream-json \
+    --output-format stream-json --verbose --model haiku > "$LOGS/l7-$1.jsonl" 2> "$LOGS/l7-$1.err"
+  echo "-- $1: session rc $?, replies $(grep -o '"result":"tick-[0-9]*' "$LOGS/l7-$1.jsonl" | wc -l) of $2"
+  grep -o '"result":"[^"]*"' "$LOGS/l7-$1.jsonl" | grep -v '"result":"tick-[0-9]*"$' \
+    | sort | uniq -c | sed 's/^/   ! /'
+  grep -i "warning\|error" "$LOGS/l7-$1.err" | sort | uniq -c | sed 's/^/   ! /'
+}
+
+phase_l7() {  # A B [MINUTES]: the one refresher (L7)
+  # Two sessions at once; the login is refreshed every ~8 minutes
+  # (WMF_SBX_AUTH_MARGIN_MINUTES=472), by whichever resume's timer comes
+  # first. A's session ends half-way; B then refreshes alone. Want: every
+  # reply, each refresh one 200 from one guest, no 400, at most a failed
+  # message just after a refresh.
+  local minutes=${3:-25} gap=30
+  local n=$(( minutes * 60 / gap ))
+  export WMF_SBX_AUTH_MARGIN_MINUTES=${WMF_SBX_AUTH_MARGIN_MINUTES:-472}
+  : > "$LOGS/l7-$1.log"; : > "$LOGS/l7-$2.log"
+  local marks=() s
+  for s in "$1" "$2"; do marks+=("$(wc -l < "$(proxy_log "$s")" 2>/dev/null || echo 0)"); done
+  echo "-- $(date -u +%T) start; host copy: $(host_copy)"
+  l7_session "$1" $(( n / 2 )) "$gap" & local pa=$!
+  sleep 20
+  l7_session "$2" "$n" "$gap" & local pb=$!
+  wait $pa $pb
+  local i=0
+  for s in "$1" "$2"; do
+    echo "-- $s: token endpoint and errors during the run:"
+    tail -n +"$(( ${marks[$i]} + 1 ))" "$(proxy_log "$s")" \
+      | grep -E 'oauth/token|status=40[013]' | sed -E 's/.*Z  INFO l7 proxy response mode=connect_intercept //' \
+      | sed 's/^/   | /'
+    i=$((i + 1))
+  done
+  echo "-- the host copy over time ($2):"; sed 's/^/   | /' "$LOGS/l7-$2.log" | awk 'NR%4==1'
+  echo "-- now: $(host_copy); $1 $(phantom "$1"); $2 $(phantom "$2")"
+}
+
 phase_rc() {  # NAME
   local before; before=$(wc -l < "$(proxy_log "$1")" 2>/dev/null || echo 0)
   echo "-- In the session: /status (note Login method, Organization policy), /usage,"
@@ -293,7 +336,9 @@ case "${1:-}" in
   rotation|race|live) [ -n "${3:-}" ] || { echo "usage: $0 $1 A B"; exit 2; }
                      "phase_$1" "$2" "$3" ;;
   trigger) [ -n "${2:-}" ] || { echo "usage: $0 trigger NAME"; exit 2; }; phase_trigger "$2" ;;
+  l7) [ -n "${3:-}" ] || { echo "usage: $0 l7 A B [MINUTES]"; exit 2; }
+      phase_l7 "$2" "$3" "${4:-25}" ;;
   long) [ -n "${3:-}" ] || { echo "usage: $0 long A B [HOURS]"; exit 2; }
         phase_long "$2" "$3" "${4:-9}" ;;
-  *) sed -n '2,25p' "$0"; exit 2 ;;
+  *) sed -n '2,26p' "$0"; exit 2 ;;
 esac

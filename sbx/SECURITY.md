@@ -119,9 +119,14 @@ denied every localhost connect except to its own proxy
 (Landlock alone: UDP to any host, TCP to any host on an opened port).
 The image now has nono 0.80 (`.nono-version`), which opens the
 session's local ports with the seccomp layer on, and `bin/claude`
-refuses `--landlock-only`. In the VM the nftables rules are a second
-layer: off the VM, the agent gets TCP 80 and 443 only, and UDP leaves
-the VM only as DNS to Lima's resolver.
+refuses `--landlock-only`. nono 0.80 opens those ports on the loopback
+only: a connect to another address is refused, even on an opened port
+(RAN). So the agent reaches the credential proxy and the clipboard
+listener (192.168.5.100, or 192.168.5.2 off the egress proxy) only
+through nono's proxy, which goes to them directly (`--upstream-bypass`)
+and not through the upstream proxy. In the VM the nftables rules are a
+second layer: off the VM, the agent gets TCP 80 and 443 only, and UDP
+leaves the VM only as DNS to Lima's resolver.
 
 **Local ports.** A session opens 4000 (the wiki), 9876 (karma), and
 the guest's ephemeral port window, 49152-53247, with bind-to-port-0:
@@ -253,8 +258,7 @@ control comes with `--sudo` mode.)
   `wl-copy`, `xclip` or `pbcopy` (`clipboard.py`). It only writes: it
   sends nothing back, so the VM cannot read your clipboard. Any process
   in the VM that reaches the port (in a contained sandbox, the agent's
-  processes, which nono lets through with `--open-port`; in a `--sudo`
-  one, any) can set CLIPBOARD and PRIMARY while the session runs: check
+  processes, through nono's proxy; in a `--sudo` one, any) can set CLIPBOARD and PRIMARY while the session runs: check
   a command you paste into a host shell. The listener takes 1 MiB at
   most, and logs a line per write to `~/.local/state/wmf-sbx/sandboxes/NAME.clipboard.log`
   (the size, never the text).

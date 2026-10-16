@@ -377,8 +377,11 @@ class LauncherTests(unittest.TestCase):
         a = self.argv(proxy="192.168.5.2:3128", launcher_flags=["--allow-post=x.org"],
                       claude_args=["-p", "hi"], cred_path="/dev/shm/wmf-sbx-cred.x")
         sep = a.index("--", a.index(session.LAUNCHER))
-        self.assertEqual(a[sep - 3:sep], ["--upstream-proxy", "192.168.5.2:3128",
+        self.assertEqual(a[sep - 5:sep], ["--upstream-proxy", "192.168.5.2:3128",
+                                          "--upstream-bypass", "192.168.5.2",
                                           "--allow-post=x.org"])
+        # off the egress proxy, nono's proxy allows the credential proxy's address
+        self.assertIn(("--allow-domain", "192.168.5.2"), list(zip(a, a[1:])))
         self.assertEqual(a[sep + 1:], ["-p", "hi"])
         self.assertIn("/dev/shm/wmf-sbx-cred.x", a)
 
@@ -668,11 +671,18 @@ class GitIdentityTests(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaisesRegex(session.SessionError, why):
                 session.check_environment(bad)
 
-    def test_the_credential_proxys_address_bypasses_nonos_proxy(self):
+    def test_the_credential_proxys_address_goes_through_nonos_proxy(self):
+        # nono 0.80 refuses a connect off the loopback: nono's proxy goes there
         env = session.session_env([])
-        self.assertEqual(env["NO_PROXY"], "localhost,127.0.0.1,192.168.5.2,192.168.5.100")
+        self.assertEqual(env["NO_PROXY"], "localhost,127.0.0.1")
         self.assertEqual(env["no_proxy"], env["NO_PROXY"])
         self.assertEqual(env["ENABLE_TOOL_SEARCH"], "true")
+
+    def test_a_sudo_sandbox_reaches_the_credential_proxy_directly(self):
+        # no nono; the egress proxy cannot reach the address
+        env = session.session_env([], sudo=True)
+        self.assertEqual(env["NO_PROXY"], "localhost,127.0.0.1,192.168.5.2,192.168.5.100")
+        self.assertEqual(env["no_proxy"], env["NO_PROXY"])
 
 
 class ContextTextTests(unittest.TestCase):
@@ -886,7 +896,9 @@ class ResumeMainTests(Env):
         self.assertRegex(cred, r"ANTHROPIC_API_KEY=wmfsbx-[\w-]{20,}\n")
         (launch,) = self.launches()
         self.assertIn("/dev/shm/wmf-sbx-cred.Xy12Ab", launch)
-        self.assertIn(f"--open-port={port}", launch[:launch.index("--", launch.index(session.LAUNCHER))])
+        flags = launch[:launch.index("--", launch.index(session.LAUNCHER))]
+        self.assertNotIn(f"--open-port={port}", flags)
+        self.assertIn(("--allow-domain", "192.168.5.2"), list(zip(flags, flags[1:])))
         # the host block is opened to the port before the session and closed after it
         rules = [" ".join(s) for s in self.lima.shells() if "wmf_sbx_hostblock" in " ".join(s)]
         added = [i for i, r in enumerate(rules) if f"tcp dport {port} accept" in r]
@@ -1126,8 +1138,12 @@ class ResumeMainTests(Env):
         self.assertIn("ANTHROPIC_BASE_URL=http://192.168.5.100:3129\n", cred)
         (launch,) = self.launches()
         launcher = launch[launch.index(session.LAUNCHER):]
-        self.assertIn("--open-port=3129", launcher)
+        # nono 0.80 opens a port on the loopback only: no --open-port; nono's
+        # proxy reaches the guestfwd directly, not through the egress proxy
+        self.assertFalse([a for a in launcher if a.startswith("--open-port")])
         self.assertIn(("--upstream-proxy", "192.168.5.100:3128"),
+                      list(zip(launcher, launcher[1:])))
+        self.assertIn(("--upstream-bypass", "192.168.5.100"),
                       list(zip(launcher, launcher[1:])))
         # no rule in the guest's host block: the guestfwd is already allowed
         self.assertFalse(any(credproxy.RULE_TAG in " ".join(s) for s in self.lima.shells()))
@@ -1180,8 +1196,12 @@ class ResumeMainTests(Env):
         self.assertEqual(rc, 0, self.err)
         self.assertEqual(seen, {"path": egress.clip_socket("demo", self.env), "in_use": True})
         self.assertFalse(os.path.exists(seen["path"]))   # stopped after the session
-        (launch,) = self.launches()
-        self.assertIn("--open-port=3130", launch[launch.index(session.LAUNCHER):])
+        # the shim reaches the listener through nono's proxy (nono 0.80 opens
+        # a port on the loopback only), which goes there directly
+        launcher = self.launches()[0]
+        launcher = launcher[launcher.index(session.LAUNCHER):]
+        self.assertNotIn("--open-port=3130", launcher)
+        self.assertIn(("--upstream-bypass", "192.168.5.100"), list(zip(launcher, launcher[1:])))
 
     def test_settings_native_copy_false_turns_off_an_older_sandbox(self):
         rc, seen = self.copy_resume(settings="session:\n  native_copy: false\n")

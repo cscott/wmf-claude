@@ -59,7 +59,23 @@ if [ -z "$addr" ]; then
   echo "wl-copy: {ADDRESS_VAR} is not set: no clipboard in this session" >&2
   exit 1
 fi
-exec 3>"/dev/tcp/${{addr%:*}}/${{addr##*:}}" || exit 1
+if [ -n "${{NONO_PROXY_TOKEN:-}}" ]; then
+  # Under nono (0.80), a connect off the loopback is refused: go through
+  # nono's proxy (CONNECT), which reaches the listener directly
+  # (--upstream-bypass, session.launcher_argv).
+  p=${{HTTPS_PROXY#*://}}; p=${{p%/}}; hp=${{p##*@}}; cred=${{p%@*}}
+  exec 3<>"/dev/tcp/${{hp%:*}}/${{hp##*:}}" || exit 1
+  printf 'CONNECT %s HTTP/1.1\\r\\nHost: %s\\r\\nProxy-Authorization: Basic %s\\r\\n\\r\\n' \\
+    "$addr" "$addr" "$(printf '%s' "$cred" | base64 -w0)" >&3
+  IFS= read -r status <&3
+  case $status in
+    "HTTP/1."?" 200"*) ;;
+    *) echo "wl-copy: the session proxy refused the clipboard: ${{status%$'\\r'}}" >&2; exit 1 ;;
+  esac
+  while IFS= read -r line <&3 && [ -n "${{line%$'\\r'}}" ]; do :; done
+else
+  exec 3>"/dev/tcp/${{addr%:*}}/${{addr##*:}}" || exit 1
+fi
 {{ printf '%s\\n' "$sel"; cat; }} >&3
 """
 

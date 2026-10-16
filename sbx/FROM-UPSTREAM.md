@@ -52,6 +52,10 @@ new sandbox, run one session and record it as RAN: a wiki curl in the port
 window, a Gerrit fetch, a read-only POST that gets 403, the `/login`
 callback, and a browser suite. The host's `nono proxy` (egress, auth
 proxy) should be 0.80 too; check NONO-ISSUE-1 (`upstream/`) on it.
+Done so far (`NOTES.md`, "nono, Landlock and the session"): a `--sudo`
+session, RAN; a nono session failed (0.80 opens ports on the loopback
+only), fixed by routing the credential proxy and the clipboard through
+nono's proxy, not RAN yet.
 
 ## 1. Small fixes
 

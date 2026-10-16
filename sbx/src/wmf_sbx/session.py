@@ -122,11 +122,14 @@ REGISTRY_DOMAINS = (
 
 # For the host credential proxy (credproxy.py), in every session; the
 # address and the phantom come per session, in the credential file.
-# - NO_PROXY: nono sets NO_PROXY=localhost,127.0.0.1 and drops the
-#   variable from the launch environment; without the proxy's address in
-#   it, the API call goes to nono's proxy, which refuses it (RAN: 403).
-#   Claude Code applies its settings `env` after nono, and the value is
-#   the same for every session, so two sessions do not clash.
+# - NO_PROXY: in a `sudo` sandbox (no nono), the proxy's address, so the
+#   API call goes to it directly, not to the egress proxy, which cannot
+#   reach it. Under nono, only the loopback (nono's own value): nono 0.80
+#   refuses a connect off the loopback (RAN: EACCES), so the call goes
+#   through nono's proxy, which reaches the address directly
+#   (launcher_argv: --upstream-bypass). Claude Code applies its settings
+#   `env` after nono, and the value is the same for every session, so two
+#   sessions do not clash.
 # - ENABLE_TOOL_SEARCH: Claude Code turns tool search off for a base URL
 #   that is not Anthropic's unless told that the proxy forwards
 #   tool_reference blocks; this one forwards the requests as they are.
@@ -134,6 +137,7 @@ REGISTRY_DOMAINS = (
 # egress.EGRESS_ADDR instead (resume.start_proxy).
 SESSION_NO_PROXY = ",".join(("localhost", "127.0.0.1", credproxy_mod.GUEST_HOST,
                              egress_mod.EGRESS_ADDR))
+NONO_NO_PROXY = "localhost,127.0.0.1"
 # In every agent command in the sandbox (the session's settings `env`, and
 # `wmf-sbx exec`): the sandbox's name. bin/git-review-check reads it to
 # know that it runs in a sandbox, where `local` is the host's repo.
@@ -351,8 +355,15 @@ def launcher_argv(state, cred_path=None, launcher_flags=(), claude_args=(),
     # A2.0 item 9, RAN: a wiki POST got 403).
     for domain in (["*"] if egress_mod.enabled(state) else REGISTRY_DOMAINS):
         grants += ["--allow-domain", domain]
+    # The credential proxy and the clipboard listener: nono 0.80 refuses
+    # a connect off the loopback, even on an --open-port port, so these
+    # go through nono's proxy, which must reach them directly, not
+    # through the upstream proxy (RAN with nono 0.80).
+    addr = egress_mod.EGRESS_ADDR if egress_mod.enabled(state) else credproxy_mod.GUEST_HOST
+    if not egress_mod.enabled(state) and cred_path:
+        grants += ["--allow-domain", addr]
     if proxy:
-        grants += ["--upstream-proxy", proxy]
+        grants += ["--upstream-proxy", proxy, "--upstream-bypass", addr]
     if state.get("nested"):
         grants += nested_mod.session_grants(state.get("nestedSrc"))
     claude = ([LAUNCHER, f"--local-web={local_ports()}",
@@ -555,15 +566,17 @@ def git_identity(run=subprocess.run):
     return out
 
 
-def session_env(resolved_for_kit, readonly=(), identity=None):
+def session_env(resolved_for_kit, readonly=(), identity=None, sudo=False):
     """The `env` key of the agent's settings (D4): the wiki and test
     variables, which nono's allow_vars would drop from the environment,
-    and the engineer's git identity."""
+    and the engineer's git identity. `sudo`: the sandbox runs no nono."""
     # No Composer process timeout: core's `composer test` (parallel-lint)
     # takes more than the default 300 s in a VM (RAN, phase 7: 22 min under
     # QEMU without KVM). The Bash tool has its own timeout.
     env = {"COMPOSER_HOME": COMPOSER_HOME, "COMPOSER_PROCESS_TIMEOUT": "0"}
     env.update(CREDENTIAL_PROXY_ENV)
+    if not sudo:
+        env.update({"NO_PROXY": NONO_NO_PROXY, "no_proxy": NONO_NO_PROXY})
     env.update(identity or {})
     for canonical, path in resolved_for_kit:
         for var in kit_mod.REPO_ENVIRONMENT_VARS.get(canonical, []):
@@ -645,7 +658,7 @@ def session_plan(name, resolved_for_kit, readonly=(), identity=None, preferences
     with open(kit_mod.TESTING_GUIDE_SOURCE, encoding="utf-8") as f:
         guide = f.read()
     settings = preference_settings(preferences, quiet=quiet)
-    env = session_env(resolved_for_kit, readonly, identity)
+    env = session_env(resolved_for_kit, readonly, identity, sudo=sudo)
     env.update(check_environment(environment))
     env.update(settings.pop("env", {}))
     env.update(git_config_env(env))

@@ -237,14 +237,11 @@ def main(argv=None, lima=None, env=None):
             proxy, cred_path = start_proxy(name, source, lima=lima, env=env,
                                            egress=egress_mod.enabled(state),
                                            nested=bool(state.get("nested")))
-            port = egress_mod.CRED_PORT if proxy.port is None else proxy.port
-            if not state.get("sudo"):
-                launcher_flags = list(launcher_flags) + [f"--open-port={port}"]
+            # No --open-port for its port: nono 0.80 opens the loopback only;
+            # the session reaches the proxy through nono's (launcher_argv).
         if state.get("nativeCopy") and session_mod.native_copy(config.get("session"),
                                                                egress_mod.enabled(state)):
             clip = start_clipboard(name, env)
-            if clip is not None and not state.get("sudo"):
-                launcher_flags = list(launcher_flags) + [f"--open-port={egress_mod.CLIP_PORT}"]
         argv = session_mod.launcher_argv(
             state, cred_path=cred_path, launcher_flags=launcher_flags,
             claude_args=claude_args, proxy=session_mod.upstream_proxy(env, state))

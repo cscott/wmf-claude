@@ -200,6 +200,60 @@ class ShimTests(unittest.TestCase):
                 self.assertEqual(res.returncode, 0, res.stderr)
                 self.assertEqual(got, [sel + "\nligne 1\nligne 2 é".encode()])
 
+    def fake_proxy(self, status=b"HTTP/1.1 200 Connection established"):
+        """A loopback proxy in place of nono's: it answers the CONNECT
+        with `status` and keeps what follows. (address, [(head, data)], thread)"""
+        server = socket.socket()
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        self.addCleanup(server.close)
+        got = []
+
+        def accept():
+            conn, _ = server.accept()
+            with conn:
+                buf = b""
+                while b"\r\n\r\n" not in buf:
+                    b = conn.recv(65536)
+                    if not b:
+                        break
+                    buf += b
+                head, _, rest = buf.partition(b"\r\n\r\n")
+                conn.sendall(status + b"\r\nX-Extra: 1\r\n\r\n")
+                chunks = [rest]
+                while True:
+                    b = conn.recv(65536)
+                    if not b:
+                        break
+                    chunks.append(b)
+                got.append((head.decode(), b"".join(chunks)))
+        t = threading.Thread(target=accept, daemon=True)
+        t.start()
+        return f"127.0.0.1:{server.getsockname()[1]}", got, t
+
+    def test_under_nono_the_shim_goes_through_nonos_proxy(self):
+        # nono 0.80 refuses a connect off the loopback: CONNECT through its proxy
+        proxy, got, t = self.fake_proxy()
+        res = self.run_shim(["-p"], b"text\n", {
+            clipboard.ADDRESS_VAR: "192.168.5.100:3130", "NONO_PROXY_TOKEN": "tok",
+            "HTTPS_PROXY": f"http://nono:tok@{proxy}"})
+        t.join(5)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        ((head, data),) = got
+        lines = head.split("\r\n")
+        self.assertEqual(lines[0], "CONNECT 192.168.5.100:3130 HTTP/1.1")
+        self.assertIn("Proxy-Authorization: Basic bm9ubzp0b2s=", lines)   # nono:tok
+        self.assertEqual(data, b"primary\ntext\n")
+
+    def test_a_refused_connect_fails_with_the_status(self):
+        proxy, _got, t = self.fake_proxy(status=b"HTTP/1.1 403 Forbidden")
+        res = self.run_shim([], b"hi", {
+            clipboard.ADDRESS_VAR: "192.168.5.100:3130", "NONO_PROXY_TOKEN": "tok",
+            "HTTPS_PROXY": f"http://nono:tok@{proxy}/"})
+        t.join(5)
+        self.assertEqual(res.returncode, 1)
+        self.assertIn(b"refused the clipboard: HTTP/1.1 403 Forbidden", res.stderr)
+
     def test_no_address_fails(self):
         res = self.run_shim([], b"hi", {})
         self.assertEqual(res.returncode, 1)

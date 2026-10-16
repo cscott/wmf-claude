@@ -1298,6 +1298,28 @@ A2.0 results (in the nested `dev` VM, nono 0.78.0, 2026-10-13):
 
 ### nono, Landlock and the session
 
+- **nono 0.80 opens ports on the loopback only** (2026-10-16). RAN (this VM, the 0.80.0
+  .deb extracted to scratch, a listener on the guest's own address): with `--open-port P`,
+  a connect to 127.0.0.1:P gets 200, to 192.168.5.15:P "Could not connect"
+  (`--allow-connect-port P` does not change it; 0.78 refused both, nono#1786). Through
+  nono's proxy (`--allow-domain '*'` or the IP; with a dead `--upstream-proxy`, and
+  `--upstream-bypass IP`) it works, and `Authorization` and `x-api-key` pass unchanged. So
+  the first nono-mode session on 0.80 failed: Claude Code reached the credential proxy at
+  192.168.5.100:3129 directly ("Unable to connect to API (EACCES)", RAN by the engineer in
+  sandbox `nono80`). Now: nono sessions get `NO_PROXY=localhost,127.0.0.1` in settings (a
+  sandbox made before needs a new `create`), and `--upstream-bypass` for the address (plus
+  `--allow-domain 192.168.5.2` off the egress proxy); the clipboard shim sends a CONNECT to
+  nono's proxy when `NONO_PROXY_TOKEN` is set (RAN with 0.80: the text arrives; a 502 is
+  reported). `--sudo` sessions have no nono and keep the direct path. Not RAN yet: a nono
+  session with this change; a nested sandbox's inner credential proxy, which connects to
+  the outer one at 192.168.5.100 from under the outer session's nono (likely refused too).
+- **nono 0.80 image, `--sudo` session** (RAN by the engineer, sandbox `nono80-sudo`, wmf-claude
+  2e819af, 2026-10-16): guest nono 0.80.0; wiki on 4000; bind/connect on 0, 49152, 53247,
+  9876 (and 5000: no nono); Gerrit fetch and ls-remote; wiki POST 403, GET 200; kernel.org
+  "CONNECT tunnel failed, response 403"; `%2F` path 403; karma started Chrome and
+  connected on 9876 (after `mw-install-browser`: `/usr/bin/chromium` is a stub); php has
+  ast, intl, mbstring; core's `tests/phpunit/unit/includes/Json` OK (244 tests).
+
 - **Cypress under nono**: the session grants `~/.config/Cypress` (Electron; without it
   `cypress verify` dies with SIGTRAP) and `/var/lib/xkb` (Xvfb writes its compiled keymaps
   there, else to `/tmp`, which the session cannot read back, and Xvfb stops: "Failed to

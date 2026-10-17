@@ -23,7 +23,7 @@
 set -euo pipefail
 
 STAGE="${1:?usage: guest-install.sh STAGED_TREE}"
-# shellcheck source=../bin/lib-output.sh
+# shellcheck source=bin/lib-output.sh
 source "$STAGE/bin/lib-output.sh"
 
 AGENT=agent
@@ -183,7 +183,7 @@ as_agent() {
 if [[ -x "$AGENT_HOME/.local/bin/claude" ]]; then
   ok "installed ($(as_agent claude --version 2>/dev/null || echo 'version unknown'))"
 else
-  as_agent bash -c 'curl -fsSL https://claude.ai/install.sh | bash'
+  as_agent bash -o pipefail -c 'curl -fsSL https://claude.ai/install.sh | bash'
   ok "installed"
 fi
 

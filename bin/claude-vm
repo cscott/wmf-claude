@@ -38,6 +38,10 @@
 #   --vm NAME                    the VM to use (default: $WMF_CLAUDE_VM, else wmf-claude)
 #   WMF_CLAUDE_VM=<name>         the VM to use when --vm is not given
 #   WMF_CLAUDE_PHAB_USER=<name>  create/update: the Phabricator username, no prompt
+
+# The guest and guest_agent scripts are single-quoted on purpose: they get
+# their values as positional arguments, never by expansion on the host.
+# shellcheck disable=SC2016
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -64,7 +68,7 @@ AGENT=agent
 AGENT_HOME="${WMF_CLAUDE_GUEST_AGENT_HOME:-/home/agent}"
 
 usage() {
-  sed -n '2,/^set -euo/{/^set -euo/d;s/^# \{0,1\}//;p;}' "$0"
+  sed -n '2,/^$/{/^$/d;s/^# \{0,1\}//;p;}' "$0"
 }
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }

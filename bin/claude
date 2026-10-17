@@ -64,7 +64,8 @@ Usage: claude [wrapper flags] [nono flags --] [claude args]
 Wrapper flags:
   --chrome             enable the chrome-devtools MCP (opens 127.0.0.1:9222; implies --local-web)
   --local-web[=PORTS]  open localhost web ports for curl-based local-wiki testing
-                       (default 80,443,8080; comma-separated list to narrow)
+                       (default 80,443,8080; comma-separated list to narrow; an
+                       item may be a range LO-HI)
   --minimax            allow egress to api.minimax.io (MiniMax models) for this session only
   --allow-post=HOSTS   allow POST and every other method to hosts the profile keeps
                        read-only (GET/HEAD), for this session only. HOSTS is a
@@ -530,6 +531,21 @@ LOCAL_WEB_NONO_ARGS=()
 if $WANT_LOCAL_WEB; then
   IFS=',' read -ra _LOCAL_WEB_PORTS <<<"${LOCAL_WEB_PORTS:-$LOCAL_WEB_DEFAULT_PORTS}"
   for port in "${_LOCAL_WEB_PORTS[@]}"; do
+    # A range LO-HI opens each port in it: nono takes one port per
+    # --open-port. Bounded, so a typo cannot open the whole port space.
+    if [[ "$port" =~ ^([0-9]{1,5})-([0-9]{1,5})$ ]]; then
+      lo=${BASH_REMATCH[1]} hi=${BASH_REMATCH[2]}
+      validate_tcp_port --local-web "$lo"
+      validate_tcp_port --local-web "$hi"
+      if (( 10#$lo > 10#$hi || 10#$hi - 10#$lo >= 8192 )); then
+        echo "error: --local-web range '$port' must be LO-HI with at most 8192 ports" >&2
+        exit 1
+      fi
+      for (( p = 10#$lo; p <= 10#$hi; p++ )); do
+        LOCAL_WEB_NONO_ARGS+=(--open-port "$p")
+      done
+      continue
+    fi
     validate_tcp_port --local-web "$port"
     LOCAL_WEB_NONO_ARGS+=(--open-port "$port")
   done

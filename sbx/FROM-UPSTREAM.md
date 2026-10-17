@@ -83,6 +83,18 @@ in a `--sudo` session works.
   each session's launch environment (`session.terminal_env`).
 - **`/etc/php` (4f36b8a).** Done: the profile in the image grants it, so
   it is not in our `READ_GRANTS`.
+- **4098 `--open-port` flags (to do; low priority).** `session.local_ports`
+  gives `--local-web` the range 49152-53247, and `bin/claude` expands a
+  range to one `--open-port` per port: about 75 KB of `nono run` command
+  line, in `ps` and in the status line's flag list. It is not the slow
+  sessions' cause (`NOTES.md`, the `nono80` item), and it does no harm
+  now. nono 0.80 has a range only in a profile (`open_port_range`), not on
+  the command line, and `profiles/wmf-engineer.json` is upstream's.
+  Choices: ask nono for a CLI range (`--open-port LO-HI`), and make
+  `bin/claude` pass a range through when nono has one; or have
+  `bin/claude` write a per-session profile with `open_port_range` (check
+  first whether `extends` can name a profile loaded by path; `CLAUDE.md`
+  says it cannot). Either way, the `bin/claude` change is upstream's.
 
 ## 2. Report uncommitted work (done)
 

@@ -66,7 +66,7 @@ nono's proxy, RAN, but slow (nono's forward proxy waits on kept-alive
 connections; the credential proxy now closes each one, RAN: 33s). The
 clipboard works. Nested in a nono session failed (seccomp refuses Lima's
 UDP socket): its sessions now run with `--sandbox-policy=landlock`, and
-its inner credential proxy goes through nono's proxy, not RAN yet. Nested
+its inner credential proxy goes through nono's proxy, RAN (`nest80b`). Nested
 in a `--sudo` session works.
 
 ## 1. Small fixes

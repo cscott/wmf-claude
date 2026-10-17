@@ -1315,7 +1315,7 @@ A2.0 results (in the nested `dev` VM, nono 0.78.0, 2026-10-13):
   `nono80` and `nest80` items below. The clipboard works in `nono80`, `nest80` and
   `nest80-sudo` (RAN by the engineer). A nested sandbox's inner credential proxy connected
   to the outer one at 192.168.5.100 directly; under nono it now sends a CONNECT to nono's
-  proxy, as the clipboard shim does (`credproxy.upstream_connection`). Not RAN yet.
+  proxy, as the clipboard shim does (`credproxy.upstream_connection`). RAN: `nest80b` below.
 - **nono 0.80 image, `--sudo` session** (RAN by the engineer, sandbox `nono80-sudo`, wmf-claude
   2e819af, 2026-10-16): guest nono 0.80.0; wiki on 4000; bind/connect on 0, 49152, 53247,
   9876 (and 5000: no nono); Gerrit fetch and ls-remote; wiki POST 403, GET 200; kernel.org
@@ -1349,8 +1349,19 @@ A2.0 results (in the nested `dev` VM, nono 0.78.0, 2026-10-13):
   which is the 0.78 `--landlock-only` posture. RAN (this VM, the 0.80.0 binary): with it,
   a UDP socket on the loopback is allowed (EPERM without it), a TCP connect to
   192.168.5.2:80 is still refused, and nono's proxy still gives 200 for an allowed host and
-  refuses kernel.org. Not RAN yet: a nested sandbox in a nono session with this change.
-  If it does not work, nested sandboxes take `--sudo` only (agreed with the engineer).
+  refuses kernel.org. If it had not worked, nested sandboxes would take `--sudo` only
+  (agreed with the engineer).
+- **nono 0.80, nested, outer nono session, 635e337** (RAN by the engineer, `nest80b`,
+  2026-10-16): the outer session has nono 0.80.0, `--upstream-bypass 192.168.5.100`, no
+  `--open-port=3129`, `NO_PROXY=localhost,127.0.0.1`; `wl-copy` exits 0. The inner golden
+  image build and `create` pass (13 checks ok, snapshot frozen in 35 s), so Lima's
+  hostagent gets its UDP socket. `resume inner -- -p` answers PONG, and the inner
+  credential proxy logs `POST /v1/messages 200 692B 2.3s`, through the outer session's
+  nono proxy. Inner egress: GET 200, POST 403 (endpoint rules), kernel.org "CONNECT tunnel
+  failed, response 403", `ls-remote` one HEAD line. The egress log has only the known
+  refusals (Datadog telemetry, `update.nono.sh`, `raw.githubusercontent.com`). The whole
+  prompt, with the image build, took about 13 minutes. `wmf-sbx` is still not on `PATH`
+  in the outer VM.
 - **nono 0.80, nested, outer `--sudo` session** (RAN by the engineer, `nest80-sudo`,
   9ead433): the inner golden image build, `create` (13 checks ok), `resume -- -p` (PONG,
   `POST /v1/messages 200 1.9s` in the inner credential proxy's log), inner egress (GET

@@ -930,18 +930,18 @@ HOOK="$REPO_ROOT/bin/session-start.sh"
 
 # The default backend is nono. Its output must stay byte for byte the
 # fixtures, or every nono user's SessionStart block changes without notice.
-# Unset the selectors, so that the result does not depend on the
+# Unset the selectors (and GERRITUA), so that the result does not depend on the
 # environment of the engineer who runs the test.
 FIXTURES="$REPO_ROOT/tests/fixtures/session-start"
 if diff -u "$FIXTURES/nono.txt" \
-     <(env -u WMF_CLAUDE_SANDBOX_BACKEND -u WMF_DOCKER_BROKER_URL \
+     <(env -u WMF_CLAUDE_SANDBOX_BACKEND -u GERRITUA -u WMF_DOCKER_BROKER_URL -u WMF_CLAUDE_SBX_EGRESS -u WMF_CLAUDE_SBX_NESTED \
          -u WMF_CLAUDE_STE -u WMF_CLAUDE_IN_VM -u WMF_CLAUDE_CHROME_IN_VM \
          -u WMF_CLAUDE_MODEL_PROXY_PORT bash "$HOOK" 2>/dev/null) >/dev/null; then
   pass "session-start default output is byte-identical to the nono fixture"
 else
   fail "session-start default output differs from tests/fixtures/session-start/nono.txt"
 fi
-out="$(WMF_CLAUDE_STE=0 env -u WMF_CLAUDE_SANDBOX_BACKEND -u WMF_DOCKER_BROKER_URL \
+out="$(WMF_CLAUDE_STE=0 env -u WMF_CLAUDE_SANDBOX_BACKEND -u GERRITUA -u WMF_DOCKER_BROKER_URL -u WMF_CLAUDE_SBX_EGRESS -u WMF_CLAUDE_SBX_NESTED \
   -u WMF_CLAUDE_IN_VM -u WMF_CLAUDE_CHROME_IN_VM -u WMF_CLAUDE_MODEL_PROXY_PORT bash "$HOOK" 2>/dev/null)"
 if ! grep -q 'ASD-STE100' <<<"$out" \
    && [[ "$(diff <(grep -v 'ASD-STE100' "$FIXTURES/nono.txt") <(echo "$out"))" == "" ]]; then
@@ -950,7 +950,7 @@ else
   fail "session-start with WMF_CLAUDE_STE=0 did not drop exactly the STE bullet"
 fi
 if diff -u "$FIXTURES/nono-broker.txt" \
-     <(env -u WMF_CLAUDE_SANDBOX_BACKEND \
+     <(env -u WMF_CLAUDE_SANDBOX_BACKEND -u GERRITUA -u WMF_CLAUDE_SBX_EGRESS -u WMF_CLAUDE_SBX_NESTED \
          -u WMF_CLAUDE_STE -u WMF_CLAUDE_IN_VM -u WMF_CLAUDE_CHROME_IN_VM \
          -u WMF_CLAUDE_MODEL_PROXY_PORT \
          WMF_DOCKER_BROKER_URL=http://127.0.0.1:5000 bash "$HOOK" 2>/dev/null) >/dev/null; then
@@ -994,6 +994,54 @@ for f in "$REPO_ROOT"/hooks/context/*/*.txt; do
     fail "backend context is missing from package.json artifacts: $rel"
   fi
 done
+
+echo "--- session-start hook: GERRITUA ---"
+# The bullet appears only when GERRITUA is set, and never shows its value.
+if [[ "$(env -u GERRITUA bash "$HOOK" 2>/dev/null | grep -c GERRITUA)" == "0" ]]; then
+  pass "session-start says nothing about GERRITUA when it is unset"
+else
+  fail "session-start mentions GERRITUA although it is unset"
+fi
+out="$(GERRITUA=sekrit-ua-value bash "$HOOK" 2>/dev/null)"
+if grep -q 'User-Agent on your own requests to gerrit.wikimedia.org' <<<"$out" \
+   && ! grep -q 'sekrit-ua-value' <<<"$out"; then
+  pass "session-start tells Claude to use \$GERRITUA, without its value"
+else
+  fail "session-start does not explain GERRITUA, or leaks its value"
+fi
+
+echo "--- session-start hook: wmf-sbx egress proxy ---"
+# Only a session behind wmf-sbx's egress proxy hears of it, with its name.
+if [[ "$(env -u WMF_CLAUDE_SBX_EGRESS bash "$HOOK" 2>/dev/null | grep -c 'wmf-sbx allow')" == "0" ]]; then
+  pass "session-start says nothing about the egress proxy without WMF_CLAUDE_SBX_EGRESS"
+else
+  fail "session-start mentions the egress proxy although WMF_CLAUDE_SBX_EGRESS is unset"
+fi
+if WMF_CLAUDE_SBX_EGRESS=demo bash "$HOOK" 2>/dev/null | grep -qF '`wmf-sbx allow demo HOST`'; then
+  pass "session-start tells Claude to ask for \`wmf-sbx allow NAME HOST\` behind the egress proxy"
+else
+  fail "session-start does not explain the egress proxy when WMF_CLAUDE_SBX_EGRESS is set"
+fi
+# wmf-sbx's sudo VM has no nono, so curl sees the egress proxy's own 403.
+out="$(WMF_CLAUDE_SANDBOX_BACKEND=lima-sbx-sudo WMF_CLAUDE_SBX_EGRESS=demo bash "$HOOK" 2>/dev/null)"
+if grep -qF 'response 403`' <<<"$out" && ! grep -q 'nono reports' <<<"$out" \
+   && grep -q 'passwordless sudo' <<<"$out" && ! grep -q 'sandboxed by nono' <<<"$out"; then
+  pass "session-start's lima-sbx-sudo text says sudo, no nono, and the proxy's 403"
+else
+  fail "session-start's lima-sbx-sudo text mentions nono or the wrong refusal"
+fi
+
+echo "--- session-start hook: wmf-sbx sandbox for nested VMs ---"
+if [[ "$(env -u WMF_CLAUDE_SBX_NESTED bash "$HOOK" 2>/dev/null | grep -c 'run VMs of its own')" == "0" ]]; then
+  pass "session-start says nothing about nested VMs without WMF_CLAUDE_SBX_NESTED"
+else
+  fail "session-start mentions nested VMs although WMF_CLAUDE_SBX_NESTED is unset"
+fi
+if WMF_CLAUDE_SBX_NESTED=1 bash "$HOOK" 2>/dev/null | grep -q 'Test such a tool here yourself'; then
+  pass "session-start tells Claude to test sandboxing tools itself in a --nested sandbox"
+else
+  fail "session-start does not explain a --nested sandbox when WMF_CLAUDE_SBX_NESTED is set"
+fi
 
 echo "--- session-start hook: Docker broker routing ---"
 # The hook is the always-present, repo-agnostic signal that tells Claude to run
@@ -1445,13 +1493,28 @@ SL="$REPO_ROOT/bin/statusline.sh"
 SL_HOME="$(mktemp -d)"; trap 'rm -rf "$FAKE_REPO" "$IDE_HOME" "$UPD" "$SL_HOME"' EXIT
 if [[ -x "$SL" ]] && bash -n "$SL"; then pass "bin/statusline.sh is executable and parses"; else fail "bin/statusline.sh missing, not executable, or has a syntax error"; fi
 sl_run() {  # $1 stdin json; env from caller
-  ( cd "$SL_HOME" && printf '%s' "$1" | HOME="$SL_HOME" WMF_CLAUDE_HOME="$REPO_ROOT" bash "$SL" )
+  # The backend comes from SL_BACKEND only: a wmf-sbx sandbox that runs these
+  # tests exports its own WMF_CLAUDE_SANDBOX_BACKEND.
+  ( cd "$SL_HOME" && printf '%s' "$1" | HOME="$SL_HOME" WMF_CLAUDE_HOME="$REPO_ROOT" \
+      SANDBOX_NAME="${SL_SANDBOX_NAME:-}" WMF_CLAUDE_SANDBOX_BACKEND="${SL_BACKEND:-}" bash "$SL" )
 }
 out="$(WMF_CLAUDE_PROFILE=wmf-engineer WMF_CLAUDE_SESSION="--local-db=3306 --docker=mediawiki" WMF_CLAUDE_UPDATE= sl_run '{"model":{"display_name":"Opus"}}')"
 if [[ "$out" == "WMF nono sandbox · --local-db=3306 --docker=mediawiki" ]]; then
   pass "status line shows the sandbox segment with the session flags"
 else
   fail "status line segment wrong: '$out'"
+fi
+out="$(SL_SANDBOX_NAME=sbx-cite WMF_CLAUDE_SESSION="--local-web" WMF_CLAUDE_UPDATE= WMF_CLAUDE_STATUSLINE='echo THEIRS' sl_run '{}')"
+if [[ "$out" == "sbx-cite · WMF nono sandbox · --local-web │ THEIRS" ]]; then
+  pass "status line puts a wmf-sbx sandbox's name first"
+else
+  fail "status line does not lead with the sandbox name: '$out'"
+fi
+out="$(SL_BACKEND=lima-sbx-sudo WMF_CLAUDE_SESSION="sudo" WMF_CLAUDE_UPDATE= sl_run '{}')"
+if [[ "$out" == "WMF sandbox VM · sudo" ]]; then
+  pass "status line does not say nono for a wmf-sbx sudo VM"
+else
+  fail "status line segment wrong for lima-sbx-sudo: '$out'"
 fi
 out="$(WMF_CLAUDE_PROFILE=wmf-data-scientist WMF_CLAUDE_SESSION= WMF_CLAUDE_UPDATE=2 sl_run '{}')"
 if [[ "$out" == *"(wmf-data-scientist)"* && "$out" == *"update available (2 behind"* ]]; then

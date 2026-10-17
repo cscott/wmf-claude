@@ -83,6 +83,37 @@ cat <<'CONTEXT'
   - If the review surfaces a fundamentally wrong approach, stop and escalate to the user rather than iterating on it.
 CONTEXT
 
+# Emitted only when the engineer gave the session GERRITUA (wmf-sbx's
+# settings.yaml `environment:`, or the launching shell). The hook names the
+# variable and never expands it: the value is a secret.
+if [[ -n "${GERRITUA:-}" ]]; then
+  cat <<'GERRITUA'
+- `$GERRITUA` is set. Send it as the User-Agent on your own requests to gerrit.wikimedia.org (gitiles, the REST API), e.g. `curl -A "$GERRITUA" ...` or `urllib.request.Request(url, headers={"User-Agent": os.environ["GERRITUA"]})`: Gerrit gives that User-Agent a higher rate limit than the default one, which earns `HTTP 429` with a 60-second `retry-after` after a burst. Its value is a secret: refer to it only as `$GERRITUA` or `os.environ["GERRITUA"]`, never print, log, or echo it, never write it into a file, a commit, or a commit message, and never send it to another host.
+GERRITUA
+fi
+
+# Emitted only when wmf-sbx runs this session behind its host egress proxy
+# (WMF_CLAUDE_SBX_EGRESS is the sandbox's name). That proxy, on the engineer's
+# machine, is then the allowlist for every host.
+# With no nono in between (lima-sbx-sudo), curl sees the proxy's own 403.
+if [[ -n "${WMF_CLAUDE_SBX_EGRESS:-}" ]]; then
+  refusal='`CONNECT tunnel failed, response 502` (this session'"'"'s nono reports the egress proxy'"'"'s refusal as 502)'
+  [[ "$BACKEND" == lima-sbx-sudo ]] && refusal='`CONNECT tunnel failed, response 403`'
+  cat <<EGRESS
+- All traffic out of this VM goes through an egress proxy on the engineer's machine, and only hosts on its allowlist get through. A host off the list fails: curl says $refusal. Do not work around it: ask the engineer to run \`wmf-sbx allow ${WMF_CLAUDE_SBX_EGRESS} HOST\` on their machine, which takes effect at once, with no restart; \`wmf-sbx logs ${WMF_CLAUDE_SBX_EGRESS}\` shows what the proxy denied.
+EGRESS
+fi
+
+# Emitted only in a sandbox that wmf-sbx made to run VMs of its own
+# (`create --nested`). The sandbox itself is not nested in anything: it is
+# for work on sandboxing tools, wmf-sbx or another, which the agent tests
+# here.
+if [[ -n "${WMF_CLAUDE_SBX_NESTED:-}" ]]; then
+  cat <<'NESTED'
+- This sandbox was made to run VMs of its own (`wmf-sbx create --nested`): you have KVM, QEMU and Lima, for work on sandboxing tools (wmf-sbx or another). Test such a tool here yourself; do not ask the engineer to run it on their machine, unless the test needs the host. A tool that you are developing is not installed: run it from your checkout, by its path. Each Bash call is a new shell, so `export PATH` does not persist. A VM image build can take 10 minutes or more: run it in the background, with a log in `$TMPDIR`.
+NESTED
+fi
+
 # Emitted only when this session is attached to a Docker dev container (the
 # broker exports WMF_DOCKER_BROKER_URL into the sandbox). This is the reliable,
 # always-present signal that routes PHP/composer/npm through the container — it

@@ -4,7 +4,8 @@
 # stdout. bin/claude exports the WMF_CLAUDE_* facts; wiring/settings-merge.json
 # points statusLine here through $WMF_CLAUDE_HOME.
 #
-# Prints the sandbox segment, then whatever the engineer's own status line
+# Prints the sandbox segment (led by the wmf-sbx sandbox's name, if any:
+# $SANDBOX_NAME), then whatever the engineer's own status line
 # prints, so ours is added rather than replacing it. Their command comes from
 # WMF_CLAUDE_STATUSLINE, which bin/claude read from ~/.claude/settings.json at
 # launch. This script reads no settings file itself: inside the sandbox those
@@ -18,9 +19,15 @@ export WMF_CLAUDE_STATUSLINE_NESTED=1
 input=$(cat)
 
 seg="WMF nono sandbox"
+# wmf-sbx's `create --sudo` VM runs Claude Code with no nono.
+[[ "${WMF_CLAUDE_SANDBOX_BACKEND:-}" == lima-sbx-sudo ]] && seg="WMF sandbox VM"
 [[ -n "${WMF_CLAUDE_PROFILE:-}" && "$WMF_CLAUDE_PROFILE" != wmf-engineer ]] && seg+=" ($WMF_CLAUDE_PROFILE)"
 [[ -n "${WMF_CLAUDE_SESSION:-}" ]] && seg+=" · $WMF_CLAUDE_SESSION"
 [[ -n "${WMF_CLAUDE_UPDATE:-}" ]] && seg+=" · update available (${WMF_CLAUDE_UPDATE} behind main)"
+# In a wmf-sbx sandbox, its name comes first, where a narrow terminal does
+# not cut it off. (Only shown: the agent can change it, as it can its
+# settings.)
+[[ -n "${SANDBOX_NAME:-}" ]] && seg="$SANDBOX_NAME · $seg"
 
 theirs=""
 cmd="${WMF_CLAUDE_STATUSLINE:-}"

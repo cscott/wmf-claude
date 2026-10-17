@@ -136,6 +136,14 @@ class LauncherTests(unittest.TestCase):
         # The session-start hook names the sandbox in `wmf-sbx allow`.
         self.assertIn("WMF_CLAUDE_SBX_EGRESS=box", a)
 
+    def test_only_a_nested_sandbox_tells_the_hook(self):
+        for extra in ({}, {"sudo": True, "egress": "proxy", "name": "box"}):
+            with self.subTest(**extra):
+                a = session.launcher_argv(dict(STATE, nested=True, **extra))
+                self.assertIn("WMF_CLAUDE_SBX_NESTED=1", a[:a.index("bash")])
+                a = session.launcher_argv(dict(STATE, **extra))
+                self.assertFalse([x for x in a if x.startswith("WMF_CLAUDE_SBX_NESTED=")])
+
     def test_off_the_egress_proxy_the_hook_says_nothing_of_it(self):
         self.assertFalse([x for x in self.argv() if x.startswith("WMF_CLAUDE_SBX_EGRESS=")])
 
@@ -146,13 +154,14 @@ class LauncherTests(unittest.TestCase):
         profile = os.path.join(image.REPO_ROOT, "profiles", "wmf-engineer.json")
         with open(profile, encoding="utf-8") as f:
             allowed = json.load(f)["environment"]["allow_vars"]
-        a = session.launcher_argv(dict(STATE, egress="proxy", name="box"),
+        a = session.launcher_argv(dict(STATE, egress="proxy", name="box", nested=True),
                                   proxy="192.168.5.100:3128",
                                   host_env={v: "x" for v in session.TERMINAL_VARS})
         names = [x.split("=", 1)[0] for x in a[:a.index("bash")]
                  if re.match(r"^[A-Z_][A-Z0-9_]*=", x)]
         self.assertIn("WMF_CLAUDE_SBX_EGRESS", names)
         self.assertIn("COLORTERM", names)
+        self.assertIn("WMF_CLAUDE_SBX_NESTED", names)
         for name in names:
             self.assertTrue(any(fnmatch.fnmatchcase(name, p) for p in allowed), name)
 

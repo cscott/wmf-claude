@@ -315,6 +315,12 @@ def terminal_env(host_env=None):
     return {k: host_env[k] for k in TERMINAL_VARS if host_env.get(k)}
 
 
+def nested_env(state):
+    """The session-start hook's bullet for a sandbox made to run VMs of its
+    own (`create --nested`): the agent can test such work here."""
+    return {"WMF_CLAUDE_SBX_NESTED": "1"} if state.get("nested") else {}
+
+
 def sudo_launcher_argv(state, cred_path=None, claude_args=(), host_env=None):
     """argv to run in the guest for one session of a `sudo` sandbox: the
     agent runs bin/launch-claude.sh in the primary clone, with no nono.
@@ -337,6 +343,7 @@ def sudo_launcher_argv(state, cred_path=None, claude_args=(), host_env=None):
                 "WMF_CLAUDE_HOME": WMF_CLAUDE_DIR,
                 "WMF_CLAUDE_SESSION": SUDO_SESSION,
                 "WMF_CLAUDE_SBX_EGRESS": name})
+    env.update(nested_env(state))
     return vm_mod.agent_argv(wrapper, workdir=state["primaryDir"], env=env)
 
 
@@ -393,6 +400,7 @@ def launcher_argv(state, cred_path=None, launcher_flags=(), claude_args=(),
         # `wmf-sbx allow` command that it gives. WMF_CLAUDE_*, not WMF_SBX_*:
         # wmf-claude reads it, and nono passes only the profile's allow_vars.
         env["WMF_CLAUDE_SBX_EGRESS"] = state.get("name") or "<this sandbox>"
+    env.update(nested_env(state))
     return vm_mod.agent_argv(wrapper, workdir=primary, env=env)
 
 

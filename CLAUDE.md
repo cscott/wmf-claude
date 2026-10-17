@@ -32,6 +32,7 @@ Two artifacts in one tree:
 - `README.md` (how to use it), `SECURITY.md` (audit surface: what Claude can and cannot reach), `docs/security-rationale.md` (the long-form why), `docs/local-testing.md` (local-wiki and Docker modes), `docs/advanced.md` (all flags, env vars, updating, custom profiles, submitting patches, troubleshooting), `docs/lima-vm.md` (Lima VM and contained mode: which mode to use, setup, daily cycle, known limitations; the mechanism is in `docs/security-rationale.md#lima-vm-mode`).
 - `setup.sh` — checkout install: preflight deps, then `bin/wmf-claude-build` + `bin/wmf-claude-setup`. It does not touch `~/.claude/settings.json`; `bin/claude` applies the tool layer per launch instead.
 - `mcp-phabricator/`, `gerrit-mcp-server/`, `gitlab-mcp-server/` — MCP server submodules.
+- `sbx/` — `wmf-sbx`, the Lima sandbox manager. It is not on PATH in a sandbox: run `sbx/bin/wmf-sbx`. In a sandbox made with `--nested`, test it yourself. See `sbx/CLAUDE.md`.
 
 ## Tests
 

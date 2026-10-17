@@ -105,6 +105,16 @@ if [[ -n "${WMF_CLAUDE_SBX_EGRESS:-}" ]]; then
 EGRESS
 fi
 
+# Emitted only in a sandbox that wmf-sbx made to run VMs of its own
+# (`create --nested`). The sandbox itself is not nested in anything: it is
+# for work on sandboxing tools, wmf-sbx or another, which the agent tests
+# here.
+if [[ -n "${WMF_CLAUDE_SBX_NESTED:-}" ]]; then
+  cat <<'NESTED'
+- This sandbox was made to run VMs of its own (`wmf-sbx create --nested`): you have KVM, QEMU and Lima, for work on sandboxing tools (wmf-sbx or another). Test such a tool here yourself; do not ask the engineer to run it on their machine, unless the test needs the host. A tool that you are developing is not installed: run it from your checkout, by its path. Each Bash call is a new shell, so `export PATH` does not persist. A VM image build can take 10 minutes or more: run it in the background, with a log in `$TMPDIR`.
+NESTED
+fi
+
 # Emitted only when this session is attached to a Docker dev container (the
 # broker exports WMF_DOCKER_BROKER_URL into the sandbox). This is the reliable,
 # always-present signal that routes PHP/composer/npm through the container — it

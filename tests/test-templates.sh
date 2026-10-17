@@ -935,14 +935,14 @@ HOOK="$REPO_ROOT/bin/session-start.sh"
 # environment of the engineer who runs the test.
 FIXTURES="$REPO_ROOT/tests/fixtures/session-start"
 if diff -u "$FIXTURES/nono.txt" \
-     <(env -u WMF_CLAUDE_SANDBOX_BACKEND -u GERRITUA -u WMF_DOCKER_BROKER_URL -u WMF_CLAUDE_SBX_EGRESS \
+     <(env -u WMF_CLAUDE_SANDBOX_BACKEND -u GERRITUA -u WMF_DOCKER_BROKER_URL -u WMF_CLAUDE_SBX_EGRESS -u WMF_CLAUDE_SBX_NESTED \
          -u WMF_CLAUDE_STE -u WMF_CLAUDE_IN_VM -u WMF_CLAUDE_CHROME_IN_VM \
          -u WMF_CLAUDE_MODEL_PROXY_PORT bash "$HOOK" 2>/dev/null) >/dev/null; then
   pass "session-start default output is byte-identical to the nono fixture"
 else
   fail "session-start default output differs from tests/fixtures/session-start/nono.txt"
 fi
-out="$(WMF_CLAUDE_STE=0 env -u WMF_CLAUDE_SANDBOX_BACKEND -u GERRITUA -u WMF_DOCKER_BROKER_URL -u WMF_CLAUDE_SBX_EGRESS \
+out="$(WMF_CLAUDE_STE=0 env -u WMF_CLAUDE_SANDBOX_BACKEND -u GERRITUA -u WMF_DOCKER_BROKER_URL -u WMF_CLAUDE_SBX_EGRESS -u WMF_CLAUDE_SBX_NESTED \
   -u WMF_CLAUDE_IN_VM -u WMF_CLAUDE_CHROME_IN_VM -u WMF_CLAUDE_MODEL_PROXY_PORT bash "$HOOK" 2>/dev/null)"
 if ! grep -q 'ASD-STE100' <<<"$out" \
    && [[ "$(diff <(grep -v 'ASD-STE100' "$FIXTURES/nono.txt") <(echo "$out"))" == "" ]]; then
@@ -951,7 +951,7 @@ else
   fail "session-start with WMF_CLAUDE_STE=0 did not drop exactly the STE bullet"
 fi
 if diff -u "$FIXTURES/nono-broker.txt" \
-     <(env -u WMF_CLAUDE_SANDBOX_BACKEND -u GERRITUA -u WMF_CLAUDE_SBX_EGRESS \
+     <(env -u WMF_CLAUDE_SANDBOX_BACKEND -u GERRITUA -u WMF_CLAUDE_SBX_EGRESS -u WMF_CLAUDE_SBX_NESTED \
          -u WMF_CLAUDE_STE -u WMF_CLAUDE_IN_VM -u WMF_CLAUDE_CHROME_IN_VM \
          -u WMF_CLAUDE_MODEL_PROXY_PORT \
          WMF_DOCKER_BROKER_URL=http://127.0.0.1:5000 bash "$HOOK" 2>/dev/null) >/dev/null; then
@@ -1030,6 +1030,18 @@ if grep -qF 'response 403`' <<<"$out" && ! grep -q 'nono reports' <<<"$out" \
   pass "session-start's lima-sbx-sudo text says sudo, no nono, and the proxy's 403"
 else
   fail "session-start's lima-sbx-sudo text mentions nono or the wrong refusal"
+fi
+
+echo "--- session-start hook: wmf-sbx sandbox for nested VMs ---"
+if [[ "$(env -u WMF_CLAUDE_SBX_NESTED bash "$HOOK" 2>/dev/null | grep -c 'run VMs of its own')" == "0" ]]; then
+  pass "session-start says nothing about nested VMs without WMF_CLAUDE_SBX_NESTED"
+else
+  fail "session-start mentions nested VMs although WMF_CLAUDE_SBX_NESTED is unset"
+fi
+if WMF_CLAUDE_SBX_NESTED=1 bash "$HOOK" 2>/dev/null | grep -q 'Test such a tool here yourself'; then
+  pass "session-start tells Claude to test sandboxing tools itself in a --nested sandbox"
+else
+  fail "session-start does not explain a --nested sandbox when WMF_CLAUDE_SBX_NESTED is set"
 fi
 
 echo "--- session-start hook: Docker broker routing ---"

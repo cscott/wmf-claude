@@ -111,13 +111,42 @@ as the engineer's, so only the home prefix differs and no path map is
 necessary. Call it from `create`/`resume` (push) and from `sbx-pull`/`rm`
 (pull: stage only, as upstream does; never write host memory).
 
-## 4. Firewall: `ct direction reply`
+## 4. Firewall: `ct direction reply` (done)
 
 Upstream's lock accepts `ct state established,related ct direction reply`
-(c907cbd). Our host block uses the plain form
-(`sandbox-provision.sh:103,117`). The change stops a connection that
-started before the rules loaded from surviving them. Our rules load at
-boot, so the gain is small. Test it in a sandbox (RAN) before adopting it.
+(c907cbd). Our host block used the plain form. The change stops a
+connection that started before the rules loaded from surviving them. Our
+rules load at boot, so the gain is small. Test it in a sandbox (RAN) before adopting it.
+
+Done: both chains (`block`, `agent_egress`) of `sandbox-provision.sh`
+accept conntrack replies only. Each allowed way out has its own rule,
+which accepts every packet, so the conntrack accept is needed only for
+replies on connections that came in (Lima's SSH). A second gain: when
+`resume` deletes a credential proxy rule, the open connections to that
+port stop too. Only a new sandbox gets it (`create` writes the
+provisioning into the Lima config).
+
+RAN, 2026-10-16, in network namespaces in the dev VM (a veth pair
+between two new namespaces; the VM's own network not touched). The
+ruleset was rendered from `sandbox-provision.sh`, and a conntrack user
+was loaded first, as Lima's DNS DNAT is in the guest:
+
+| case | plain form | reply only |
+| --- | --- | --- |
+| guest (root) to a private address, opened before the load | survived | cut |
+| agent to a public address, port 5555, opened before the load | survived | cut |
+| host to guest (as SSH), opened before the load | survived | survived |
+| agent to a credential proxy port, after its rule is deleted | survived | cut |
+| new: guest to a private address; agent to port 5555 | refused | refused |
+| new: agent to port 443; host to guest | connected | connected |
+
+Without the conntrack user, a namespace tracks no connection until the
+rules load, and both forms cut the old connections.
+
+Not RAN yet (the engineer's): in a new sandbox, `sudo nft list chain
+inet wmf_sbx_hostblock block | grep 'direction reply'` prints a line,
+`limactl shell` works, and a session gets to the model and a Gerrit
+fetch.
 
 ## 5. `create --contained` (proposed; design first)
 

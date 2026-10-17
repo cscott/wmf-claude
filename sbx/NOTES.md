@@ -498,7 +498,7 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
 - [ ] **Adopt what upstream added (`sbx/FROM-UPSTREAM.md`)**: more to-dos, from the
   review of upstream 70712f6..21bc986. In order: a session on nono 0.80, the long project
   directory names in `resume.py`, `WMF_CLAUDE_PHAB_USER`, the terminal variables, the
-  uncommitted-work report (these four done), memory and session carry, `ct direction reply`, a design
+  uncommitted-work report, `ct direction reply` (these five done), memory and session carry, a design
   for `create --contained`; then, after asking the engineer, headless Chromium and
   request-body checks.
 - [ ] **Send the new upstreamable commits upstream** (`sbx/upstream/README.md`, "To send"):

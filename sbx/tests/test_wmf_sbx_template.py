@@ -262,6 +262,11 @@ class ProvisionTests(unittest.TestCase):
             self.assertIn(needle, s)
         self.assertNotIn("flush ruleset", s)
 
+    def test_conntrack_accepts_replies_only(self):
+        s = self.script()
+        self.assertEqual(s.count("ct state established,related ct direction reply accept"), 2)
+        self.assertNotIn("ct state established,related accept", s)
+
 
 
 

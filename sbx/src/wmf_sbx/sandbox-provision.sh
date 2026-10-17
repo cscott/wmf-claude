@@ -64,6 +64,12 @@ chmod 0750 "/home/$AGENT" "$(getent passwd "$ENGINEER" | cut -d: -f6)"
 # http_proxy names 127.0.0.1) is reachable on exactly its port; Lima
 # gives the guest that proxy as 192.168.5.2. The agent gets TCP 80 and
 # 443 only, plus that port.
+# Each allowed way out is accepted packet by packet, by its own rule. The
+# conntrack accept is for replies on connections that came in (Lima's
+# SSH from 192.168.5.2), so it is for the reply direction only: a
+# connection that the guest opened itself is dropped when its rule goes
+# (a credential proxy port at the end of a session), and does not
+# survive these rules when they load (upstream's lock, c907cbd).
 # Behind the egress proxy (restrict=on) the guest has no default route:
 # take the interface that reaches Lima's gateway.
 DEV=$(ip -4 route show default | awk '{print $5; exit}')
@@ -100,7 +106,7 @@ table inet wmf_sbx_hostblock {
     elements = { fc00::/7, fe80::/10 }
   }
   chain block {
-    ct state established,related accept
+    ct state established,related ct direction reply accept
     ip daddr $NET udp dport { 53, 67 } accept
     ip daddr $NET tcp dport 53 accept
     # Lima's host resolver: the guest asks 192.168.5.3:53, and Lima's own
@@ -114,7 +120,7 @@ table inet wmf_sbx_hostblock {
     meta l4proto { tcp, udp } ip6 daddr @private6 counter reject
   }
   chain agent_egress {
-    ct state established,related accept
+    ct state established,related ct direction reply accept
     tcp dport { 80, 443 } accept
     $PROXY_RULE
     $EGRESS_RULE

@@ -1,0 +1,3 @@
+  - The MCP attaches to a headless Chromium that `claude-vm claude NAME --chrome` started inside the VM for this session, as its own user; it stops with the session. If the MCP cannot connect, tell the engineer to restart the session with `--chrome` and read the browser log it prints.
+  - CDP on 127.0.0.1:9222 is unauthenticated. Any credentials submitted via fill_form / evaluate_script are exposed to other local processes — use throwaway dev-wiki accounts only.
+  - The browser reaches loopback only: the guest firewall rejects everything else, so it shows the local wiki and nothing outside the VM. An external URL fails by design; do not retry it or look for a way around it.

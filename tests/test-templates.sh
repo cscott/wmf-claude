@@ -916,30 +916,108 @@ if ! grep -q 'managed Docker broker' <<<"$out" && ! grep -q 'no broker handshake
   pass "--docker after -- is not treated as a wrapper flag"; else fail "--docker after -- was wrongly consumed"; fi
 rm -rf "$DOCKER_CWD"
 
-echo "--- session-start hook: WMF_CLAUDE_STE ---"
-ste_default="$(WMF_DOCKER_BROKER_URL='' bash "$REPO_ROOT/bin/session-start.sh")"
-ste_off="$(WMF_CLAUDE_STE=0 WMF_DOCKER_BROKER_URL='' bash "$REPO_ROOT/bin/session-start.sh")"
-if grep -q 'ASD-STE100' <<<"$ste_default" && ! grep -q 'ASD-STE100' <<<"$ste_off" \
-   && [[ "$(grep -v 'ASD-STE100' <<<"$ste_default")" == "$ste_off" ]]; then
+echo "--- session-start hook: backend-aware context ---"
+HOOK="$REPO_ROOT/bin/session-start.sh"
+
+# The default backend is nono. Its output must stay byte for byte the
+# fixtures, or every nono user's SessionStart block changes without notice.
+# Unset the selectors, so that the result does not depend on the
+# environment of the engineer who runs the test.
+FIXTURES="$REPO_ROOT/tests/fixtures/session-start"
+if diff -u "$FIXTURES/nono.txt" \
+     <(env -u WMF_CLAUDE_SANDBOX_BACKEND -u WMF_DOCKER_BROKER_URL \
+         -u WMF_CLAUDE_STE -u WMF_CLAUDE_IN_VM -u WMF_CLAUDE_CHROME_IN_VM \
+         -u WMF_CLAUDE_MODEL_PROXY_PORT bash "$HOOK" 2>/dev/null) >/dev/null; then
+  pass "session-start default output is byte-identical to the nono fixture"
+else
+  fail "session-start default output differs from tests/fixtures/session-start/nono.txt"
+fi
+out="$(WMF_CLAUDE_STE=0 env -u WMF_CLAUDE_SANDBOX_BACKEND -u WMF_DOCKER_BROKER_URL \
+  -u WMF_CLAUDE_IN_VM -u WMF_CLAUDE_CHROME_IN_VM -u WMF_CLAUDE_MODEL_PROXY_PORT bash "$HOOK" 2>/dev/null)"
+if ! grep -q 'ASD-STE100' <<<"$out" \
+   && [[ "$(diff <(grep -v 'ASD-STE100' "$FIXTURES/nono.txt") <(echo "$out"))" == "" ]]; then
   pass "session-start with WMF_CLAUDE_STE=0 drops only the STE bullet"
 else
   fail "session-start with WMF_CLAUDE_STE=0 did not drop exactly the STE bullet"
 fi
+if diff -u "$FIXTURES/nono-broker.txt" \
+     <(env -u WMF_CLAUDE_SANDBOX_BACKEND \
+         -u WMF_CLAUDE_STE -u WMF_CLAUDE_IN_VM -u WMF_CLAUDE_CHROME_IN_VM \
+         -u WMF_CLAUDE_MODEL_PROXY_PORT \
+         WMF_DOCKER_BROKER_URL=http://127.0.0.1:5000 bash "$HOOK" 2>/dev/null) >/dev/null; then
+  pass "session-start default output with a broker is byte-identical to the nono-broker fixture"
+else
+  fail "session-start broker output differs from tests/fixtures/session-start/nono-broker.txt"
+fi
+
+# Fail closed: an unknown backend gets no sandbox text, warns on stderr,
+# and still emits the backend-agnostic bullets.
+unknown_err="$(mktemp)"
+unknown_out="$(WMF_CLAUDE_SANDBOX_BACKEND=definitely-not-a-backend bash "$HOOK" 2>"$unknown_err")"
+if ! grep -q 'sandboxed by' <<<"$unknown_out" && grep -q 'stage-hunks' <<<"$unknown_out"; then
+  pass "session-start omits the sandbox paragraph for an unknown backend, keeping the rest"
+else
+  fail "session-start emitted sandbox text for an unknown backend, or dropped the shared bullets"
+fi
+if grep -q "no sandbox context for backend 'definitely-not-a-backend'" "$unknown_err"; then
+  pass "session-start warns on stderr about an unknown backend"
+else
+  fail "session-start is silent about an unknown backend"
+fi
+rm -f "$unknown_err"
+
+# A backend must supply both files, or neither.
+for d in "$REPO_ROOT"/hooks/context/*/; do
+  [[ -d "$d" ]] || continue
+  if [[ -r "$d/sandbox.txt" && -r "$d/environment.txt" ]]; then
+    pass "backend context complete: $(basename "$d")"
+  else
+    fail "backend context incomplete: $(basename "$d") is missing sandbox.txt or environment.txt"
+  fi
+done
+
+# Each file the hook reads must ship in the nono pack.
+for f in "$REPO_ROOT"/hooks/context/*/*.txt; do
+  rel="${f#"$REPO_ROOT"/}"
+  if jq -e --arg p "$rel" 'any(.artifacts[]; .path == $p)' "$REPO_ROOT/package.json" >/dev/null; then
+    pass "backend context is a package.json artifact: $rel"
+  else
+    fail "backend context is missing from package.json artifacts: $rel"
+  fi
+done
 
 echo "--- session-start hook: Docker broker routing ---"
 # The hook is the always-present, repo-agnostic signal that tells Claude to run
 # dev tools via mwdocker. It must stay silent unless the broker is attached.
-if [[ "$(WMF_DOCKER_BROKER_URL='' bash "$REPO_ROOT/bin/session-start.sh" | grep -c mwdocker)" == "0" ]]; then
+if [[ "$(WMF_DOCKER_BROKER_URL='' bash "$HOOK" 2>/dev/null | grep -c mwdocker)" == "0" ]]; then
   pass "session-start says nothing about mwdocker without a broker"
 else
   fail "session-start mentions mwdocker even without a broker"
 fi
-if WMF_DOCKER_BROKER_URL=http://127.0.0.1:5000 bash "$REPO_ROOT/bin/session-start.sh" \
+if WMF_DOCKER_BROKER_URL=http://127.0.0.1:5000 bash "$HOOK" 2>/dev/null \
    | grep -q 'prefixing them with `mwdocker`'; then
   pass "session-start tells Claude to use mwdocker when a broker is attached"
 else
   fail "session-start does not route to mwdocker when a broker is attached"
 fi
+
+echo ""
+echo "--- skill list consistency ---"
+# The skill list lives in three places (skills/, package.json artifacts, and
+# the session-start hook), and it is easy to miss one. Assert all three agree.
+hook_out="$(bash "$HOOK" 2>/dev/null)"
+for d in "$REPO_ROOT"/skills/*/; do
+  name="$(basename "$d")"
+  [[ -f "$d/SKILL.md" ]] || continue
+  listed=1
+  jq -e --arg p "skills/$name/SKILL.md" \
+     'any(.artifacts[]; .path == $p)' "$REPO_ROOT/package.json" >/dev/null || listed=0
+  if [[ "$listed" == 1 ]] && grep -q "/wmf-claude:$name" <<<"$hook_out"; then
+    pass "skill listed in package.json and session-start: $name"
+  else
+    fail "skill missing from package.json artifacts or session-start: $name"
+  fi
+done
 
 echo ""
 echo "--- bin/claude update prompt ---"

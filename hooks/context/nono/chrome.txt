@@ -1,0 +1,3 @@
+  - The MCP attaches to a Chrome started outside the sandbox by `bin/launch-test-chrome` (Chrome can't run inside — IOKit denied). If the engineer hasn't started it, the MCP will fail to connect — tell them to run `bin/launch-test-chrome` in another terminal.
+  - CDP on 127.0.0.1:9222 is unauthenticated. Any credentials submitted via fill_form / evaluate_script are exposed to other local processes — use throwaway dev-wiki accounts only.
+  - The attached Chrome's network is NOT restricted by nono. Only navigate to URLs the engineer has explicitly authorized (their local wiki, Wikimedia domains) — never arbitrary external sites, and don't issue outbound fetch() calls via evaluate_script either.

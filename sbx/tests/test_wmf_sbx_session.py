@@ -105,9 +105,13 @@ class LauncherTests(unittest.TestCase):
         self.assertIn(("--allow", "/home/me/src/core"), pairs)
         self.assertIn(("--read", "/home/me/src/Vector"), pairs)
         self.assertNotIn(("--allow", "/home/me/src/Cite"), pairs)
-        for path in ("/run/wmf-sbx/host", "/opt/claude-code", "/opt/node", "/etc/php",
+        for path in ("/run/wmf-sbx/host", "/opt/claude-code", "/opt/node",
                      "/home/agent/.wmf-sbx", "/etc/fonts"):
             self.assertIn(("--read", path), pairs)
+        # The profile reads /etc/php itself (4f36b8a); PHP needs it.
+        self.assertNotIn(("--read", "/etc/php"), pairs)
+        with open(os.path.join(image.REPO_ROOT, "profiles", "wmf-engineer.json")) as f:
+            self.assertIn("/etc/php", json.load(f)["filesystem"]["read"])
         self.assertIn(("--read-file", "/etc/gitconfig"), pairs)
         # The home is not readable under the profile; the guide is granted.
         self.assertIn(("--read-file", "/home/agent/MEDIAWIKI-TESTING.md"), pairs)

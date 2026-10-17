@@ -81,9 +81,8 @@ in a `--sudo` session works.
 - **Terminal variables (3982f3a).** Done: `resume` copies `TERM_PROGRAM`,
   `TERM_PROGRAM_VERSION` and `COLORTERM` from the host's environment into
   each session's launch environment (`session.terminal_env`).
-- **`/etc/php` (4f36b8a).** Upstream's profile now grants a read of
-  `/etc/php`. When the image's nono profile has it, remove it from our
-  `READ_GRANTS`.
+- **`/etc/php` (4f36b8a).** Done: the profile in the image grants it, so
+  it is not in our `READ_GRANTS`.
 
 ## 2. Report uncommitted work
 

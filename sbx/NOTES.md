@@ -235,9 +235,9 @@ Track A is done (2026-10-14); its findings are under "Decisions and findings".
   since `wmf-claude-setup` skips `claude update` (`WMF_CLAUDE_SKIP_UPDATE=1`) and the
   version is pinned (cananian, 2026-10-16).
 - [ ] **Upstream: grant the Linux system paths the tools read**. Propose `read`
-  entries for `/opt/claude-code`, `/etc/php`, `/etc/gitconfig`, `/etc/bash.bashrc`,
-  `/opt/node`, `/etc/fonts` in `profiles/wmf-engineer.json` (today the lima-sbx launcher
-  grants them per session).
+  entries for `/opt/claude-code`, `/etc/gitconfig`, `/etc/bash.bashrc`, `/opt/node`,
+  `/etc/fonts` in `profiles/wmf-engineer.json` (today the lima-sbx launcher grants them
+  per session; upstream added `/etc/php` in 4f36b8a, so ours is gone).
 - [ ] **Upstream: Gerrit MCP write-tool denies** (HANDOFF §12). Gerrit's MCP server has
   20 tools; the skills use 5 read-only ones; 15 write under the engineer's credential.
 - [ ] **Upstream topic: Claude Code's hooks tell the agent to offer profile changes after any

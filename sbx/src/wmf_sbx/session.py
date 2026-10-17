@@ -69,8 +69,6 @@ def local_ports():
 # phase 6):
 # - /opt/claude-code and /opt/node hold the image's Claude Code and Node
 #   (/usr/local/bin has only links to them): without them, EACCES;
-# - /etc/php: without it PHP loads no .ini and no extension, and
-#   `composer serve` stops ("iconv OR mbstring ... missing");
 # - /etc/gitconfig: without it every git command stops ("fatal: unknown
 #   error occurred while reading the configuration files"); it also holds
 #   the safe.directory entries (sandbox-repos.sh);
@@ -79,7 +77,9 @@ def local_ports():
 #   its line stays.)
 # The setup log, which ~/MEDIAWIKI-TESTING.md points at, and fontconfig,
 # which Chrome reads to lay out text (RAN, phase 7: both were denied).
-READ_GRANTS = (template_mod.HOST_MOUNT_ROOT, "/opt/claude-code", "/opt/node", "/etc/php",
+# Not /etc/php: the profile reads it (4f36b8a; without it PHP loads no
+# .ini and no extension, and `composer serve` stops).
+READ_GRANTS = (template_mod.HOST_MOUNT_ROOT, "/opt/claude-code", "/opt/node",
                setup_mod.LOG_DIR, "/etc/fonts")
 # The agent's home itself is not readable under the profile (only its
 # dot-directories are), so the guide that ~/.claude/CLAUDE.md points at

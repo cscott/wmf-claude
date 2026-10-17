@@ -12,6 +12,7 @@
 #   wmf-sbx logs NAME [TAIL-OPTS...]    the egress proxy's log (tail -f, -50, ...)
 #   wmf-sbx cp SRC DST                  copy; one side is NAME:PATH
 #   wmf-sbx rm NAME                     remove the VM, state and remotes
+#   wmf-sbx pull [NAME/]BRANCH          the same as `git sbx-pull`, in a host repo
 #   wmf-sbx ls                          list the sandboxes
 #   wmf-sbx image build|ls|rm|prune     the golden image
 #   wmf-sbx login                       sign in to Claude once, for every sandbox
@@ -25,7 +26,7 @@ set -euo pipefail
 # An SSH agent socket has no business in any command this starts.
 unset SSH_AUTH_SOCK
 
-VERBS="allow cp create exec image login logs ls ls-remotes resolve resume rm start status stop"
+VERBS="allow cp create exec image login logs ls ls-remotes pull resolve resume rm start status stop"
 
 usage() {
   sed -n '2,/^set -euo/{/^set -euo/d;s/^# \{0,1\}//;p;}' "${BASH_SOURCE[0]}"

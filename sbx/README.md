@@ -742,8 +742,9 @@ more than one records the same sandbox branch; and y/N before it leaves or
 moves unsaved commits. Enter (or Ctrl-D) is no, and the command stops as
 before. In a script or a pipe it never asks.
 
-`git safe-reset sbx-cite/fix-thing` says to use `git sbx-pull`, then runs
-it. `git review-check` (the pre-review hook) accepts a commit that is in a
+`wmf-sbx pull` is the same command as `git sbx-pull`, with the same
+arguments (run it in the host repo). `git safe-reset sbx-cite/fix-thing`
+says to use `git sbx-pull`, then runs it. `git review-check` (the pre-review hook) accepts a commit that is in a
 sandbox remote.
 
 **From the host to the sandbox.** Commit on a branch on the host, then

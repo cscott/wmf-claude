@@ -171,6 +171,23 @@ class DispatchTests(unittest.TestCase):
         self.assertEqual([e["name"] for e in read_log(self.sibling_log)], ["wmf-sbx-resume"])
         self.assertEqual(read_log(self.sbx_log), [])
 
+    def test_pull_reaches_its_sibling(self):
+        self.add_sibling("pull")
+        r = self.run_wmf_sbx(["pull", "sbx-cite/fix-thing", "--onto", "REL1_46"])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(read_log(self.sibling_log),
+                         [{"name": "wmf-sbx-pull",
+                           "argv": ["sbx-cite/fix-thing", "--onto", "REL1_46"],
+                           "ssh_auth_sock": None}])
+
+    def test_the_real_pull_is_git_sbx_pull(self):
+        r = subprocess.run([os.path.join(BIN, "wmf-sbx"), "pull", "--help"],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("--onto", r.stdout)
+        with open(os.path.join(BIN, "wmf-sbx-pull"), encoding="utf-8") as f:
+            self.assertIn("from wmf_sbx.sbx_pull import main", f.read())
+
     def test_an_unknown_verb_is_an_error(self):
         r = self.run_wmf_sbx(["frobnicate"])
         self.assertEqual(r.returncode, 1)

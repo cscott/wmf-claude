@@ -263,7 +263,8 @@ def main(argv=None, lima=None, env=None):
             clip = start_clipboard(name, env)
         argv = session_mod.launcher_argv(
             state, cred_path=cred_path, launcher_flags=launcher_flags,
-            claude_args=claude_args, proxy=session_mod.upstream_proxy(env, state))
+            claude_args=claude_args, proxy=session_mod.upstream_proxy(env, state),
+            host_env=env)
         print(color_mod.dim(f"+ claude in {vm_mod.instance_name(name)}, as the agent, in "
                             f"{state['primaryDir']}"), file=sys.stderr)
         result = vm_mod.shell(name, argv, lima=lima, workdir="/", check=False,

@@ -78,9 +78,9 @@ in a `--sudo` session works.
   call): withdraw !131, or keep it only for a host where `claude mcp get`
   fails. `create.phabricator_username` reads the host's `config.json`
   (which only !131 writes) before that output.
-- **Terminal variables (3982f3a).** The profile now passes
-  `TERM_PROGRAM`, `TERM_PROGRAM_VERSION` and `COLORTERM`. Copy them from
-  the host's environment into the session's `env` (`session.py`).
+- **Terminal variables (3982f3a).** Done: `resume` copies `TERM_PROGRAM`,
+  `TERM_PROGRAM_VERSION` and `COLORTERM` from the host's environment into
+  each session's launch environment (`session.terminal_env`).
 - **`/etc/php` (4f36b8a).** Upstream's profile now grants a read of
   `/etc/php`. When the image's nono profile has it, remove it from our
   `READ_GRANTS`.

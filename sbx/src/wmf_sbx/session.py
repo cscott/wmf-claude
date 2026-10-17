@@ -302,7 +302,20 @@ def upstream_proxy(env=None, state=None):
     return hostport or None
 
 
-def sudo_launcher_argv(state, cred_path=None, claude_args=()):
+# The terminal the engineer runs `resume` in: Claude Code then knows it
+# (links in Ghostty, say) and its colors. The wmf-engineer profile passes
+# them (3982f3a). Per session, not in settings: the next resume can come
+# from another terminal.
+TERMINAL_VARS = ("TERM_PROGRAM", "TERM_PROGRAM_VERSION", "COLORTERM")
+
+
+def terminal_env(host_env=None):
+    """TERMINAL_VARS that the host's environment has."""
+    host_env = os.environ if host_env is None else host_env
+    return {k: host_env[k] for k in TERMINAL_VARS if host_env.get(k)}
+
+
+def sudo_launcher_argv(state, cred_path=None, claude_args=(), host_env=None):
     """argv to run in the guest for one session of a `sudo` sandbox: the
     agent runs bin/launch-claude.sh in the primary clone, with no nono.
     The egress proxy's variables are in the env: `sudo -u agent` drops
@@ -317,6 +330,7 @@ def sudo_launcher_argv(state, cred_path=None, claude_args=()):
     # forwarder (egress.FORWARD_PORT).
     env = dict(egress_mod.guest_environment(
         name, forward=bool(state.get(egress_mod.FORWARD_KEY))))
+    env.update(terminal_env(host_env))
     env.update({"no_proxy": SESSION_NO_PROXY, "NO_PROXY": SESSION_NO_PROXY,
                 "NODE_EXTRA_CA_CERTS": image_mod.SYSTEM_CA_BUNDLE,
                 "WMF_CLAUDE_SANDBOX_BACKEND": SUDO_SANDBOX_BACKEND,
@@ -327,7 +341,7 @@ def sudo_launcher_argv(state, cred_path=None, claude_args=()):
 
 
 def launcher_argv(state, cred_path=None, launcher_flags=(), claude_args=(),
-                  proxy=None):
+                  proxy=None, host_env=None):
     """argv to run in the guest (as the engineer, Lima's user) for one
     nono session: the agent runs bin/claude in the primary clone
     with the grants for the other clones and the mounts. A `sudo`
@@ -335,7 +349,8 @@ def launcher_argv(state, cred_path=None, launcher_flags=(), claude_args=(),
     if state.get("sudo"):
         if launcher_flags:
             raise SessionError("a sudo sandbox takes no bin/claude flags")
-        return sudo_launcher_argv(state, cred_path=cred_path, claude_args=claude_args)
+        return sudo_launcher_argv(state, cred_path=cred_path, claude_args=claude_args,
+                                  host_env=host_env)
     primary = state["primaryDir"]
     readonly = set(state.get("readOnly") or [])
     grants = []
@@ -369,9 +384,10 @@ def launcher_argv(state, cred_path=None, launcher_flags=(), claude_args=(),
                "--listen-port", "0"] + grants
               + list(launcher_flags) + ["--"] + list(claude_args))
     wrapper = ["bash", "-c", CREDENTIAL_WRAPPER, "_", cred_path or ""] + claude
-    env = {"WMF_CLAUDE_SANDBOX_BACKEND": SANDBOX_BACKEND,
-           # no "Press Enter" pause after bin/claude's notices
-           "WMF_CLAUDE_NO_PAUSE": "1"}
+    env = dict(terminal_env(host_env),
+               WMF_CLAUDE_SANDBOX_BACKEND=SANDBOX_BACKEND,
+               # no "Press Enter" pause after bin/claude's notices
+               WMF_CLAUDE_NO_PAUSE="1")
     if egress_mod.enabled(state):
         # The session-start hook's egress bullet names the sandbox in the
         # `wmf-sbx allow` command that it gives. WMF_CLAUDE_*, not WMF_SBX_*:

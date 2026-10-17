@@ -143,10 +143,12 @@ class LauncherTests(unittest.TestCase):
         with open(profile, encoding="utf-8") as f:
             allowed = json.load(f)["environment"]["allow_vars"]
         a = session.launcher_argv(dict(STATE, egress="proxy", name="box"),
-                                  proxy="192.168.5.100:3128")
+                                  proxy="192.168.5.100:3128",
+                                  host_env={v: "x" for v in session.TERMINAL_VARS})
         names = [x.split("=", 1)[0] for x in a[:a.index("bash")]
                  if re.match(r"^[A-Z_][A-Z0-9_]*=", x)]
         self.assertIn("WMF_CLAUDE_SBX_EGRESS", names)
+        self.assertIn("COLORTERM", names)
         for name in names:
             self.assertTrue(any(fnmatch.fnmatchcase(name, p) for p in allowed), name)
 
@@ -206,6 +208,18 @@ class LauncherTests(unittest.TestCase):
         with self.assertRaises(session.SessionError):
             session.launcher_argv(dict(STATE, egress="proxy", sudo=True, name="box"),
                                   launcher_flags=["--allow-post=x"])
+
+    def test_the_hosts_terminal_variables_go_to_each_session(self):
+        host = {"TERM_PROGRAM": "ghostty", "TERM_PROGRAM_VERSION": "1.2", "COLORTERM": "truecolor",
+                "TERM_SESSION_ID": "no"}
+        for st in (STATE, dict(STATE, egress="proxy", sudo=True, name="box")):
+            argv = session.launcher_argv(st, host_env=host)
+            for want in ("TERM_PROGRAM=ghostty", "TERM_PROGRAM_VERSION=1.2",
+                         "COLORTERM=truecolor"):
+                self.assertIn(want, argv)
+            self.assertFalse(any(a.startswith("TERM_SESSION_ID=") for a in argv))
+        argv = session.launcher_argv(STATE, host_env={})
+        self.assertFalse(any(a.startswith(("TERM_PROGRAM", "COLORTERM")) for a in argv))
 
     def test_a_nested_sandbox_gets_the_lima_grants(self):
         argv = session.launcher_argv(dict(STATE, nested=True, nestedSrc="/home/eng/wmf-sbx-src"))

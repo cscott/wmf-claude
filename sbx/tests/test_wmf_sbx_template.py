@@ -215,7 +215,7 @@ class ProvisionTests(unittest.TestCase):
 
     def test_the_guest_reaches_each_guestfwd_on_the_egress_address(self):
         script = template.provision_script(egress=True)
-        self.assertIn('EGRESS_RULE="ip daddr $EGRESS tcp dport { 53, 3128, 3129 } accept"',
+        self.assertIn('EGRESS_RULE="ip daddr $EGRESS tcp dport { 53, 3128, 3129, 3130 } accept"',
                       script)
 
     def test_the_proxy_rule_expands_to_valid_nft_syntax(self):

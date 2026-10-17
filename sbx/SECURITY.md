@@ -96,8 +96,9 @@ QEMU's `restrict=on` user network: no route out and no DNS. Its only
 ways out are `guestfwd`s on 192.168.5.100 to sockets on the host: a
 `nono proxy` (the allowlist: the profile's hosts with its endpoint
 rules, the package registries, Debian's mirror, and the hosts that
-`wmf-sbx allow` adds), a resolver that gives fake addresses, and the
-credential proxy (§4). The QEMU wrapper starts them, so the policy is
+`wmf-sbx allow` adds), a resolver that gives fake addresses, the
+credential proxy (§4), and the clipboard listener (§6). The QEMU wrapper
+starts them, so the policy is
 outside the guest: root in the guest cannot change it. The proxy logs
 each connection (`wmf-sbx logs`). A session's nono then lets every host
 through to that proxy, and still applies the profile's endpoint rules.
@@ -115,9 +116,9 @@ a host proxy, nono chains to it (`--upstream-proxy`).
 **nono's network layer is on.** The image's nono (`.nono-version`)
 opens the session's local ports with its seccomp layer on, and on the
 loopback only: a connect to another address is refused, even on an
-opened port. So the agent reaches the credential proxy (192.168.5.100,
-or 192.168.5.2 off the egress proxy) only
-through nono's proxy, which goes to it directly (`--upstream-bypass`)
+opened port. So the agent reaches the credential proxy and the clipboard
+listener (192.168.5.100, or 192.168.5.2 off the egress proxy) only
+through nono's proxy, which goes to them directly (`--upstream-bypass`)
 and not through the upstream proxy. In the VM the nftables rules are a
 second layer: off the VM, the agent gets TCP 80 and 443 only, and UDP
 leaves the VM only as DNS to Lima's resolver.
@@ -244,9 +245,22 @@ on loopback.
   egress proxy (§3) it also starts that proxy, the resolver and the
   credential proxy; it refuses a boot that has neither that proxy's
   config nor the plain mode that `wmf-sbx` sets.
+- **The clipboard** (behind the egress proxy, unless settings.yaml has
+  `session: {native_copy: false}`). For the length of a session,
+  `resume` listens on the sandbox's `clip.sock`, which the guestfwd at
+  192.168.5.100:3130 reaches, and gives what comes in to the host's
+  `wl-copy`, `xclip` or `pbcopy` (`clipboard.py`). It only writes: it
+  sends nothing back, so the VM cannot read your clipboard. Any process
+  in the VM that reaches the port (in a nono-mode sandbox, the agent's
+  processes, through nono's proxy; in a `--sudo` one, any) can set CLIPBOARD and PRIMARY while the session runs: check
+  a command you paste into a host shell. The listener takes 1 MiB at
+  most, and logs a line per write to `~/.local/state/wmf-sbx/sandboxes/NAME.clipboard.log`
+  (the size, never the text).
 - **Attack surface on the host:** the hypervisor; the 9p or virtiofs
   server, which parses guest requests; `limactl shell` (SSH to the guest
-  with Lima's key in `~/.lima/_config/user`).
+  with Lima's key in `~/.lima/_config/user`); the clipboard listener,
+  which reads a line and the text, and runs a fixed command with the
+  text on stdin.
 - **The golden image** is read-only in the cache and checked against
   its checksum by `status`. It holds no credential.
 - **Warm snapshots** (QEMU) carry a sandbox's disk to the next sandbox
@@ -370,6 +384,8 @@ What changes:
 - Reach the allowed hosts through nono's proxy, and Lima's DNS.
 - Spend the Claude credential of the session it runs in, through the
   host's proxy; not read it.
+- Set your clipboard while a session runs (§6), unless
+  `native_copy: false`; not read it.
 - Not: read your home directory or working trees, write anything on
   the host, push, reach the host or the LAN, become root (except in the
   VM of a `--sudo` sandbox, §6b), or use your Gerrit, Phabricator,

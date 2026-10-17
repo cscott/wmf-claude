@@ -37,6 +37,13 @@ A sandbox with the auth proxy (authproxy.py) uses none of these: its
 login is the shared one, which `/login` in any such sandbox made; the
 host egress proxy keeps it, and the session syncs the phantoms and takes
 part in its refresh (authproxy.Coordinator).
+
+In a sandbox made with native_copy (behind the egress proxy, and no
+`session: {native_copy: false}` in settings.yaml), a mouse selection in
+Claude Code goes to the host's clipboard (clipboard.py): for the length
+of the session, a listener on the host gives it to wl-copy, xclip or
+pbcopy. `native_copy: false` in settings.yaml turns it off, at the next
+session of each sandbox.
 """
 
 import argparse
@@ -48,6 +55,7 @@ import sys
 
 from . import authproxy as authproxy_mod
 from . import cli as cli_mod
+from . import clipboard as clipboard_mod
 from . import color as color_mod
 from . import credproxy as credproxy_mod
 from . import egress as egress_mod
@@ -185,7 +193,7 @@ def build_parser():
 
 def main(argv=None, lima=None, env=None, run=subprocess.run):
     parser = build_parser()
-    args, _config = cli_mod.parse_args(parser, argv, "resume")
+    args, config = cli_mod.parse_args(parser, argv, "resume")
     launcher_flags, claude_args = split_launcher(args.rest)
     # resume's --local-web= opens the wiki's and the browsers' ports, and
     # bin/claude keeps the last --local-web= it is given.
@@ -231,7 +239,7 @@ def main(argv=None, lima=None, env=None, run=subprocess.run):
         found = has_conversation(name, state["primaryDir"], lima)
         attached = attached if found is None else found
     claude_args = claude_args_for(getattr(args, "continue"), claude_args, attached)
-    proxy = syncer = None
+    proxy = clip = syncer = None
     try:
         cred_path = None
         if auth:
@@ -249,6 +257,9 @@ def main(argv=None, lima=None, env=None, run=subprocess.run):
                                            nested=bool(state.get("nested")))
             # No --open-port for its port: nono 0.80 opens the loopback only;
             # the session reaches the proxy through nono's (launcher_argv).
+        if state.get("nativeCopy") and session_mod.native_copy(config.get("session"),
+                                                               egress_mod.enabled(state)):
+            clip = start_clipboard(name, env)
         argv = session_mod.launcher_argv(
             state, cred_path=cred_path, launcher_flags=launcher_flags,
             claude_args=claude_args, proxy=session_mod.upstream_proxy(env, state),
@@ -262,6 +273,8 @@ def main(argv=None, lima=None, env=None, run=subprocess.run):
     finally:
         if proxy is not None:
             stop_proxy(name, proxy, lima=lima)
+        if clip is not None:
+            clip.stop()
         if syncer is not None:
             syncer.stop()
     if result.returncode == 0 and starts_a_conversation(claude_args):
@@ -317,6 +330,36 @@ def unfetched_lines(state, run=subprocess.run):
 
 def proxy_log_path(name, env=None):
     return os.path.join(state_mod.state_dir(env), f"{name}.credproxy.log")
+
+
+def clipboard_log_path(name, env=None):
+    return os.path.join(state_mod.state_dir(env), f"{name}.clipboard.log")
+
+
+def start_clipboard(name, env=None):
+    """Start the session's clipboard listener on the sandbox's socket,
+    which the guestfwd at EGRESS_ADDR:CLIP_PORT connects to. None, with a
+    note, when the host has no tool for it or another session has it: the
+    session starts all the same, and Claude Code's copies go nowhere."""
+    listener = clipboard_mod.Listener(egress_mod.clip_socket(name, env),
+                                      os.environ if env is None else env,
+                                      log_path=clipboard_log_path(name, env))
+    if not listener.available():
+        print(color_mod.dim("note: no wl-copy (Wayland), xclip (X11) or pbcopy on this host's "
+                            "display, so a copy in Claude Code does not reach its clipboard."),
+              file=sys.stderr)
+        return None
+    if credproxy_mod.socket_in_use(listener.path):
+        color_mod.warn(f"another session in {name} has the clipboard; "
+                       f"this one's copies go nowhere.")
+        return None
+    try:
+        listener.start()
+    except OSError as e:
+        color_mod.warn(f"could not start the clipboard listener on "
+                       f"{listener.path} ({e})")
+        return None
+    return listener
 
 
 def start_proxy(name, source, lima=None, env=None, egress=False, nested=False):

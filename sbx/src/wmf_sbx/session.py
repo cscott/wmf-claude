@@ -25,6 +25,7 @@ import os
 import shlex
 import subprocess
 
+from . import clipboard as clipboard_mod
 from . import credproxy as credproxy_mod
 from . import deps as deps_mod
 from . import egress as egress_mod
@@ -150,9 +151,11 @@ EXEC_ENV_KEY = "sessionEnv"
 def exec_env(session_env_vars):
     """The session's variables for `wmf-sbx exec`: the wiki, test and
     composer variables, the git identity and settings.yaml `environment:`;
-    not the credential proxy's (exec runs no Claude Code)."""
+    not the credential proxy's or the clipboard's (exec runs no Claude
+    Code)."""
     return {k: v for k, v in session_env_vars.items()
-            if k not in CREDENTIAL_PROXY_ENV and not k.startswith("ANTHROPIC_")}
+            if k not in CREDENTIAL_PROXY_ENV and k not in clipboard_env()
+            and not k.startswith("ANTHROPIC_")}
 
 
 # Reads the credential file (if any), deletes it, then runs the launcher.
@@ -170,7 +173,7 @@ class SessionError(Exception):
 # `sudo` is create's default for --sudo/--no-sudo instead.
 PERMISSION_MODES = ("default", "acceptEdits", "plan", "auto", "bypassPermissions")
 THEMES = ("dark", "light", "dark-daltonized", "light-daltonized", "dark-ansi", "light-ansi")
-PREFERENCE_KEYS = ("model", "permission_mode", "theme", "ste", "settings")
+PREFERENCE_KEYS = ("model", "permission_mode", "theme", "ste", "settings", "native_copy")
 
 
 def first_run_marker(env=None):
@@ -199,7 +202,8 @@ MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\[\]-]*$")
 
 def preference_settings(prefs, quiet=True, warn=lambda msg: None):
     """The settings.json patch for the `session:` preferences: `model`
-    and `permission_mode`. Raises SessionError for a bad value, so that a
+    and `permission_mode`. `native_copy` is native_copy's. Raises
+    SessionError for a bad value, so that a
     typo stops the create before it builds anything. An unknown key goes
     to `warn`, and is ignored: a newer wmf-sbx may read it. `settings`
     is cli.py's.
@@ -219,7 +223,7 @@ def preference_settings(prefs, quiet=True, warn=lambda msg: None):
     theme = prefs.get("theme")
     if theme is not None and theme not in THEMES:
         raise SessionError(f"settings.yaml: session.theme {theme!r}: want one of {', '.join(THEMES)}")
-    for key in ("ste", "settings"):
+    for key in ("ste", "settings", "native_copy"):
         value = prefs.get(key)
         if value is not None and not isinstance(value, bool):
             raise SessionError(f"settings.yaml: session.{key} {value!r}: want true or false")
@@ -242,6 +246,14 @@ def preference_settings(prefs, quiet=True, warn=lambda msg: None):
         # bin/session-start.sh leaves out the ASD-STE100 writing rule.
         patch["env"] = {"WMF_CLAUDE_STE": "0"}
     return patch
+
+
+def native_copy(prefs, egress):
+    """Whether a sandbox copies to the host's clipboard (clipboard.py):
+    behind the egress proxy (`egress`), unless the `session:` preferences
+    have `native_copy: false`."""
+    return bool(egress) and (prefs if isinstance(prefs, dict) else {}).get("native_copy") \
+        is not False
 
 
 def claude_json_patch(prefs, trusted_paths, claude_version=None, quiet=True):
@@ -362,9 +374,10 @@ def launcher_argv(state, cred_path=None, launcher_flags=(), claude_args=(),
     # POST gets 403).
     for domain in (["*"] if egress_mod.enabled(state) else REGISTRY_DOMAINS):
         grants += ["--allow-domain", domain]
-    # The credential proxy: nono 0.80 refuses a connect off the loopback,
-    # even on an --open-port port, so it goes through nono's proxy, which
-    # must reach it directly, not through the upstream proxy.
+    # The credential proxy and the clipboard listener: nono 0.80 refuses
+    # a connect off the loopback, even on an --open-port port, so these
+    # go through nono's proxy, which must reach them directly, not
+    # through the upstream proxy.
     addr = egress_mod.EGRESS_ADDR if egress_mod.enabled(state) else credproxy_mod.GUEST_HOST
     if not egress_mod.enabled(state) and cred_path:
         grants += ["--allow-domain", addr]
@@ -641,6 +654,13 @@ def git_config_env(env):
         raise SessionError("settings.yaml: `environment:` GIT_CONFIG_COUNT: want a number")
 
 
+def clipboard_env():
+    """The settings `env` of a sandbox with native_copy: Claude Code finds
+    the `wl-copy` shim, and the shim finds the listener (clipboard.py)."""
+    return {"WAYLAND_DISPLAY": clipboard_mod.WAYLAND_DISPLAY,
+            clipboard_mod.ADDRESS_VAR: f"{egress_mod.EGRESS_ADDR}:{egress_mod.CLIP_PORT}"}
+
+
 # The skill for a hand-off from the host (`git sbx-pull` in the guest,
 # sbx/helpers/git-sbx-pull). A user skill, not the plugin's: it is wmf-sbx's,
 # and its command is `/sbx-pull`.
@@ -655,10 +675,12 @@ def sbx_pull_skill():
 
 
 def session_plan(name, resolved_for_kit, readonly=(), identity=None, preferences=None,
-                 claude_version=None, quiet=True, environment=None, sudo=False):
+                 claude_version=None, quiet=True, environment=None, sudo=False,
+                 copy=False):
     """The `session` part of the plan, which setup.py writes as the
     agent: settings `env` (wmf-sbx's, then settings.yaml `environment:`)
-    and the engineer's preferences, and files under the agent's home."""
+    and the engineer's preferences, and files under the agent's home.
+    `copy` (native_copy): the clipboard shim and its variables."""
     with open(kit_mod.TESTING_GUIDE_SOURCE, encoding="utf-8") as f:
         guide = f.read()
     settings = preference_settings(preferences, quiet=quiet)
@@ -672,6 +694,10 @@ def session_plan(name, resolved_for_kit, readonly=(), identity=None, preferences
         {"path": f"~/{kit_mod.TESTING_GUIDE}", "content": guide},
         {"path": SBX_PULL_SKILL_PATH, "content": sbx_pull_skill()},
     ]
+    if copy:
+        env.update(clipboard_env())
+        files.append({"path": clipboard_mod.SHIM_PATH, "content": clipboard_mod.GUEST_SHIM,
+                      "mode": 0o755})
     return {
         "env": env,
         "settings": settings,

@@ -492,8 +492,8 @@ only, and says which status it got. sbx-pull's query goes to Gerrit only.
 - Under nono 0.80, `--open-port` allows connections on the loopback
   only. So a nono session gets `NO_PROXY=localhost,127.0.0.1`, and
   `--upstream-bypass` and `--allow-domain` for `192.168.5.2`. The
-  inner credential proxy connects with CONNECT through nono's proxy
-  when `NONO_PROXY_TOKEN` is set.
+  clipboard shim and the inner credential proxy connect with CONNECT
+  through nono's proxy when `NONO_PROXY_TOKEN` is set.
 - The credential proxy sends `connection: close`. nono's forward path
   copies until the upstream closes, so a kept-alive connection held each
   request open. Verified: one task took 47 minutes before the change and
@@ -635,6 +635,41 @@ replaced with `mv`, granted with `--read-file`) is the source and
 upstream of the inner credential proxy. The guest honours
 `ANTHROPIC_BASE_URL` only in a nested sandbox. After the session the
 marker keeps a phantom that no longer works.
+
+## The clipboard
+
+GNOME Terminal (VTE) drops OSC 52 (vte#2495), so a copy in Claude Code
+does not reach the host. Rejected: mounting the host's Wayland socket,
+another terminal, and turning off the mouse.
+
+What Claude Code does (read from its code): it probes with `Bun.which`.
+It runs `wl-copy` if `WAYLAND_DISPLAY` is set and `wl-copy` is on PATH,
+then `wl-copy --primary`. It writes the text on stdin, does not check
+the exit status, and kills the command after 2 seconds. The probe
+decides the toast. It always sends OSC 52 too. `SSH_CONNECTION` forces
+OSC 52 only (`sudo`'s `env_reset` removes it). The `env` in
+`settings.json` applies before the probe, so `WAYLAND_DISPLAY` can go
+there.
+
+Why `wl-copy` and not `xclip`: with `DISPLAY` set, Cypress and Chrome
+look for a display, and `xclip` gets screenshot images.
+
+**What wmf-sbx does.** `clipboard.py` is a host listener thread, started
+by `resume`, on `egress.clip_socket` (mode 0600). A guestfwd connects
+the guest to it, so it needs the egress proxy. The host tool is
+`wl-copy --type 'text/plain;charset=utf-8' [--primary]`, else `xclip`,
+else `pbcopy`. A write over 1 MiB is refused. Each write logs a line
+with the byte count only. The host `wl-copy` forks its owner process, so
+the listener does not wait for it.
+
+The guest shim (`GUEST_SHIM`) is bash with `/dev/tcp`. It sends
+`clipboard` or `primary`, then the text. Under nono it connects with
+CONNECT through nono's proxy. Called as `wl-paste`, it exits 1.
+`session.native_copy` (default true) turns it on.
+
+Paste is not built, on purpose: a read channel would let the VM read
+the host's clipboard. The terminal's own paste works (Ctrl+Shift+V,
+Shift+middle click).
 
 ## Disks and warm snapshots
 

@@ -895,6 +895,8 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
         state[egress_mod.STATE_KEY] = egress_mod.STATE_VALUE
     if sudo:
         state["sudo"] = True
+    if session_mod.native_copy(preferences, egress):
+        state["nativeCopy"] = True
     if auth:
         state[authproxy_mod.STATE_KEY] = True
     state_mod.save(state, env)
@@ -993,7 +995,7 @@ def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
     plan["session"] = session_mod.session_plan(
         name, resolved_for_kit, readonly, identity=session_mod.git_identity(run=run, env=env),
         preferences=preferences, claude_version=claude_version, quiet=quiet,
-        environment=config["environment"], sudo=sudo)
+        environment=config["environment"], sudo=sudo, copy=bool(state.get("nativeCopy")))
     # `wmf-sbx exec` gives a command the session's variables (MW_INSTALL_PATH
     # and the others) from here, not from the guest's settings.json, which
     # the agent can write: exec runs outside nono.

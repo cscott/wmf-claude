@@ -139,7 +139,8 @@ EPHEMERAL_PORTS = (49152, 53247)
 def provision_script(proxy_ports=(), egress=False, sudo=False):
     with open(PROVISION_SCRIPT, encoding="utf-8") as f:
         script = f.read()
-    ports = (egress_mod.DNS_PORT, egress_mod.EGRESS_PORT, egress_mod.CRED_PORT)
+    ports = (egress_mod.DNS_PORT, egress_mod.EGRESS_PORT, egress_mod.CRED_PORT,
+             egress_mod.CLIP_PORT)
     return (script.replace("@ENGINEER@", ENGINEER)
                   .replace("@PROXY_PORTS@", " ".join(str(p) for p in proxy_ports))
                   .replace("@EPHEMERAL_PORTS@", "%d %d" % EPHEMERAL_PORTS)

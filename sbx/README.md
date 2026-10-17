@@ -370,6 +370,7 @@ session:              # preferences for new sandboxes, written into the
   theme: dark         # dark, light, dark-daltonized, light-daltonized, dark-ansi, light-ansi
   ste: false          # no ASD-STE100 rule in the SessionStart context (default: true)
   settings: false     # no option defaults from this file (default: true)
+  native_copy: false  # no copy to the host clipboard (default: true; "Copying text")
 environment:          # variables for the sessions (the agent's settings `env`)
   GERRITUA: "..."
 packages: [nano]      # extra Debian packages in the golden image
@@ -684,6 +685,29 @@ your `TERM_PROGRAM`, `TERM_PROGRAM_VERSION` and `COLORTERM`
   for upstream's `claude-vm`, else from the host's
   `claude mcp get phabricator`.
 
+### Copying text
+
+In a fenced sandbox, a mouse selection in Claude Code goes to the host's
+clipboard (paste with Ctrl+V or middle click on the host). `create`
+installs a `wl-copy` shim in the VM and sets `WAYLAND_DISPLAY=wmf-sbx` (a
+name only: there is no display). During a session, `resume` listens for
+the shim on the host, and gives the text to the host's `wl-copy`
+(Wayland), `xclip` (X11) or `pbcopy` (macOS). Its log, one line for each
+copy, with the size and never the text, is
+`~/.local/state/wmf-sbx/sandboxes/NAME.clipboard.log`.
+
+- Copy only. To paste into Claude Code, use the terminal's paste
+  (Ctrl+Shift+V or Shift+middle click in GNOME Terminal). A plain middle
+  click pastes nothing: Claude Code reads the clipboard itself, which the
+  sandbox cannot see. A paste channel would let the VM read your
+  clipboard, passwords included (`DESIGN.md`, "The clipboard").
+- With no display on the host (an SSH login), `resume` says so and
+  starts the session without it.
+- The agent can set your clipboard while a session runs (`SECURITY.md`
+  §6): examine a command before you paste it into a shell.
+  `session: {native_copy: false}` removes the shim from new sandboxes,
+  and the listener for all sandboxes.
+
 ## Nested sandboxes
 
 `create --nested` is **lower security, only for work on sandboxing
@@ -826,5 +850,5 @@ the full description.
 | Repos in the VM | `repos.py`, `sandbox-repos.sh` | each git dir is a read-only mount under `/run/wmf-sbx/host/`, with a `git clone --shared` of it at the host path; `engineer` owns the `:ro` clones |
 | VM to host | `remotes.py`, `remote_helper.py` | the host remote `wmfsbx://NAME/PATH`; `git-remote-wmfsbx` serves only `git-upload-pack`, as the agent, with hooks off; host gc is off while clones borrow objects |
 | MediaWiki setup | `mediawiki.py`, `setup.py`, `kit.py` | the host's plan, run in the VM as the agent: links into core, `composer.local.json`, `composer update` and `npm ci` in core and each named repo, the SQLite install, `phpunit.xml`, the api-testing config. `setup.py` goes on stdin, so a change needs no new image |
-| Session | `session.py`, `resume.py`, `credproxy.py`, `authproxy.py` | the invariants, the credential proxy, upstream's `bin/claude` under nono (`bin/launch-claude.sh` with `--sudo`); `WMF_CLAUDE_SANDBOX_BACKEND=lima-sbx` (`lima-sbx-sudo`) selects the SessionStart text in `hooks/context/` |
+| Session | `session.py`, `resume.py`, `credproxy.py`, `authproxy.py`, `clipboard.py` | the invariants, the credential proxy, upstream's `bin/claude` under nono (`bin/launch-claude.sh` with `--sudo`); `WMF_CLAUDE_SANDBOX_BACKEND=lima-sbx` (`lima-sbx-sudo`) selects the SessionStart text in `hooks/context/` |
 | Commit flow | `sbx_pull.py`, `helpers/git-sbx-pull` | `git sbx-pull` on the host and in the guest |

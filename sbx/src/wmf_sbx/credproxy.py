@@ -290,7 +290,7 @@ def upstream_connection(env=None, ca_files=()):
         # nono 0.80 refuses a connect off the loopback, even on an opened
         # port, and does not open the enclosing proxy's port any more. Its
         # proxy goes to that address directly (session.launcher_argv:
-        # --upstream-bypass).
+        # --upstream-bypass), as for the clipboard shim.
         proxy = env.get("HTTP_PROXY") or env.get("http_proxy")
         if not (env.get("NONO_PROXY_TOKEN") and proxy):
             return http.client.HTTPConnection(host, port, timeout=600)

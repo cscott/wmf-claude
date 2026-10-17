@@ -10,7 +10,7 @@ tests cannot do.
   --nested` you have KVM, QEMU and Lima: run `create`, `resume`, `exec`
   and the rest here, and say what you ran and what it showed. Do not ask
   the engineer to run a check that works here. Only host checks (the host
-  egress proxy, macOS; see `checks/`) are the
+  egress proxy, the host's clipboard, macOS; see `checks/`) are the
   engineer's: write the commands for them, and say which results came
   from the engineer.
 - **`wmf-sbx` is not on PATH** in a sandbox: the image installs nothing

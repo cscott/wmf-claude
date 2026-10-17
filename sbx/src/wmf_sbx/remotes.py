@@ -446,6 +446,15 @@ def unfetched_tips(state, run=subprocess.run):
     all. "Can't check" must never read as "nothing to lose", so callers
     treat unreachable as blocking too (see wmf_sbx_rm).
     """
+    findings, unreachable = unfetched_refs(state, run=run)
+    return ([(host_dir, remote, [sha for sha, _refs in tips])
+             for host_dir, remote, tips in findings], unreachable)
+
+
+def unfetched_refs(state, run=subprocess.run):
+    """As unfetched_tips, but each finding lists (sha, [ref, ...]): the
+    refs that point at the commit (HEAD, refs/heads/...). The ref names
+    come from the guest's upload-pack."""
     findings, unreachable = [], []
     for entry in state.get("remotes", []):
         host_dir, remote, url = entry["hostDir"], entry["remote"], entry["url"]
@@ -467,7 +476,7 @@ def unfetched_tips(state, run=subprocess.run):
         # the agent's, and none of it dies with the sandbox: it is sitting
         # on the origin the sandbox pulled it from.
         upstream = {sha for sha, ref in refs if ref.startswith("refs/remotes/")}
-        missing, seen = [], set()
+        missing, names, checked = [], {}, set()
         for sha, ref in refs:
             if ref.startswith("refs/tags/") or ref.startswith("refs/remotes/"):
                 # Peeled tag entries ("...^{}") and lightweight tags both
@@ -477,16 +486,18 @@ def unfetched_tips(state, run=subprocess.run):
                 # A branch sitting exactly on origin/master, which is what
                 # every clone looks like until the agent commits.
                 continue
-            if sha in seen:
+            if sha in checked:
                 # HEAD and the branch it points at are two lines with one
                 # commit -- report the work once, not once per ref.
+                names[sha].append(ref)
                 continue
-            seen.add(sha)
+            checked.add(sha)
+            names[sha] = [ref]
             have = _git(host_dir, ["cat-file", "-e", f"{sha}^{{commit}}"], run=run)
             if have.returncode != 0:
                 missing.append(sha)
         if missing:
-            findings.append((host_dir, remote, missing))
+            findings.append((host_dir, remote, [(sha, names[sha]) for sha in missing]))
     return findings, unreachable
 
 

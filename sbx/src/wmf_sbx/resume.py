@@ -49,6 +49,8 @@ sandboxes made before, too.
 import argparse
 import importlib.util
 import os
+import shlex
+import subprocess
 import sys
 
 from . import authproxy as authproxy_mod
@@ -60,6 +62,7 @@ from . import egress as egress_mod
 from . import image as image_mod
 from . import lima as lima_mod
 from . import nested as nested_mod
+from . import remotes as remotes_mod
 from . import session as session_mod
 from . import start as start_mod
 from . import state as state_mod
@@ -189,7 +192,7 @@ def build_parser():
     return parser
 
 
-def main(argv=None, lima=None, env=None):
+def main(argv=None, lima=None, env=None, run=subprocess.run):
     parser = build_parser()
     args, config = cli_mod.parse_args(parser, argv, "resume")
     launcher_flags, claude_args = split_launcher(args.rest)
@@ -282,20 +285,52 @@ def main(argv=None, lima=None, env=None):
     if result.returncode == 0 and starts_a_conversation(claude_args):
         set_attached(name, env=env)
         session_mod.mark_first_run_seen(env)
-    report_uncommitted(name, state, lima=lima)
+    report_unsaved(name, state, lima=lima, run=run)
     return result.returncode
 
 
-def report_uncommitted(name, state, lima=None):
-    """After a session: the files the agent left uncommitted, which no
-    fetch brings to the host. Silent when there are none."""
+def report_unsaved(name, state, lima=None, run=subprocess.run):
+    """After a session: what the agent has that the host does not.
+    Branches with commits the host has not fetched (the host's
+    `git ls-remote` through each sandbox remote, as `rm` does), and
+    files the agent did not commit, which no fetch brings. Silent when
+    the host has it all."""
+    lines = unfetched_lines(state, run=run)
     result = vm_mod.uncommitted(name, state.get("repos") or [], lima=lima)
-    if not result or not (result[0] or result[1]):
+    if result and (result[0] or result[1]):
+        lines.append("  Not committed (a fetch brings commits only; ask the agent to "
+                     "commit them):")
+        lines += ["  " + line for line in vm_mod.uncommitted_report(*result)]
+    if not lines:
         return
-    print(color_mod.warning(f"note: uncommitted files in {name}. A fetch brings "
-                            f"commits only; ask the agent to commit them:"), file=sys.stderr)
-    for line in vm_mod.uncommitted_report(*result):
+    print(color_mod.warning(f"note: {name} has work that the host does not have:"),
+          file=sys.stderr)
+    for line in lines:
         print(color_mod.dim(line), file=sys.stderr)
+
+
+def unfetched_lines(state, run=subprocess.run):
+    """Report lines for the branches the host has not fetched, with the
+    `git sbx-pull` that takes each one."""
+    if not state.get("remotes"):
+        return []
+    findings, unreachable = remotes_mod.unfetched_refs(state, run=run)
+    lines = ["  Not fetched (take each branch with its command):"] if findings else []
+    for host_dir, remote, tips in findings:
+        for sha, refs in tips:
+            # The names come from the guest's upload-pack.
+            branches = [vm_mod.CONTROL_RE.sub("", r[len("refs/heads/"):])
+                        for r in refs if r.startswith("refs/heads/")]
+            for branch in branches:
+                lines.append(f"    git -C {shlex.quote(host_dir)} sbx-pull "
+                             f"{shlex.quote(remote + '/' + branch)}")
+            if not branches:
+                lines.append(f"    {host_dir}: a commit on no branch ({sha[:12]}); ask "
+                             f"the agent to put it on one")
+    for host_dir, remote, _reason in unreachable:
+        lines.append(f"  {host_dir}: could not reach {remote}, so this does not "
+                     f"show its unfetched commits")
+    return lines
 
 
 def proxy_log_path(name, env=None):

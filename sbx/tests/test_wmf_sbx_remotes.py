@@ -549,6 +549,14 @@ class UnfetchedTipsTests(unittest.TestCase):
         self.assertEqual(unreachable, [])
         self.assertEqual(findings, [(self.host, "sandbox-mw-cite", [sha])])
 
+    def test_unfetched_refs_names_every_ref_on_the_tip(self):
+        git(self.sandbox, "branch", "wip")
+        sha = self.commit_in_sandbox()   # on main; wip stays on the host's commit
+        git(self.sandbox, "branch", "same")
+        findings, _unreachable = m.unfetched_refs(self.state)
+        self.assertEqual(findings, [(self.host, "sandbox-mw-cite",
+                                     [(sha, ["HEAD", "refs/heads/main", "refs/heads/same"])])])
+
     def test_fetched_commit_is_not_reported(self):
         self.commit_in_sandbox()
         git(self.host, "fetch", "-q", self.sandbox, "main")

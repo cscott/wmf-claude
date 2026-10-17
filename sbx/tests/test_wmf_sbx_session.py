@@ -881,11 +881,73 @@ class ResumeMainTests(Env):
         (i,) = [i for i, s in enumerate(shells) if vm.UNCOMMITTED_SCRIPT in s]
         self.assertGreater(i, shells.index(self.launches()[0]))
         self.assertEqual(shells[i][-1], "/home/me/src/Cite")
-        self.assertIn("/home/me/src/Cite: 1 uncommitted file\n    ?? notes.txt", self.err)
+        self.assertIn("/home/me/src/Cite: 1 uncommitted file\n      ?? notes.txt", self.err)
 
     def test_a_clean_session_end_says_nothing_of_it(self):
         self.assertEqual(self.resume(), 0, self.err)
-        self.assertNotIn("uncommitted", self.err)
+        self.assertNotIn("the host does not have", self.err)
+
+    def sandbox_remote(self):
+        """A host repo, and a clone of it as the sandbox, reached by
+        path (git ls-remote of a wmfsbx:// URL reaches the VM)."""
+        host, guest = os.path.join(self.tmp, "host"), os.path.join(self.tmp, "guest")
+        git_repo(host)
+        subprocess.run(["git", "clone", "-q", host, guest], check=True)
+        st = state_mod.load("demo", self.env)
+        st["remotes"] = [{"hostDir": host, "remote": "demo", "url": guest}]
+        state_mod.save(st, self.env)
+        return host, guest
+
+    def commit(self, repo, *argv):
+        subprocess.run(["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@example.org",
+                        "commit", "-q", "--allow-empty", "-m", "agent work"] + list(argv),
+                       check=True)
+
+    @unittest.skipUnless(shutil.which("git"), "git not installed")
+    def test_the_end_of_a_session_reports_unfetched_branches(self):
+        host, guest = self.sandbox_remote()
+        subprocess.run(["git", "-C", guest, "checkout", "-qb", "fix-thing"], check=True)
+        self.commit(guest)
+        subprocess.run(["git", "-C", guest, "branch", "also-here"], check=True)
+        self.assertEqual(self.resume(), 0, self.err)
+        self.assertIn("Not fetched", self.err)
+        self.assertIn(f"git -C {host} sbx-pull demo/fix-thing\n", self.err)
+        self.assertIn(f"git -C {host} sbx-pull demo/also-here\n", self.err)
+        self.assertNotIn("sbx-pull demo/main", self.err)
+        self.assertNotIn("no branch", self.err)
+
+    @unittest.skipUnless(shutil.which("git"), "git not installed")
+    def test_a_fetched_branch_is_not_reported(self):
+        host, guest = self.sandbox_remote()
+        self.commit(guest)
+        subprocess.run(["git", "-C", host, "fetch", "-q", guest, "main"], check=True)
+        self.assertEqual(self.resume(), 0, self.err)
+        self.assertNotIn("the host does not have", self.err)
+
+    @unittest.skipUnless(shutil.which("git"), "git not installed")
+    def test_a_commit_on_no_branch_is_reported(self):
+        host, guest = self.sandbox_remote()
+        subprocess.run(["git", "-C", guest, "checkout", "-q", "--detach"], check=True)
+        self.commit(guest)
+        self.assertEqual(self.resume(), 0, self.err)
+        self.assertIn(f"{host}: a commit on no branch", self.err)
+
+    @unittest.skipUnless(shutil.which("git"), "git not installed")
+    def test_an_unreachable_remote_is_said(self):
+        host = os.path.join(self.tmp, "host")
+        git_repo(host)
+        st = state_mod.load("demo", self.env)
+        st["remotes"] = [{"hostDir": host, "remote": "demo",
+                          "url": os.path.join(self.tmp, "missing")}]
+        state_mod.save(st, self.env)
+        self.assertEqual(self.resume(), 0, self.err)
+        self.assertIn("could not reach demo", self.err)
+
+    def test_branch_names_from_the_guest_are_cleaned_and_quoted(self):
+        with mock.patch.object(resume.remotes_mod, "unfetched_refs", lambda st, run=None: (
+                [("/h", "demo", [("a" * 40, ["refs/heads/x\x1b[2J; rm -rf ~"])])], [])):
+            lines = resume.unfetched_lines({"remotes": [{}]})
+        self.assertEqual(lines[1], "    git -C /h sbx-pull 'demo/x[2J; rm -rf ~'")
 
     def marker_writes(self):
         return [i for i, s in enumerate(self.lima.shells())

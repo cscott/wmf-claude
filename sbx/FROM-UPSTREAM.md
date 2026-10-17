@@ -95,9 +95,11 @@ guest: strip control characters before printing them, as upstream does.
 Done: `vm.uncommitted` (one `limactl shell`, as the agent, with no
 optional locks, hooks or fsmonitor; control characters stripped), in
 `rm` (a warning before the question, unless `--force`; a stopped VM is
-not started for it) and after each session (`resume`). Not done: the
-end of a session does not list unfetched branch tips, as upstream's
-does.
+not started for it) and after each session (`resume`). The end of a
+session also lists the branches that the host has not fetched, as
+upstream's does (`remotes.unfetched_refs`, the walk of `rm`'s guard),
+each with its `git -C HOST_DIR sbx-pull SANDBOX/BRANCH`. Upstream also
+counts the commits; we do not.
 
 ## 3. Carry Claude Code memory and sessions
 

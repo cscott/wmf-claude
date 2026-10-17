@@ -392,7 +392,7 @@ sandbox) removes the proxy variables from the child's environment
 `bin/launch-claude.sh`, which wmf-claude also uses outside wmf-sbx, must
 set them again inside the sandbox. Until `vz` has an equivalent, doing
 this for QEMU alone adds a branch and removes no code (`DESIGN.md`,
-"Local ports").
+"Local ports"; `TODO.md`).
 
 Leads, none checked:
 

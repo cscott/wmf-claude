@@ -11,7 +11,7 @@ agent's work.
 This file tells how to use wmf-sbx. `SECURITY.md` tells what the agent
 can and cannot reach; `DESIGN.md`, the reasons for the design and the
 facts that the code depends on; `MACOS.md`, the setup, host checks and
-differences on a Mac (`vz`); `HISTORY.md`, the
+differences on a Mac (`vz`); `TODO.md`, the open work; `HISTORY.md`, the
 designs that were tried and dropped. `checks/` holds manual checks that
 need a real host or a running sandbox (each header says where it runs).
 
@@ -597,7 +597,7 @@ a fence between the VM and the internet; on QEMU, fenced is the
 default), and **+nono** or **+sudo** (what is around the agent in the
 VM). So there are three modes: **fenced+nono** (the default), **fenced+sudo**
 (`--sudo`), and **unfenced+nono** (`vz` or `--no-egress-proxy`; to be
-removed). There is no unfenced+sudo: with root in the guest
+removed, `TODO.md`). There is no unfenced+sudo: with root in the guest
 and no fence, nothing limits the agent's egress. In each mode, the Claude
 credential stays on the host. Compared with upstream's `claude-vm`
 (`../docs/lima-vm.md`), its **isolated** VM is approximately

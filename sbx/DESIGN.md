@@ -4,7 +4,7 @@ The reasons the code depends on. `README.md` tells how to use wmf-sbx,
 and `SECURITY.md` tells what a sandbox guards. This file tells why the
 code is as it is. Where a fact comes from a measurement, it says
 "verified" and what was checked. `HISTORY.md` has the paths that were
-abandoned.
+abandoned; `TODO.md` has the open items.
 
 ## Project rules
 

@@ -2,7 +2,7 @@
 
 Guidance for Claude Code working on wmf-sbx, the Lima sandbox manager.
 `README.md` is how to use it, `SECURITY.md` what it guards, `DESIGN.md`
-the reasons for the design, `HISTORY.md` the
+the reasons for the design, `TODO.md` the open items, `HISTORY.md` the
 paths that were abandoned, and `checks/` the manual checks that the unit
 tests cannot do.
 

@@ -24,7 +24,7 @@ run Lima itself, which the sbx microVM could not.
 The Docker port ran the MCP servers on the host, and the sandbox reached
 them through a gateway. The secrets stayed on the host. Lima has no such
 gateway, so the servers now run anonymous in the VM. Moving them out of
-the guest again is an open item.
+the guest again is an open item (`TODO.md`).
 
 ## Credential proxy options
 

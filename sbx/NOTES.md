@@ -30,7 +30,8 @@ Shims for old names and old local state:
   each with `git log -S` first: keep a fallback that other users can hit.
 - [ ] **The Phabricator username from `claude mcp get phabricator`** (create.py,
   `phabricator_username`, step 3, "for a host whose last install predates" config.json):
-  remove it if upstream's installer has written config.json for long enough.
+  remove it only if !131 merges (only !131's installer writes config.json) and has for
+  long enough. If !131 is withdrawn, this is the main source.
 
 Docker sbx leftovers (cananian removed the last Docker sandboxes, 2026-10-16):
 - [x] **`state.new_state` wrote `daemonPort`/`hostPort`** and `"backend": "lima"`: gone,

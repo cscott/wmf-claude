@@ -73,11 +73,11 @@ in a `--sudo` session works.
 
 - **Project directory names over 200 characters.** Done:
   `resume.project_dir` uses `lima/claude-context.py enc`.
-- **`WMF_CLAUDE_PHAB_USER`.** Upstream's `bin/wmf-claude-setup` takes the
-  Phabricator username from it, with no prompt. `session.wmf_claude_setup`
-  can pass it, and stop writing `config.json` into the VM and piping
-  `"\n"`. Then withdraw !131, or keep it only for a host where
-  `claude mcp get` fails (`create.py:495-508` reads that output).
+- **`WMF_CLAUDE_PHAB_USER`.** Done: `session.wmf_claude_setup` passes it,
+  and writes no `config.json` into the VM. Still open (the engineer's
+  call): withdraw !131, or keep it only for a host where `claude mcp get`
+  fails. `create.phabricator_username` reads the host's `config.json`
+  (which only !131 writes) before that output.
 - **Terminal variables (3982f3a).** The profile now passes
   `TERM_PROGRAM`, `TERM_PROGRAM_VERSION` and `COLORTERM`. Copy them from
   the host's environment into the session's `env` (`session.py`).

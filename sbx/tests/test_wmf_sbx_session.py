@@ -1315,8 +1315,11 @@ class CreateSessionTests(Env):
         setup_at = next(i for i, s in enumerate(shells) if session.WMF_CLAUDE_SETUP in s)
         rm_at = next(i for i, s in enumerate(shells) if "rm" in s and "/home/agent/.bashrc" in s)
         self.assertGreater(rm_at, setup_at)
-        config = [i for a, i in inputs if i and "phabricatorUsername" in i]
-        self.assertEqual(json.loads(config[0]), {"phabricatorUsername": "Tester"})
+        # The username goes in the environment: no config.json, no Enter.
+        setup = next(s for s in shells if session.WMF_CLAUDE_SETUP in s)
+        self.assertIn("WMF_CLAUDE_PHAB_USER=Tester", setup)
+        self.assertFalse(any(i and "phabricatorUsername" in i for _a, i in inputs))
+        self.assertFalse(any("config.json" in " ".join(s) for s in shells))
         plan = self.plan_of(inputs)
         self.assertEqual(plan["session"]["files"][0]["path"], "~/.claude/CLAUDE.md")
         self.assertIn("fetch demo", plan["session"]["files"][0]["content"])

@@ -451,7 +451,7 @@ def canonicals_for_kit(resolved, rules):
 #
 # The MCP servers run in the VM, anonymously (session.wmf_claude_setup).
 # The host only supplies the engineer's Phabricator username, which
-# wmf-claude-setup offers as its default.
+# wmf-claude-setup takes from $WMF_CLAUDE_PHAB_USER.
 
 
 def wmf_claude_config(path=None):

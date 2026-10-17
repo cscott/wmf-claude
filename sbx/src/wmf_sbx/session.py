@@ -21,7 +21,6 @@ into the VM on stdin, into a 0600 file in /dev/shm (RAM), and the
 launcher reads and deletes the file before it starts bin/claude.
 """
 
-import json
 import re
 import os
 import shlex
@@ -681,12 +680,6 @@ def session_plan(name, resolved_for_kit, readonly=(), identity=None, preferences
     }
 
 
-def phabricator_config(username):
-    """~/.config/wmf-claude/config.json for wmf-claude-setup, which then
-    offers the username as its default."""
-    return {"phabricatorUsername": username} if username else {}
-
-
 def wmf_claude_setup(name, username, lima=None, env=None):
     """Run bin/wmf-claude-setup in the VM as the agent: it pulls nono's base
     pack and registers the MCP servers in the agent's ~/.claude.json, as
@@ -697,23 +690,23 @@ def wmf_claude_setup(name, username, lima=None, env=None):
                               "-g", vm_mod.AGENT, "/dev/null", log], lima=lima, check=False)
     if res.returncode != 0:
         raise SessionError(f"could not create {log} for the agent")
-    config = json.dumps(phabricator_config(username)) + "\n"
-    # The cache directories too: nono may refuse a grant for a path that
-    # does not exist (ALLOW_GRANTS).
-    write = vm_mod.agent_argv(["sh", "-c", "mkdir -p ~/.config/wmf-claude " + " ".join(
-        shlex.quote(p) for p in ALLOW_GRANTS + (COMPOSER_HOME,))
-        + " && cat > ~/.config/wmf-claude/config.json"])
-    vm_mod.shell(name, write, lima=lima, input=config, check=False)
+    # The cache directories: nono may refuse a grant for a path that does
+    # not exist (ALLOW_GRANTS).
+    mkdir = vm_mod.agent_argv(["mkdir", "-p", "--"] + list(ALLOW_GRANTS + (COMPOSER_HOME,)))
+    vm_mod.shell(name, mkdir, lima=lima, check=False)
     proxy = vm_mod.guest_proxy_env(name, env)
     # SKIP_UPDATE: the image pins Claude Code (image.claude_release; the
     # version is in the cache key). `claude update` would download ~250 MB
     # per sandbox into an agent-writable ~/.local/bin that sessions do not
     # run (RAN: /usr/local/bin is first on AGENT_PATH).
-    argv = vm_mod.agent_argv([WMF_CLAUDE_SETUP], env=dict(
-        proxy, WMF_CLAUDE_SKIP_BUILD="1", WMF_CLAUDE_IN_VM="1", WMF_CLAUDE_SKIP_CHROME="1",
-        WMF_CLAUDE_SKIP_UPDATE="1"))
-    # Enter: take the default Phabricator username (from config.json).
-    res = vm_mod.shell(name, argv, lima=lima, input="\n", check=False, capture=False)
+    # WMF_CLAUDE_PHAB_USER: the Phabricator username, with no prompt.
+    # Without one, setup asks, reads the end of input, and stops.
+    setup_env = dict(proxy, WMF_CLAUDE_SKIP_BUILD="1", WMF_CLAUDE_IN_VM="1",
+                     WMF_CLAUDE_SKIP_CHROME="1", WMF_CLAUDE_SKIP_UPDATE="1")
+    if username:
+        setup_env["WMF_CLAUDE_PHAB_USER"] = username
+    argv = vm_mod.agent_argv([WMF_CLAUDE_SETUP], env=setup_env)
+    res = vm_mod.shell(name, argv, lima=lima, input="", check=False, capture=False)
     if res.returncode != 0:
         raise SessionError(f"wmf-claude-setup failed in the VM (exit {res.returncode})")
     # After wmf-claude-setup, which writes its `claude` alias into ~/.bashrc

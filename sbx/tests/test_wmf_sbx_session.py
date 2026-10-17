@@ -874,6 +874,19 @@ class ResumeMainTests(Env):
         # a session ran: later sandboxes skip the first-run questions
         self.assertTrue(session.first_run_seen(self.env))
 
+    def test_the_end_of_a_session_reports_uncommitted_files(self):
+        self.lima.uncommitted_result = Done(stdout="\x1e0\n?? notes.txt\n")
+        self.assertEqual(self.resume(), 0, self.err)
+        shells = self.lima.shells()
+        (i,) = [i for i, s in enumerate(shells) if vm.UNCOMMITTED_SCRIPT in s]
+        self.assertGreater(i, shells.index(self.launches()[0]))
+        self.assertEqual(shells[i][-1], "/home/me/src/Cite")
+        self.assertIn("/home/me/src/Cite: 1 uncommitted file\n    ?? notes.txt", self.err)
+
+    def test_a_clean_session_end_says_nothing_of_it(self):
+        self.assertEqual(self.resume(), 0, self.err)
+        self.assertNotIn("uncommitted", self.err)
+
     def marker_writes(self):
         return [i for i, s in enumerate(self.lima.shells())
                 if session.NESTED_CREDENTIAL_SCRIPT in s]

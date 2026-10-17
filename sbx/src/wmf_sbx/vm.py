@@ -294,6 +294,66 @@ def shell(name, argv, lima=None, workdir=ENGINEER_HOME, check=True, capture=True
     return lima.call(*args, check=check, capture=capture, input=input)
 
 
+# Files the agent changed but did not commit, per clone (the uncommitted
+# work report, after a session and in `rm`). A fetch brings commits only,
+# so these die with the VM. As the agent, read-only: no optional locks
+# (status does not write the index), no hooks, no fsmonitor command. A
+# line that starts with RS names the next clone by its index; git quotes
+# a file name with a control character, so no file name can start one.
+UNCOMMITTED_SCRIPT = r"""i=0
+for d in "$@"; do
+  printf '\036%s\n' "$i"; i=$((i+1))
+  GIT_OPTIONAL_LOCKS=0 timeout 60 git -c core.hooksPath=/dev/null -c core.fsmonitor=false \
+    -C "$d" status --porcelain 2>/dev/null || printf '\037\n'
+done"""
+# The C0 controls but tab, DEL, and the C1 controls: the agent chooses
+# the file names, and they go to the engineer's terminal.
+CONTROL_RE = re.compile(r"[\x00-\x08\x0a-\x1f\x7f-\x9f]")
+MARKER_RE = re.compile(r"\x1e[0-9]{1,6}")   # ASCII: isdigit() takes "²"
+
+
+def uncommitted(name, paths, lima=None):
+    """{path: [porcelain line, ...]} for each clone in `paths` with
+    uncommitted files, and the paths that could not be checked. None
+    when the query failed (the VM does not run, say)."""
+    paths = list(paths)
+    if not paths:
+        return {}, []
+    try:
+        res = shell(name, agent_argv(["sh", "-c", UNCOMMITTED_SCRIPT, "_"] + paths,
+                                     workdir="/"),
+                    lima=lima, check=False)
+    except lima_mod.LimaError:
+        return None
+    if res.returncode != 0:
+        return None
+    found, failed, current = {}, [], None
+    # Not splitlines(): it splits on RS (and the other C0/C1 separators) too.
+    for line in (res.stdout or "").split("\n"):
+        if MARKER_RE.fullmatch(line) and int(line[1:]) < len(paths):
+            current = paths[int(line[1:])]
+        elif current is None:
+            continue
+        elif line == "\037":
+            failed.append(current)
+        elif line.strip():
+            found.setdefault(current, []).append(CONTROL_RE.sub("", line))
+    return found, failed
+
+
+def uncommitted_report(found, failed, limit=5):
+    """Lines for the engineer: each clone, its count and some names."""
+    out = []
+    for path, lines in found.items():
+        n = len(lines)
+        out.append(f"  {path}: {n} uncommitted file{'' if n == 1 else 's'}")
+        out += [f"    {line}" for line in lines[:limit]]
+        if n > limit:
+            out.append(f"    ... and {n - limit} more")
+    out += [f"  {path}: could not run git status" for path in failed]
+    return out
+
+
 # The security invariants that `start` and `status` check in a running
 # sandbox (HANDOFF-LIMA.md §4). Each is a shell test that
 # prints nothing and exits 0 when the invariant holds.

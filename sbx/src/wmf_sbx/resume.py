@@ -282,7 +282,20 @@ def main(argv=None, lima=None, env=None):
     if result.returncode == 0 and starts_a_conversation(claude_args):
         set_attached(name, env=env)
         session_mod.mark_first_run_seen(env)
+    report_uncommitted(name, state, lima=lima)
     return result.returncode
+
+
+def report_uncommitted(name, state, lima=None):
+    """After a session: the files the agent left uncommitted, which no
+    fetch brings to the host. Silent when there are none."""
+    result = vm_mod.uncommitted(name, state.get("repos") or [], lima=lima)
+    if not result or not (result[0] or result[1]):
+        return
+    print(color_mod.warning(f"note: uncommitted files in {name}. A fetch brings "
+                            f"commits only; ask the agent to commit them:"), file=sys.stderr)
+    for line in vm_mod.uncommitted_report(*result):
+        print(color_mod.dim(line), file=sys.stderr)
 
 
 def proxy_log_path(name, env=None):

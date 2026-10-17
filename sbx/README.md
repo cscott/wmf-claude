@@ -707,6 +707,9 @@ Work goes between the host and a sandbox as branches, in both directions,
 with one command: `git sbx-pull`. On the host it takes a sandbox's
 branch; in the sandbox it takes the host's branch. There is no push: the
 sandbox cannot reach the host, and the host never writes into the VM.
+Only commits go: a file that the agent did not commit stays in the VM.
+When a session ends, and before `rm` asks, wmf-sbx lists the uncommitted
+files in each clone (as the agent, with a read-only `git status`).
 
 **From the sandbox to the host.** In the host repo:
 
@@ -772,7 +775,8 @@ wmf-sbx rm --force NAME
 When the agent has commits that the host has not fetched, `rm` on a
 terminal offers to fetch them. A fetch puts them in `NAME/BRANCH`, which
 `rm` then deletes with the remote: to keep a branch, `git sbx-pull` it
-first.
+first. Uncommitted files get a warning only (`rm` does not start a
+stopped VM to look for them).
 
 ```bash
 wmf-sbx rm --prune         # remotes and state of sandboxes whose VM is gone

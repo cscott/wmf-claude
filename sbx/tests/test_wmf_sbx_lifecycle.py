@@ -185,6 +185,9 @@ class FakeLima:
             return Done(stdout="/tmp/wmf-sbx-cp.AbC123\n")
         if argv[0] == "shell" and input and "base64 -w0" in input:
             return Done(stdout="S0VQVA==\n")   # snapshot.keep_script's output
+        if argv[0] == "shell" and vm.UNCOMMITTED_SCRIPT in argv:
+            # The guest's `git status --porcelain` pass: clean by default.
+            return getattr(self, "uncommitted_result", Done())
         if argv[0] == "shell" and argv[-3:-1] == ["test", "-d"]:
             return Done(returncode=1)
         return Done(returncode=self.rc)
@@ -246,6 +249,69 @@ class Env(unittest.TestCase):
 
 
 # -- vm.py ----------------------------------------------------------------
+
+class UncommittedTests(Env):
+    """vm.uncommitted: the guest's `git status --porcelain` pass."""
+
+    def query(self, stdout, paths=("/a", "/b"), returncode=0):
+        lima = FakeLima({"wmf-sbx-demo": "Running"})
+        lima.uncommitted_result = Done(returncode=returncode, stdout=stdout)
+        return vm.uncommitted("demo", list(paths), lima=lima), lima
+
+    def test_it_runs_once_as_the_agent_read_only(self):
+        _result, lima = self.query("")
+        (shell,) = lima.shells()
+        self.assertEqual(shell[shell.index("--") + 1:][:4], ("sudo", "-H", "-u", "agent"))
+        self.assertIn("GIT_OPTIONAL_LOCKS=0", vm.UNCOMMITTED_SCRIPT)
+        self.assertIn("core.hooksPath=/dev/null", vm.UNCOMMITTED_SCRIPT)
+        self.assertIn("core.fsmonitor=false", vm.UNCOMMITTED_SCRIPT)
+
+    def test_it_groups_the_lines_by_clone(self):
+        (found, failed), _ = self.query("\x1e0\n?? a.txt\n M b.php\n\x1e1\n")
+        self.assertEqual(found, {"/a": ["?? a.txt", " M b.php"]})
+        self.assertEqual(failed, [])
+
+    def test_a_clone_git_cannot_read_is_reported(self):
+        (found, failed), _ = self.query("\x1e0\n\x1f\n\x1e1\n")
+        self.assertEqual((found, failed), ({}, ["/a"]))
+
+    def test_control_characters_are_stripped(self):
+        (found, _failed), _ = self.query("\x1e0\n?? x\x1b[31my\x07\x9bz\r\n")
+        self.assertEqual(found, {"/a": ["?? x[31myz"]})
+
+    def test_an_index_out_of_range_or_lines_before_a_marker_are_ignored(self):
+        (found, _failed), _ = self.query("?? early\n\x1e7\n?? late\n\x1e\u00b2\n?? two\n")
+        self.assertEqual(found, {})
+
+    def test_a_failed_query_is_none(self):
+        self.assertIsNone(self.query("", returncode=255)[0])
+
+    def test_no_clones_need_no_query(self):
+        result, lima = self.query("", paths=())
+        self.assertEqual((result, lima.shells()), (({}, []), []))
+
+    @unittest.skipUnless(shutil.which("git"), "git not installed")
+    def test_the_script_on_real_clones(self):
+        clean, dirty = os.path.join(self.tmp, "clean"), os.path.join(self.tmp, "dirty")
+        git_repo(clean)
+        git_repo(dirty)
+        for f in ("a", "b\x1b[31mc"):
+            open(os.path.join(dirty, f), "w").close()
+        missing = os.path.join(self.tmp, "missing")
+        out = subprocess.run(["sh", "-c", vm.UNCOMMITTED_SCRIPT, "_", clean, dirty, missing],
+                             capture_output=True, text=True, check=True).stdout
+        (found, failed), _ = self.query(out, paths=(clean, dirty, missing))
+        self.assertEqual(found, {dirty: ["?? a", '?? "b\\033[31mc"']})
+        self.assertEqual(failed, [missing])
+        self.assertEqual(vm.uncommitted_report(found, failed), [
+            f"  {dirty}: 2 uncommitted files", "    ?? a", '    ?? "b\\033[31mc"',
+            f"  {missing}: could not run git status"])
+
+    def test_the_report_names_some_files_only(self):
+        lines = vm.uncommitted_report({"/a": [f"?? f{i}" for i in range(8)]}, [], limit=3)
+        self.assertEqual(lines, ["  /a: 8 uncommitted files", "    ?? f0", "    ?? f1",
+                                 "    ?? f2", "    ... and 5 more"])
+
 
 class VmTests(Env):
 
@@ -1716,6 +1782,43 @@ class RmTests(Env):
         self.assertEqual(self.quiet(rm.main, ["--prune"], lima=lima, env=self.env), 0, self.err)
         self.assertIsNone(state_mod.load("sbx-demo", self.env))
         self.assertIsNotNone(state_mod.load("alive", self.env))
+
+    def uncommitted(self, lima, stdout, returncode=0):
+        st = state_mod.load("sbx-demo", self.env)
+        st["repos"] = ["/home/me/src/demo", "/home/me/src/other"]
+        state_mod.save(st, self.env)
+        lima.uncommitted_result = Done(returncode=returncode, stdout=stdout)
+
+    def test_rm_reports_uncommitted_files_before_it_asks(self):
+        lima = self.sandbox()
+        self.uncommitted(lima, "\x1e0\n?? notes.txt\n M x.php\n\x1e1\n")
+        asked = []
+        self.quiet(rm.main, ["sbx-demo"], lima=lima, env=self.env,
+                   confirm=lambda q: asked.append(sys.stderr.getvalue()) or "n")
+        self.assertIn("/home/me/src/demo: 2 uncommitted files", asked[0])
+        self.assertIn("?? notes.txt", asked[0])
+        self.assertNotIn("/home/me/src/other", self.err)
+        (shell,) = [s for s in lima.shells() if vm.UNCOMMITTED_SCRIPT in s]
+        self.assertIn("agent", shell)
+        self.assertEqual(shell[-2:], ("/home/me/src/demo", "/home/me/src/other"))
+
+    def test_rm_warns_when_it_cannot_check(self):
+        lima = self.sandbox()
+        self.uncommitted(lima, "", returncode=255)
+        self.quiet(rm.main, ["sbx-demo"], lima=lima, env=self.env, confirm=lambda q: "n")
+        self.assertIn("could not check the sandbox for uncommitted files", self.err)
+
+    def test_rm_does_not_start_a_stopped_vm_to_check(self):
+        lima = self.sandbox(status="Stopped")
+        self.quiet(rm.main, ["sbx-demo"], lima=lima, env=self.env, confirm=lambda q: "n")
+        self.assertNotIn(("start", "wmf-sbx-sbx-demo"), lima.calls)
+        self.assertIn("did not check it for uncommitted files", self.err)
+
+    def test_rm_force_does_not_check(self):
+        lima = self.sandbox()
+        self.uncommitted(lima, "\x1e0\n?? notes.txt\n")
+        self.quiet(rm.main, ["-f", "sbx-demo"], lima=lima, env=self.env)
+        self.assertEqual([s for s in lima.shells() if vm.UNCOMMITTED_SCRIPT in s], [])
 
     def test_settings_rm_force_and_no_force(self):
         settings = os.path.join(self.tmp, "settings.yaml")

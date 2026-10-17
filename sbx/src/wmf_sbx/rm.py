@@ -5,7 +5,8 @@ git remotes and gc settings that wmf-sbx added for it.
 Only a sandbox that wmf-sbx owns (it has a state file) is removed, so
 that `rm` can never delete another Lima VM. `limactl delete` does not
 ask, so this asks first, unless --force. The guard against unfetched
-commits runs first, as before.
+commits runs first, as before; then a warning lists the files that the
+agent did not commit.
 
 Usage:
   wmf-sbx-rm [--dry-run] [--keep-remotes] [-f|--force] NAME [NAME ...]
@@ -96,6 +97,26 @@ def check_unfetched(state, run=subprocess.run, env=None, lima=None, confirm=None
     return False
 
 
+def report_uncommitted(state, lima=None):
+    """Warn about files the agent did not commit: no fetch brings them
+    to the host, so they die with the VM. A warning only: they are often
+    scratch files. A stopped VM is not started for this."""
+    if vm_mod.status(state["name"], lima=lima) != "Running":
+        print(f"note: the VM is not running, so rm did not check it for uncommitted "
+              f"files. `wmf-sbx start {state['name']}` first to check.", file=sys.stderr)
+        return
+    result = vm_mod.uncommitted(state["name"], state.get("repos") or [], lima=lima)
+    if result is None:
+        warn("could not check the sandbox for uncommitted files.")
+        return
+    found, failed = result
+    if found or failed:
+        warn("the sandbox has files that are not committed. No fetch brings "
+             "them to the host, and removing the VM loses them:")
+        for line in vm_mod.uncommitted_report(found, failed):
+            print(line, file=sys.stderr)
+
+
 def report_unfetched(findings):
     print(
         "error: the sandbox has commits the host has never fetched. "
@@ -147,6 +168,8 @@ def remove_one(name, args, run=subprocess.run, env=None, lima=None, confirm=None
     if not args.force and not args.keep_remotes:
         if not check_unfetched(state, run=run, env=env, lima=lima, confirm=confirm):
             return 1
+    if not args.force:
+        report_uncommitted(state, lima=lima)
 
     if args.dry_run:
         print(f"+ would remove sandbox {name!r} (VM {vm_mod.instance_name(name)})",

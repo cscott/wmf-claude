@@ -84,7 +84,7 @@ in a `--sudo` session works.
 - **`/etc/php` (4f36b8a).** Done: the profile in the image grants it, so
   it is not in our `READ_GRANTS`.
 
-## 2. Report uncommitted work
+## 2. Report uncommitted work (done)
 
 Upstream's `claude-vm claude` lists, at the end of a session, what is not
 pulled yet, including uncommitted files (61dd761, ea18f80). We report
@@ -92,6 +92,12 @@ unfetched branch tips (`remotes.unfetched_tips`, in `rm` and `ls`) but not
 uncommitted files. Add one read-only `git status --porcelain` pass, as the
 agent, to `rm` and to the end of a session. File names come from the
 guest: strip control characters before printing them, as upstream does.
+Done: `vm.uncommitted` (one `limactl shell`, as the agent, with no
+optional locks, hooks or fsmonitor; control characters stripped), in
+`rm` (a warning before the question, unless `--force`; a stopped VM is
+not started for it) and after each session (`resume`). Not done: the
+end of a session does not list unfetched branch tips, as upstream's
+does.
 
 ## 3. Carry Claude Code memory and sessions
 

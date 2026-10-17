@@ -19,6 +19,7 @@ COMMANDS = {
     "logs": "wmf_sbx.logs",
     "ls": "wmf_sbx.ls",
     "ls-remotes": "wmf_sbx.ls_remotes",
+    "pull": "wmf_sbx.sbx_pull",
     "resolve": "wmf_sbx.resolve",
     "resume": "wmf_sbx.resume",
     "rm": "wmf_sbx.rm",

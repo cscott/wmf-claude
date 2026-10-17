@@ -86,12 +86,15 @@ if [ -n "$REMOTE" ] && is_local_check_target "$REMOTE"; then
 fi
 
 # Whatever REMOTE is: HEAD is safe when the agent of a sandbox of this
-# repo has it, as a sandbox branch (refs/remotes/NAME/*). No fetch here:
-# these refs are as of the last `git remote update`. Inside a sandbox
-# there are no sandbox remotes, and this finds nothing.
+# repo has it, as a sandbox branch (refs/remotes/NAME/*) or as a hand-off
+# it took (refs/remotes/NAME-seen/*, which `git sbx-pull` fetches from the
+# guest's refs/sbx/seen/*). So `git safe-reset` after a hand-off does not
+# complain (DESIGN.md, "The commit flow (sbx-pull)"). No fetch here: these
+# refs are as of the last `git remote update` or `git sbx-pull`. Inside a
+# sandbox there are no sandbox remotes, and this finds nothing.
 AGENT_REFS=()
 while read -r R; do
-    [ -n "$R" ] && AGENT_REFS+=("refs/remotes/$R/")
+    [ -n "$R" ] && AGENT_REFS+=("refs/remotes/$R/" "refs/remotes/$R-seen/")
 done < <(sandbox_remotes)
 if [ "${#AGENT_REFS[@]}" -gt 0 ]; then
     MATCH=$(git for-each-ref --contains=HEAD --format='%(refname)' --count=1 \

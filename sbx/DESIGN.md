@@ -139,6 +139,7 @@ The image contains:
   `192.168.5.2`.
 - php-ast at CI's pin (`image.PHP_AST`), Node 24 from nodejs.org,
   rsync, the libraries that Chrome and Cypress need, and Xvfb.
+- The guest helper `git-sbx-pull`, in `/usr/local/bin`.
 - apt-listchanges and apt's daily timers, masked.
 
 The seal removes the machine's identity: `rm -f /etc/ssh/ssh_host_*`,
@@ -233,8 +234,8 @@ protocol v0. git ignores `uploadpack.packObjectsHook` from repo config
 `vm.uncommitted` runs `git status --porcelain` as the agent (no optional
 locks, hooks or fsmonitor) and strips control characters; `rm` and the
 end of a session use it. `remotes.unfetched_refs` lists the branches
-the host does not have, each with its `git -C HOST_DIR fetch SANDBOX
-BRANCH`.
+the host does not have, each with its `git -C HOST_DIR sbx-pull
+SANDBOX/BRANCH`.
 
 **In the guest.** `git safe-reset` takes `R`, `R master` and
 `R/master`. `git-review-check` answers for a sandbox remote and for
@@ -246,13 +247,75 @@ BRANCH`.
 Path shortcuts resolve against `primaryDir`, and `cp` anchors a relative
 guest path there.
 
+## The commit flow (sbx-pull)
+
+git-review follows the branch's upstream only when `track=1` (core, Cite
+and Parsoid set it, for release branches). So a branch that tracks the
+sandbox remote breaks `git review`. Upstreams therefore stay on Gerrit,
+and the host records the sandbox link in its own branch config:
+`branch.B.wmfsbx`, `branch.B.wmfsbxBranch`, `branch.B.wmfsbxSha`.
+
+**On the host: `git sbx-pull [--onto X] [-f] [[NAME/]BRANCH]`.**
+
+- Which branch: `NAME/BRANCH`; or a `BRANCH` whose host record names the
+  sandbox; or else the only new branch over all sandboxes (not named as
+  an origin branch, and not a hand-off tip).
+- Gates: a dirty tree stops it. A `git-review-check` failure stops it,
+  unless `-f`.
+- The target: the recorded branch, else a branch of the same name, else
+  a new one. `reset --keep` moves it when nothing is lost: the old tip
+  is in the new tip, or is `wmfsbxSha`, or is on Gerrit, or the agent
+  fetched it (the seen ref). Otherwise it stops, unless `-f`; the old
+  tip stays in the reflog, and sbx-pull prints it.
+- The new upstream, first match: the sandbox branch's `origin/X`;
+  `local/Y`, which gives Y's host upstream; the upstream of the host
+  branch the work sits on; a guess (the origin branch with the fewest
+  commits to the tip, master on a tie, said aloud); `--onto` (which also
+  re-points the upstream of an existing branch). sbx-pull never passes
+  on an upstream on a sandbox remote.
+- The Gerrit check is in Python (`gerrit_has`).
+
+**In the guest: `git sbx-pull`** (`sbx/helpers/git-sbx-pull`, stdlib
+only, at `/usr/local/bin`).
+
+- Which branch: the argument; else the host's current branch (`git
+  ls-remote --symref local HEAD`) if it is not named as an origin
+  branch; else, if host master has commits that origin does not, it
+  stops and asks for `--as NAME`.
+- Gates: a clean tree, and the commits are on the host (the host's
+  `refs/remotes/$SANDBOX_NAME/*`, seen as `refs/sbx/host-has/*`) or on
+  Gerrit.
+- Then `checkout -B B local/B`, and the seen ref `refs/sbx/seen/B`,
+  which the host fetches into `refs/remotes/NAME-seen/`.
+- The guest side never asks a question.
+
+`git-review-check` treats a HEAD in `refs/remotes/NAME/*` or
+`NAME-seen/*` as safe. `git safe-reset NAME/BRANCH` runs sbx-pull.
+
+The user skill `/sbx-pull` comes from `sbx/templates/skills/sbx-pull/`
+and goes to `~/.claude/skills/sbx-pull/SKILL.md` in the guest. It keeps
+the agent on the hand-off branch, reads `git range-diff OLD...NEW`, and
+uses `--as` only for a hand-off on master. There is no push command:
+the hand-off is "type /sbx-pull".
+
+`rm` runs `remotes.forget_pulls`. `git remote remove` deletes
+`refs/remotes/NAME/*` and the upstreams that point there.
+
+**Completion.** `sbx/completion/git-sbx-pull` defines `_git_sbx_pull`.
+bash-completion loads it lazily from `$BASH_COMPLETION_USER_DIR` or
+`$XDG_DATA_HOME/bash-completion`, so no `.bashrc` edit is needed. It
+fetches the sandbox remotes in parallel, in a subshell, quietly, at most
+once a minute (a stamp in `.git/wmf-sbx-completion/`), with no timeout
+(macOS has no `timeout`). The host side leaves out branches named as
+origin branches.
+
 **Prompts.** `prompt.Prompt.pick` and `confirm` check that both stdin
 and stderr are terminals; with no terminal, `pick` gives None and
 `confirm` gives False. A destructive question defaults to no. `rm`'s
 "Fetch them now?" defaults to yes. The busy image lock defaults to wait.
-The questions "which sandbox" and "which project" have no default.
-`create`'s clone question defaults to no. `pick` accepts a prefix of a
-label. `rm` with no `-f` and no terminal refuses at once, before
+The questions "which sandbox", "which project" and "which new branch"
+have no default. `create`'s clone question defaults to no. `pick`
+accepts a prefix of a label. `rm` with no `-f` and no terminal refuses at once, before
 its checks start the VM.
 
 ## Repo resolution and the dependency walk
@@ -422,7 +485,7 @@ config. The session environment sets `http.proxyAuthMethod=basic`, and
 `deps.gerrit_git_config` gives the same: as `export` lines on stdin in
 the VM, as the environment on the host, never in argv.
 `git-review-check` sends `$GERRITUA` with `-H @-` to gerrit.wikimedia.org
-only, and says which status it got.
+only, and says which status it got. sbx-pull's query goes to Gerrit only.
 
 ## nono and Landlock
 

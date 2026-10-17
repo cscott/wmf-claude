@@ -1,0 +1,188 @@
+#!/usr/bin/env python3
+"""git sbx-pull, in a sandbox: take the engineer's hand-off from the host.
+
+    git sbx-pull [BRANCH] [--as NAME] [-f]
+
+Runs INSIDE a sandbox, as the agent ($SANDBOX_NAME is set). The host's
+`git sbx-pull` (sbx/src/wmf_sbx/sbx_pull.py) is the other half; see
+sbx/DESIGN.md, "The commit flow (sbx-pull)". This file imports nothing but the
+standard library: the image copies it to /usr/local/bin alone.
+
+Which host branch: BRANCH, else the host's current branch, when it is not
+named like an origin branch. When the host is on such a branch (master,
+say) with commits that origin does not have, a hand-off of WIP commits,
+`--as NAME` names the sandbox's branch for the work.
+
+It stops when the tree has changes, and when it would leave or move a
+branch whose commits are not on the host or on Gerrit (the engineer has
+not pulled them yet), unless -f. Then it checks out the sandbox branch at
+the host's tip, with upstream local/BRANCH, and marks the tip seen
+(refs/sbx/seen/NAME), which tells the host's checks that the agent has
+it. It prints the old and new tips, for `git range-diff`.
+"""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import urllib.parse
+import urllib.request
+
+PREFIX = "git sbx-pull"
+SEEN = "refs/sbx/seen"
+# The host's copy of this sandbox's branches: the host remote is named
+# like the sandbox (sbx/src/wmf_sbx/remotes.py remote_name_for).
+HOST_HAS = "refs/sbx/host-has"
+GERRIT_TIMEOUT = 15
+GERRIT_HOST = "gerrit.wikimedia.org"
+
+
+class PullError(Exception):
+    pass
+
+
+def git(*args, check=True):
+    res = subprocess.run(["git"] + list(args), capture_output=True, text=True,
+                         stdin=subprocess.DEVNULL)
+    if check and res.returncode != 0:
+        raise PullError(f"git {' '.join(args)} failed: {res.stderr.strip()}")
+    return res
+
+
+def out(*args):
+    return git(*args).stdout.strip()
+
+
+def sha(ref):
+    res = git("rev-parse", "-q", "--verify", f"{ref}^{{commit}}", check=False)
+    return res.stdout.strip() if res.returncode == 0 else None
+
+
+def gerrit_has(root, commit, env):
+    """Whether the Gerrit of .gitreview has a change with `commit`."""
+    host = None
+    try:
+        with open(os.path.join(root, ".gitreview"), encoding="utf-8") as f:
+            for line in f:
+                key, _, value = line.partition("=")
+                if key.strip() == "host":
+                    host = value.strip()
+    except OSError:
+        return False
+    if not host:
+        return False
+    url = (f"https://{host}/r/changes/?" +
+           urllib.parse.urlencode({"q": f"commit:{commit}", "n": "1"}))
+    req = urllib.request.Request(url)
+    # GERRITUA to gerrit.wikimedia.org only, not to another .gitreview host
+    # or (unredirected) a redirect's: the value is a secret.
+    if env.get("GERRITUA") and host == GERRIT_HOST:
+        req.add_unredirected_header("User-Agent", env["GERRITUA"])
+    try:
+        with urllib.request.urlopen(req, timeout=GERRIT_TIMEOUT) as resp:
+            body = resp.read().decode("utf-8", "replace")
+        changes = json.loads(body.split("\n", 1)[1] if body.startswith(")]}'") else body)
+    except (OSError, ValueError):
+        return False
+    return any(isinstance(c, dict) and c.get("change_id") for c in changes)
+
+
+def saved(commit, root, env):
+    """Why `commit` is safe to leave, or None."""
+    if out("for-each-ref", f"--contains={commit}", "--format=%(refname)", "--count=1",
+           f"{HOST_HAS}/", "refs/remotes/local/"):
+        return "the host has it"
+    if out("for-each-ref", f"--contains={commit}", "--format=%(refname)", "--count=1",
+           "refs/remotes/origin/"):
+        return "origin has it"
+    return "Gerrit has it" if gerrit_has(root, commit, env) else None
+
+
+def host_branch():
+    """The host's current branch, or None (detached)."""
+    for line in out("ls-remote", "--symref", "local", "HEAD").splitlines():
+        if line.startswith("ref: refs/heads/"):
+            return line[len("ref: refs/heads/"):].split("\t")[0]
+    return None
+
+
+def main(argv=None, env=None):
+    parser = argparse.ArgumentParser(prog=PREFIX, description=__doc__.splitlines()[0])
+    parser.add_argument("branch", nargs="?", metavar="BRANCH",
+                        help="the host branch (default: the host's current branch)")
+    parser.add_argument("--as", dest="as_name", metavar="NAME",
+                        help="the sandbox's name for the branch (a hand-off from master)")
+    parser.add_argument("-f", "--force", action="store_true",
+                        help="leave or move a branch whose commits the host does "
+                        "not have; only when the engineer says so")
+    args = parser.parse_args(argv)
+    env = os.environ if env is None else env
+    try:
+        return pull(args, env)
+    except PullError as e:
+        print(f"{PREFIX}: {e}", file=sys.stderr)
+        return 1
+
+
+def pull(args, env):
+    sandbox = env.get("SANDBOX_NAME")
+    if not sandbox:
+        raise PullError("this is the sandbox's git sbx-pull, and $SANDBOX_NAME is not "
+                        "set; on the host, use wmf-claude's sbx/bin/git-sbx-pull")
+    res = git("rev-parse", "--show-toplevel", check=False)
+    if res.returncode != 0:
+        raise PullError("not inside a git repository")
+    root = res.stdout.strip()
+    git("fetch", "-q", "--prune", "--no-tags", "local",
+        "+refs/heads/*:refs/remotes/local/*",
+        f"+refs/remotes/{sandbox}/*:{HOST_HAS}/*")
+
+    branch = args.branch or host_branch()
+    if not branch:
+        raise PullError("the host is on no branch; name one: git sbx-pull BRANCH")
+    new = sha(f"refs/remotes/local/{branch}")
+    if not new:
+        raise PullError(f"the host has no branch {branch}")
+    name = args.as_name or branch
+    if not args.as_name and sha(f"refs/remotes/origin/{branch}"):
+        ahead = int(out("rev-list", "--count", f"refs/remotes/origin/{branch}..{new}"))
+        if not ahead:
+            raise PullError(f"the host is on {branch}, with nothing that origin does "
+                            f"not have: nothing to take")
+        raise PullError(
+            f"the host is on {branch}, with {ahead} commit(s) that origin does not "
+            f"have; name a branch for the work: git sbx-pull --as NAME "
+            f"(read them with: git log -p origin/{branch}..local/{branch})")
+
+    if out("status", "--porcelain", "--untracked-files=no"):
+        raise PullError("the tree has changes; commit or stash them first")
+    res = git("symbolic-ref", "-q", "--short", "HEAD", check=False)
+    current = res.stdout.strip() if res.returncode == 0 else None
+    old = sha(f"refs/heads/{name}")
+    for what, commit in ((current or "HEAD", sha("HEAD")), (name, old)):
+        if not commit or commit == new or args.force:
+            continue
+        if git("merge-base", "--is-ancestor", commit, new, check=False).returncode == 0:
+            continue
+        if not saved(commit, root, env):
+            raise PullError(
+                f"{what} ({commit[:12]}) has commits that the host does not have; ask "
+                f"the engineer to run `git sbx-pull` on the host first (-f takes the "
+                f"host's branch anyway)")
+
+    git("checkout", "-q", "--no-track", "-B", name, new)
+    git("branch", "-q", f"--set-upstream-to=local/{branch}", name)
+    git("update-ref", f"{SEEN}/{name}", new)
+    print(f"{name}: at {new[:12]} (the host's {branch})")
+    if old and old != new:
+        print(f"old tip: {old}")
+        print(f"new tip: {new}")
+        print(f"what changed: git range-diff {old[:12]}...{new[:12]}")
+    elif not old:
+        print(f"new tip: {new}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

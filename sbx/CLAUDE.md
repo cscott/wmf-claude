@@ -15,7 +15,7 @@ tests cannot do.
   from the engineer.
 - **`wmf-sbx` is not on PATH** in a sandbox: the image installs nothing
   from this checkout. Run it as `sbx/bin/wmf-sbx` from the repo root (the
-  `git safe-reset` helper is in `sbx/bin/` too). Each
+  `git sbx-pull` and `git safe-reset` helpers are in `sbx/bin/` too). Each
   Bash call is a new shell, so `export PATH` does not persist: use the
   path.
 - **Tests**, from `sbx/`: `env -u SANDBOX_NAME python3 -m unittest discover
@@ -38,7 +38,7 @@ tests cannot do.
   - Give `--memory` and `--disk` a unit (`4GiB`): a bare number is
     bytes, and `create` refuses less than 1GiB.
   - Put `sbx/bin` on `PATH` in the same command (`PATH="$PWD/sbx/bin:$PATH"`)
-    for anything that runs git on the sandbox remotes (`git fetch`,
+    for anything that runs git on the sandbox remotes (`git sbx-pull`,
     `rm`): git needs `git-remote-wmfsbx`.
   - There is no `/login`: an inner session uses the outer session's
     credential, from `/etc/wmf-sbx/nested`.

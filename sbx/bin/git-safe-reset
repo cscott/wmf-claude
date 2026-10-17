@@ -13,6 +13,11 @@
 # your scrollback.
 #
 # --force proceeds past git-review-check's unsubmitted-commits warning.
+#
+# `git safe-reset NAME/BRANCH` (or `NAME BRANCH`), with NAME a sandbox
+# remote of this repo, runs `git sbx-pull NAME/BRANCH` instead (a
+# warning says so): a branch from a sandbox keeps its upstream on Gerrit
+# that way (DESIGN.md, "The commit flow (sbx-pull)").
 FORCE=0
 ARGS=()
 for arg in "$@"; do
@@ -42,6 +47,21 @@ if ! git remote | grep -Fqx -- "$UPSTREAM"; then
     echo "No such remote '$UPSTREAM'. This repository has:" >&2
     git remote | sed 's/^/  /' >&2
     exit 1
+fi
+
+if [ -n "$BRANCH" ]; then
+    SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+    LS_REMOTES="$SCRIPT_DIR/wmf-sbx-ls-remotes"
+    [ -x "$LS_REMOTES" ] || LS_REMOTES=$(command -v wmf-sbx-ls-remotes 2>/dev/null)
+    if [ -n "$LS_REMOTES" ] && "$LS_REMOTES" --path "$(git rev-parse --show-toplevel)" \
+            2>/dev/null | grep -Fqx -- "$UPSTREAM"; then
+        echo "warning: $UPSTREAM is a sandbox; running \`git sbx-pull $UPSTREAM/$BRANCH\`" \
+            "(use that command next time)." >&2
+        PULL=(git sbx-pull)
+        [ -x "$SCRIPT_DIR/git-sbx-pull" ] && PULL=("$SCRIPT_DIR/git-sbx-pull")
+        [ "$FORCE" -eq 1 ] && PULL+=(--force)
+        exec "${PULL[@]}" "$UPSTREAM/$BRANCH"
+    fi
 fi
 
 git remote update

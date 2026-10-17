@@ -447,6 +447,22 @@ class RemoveRemotesTests(unittest.TestCase):
         self.assertEqual(self.remove(), [(self.repo, "sandbox-mw-cite", "removed")])
         self.assertEqual(remotes_of(self.repo), [])
 
+    def test_forgets_git_sbx_pulls_of_this_sandbox_only(self):
+        self.add_ours()
+        git(self.repo, "branch", "fix-thing")
+        git(self.repo, "branch", "other")
+        for branch, sandbox in (("fix-thing", "mw-cite"), ("other", "mw-cite-2")):
+            for key, value in (("wmfsbx", sandbox), ("wmfsbxBranch", branch),
+                               ("wmfsbxSha", "abc")):
+                git(self.repo, "config", f"branch.{branch}.{key}", value)
+        git(self.repo, "update-ref", "refs/remotes/sandbox-mw-cite-seen/fix-thing", "HEAD")
+        self.assertEqual(self.remove(), [(self.repo, "sandbox-mw-cite", "removed")])
+        config = git(self.repo, "config", "--get-regexp", "^branch[.]").stdout
+        self.assertNotIn("fix-thing.wmfsbx", config)
+        self.assertIn("branch.other.wmfsbx mw-cite-2", config)
+        self.assertEqual(git(self.repo, "for-each-ref", "refs/remotes/").stdout, "")
+        self.assertIn("fix-thing", git(self.repo, "branch").stdout)
+
     def test_dry_run_changes_nothing(self):
         self.add_ours()
         self.assertEqual(self.remove(dry_run=True), [(self.repo, "sandbox-mw-cite", "removed")])

@@ -646,6 +646,19 @@ class GitIdentityTests(unittest.TestCase):
         env = session.session_plan("demo", [], environment={"GERRITUA": "ua"})["env"]
         self.assertEqual(session.exec_env(env)["GIT_CONFIG_COUNT"], "2")
 
+    def test_the_plan_ships_the_sbx_pull_skill(self):
+        # A user skill, so its command is /sbx-pull; CLAUDE.md names it.
+        plan = session.session_plan("demo", [])
+        (skill,) = [f for f in plan["files"]
+                    if f["path"] == "~/.claude/skills/sbx-pull/SKILL.md"]
+        front = skill["content"].split("---\n")[1]
+        meta = session.image_mod.yaml.safe_load(front)
+        self.assertIn("git sbx-pull", meta["description"])
+        self.assertIn("Bash(git sbx-pull*)", meta["allowed-tools"])
+        self.assertIn("git sbx-pull --as NAME", skill["content"])
+        claude_md = [f for f in plan["files"] if f["path"] == "~/.claude/CLAUDE.md"][0]
+        self.assertIn("use the `/sbx-pull` skill", claude_md["content"])
+
     def test_bad_or_reserved_environment_is_refused(self):
         for bad, why in (({"1X": "a"}, "not a variable name"),
                          ({"NO_PROXY": "x"}, "credential proxy"),
@@ -875,9 +888,9 @@ class ResumeMainTests(Env):
         subprocess.run(["git", "-C", guest, "branch", "also-here"], check=True)
         self.assertEqual(self.resume(), 0, self.err)
         self.assertIn("Not fetched", self.err)
-        self.assertIn(f"git -C {host} fetch demo fix-thing\n", self.err)
-        self.assertIn(f"git -C {host} fetch demo also-here\n", self.err)
-        self.assertNotIn("fetch demo main", self.err)
+        self.assertIn(f"git -C {host} sbx-pull demo/fix-thing\n", self.err)
+        self.assertIn(f"git -C {host} sbx-pull demo/also-here\n", self.err)
+        self.assertNotIn("sbx-pull demo/main", self.err)
         self.assertNotIn("no branch", self.err)
 
     @unittest.skipUnless(shutil.which("git"), "git not installed")
@@ -911,7 +924,7 @@ class ResumeMainTests(Env):
         with mock.patch.object(resume.remotes_mod, "unfetched_refs", lambda st, run=None: (
                 [("/h", "demo", [("a" * 40, ["refs/heads/x\x1b[2J; rm -rf ~"])])], [])):
             lines = resume.unfetched_lines({"remotes": [{}]})
-        self.assertEqual(lines[1], "    git -C /h fetch demo 'x[2J; rm -rf ~'")
+        self.assertEqual(lines[1], "    git -C /h sbx-pull 'demo/x[2J; rm -rf ~'")
 
     def marker_writes(self):
         return [i for i, s in enumerate(self.lima.shells())

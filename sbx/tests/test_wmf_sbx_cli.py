@@ -276,8 +276,9 @@ class UnknownSectionTests(unittest.TestCase):
 
 
 # The commands that do not use the helper: logs, whose arguments are
-# tail's.
-NOT_YET = {"logs"}
+# tail's, and pull, which is `git sbx-pull` (it takes no settings, in a
+# sandbox or on the host).
+NOT_YET = {"logs", "pull"}
 
 
 class _Captured(Exception):

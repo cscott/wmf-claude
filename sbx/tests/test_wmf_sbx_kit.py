@@ -5,6 +5,7 @@
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -131,6 +132,15 @@ class HelperScriptTests(unittest.TestCase):
             self.assertRegex(shebang, r"\bbash\b", name)
             done = subprocess.run(["bash", "-n", path], capture_output=True, text=True)
             self.assertEqual(done.returncode, 0, f"{name}: {done.stderr}")
+
+    def test_the_guest_git_sbx_pull_imports_only_the_standard_library(self):
+        # The image copies it to /usr/local/bin alone.
+        path = os.path.join(k.SANDBOX_HELPER_DIR, "git-sbx-pull")
+        with open(path, encoding="utf-8") as f:
+            imports = re.findall(r"^(?:import|from) (\S+)", f.read(), re.M)
+        self.assertTrue(imports)
+        for mod in imports:
+            self.assertIn(mod.split(".")[0], sys.stdlib_module_names, mod)
 
 
 class TestingGuideTests(unittest.TestCase):

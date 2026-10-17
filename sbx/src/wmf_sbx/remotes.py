@@ -52,6 +52,14 @@ EXIT_NO_SUCH_REMOTE = 2
 # `git config --unset` for a key that isn't set. Also an expected outcome.
 EXIT_NOTHING_TO_UNSET = 5
 
+# `git sbx-pull` (sbx_pull.py) records the sandbox of a host branch in
+# branch.<branch>.<key>: the sandbox, its name for the branch, and the
+# tip at the last pull. It fetches the guest's hand-off refs to
+# refs/remotes/<remote><SEEN_SUFFIX>/*, which `git remote remove` leaves.
+BRANCH_SANDBOX_KEY = "wmfsbx"
+BRANCH_KEYS = (BRANCH_SANDBOX_KEY, "wmfsbxBranch", "wmfsbxSha")
+SEEN_SUFFIX = "-seen"
+
 # (live key, value we force it to, where the old value is stashed).
 GC_SETTINGS = (
     ("gc.auto", "0", "wmfSbx.savedGcAuto"),
@@ -324,6 +332,24 @@ def sync_remotes(name, candidates, run=subprocess.run, warn=None):
     return remotes, skipped
 
 
+def forget_pulls(host_dir, name, remote, run=subprocess.run):
+    """Unset the branch records (BRANCH_KEYS) that name sandbox `name`,
+    and delete `remote`'s seen-refs. The branches stay."""
+    result = git(host_dir, ["config", "--local", "--get-regexp",
+                             r"^branch\..*\." + BRANCH_SANDBOX_KEY.lower() + "$"], run=run)
+    for line in (result.stdout or "").splitlines() if result.returncode == 0 else []:
+        key, _, value = line.partition(" ")
+        if value != name:
+            continue
+        branch = key[len("branch."):-len("." + BRANCH_SANDBOX_KEY)]
+        for k in BRANCH_KEYS:
+            _config_unset(host_dir, f"branch.{branch}.{k}", run=run)
+    seen = git(host_dir, ["for-each-ref", "--format=%(refname)",
+                           f"refs/remotes/{remote}{SEEN_SUFFIX}/"], run=run)
+    for ref in (seen.stdout or "").splitlines() if seen.returncode == 0 else []:
+        git(host_dir, ["update-ref", "-d", ref], run=run)
+
+
 def remove_remotes(state, run=subprocess.run, warn=None, dry_run=False):
     """Remove every remote `state` records as ours. Returns
     [(hostDir, remote, outcome), ...] where outcome is one of 'removed',
@@ -361,7 +387,8 @@ def remove_remotes(state, run=subprocess.run, warn=None, dry_run=False):
         result = git(host_dir, ["remote", "remove", remote], run=run)
         if result.returncode == 0:
             # `git remote remove` drops the whole remote.<name>.* section,
-            # marker included.
+            # marker included; git sbx-pull's records are ours to clean.
+            forget_pulls(host_dir, name, remote, run=run)
             return "removed"
         if result.returncode == EXIT_NO_SUCH_REMOTE:
             return "absent"

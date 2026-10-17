@@ -50,6 +50,7 @@ that directory. `--help` after a verb shows its options.
 | `ls`, `status NAME` | list the sandboxes; check one (VM, image, mode, security invariants) |
 | `start NAME`, `stop NAME` | boot or stop the VM; nothing is lost |
 | `rm NAME...` | remove the VM, its state and its host remotes ("Cleaning up") |
+| `pull [NAME/]BRANCH` | the same as `git sbx-pull`, in a host repo ("Commit flow") |
 | `image build/ls/rm/gc/prune` | manage the cached golden images ("The golden image") |
 | `login` | get the inference-only token, for every sandbox ("Sign-in") |
 | `resolve`, `ls-remotes` | show how a repo name or directory resolves; list a repo's sandbox remotes |
@@ -107,7 +108,19 @@ On Linux. On a Mac, follow `MACOS.md` instead.
 
    Log out and in again (or `source ~/.profile`) to get steps 2 and 3.
 
-4. **Tell wmf-sbx where your repos are.** Your settings are in
+4. **Optional: tab completion for `git sbx-pull`.** Link it into your
+   bash-completion directory (not `~/.bashrc`). It needs bash 4 or
+   later, bash-completion 2 and git's own completion; not zsh. A TAB
+   first fetches the sandbox remotes (each at most once a minute), so the
+   list has the agent's new branches.
+
+   ```bash
+   dir=${BASH_COMPLETION_USER_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion}/completions
+   mkdir -p "$dir"
+   ln -s "$HOME/src/wmf-claude/sbx/completion/git-sbx-pull" "$dir/git-sbx-pull"
+   ```
+
+5. **Tell wmf-sbx where your repos are.** Your settings are in
    `~/.config/wmf-sbx/settings.yaml`. Start from the example:
 
    ```bash
@@ -159,7 +172,7 @@ On Linux. On a Mac, follow `MACOS.md` instead.
    mode and theme of each new sandbox's Claude Code) and `environment:`
    (for example `GERRITUA`, if you have one).
 
-5. **Sign in, when you make your first sandbox** ("Sign-in"). On QEMU,
+6. **Sign in, when you make your first sandbox** ("Sign-in"). On QEMU,
    run `/login` in the first session of your first sandbox; later
    sandboxes share that login. You need not do anything now.
 
@@ -195,18 +208,16 @@ checkout, and it ends its turn with a commit on a branch. When you exit
 the session, wmf-sbx lists the branches that you have not fetched, with
 the command that takes each, and any uncommitted files.
 
-**Take the change on the host**, with `git fetch` in your checkout. The
-sandbox is a remote of it, with the name of the sandbox:
+**Take the change on the host**, with `git sbx-pull` in your checkout:
 
 ```bash
 cd ~/src/mw/extensions/MultiTitle
-git fetch sbx-multititle
-git switch --no-track -c readme-testing sbx-multititle/readme-testing
+git sbx-pull readme-testing     # or `git sbx-pull`: the only new branch
 git log -p -1
 ```
 
-You are now on a branch `readme-testing` at the agent's commit, with no
-upstream on the sandbox, so `git review` sends it to Gerrit as usual.
+You are now on a branch `readme-testing` at the agent's commit, with an
+upstream on `origin`, so `git review` sends it to Gerrit as usual.
 
 **Change it on the host, and hand it back.** Edit, then commit on the
 same branch (a new commit, or `git commit --amend`):
@@ -217,9 +228,10 @@ git commit -a --amend
 wmf-sbx resume sbx-multititle   # continues the last conversation
 ```
 
-In the session, tell the agent that you changed `readme-testing`. In
-the sandbox, the remote `local` is your checkout: the agent runs
-`git fetch local` and continues from your version.
+In the session, type `/sbx-pull`. The agent runs `git sbx-pull` in the
+sandbox, which takes your current branch, here `readme-testing`, and
+shows what you changed (`git range-diff`). The agent can then continue
+from your version.
 
 **Copy files** between the host and the sandbox with `wmf-sbx cp`. One
 side is `NAME:PATH`; a relative PATH is in the sandbox's primary clone:
@@ -231,7 +243,7 @@ wmf-sbx cp sbx-multititle:/home/agent/coverage ./coverage   # a directory, whole
 ```
 
 A file copied in is not committed: tell the agent to read it, or to
-commit it. Use git, not `cp`, for code.
+commit it. Use `git sbx-pull`, not `cp`, for code.
 
 **Look around, and clean up:**
 
@@ -652,7 +664,7 @@ your `TERM_PROGRAM`, `TERM_PROGRAM_VERSION` and `COLORTERM`
 
   ```bash
   wmf-sbx resume sbx-cite -- --permission-mode auto -p "Run the PHPUnit tests"
-  wmf-sbx resume --continue sbx-cite -- --permission-mode auto -p "Commit the fix on a branch"
+  wmf-sbx resume --continue sbx-cite -- --permission-mode auto -p "/sbx-pull"
   ```
 
   It prints the agent's last message and exits. With `-p`, `resume`
@@ -664,7 +676,7 @@ your `TERM_PROGRAM`, `TERM_PROGRAM_VERSION` and `COLORTERM`
   instead.
 - When a session ends, wmf-sbx lists what the host does not have: each
   branch with commits that the host has not fetched, with the
-  `git fetch` command that takes it, and the uncommitted files in
+  `git sbx-pull` command that takes it, and the uncommitted files in
   each clone (a read-only `git status`, as the agent).
 - The anonymous Phabricator, Gerrit and GitLab MCP servers are
   registered at `create`. The Phabricator username (only for the default
@@ -704,30 +716,50 @@ image builds, inner sandboxes, `checks/real-hardware.sh`. Example:
 ## Commit flow
 
 Work goes between the host and a sandbox as branches, in both directions,
-with `git fetch`. There is no push: the sandbox cannot reach the host,
+with `git sbx-pull`. There is no push: the sandbox cannot reach the host,
 and the host never writes into the VM. A file that the agent did not
-commit stays in the VM. In
+commit stays in the VM (`DESIGN.md`, "The commit flow (sbx-pull)"). In
 the sandbox, the remote `local` is your host checkout (read-only, as of
 your last fetch), and `origin` is the real upstream. The agent ends each
 turn with a commit on a branch; you review, amend and `git review` from
 the host, as usual.
 
-**From the sandbox to the host.** `create` adds the sandbox as a remote
-of each host repo, with the name of the sandbox. In the host repo:
+**From the sandbox to the host.** In the host repo:
 
 ```bash
-git fetch sbx-cite
-git switch --no-track -c fix-thing sbx-cite/fix-thing
+git sbx-pull                    # the current branch's sandbox branch, else the only new one
+git sbx-pull fix-thing          # that branch, from the sandbox that has it
+git sbx-pull sbx-cite/fix-thing # that branch, from that sandbox
+git sbx-pull fix-thing --onto REL1_46   # its upstream on origin, when the guess is wrong
 ```
 
-`--no-track` keeps the sandbox remote out of the branch's upstream:
-git-review follows the upstream when `.gitreview` sets `track=1` (core,
-Cite and Parsoid do), and a sandbox is not Gerrit. `git review-check`
-(the pre-review hook) accepts a commit that is in a sandbox remote.
+It fetches the sandbox remotes and checks out a branch of the same name
+at the agent's tip:
+
+- A new branch gets an upstream on origin (the sandbox branch's upstream,
+  else the nearest host branch's), for `git review`. An existing branch
+  moves with `git reset --keep`; the old tip is `BRANCH@{1}`.
+- Each host branch records its sandbox branch (`branch.BRANCH.wmfsbx*`
+  in git config), so the next `git sbx-pull` on it needs no argument.
+- It stops when it would leave or move a branch whose commits are not in
+  a sandbox remote, on origin or on Gerrit; `-f`/`--force` continues. A
+  dirty tree always stops it.
+- On a terminal, it asks when the choice is yours (which sandbox branch;
+  which host branch; y/N before it leaves unsaved commits). Enter or
+  Ctrl-D is no. In a script, it never asks.
+
+`wmf-sbx pull` is the same command. `git safe-reset sbx-cite/fix-thing`
+tells you to use `git sbx-pull`, then runs it. `git review-check` (the
+pre-review hook) accepts a commit that is in a sandbox remote.
 
 **From the host to the sandbox.** Commit on a branch on the host, then
-tell the agent its name. The agent runs `git fetch local` and takes
-your branch from `local/BRANCH`.
+tell the agent to run `/sbx-pull`. It runs `git sbx-pull [BRANCH]` in the
+sandbox, which takes your current branch (or BRANCH) as a branch of the
+same name with upstream `local/BRANCH`, and shows the change with
+`git range-diff`. A hand-off from `master` or `main` gets a new name,
+which the agent chooses (`--as NAME`). It stops when the agent has
+commits that the host does not have (run `git sbx-pull` on the host
+first), unless `-f`.
 
 ## Tests in the sandbox
 
@@ -752,9 +784,9 @@ wmf-sbx rm --scan DIR      # remotes and gc entries, in the repos under DIR,
 
 When the agent has unfetched commits, `rm` on a terminal offers to fetch
 them into `NAME/BRANCH`, which it then deletes with the remote: to keep a
-branch, make a host branch of it first. Uncommitted files get only a
-warning (`rm` does not start a stopped VM to find them). `image gc` and
-`image prune` remove
+branch, `git sbx-pull` it first. Uncommitted files get only a warning
+(`rm` does not start a stopped VM to find them). `rm` also removes the
+sandbox's `git sbx-pull` records. `image gc` and `image prune` remove
 unused golden images ("The golden image").
 
 ## Troubleshooting
@@ -795,3 +827,4 @@ the full description.
 | VM to host | `remotes.py`, `remote_helper.py` | the host remote `wmfsbx://NAME/PATH`; `git-remote-wmfsbx` serves only `git-upload-pack`, as the agent, with hooks off; host gc is off while clones borrow objects |
 | MediaWiki setup | `mediawiki.py`, `setup.py`, `kit.py` | the host's plan, run in the VM as the agent: links into core, `composer.local.json`, `composer update` and `npm ci` in core and each named repo, the SQLite install, `phpunit.xml`, the api-testing config. `setup.py` goes on stdin, so a change needs no new image |
 | Session | `session.py`, `resume.py`, `credproxy.py`, `authproxy.py` | the invariants, the credential proxy, upstream's `bin/claude` under nono (`bin/launch-claude.sh` with `--sudo`); `WMF_CLAUDE_SANDBOX_BACKEND=lima-sbx` (`lima-sbx-sudo`) selects the SessionStart text in `hooks/context/` |
+| Commit flow | `sbx_pull.py`, `helpers/git-sbx-pull` | `git sbx-pull` on the host and in the guest |

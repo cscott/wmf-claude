@@ -293,7 +293,7 @@ def report_unsaved(name, state, lima=None, run=subprocess.run):
 
 def unfetched_lines(state, run=subprocess.run):
     """Report lines for the branches the host has not fetched, with the
-    `git fetch` that takes each one."""
+    `git sbx-pull` that takes each one."""
     if not state.get("remotes"):
         return []
     findings, unreachable = remotes_mod.unfetched_refs(state, run=run)
@@ -304,8 +304,8 @@ def unfetched_lines(state, run=subprocess.run):
             branches = [vm_mod.CONTROL_RE.sub("", r[len("refs/heads/"):])
                         for r in refs if r.startswith("refs/heads/")]
             for branch in branches:
-                lines.append(f"    git -C {shlex.quote(host_dir)} fetch "
-                             f"{shlex.quote(remote)} {shlex.quote(branch)}")
+                lines.append(f"    git -C {shlex.quote(host_dir)} sbx-pull "
+                             f"{shlex.quote(remote + '/' + branch)}")
             if not branches:
                 lines.append(f"    {host_dir}: a commit on no branch ({sha[:12]}); ask "
                              f"the agent to put it on one")

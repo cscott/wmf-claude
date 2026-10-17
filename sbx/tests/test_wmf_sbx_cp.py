@@ -1,0 +1,87 @@
+#!/usr/bin/env python3
+"""Unit tests for wmf_sbx/cp.py -- run with:
+  python3 -m unittest discover -s sbx/tests -v
+"""
+
+import os
+import sys
+import tempfile
+import unittest
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+
+import wmf_sbx.cp as cp  # noqa: E402
+import wmf_sbx.state as state_mod  # noqa: E402
+import isolation  # noqa: E402
+
+
+def setUpModule():
+    isolation.isolate()
+
+
+class ResolveCpArgTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.env = {"XDG_STATE_HOME": self.tmp.name}
+        self.repo = tempfile.TemporaryDirectory()
+        self.addCleanup(self.repo.cleanup)
+        state_mod.save(
+            state_mod.new_state("mw-cite", primary_dir=self.repo.name),
+            env=self.env,
+        )
+        # A sandbox with no recorded `primaryDir`: there is nothing to
+        # anchor a relative PATH to, so it must be left exactly as given.
+        state_mod.save(state_mod.new_state("mw-old"), env=self.env)
+
+    def test_a_plain_host_path_passes_through(self):
+        self.assertEqual(cp.resolve_cp_arg("some/local/file", env=self.env), "some/local/file")
+
+    def test_an_already_valid_sandbox_name_also_anchors_a_relative_path(self):
+        # NAME need not be a path shortcut to get a relative PATH
+        # anchored -- its own recorded primaryDir is enough.
+        self.assertEqual(
+            cp.resolve_cp_arg("mw-cite:bar", env=self.env), f"mw-cite:{self.repo.name}/bar",
+        )
+
+    def test_a_sandbox_without_a_primary_dir_or_an_unknown_one_is_left_alone(self):
+        # An unknown name is not ours to diagnose: the copy reports it.
+        for arg in ("mw-old:bar", "mw-nope:bar"):
+            with self.subTest(arg=arg):
+                self.assertEqual(cp.resolve_cp_arg(arg, env=self.env), arg)
+
+    def test_a_dot_shortcut_before_the_colon_resolves(self):
+        # The relative PATH half is anchored at the shortcut's own
+        # directory.
+        old_cwd = os.getcwd()
+        os.chdir(self.repo.name)
+        self.addCleanup(os.chdir, old_cwd)
+        self.assertEqual(
+            cp.resolve_cp_arg(".:bar", env=self.env), f"mw-cite:{self.repo.name}/bar",
+        )
+
+    def test_an_absolute_path_shortcut_before_the_colon_resolves(self):
+        self.assertEqual(
+            cp.resolve_cp_arg(f"{self.repo.name}:bar", env=self.env),
+            f"mw-cite:{self.repo.name}/bar",
+        )
+
+    def test_no_path_at_all_resolves_to_the_shortcuts_own_directory(self):
+        self.assertEqual(
+            cp.resolve_cp_arg(f"{self.repo.name}:", env=self.env),
+            f"mw-cite:{self.repo.name}",
+        )
+
+    def test_the_path_half_survives_untouched_including_extra_colons(self):
+        self.assertEqual(
+            cp.resolve_cp_arg(f"{self.repo.name}:/etc/foo:bar", env=self.env),
+            "mw-cite:/etc/foo:bar",
+        )
+
+    def test_no_match_raises(self):
+        with self.assertRaises(state_mod.StateError):
+            cp.resolve_cp_arg("../nowhere:bar", env=self.env)
+
+
+if __name__ == "__main__":
+    unittest.main()

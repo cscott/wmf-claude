@@ -1,0 +1,1644 @@
+#!/usr/bin/env python3
+"""Unit tests for the Lima lifecycle: vm.py and the verbs create, start,
+stop, exec, cp, rm, status and ls -- run with:
+  python3 -m unittest discover -s sbx/tests -v
+
+A FakeLima (fakes.py) stands in for limactl: it keeps instances and their status,
+and answers the guest calls that the verbs make. No test starts a VM.
+"""
+
+import io
+import datetime
+import json
+import os
+import shutil
+import subprocess
+import sys
+import unittest
+from unittest import mock
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+
+import wmf_sbx.cp as cp  # noqa: E402
+import wmf_sbx.create as create  # noqa: E402
+import wmf_sbx.exec as exec_mod  # noqa: E402
+import wmf_sbx.image as image  # noqa: E402
+import wmf_sbx.lima as lima_mod  # noqa: E402
+import wmf_sbx.nested as nested  # noqa: E402
+import wmf_sbx.ls as ls  # noqa: E402
+import wmf_sbx.rm as rm  # noqa: E402
+import wmf_sbx.egress as egress  # noqa: E402
+import wmf_sbx.start as start  # noqa: E402
+import wmf_sbx.session as session_mod  # noqa: E402
+import wmf_sbx.state as state_mod  # noqa: E402
+import wmf_sbx.status as status_mod  # noqa: E402
+import wmf_sbx.stop as stop  # noqa: E402
+import wmf_sbx.template as template  # noqa: E402
+import wmf_sbx.vm as vm  # noqa: E402
+import isolation  # noqa: E402
+from fakes import Done, Env, FakeLima, allow_tmp, git_repo  # noqa: E402
+
+
+def setUpModule():
+    isolation.isolate()
+
+
+HOST_UID = os.getuid() or 30033
+
+
+# -- vm.py ----------------------------------------------------------------
+
+class UncommittedTests(Env):
+    """vm.uncommitted: the guest's `git status --porcelain` pass."""
+
+    def query(self, stdout, paths=("/a", "/b"), returncode=0):
+        lima = FakeLima({"wmf-sbx-demo": "Running"})
+        lima.uncommitted_result = Done(returncode=returncode, stdout=stdout)
+        return vm.uncommitted("demo", list(paths), lima=lima), lima
+
+    def test_it_runs_once_as_the_agent_read_only(self):
+        _result, lima = self.query("")
+        (shell,) = lima.shells()
+        self.assertEqual(shell[shell.index("--") + 1:][:4], ("sudo", "-H", "-u", "agent"))
+        self.assertIn("GIT_OPTIONAL_LOCKS=0", vm.UNCOMMITTED_SCRIPT)
+        self.assertIn("core.hooksPath=/dev/null", vm.UNCOMMITTED_SCRIPT)
+        self.assertIn("core.fsmonitor=false", vm.UNCOMMITTED_SCRIPT)
+
+    def test_it_groups_the_lines_by_clone(self):
+        (found, failed), _ = self.query("\x1e0\n?? a.txt\n M b.php\n\x1e1\n")
+        self.assertEqual(found, {"/a": ["?? a.txt", " M b.php"]})
+        self.assertEqual(failed, [])
+
+    def test_a_clone_git_cannot_read_is_reported(self):
+        (found, failed), _ = self.query("\x1e0\n\x1f\n\x1e1\n")
+        self.assertEqual((found, failed), ({}, ["/a"]))
+
+    def test_control_characters_are_stripped(self):
+        (found, _failed), _ = self.query("\x1e0\n?? x\x1b[31my\x07\x9bz\r\n")
+        self.assertEqual(found, {"/a": ["?? x[31myz"]})
+
+    def test_an_index_out_of_range_or_lines_before_a_marker_are_ignored(self):
+        (found, _failed), _ = self.query("?? early\n\x1e7\n?? late\n\x1e\u00b2\n?? two\n")
+        self.assertEqual(found, {})
+
+    def test_a_failed_query_is_none(self):
+        self.assertIsNone(self.query("", returncode=255)[0])
+
+    def test_no_clones_need_no_query(self):
+        result, lima = self.query("", paths=())
+        self.assertEqual((result, lima.shells()), (({}, []), []))
+
+    @unittest.skipUnless(shutil.which("git"), "git not installed")
+    def test_the_script_on_real_clones(self):
+        clean, dirty = os.path.join(self.tmp, "clean"), os.path.join(self.tmp, "dirty")
+        git_repo(clean)
+        git_repo(dirty)
+        for f in ("a", "b\x1b[31mc"):
+            open(os.path.join(dirty, f), "w").close()
+        missing = os.path.join(self.tmp, "missing")
+        out = subprocess.run(["sh", "-c", vm.UNCOMMITTED_SCRIPT, "_", clean, dirty, missing],
+                             capture_output=True, text=True, check=True).stdout
+        (found, failed), _ = self.query(out, paths=(clean, dirty, missing))
+        self.assertEqual(found, {dirty: ["?? a", '?? "b\\033[31mc"']})
+        self.assertEqual(failed, [missing])
+        self.assertEqual(vm.uncommitted_report(found, failed), [
+            f"  {dirty}: 2 uncommitted files", "    ?? a", '    ?? "b\\033[31mc"',
+            f"  {missing}: could not run git status"])
+
+    def test_the_report_names_some_files_only(self):
+        lines = vm.uncommitted_report({"/a": [f"?? f{i}" for i in range(8)]}, [], limit=3)
+        self.assertEqual(lines, ["  /a: 8 uncommitted files", "    ?? f0", "    ?? f1",
+                                 "    ?? f2", "    ... and 5 more"])
+
+
+class VmTests(Env):
+
+    def test_instance_names_are_prefixed(self):
+        self.assertEqual(vm.instance_name("sbx-cite"), "wmf-sbx-sbx-cite")
+        with self.assertRaises(vm.VmError):
+            vm.instance_name("builder-1234")
+
+    def test_agent_argv_has_a_fixed_path_and_no_login_shell(self):
+        argv = vm.agent_argv(["git", "log"], workdir="/home/me/src/x")
+        self.assertEqual(argv[:7], ["sudo", "-H", "-u", "agent", "env", "-C", "/home/me/src/x"])
+        self.assertEqual(argv[7], f"PATH={vm.AGENT_PATH}")
+        self.assertTrue(vm.AGENT_PATH.endswith("/home/agent/.local/bin"))
+        self.assertEqual(argv[-2:], ["git", "log"])
+        self.assertNotIn("-i", argv)
+
+    def test_check_invariants_reads_each_verdict(self):
+        lima = self.sandbox(lima=FakeLima(invariants=[True, False] + [True] * (len(vm.INVARIANTS) - 2)))
+        results = vm.check_invariants("sbx-demo", host_uid=HOST_UID, lima=lima)
+        self.assertEqual([ok for _d, ok in results][:2], [True, False])
+        script = lima.shells()[-1][-1]
+        self.assertIn(f"WMF_SBX_HOST_UID={HOST_UID}", script)
+
+    def test_a_sandbox_behind_the_egress_proxy_has_more_invariants(self):
+        lima = self.sandbox(lima=FakeLima())
+        plain = vm.check_invariants("sbx-demo", host_uid=HOST_UID, lima=lima)
+        results = vm.check_invariants("sbx-demo", host_uid=HOST_UID, lima=lima, egress=True,
+                                      loopback_port=40123)
+        self.assertEqual(len(results), len(plain) + len(vm.EGRESS_INVARIANTS))
+        self.assertIn("no route out but the egress proxy", [d for d, _ok in results])
+        script = lima.invariant_scripts[-1]
+        self.assertIn("WMF_SBX_LOOPBACK_PORT=40123", script)
+        self.assertNotIn("POST", script)
+        self.assertNotIn("no route out", " ".join(d for d, _ok in plain))
+        res = subprocess.run(["bash", "-n"], input=script, text=True, capture_output=True)
+        self.assertEqual(res.returncode, 0, res.stderr)
+
+    def test_a_sudo_sandbox_checks_that_the_agent_can_sudo(self):
+        checks = [d for d, _t in vm.invariants(sudo=True)]
+        self.assertNotIn("the agent cannot sudo", checks)
+        self.assertIn("the agent can sudo", checks)
+        self.assertIn("the agent's sudoers file is there", checks)
+        self.assertIn("the agent is not in sudo or docker", checks)
+        # Root in the guest can undo its own rules: the host's are required.
+        for desc, _t in vm.EGRESS_INVARIANTS:
+            self.assertIn(desc, checks)
+        self.assertIn("the agent cannot sudo", [d for d, _t in vm.invariants(egress=True)])
+
+    def test_the_checks_look_in_sudoers_d_as_root(self):
+        # The checks run as the engineer; /etc/sudoers.d is 0750 root:root,
+        # so a check without sudo fails with the file there.
+        for desc, test in vm.invariants(egress=True, sudo=True):
+            for part in test.split("&&"):
+                if "/etc/sudoers.d/" in part:
+                    self.assertTrue(part.strip().startswith("sudo -n "), desc)
+
+    def test_start_checks_a_sudo_sandbox_as_one(self):
+        lima = self.sandbox(lima=FakeLima())
+        st = state_mod.load("sbx-demo", self.env)
+        st.update({"egress": "proxy", "sudo": True})
+        state_mod.save(st, self.env)
+        egress.make_dir("sbx-demo", self.env)
+        egress.write_port(egress.port_file("sbx-demo", self.env), 40999)
+        out = io.StringIO()
+        self.assertTrue(start.check("sbx-demo", lima=lima, out=out, env=self.env))
+        self.assertIn("the agent can sudo", out.getvalue())
+        self.assertNotIn("the agent cannot sudo", out.getvalue())
+        script = lima.invariant_scripts[-1]
+        res = subprocess.run(["bash", "-n"], input=script, text=True, capture_output=True)
+        self.assertEqual(res.returncode, 0, res.stderr)
+
+    def test_start_checks_the_egress_invariants_of_an_egress_sandbox(self):
+        lima = self.sandbox(lima=FakeLima())
+        st = state_mod.load("sbx-demo", self.env)
+        st["egress"] = "proxy"
+        state_mod.save(st, self.env)
+        egress.make_dir("sbx-demo", self.env)
+        egress.write_port(egress.port_file("sbx-demo", self.env), 40999)
+        out = io.StringIO()
+        self.assertTrue(start.check("sbx-demo", lima=lima, out=out, env=self.env))
+        self.assertIn("names resolve only to the fake block", out.getvalue())
+        self.assertIn("WMF_SBX_LOOPBACK_PORT=40999", lima.invariant_scripts[-1])
+
+    def test_a_missing_verdict_counts_as_failed(self):
+        class Silent(FakeLima):
+            def call(self, *a, **kw):
+                return Done(stdout="")
+        results = vm.check_invariants("x", host_uid=HOST_UID, lima=Silent())
+        self.assertFalse(any(ok for _d, ok in results))
+
+    def test_create_refuses_an_existing_instance(self):
+        lima = FakeLima({"wmf-sbx-dup": "Stopped"})
+        with self.assertRaisesRegex(vm.VmError, "exists already"):
+            vm.create("dup", {"x": 1}, lima=lima, log=lambda m: None)
+
+    def test_resolve_requires_a_state_file(self):
+        with self.assertRaisesRegex(state_mod.StateError, "not a wmf-sbx sandbox"):
+            vm.resolve("nobody", env=self.env)
+
+
+# -- create ---------------------------------------------------------------
+
+class CreateTests(Env):
+
+    def setUp(self):
+        super().setUp()
+        self.repo = os.path.join(self.tmp, "demo")
+        git_repo(self.repo)
+        allow_tmp(self)
+        self.config = os.path.join(self.tmp, "repos.yaml")
+        self.inputs = {"arch": "x86_64", "k": 1}
+        self.built = []
+
+    def fake_inputs(self):
+        return self.inputs
+
+    def fake_build(self, inputs, **kw):
+        """Record the build; leave a read-only golden file, which the
+        overlay's chain check looks at."""
+        self.built.append(inputs)
+        key = image.cache_key(inputs)
+        os.makedirs(image.entry_dir(key, self.env), exist_ok=True)
+        path = image.golden_path(key, self.env)
+        if not os.path.exists(path):
+            with open(path, "wb") as f:
+                f.write(b"golden")
+            os.chmod(path, 0o444)
+
+    def create(self, *extra, lima=None, inputs=True):
+        lima = lima or FakeLima()
+        self.lima = lima
+        argv = ["--no-deps", "--config", self.config, "--image", self.KEY, self.repo] + list(extra)
+        if not inputs:
+            argv.remove("--image")
+            argv.remove(self.KEY)
+        return self.quiet(create.main, argv, lima=lima, env=self.env, build=self.fake_build,
+                          inputs_fn=self.fake_inputs, prompt=lambda q: "")
+
+    # -- a repo that is not on the host: asked for before it is cloned --
+
+    MISSING = "gerrit:mediawiki/extensions/Missing"
+
+    def create_missing(self, *extra, settings="", answer=None, tty=False):
+        """create with an extra repo that a rule maps to a directory that
+        does not exist. Returns (rc, the prompts, the clones)."""
+        with open(self.config, "w") as f:
+            f.write("repos:\n  - match: \"gerrit:mediawiki/extensions/{name}\"\n"
+                    f"    path: \"{self.tmp}/ext/{{name}}\"\n" + settings)
+        asked, cloned = [], []
+
+        def prompt(q):
+            asked.append(q)
+            return answer if answer is not None else ""
+
+        def fake_clone(canonical, path, **kw):
+            cloned.append((canonical, path))
+            git_repo(path)
+
+        argv = (["--no-deps", "--config", self.config, "--image", self.KEY, "--name", "demo",
+                 self.repo, self.MISSING] + list(extra))
+        with mock.patch.object(create, "do_clone", fake_clone):
+            self.lima = FakeLima()
+            rc = self.quiet(create.main, argv, lima=self.lima, env=self.env,
+                            build=self.fake_build, inputs_fn=self.fake_inputs,
+                            prompt=prompt, isatty=lambda: tty)
+        return rc, [q for q in asked if "Clone" in q], cloned
+
+    def test_with_no_terminal_a_missing_repo_is_an_error(self):
+        rc, asked, cloned = self.create_missing()
+        self.assertEqual(rc, 1)
+        self.assertEqual((asked, cloned), ([], []))
+        self.assertIn("no terminal to ask on", self.err)
+        self.assertIn("--clone-missing", self.err)
+        self.assertEqual(self.lima.calls, [])     # before anything is made
+
+    def test_on_a_terminal_a_missing_repo_is_cloned_only_on_yes(self):
+        rc, asked, cloned = self.create_missing(answer="n", tty=True)
+        self.assertEqual((rc, len(asked), cloned), (1, 1, []))
+        self.assertIn(f"{self.MISSING} -> {self.tmp}/ext/Missing", self.err)
+        rc, asked, cloned = self.create_missing(answer="y", tty=True)
+        self.assertEqual(rc, 0, self.err)
+        self.assertEqual(len(asked), 1)
+        self.assertEqual(cloned, [(self.MISSING, os.path.join(self.tmp, "ext", "Missing"))])
+
+    def test_clone_missing_clones_without_asking(self):
+        rc, asked, cloned = self.create_missing("--clone-missing")
+        self.assertEqual(rc, 0, self.err)
+        self.assertEqual((asked, len(cloned)), ([], 1))
+
+    def test_settings_create_clone_missing_is_the_default_and_the_flag_overrides_it(self):
+        rc, asked, cloned = self.create_missing(settings="create:\n  cloneMissing: true\n")
+        self.assertEqual(rc, 0, self.err)
+        self.assertEqual((asked, len(cloned)), ([], 1))
+        shutil.rmtree(os.path.join(self.tmp, "ext"))
+        rc, _asked, cloned = self.create_missing(
+            "--no-clone-missing", "--name", "demo2",
+            settings="create:\n  cloneMissing: true\n")
+        self.assertEqual((rc, cloned), (1, []))
+
+    def test_create_clone_missing_must_be_a_boolean(self):
+        with self.assertRaises(SystemExit) as cm:
+            self.create_missing(settings="create:\n  cloneMissing: yes please\n")
+        self.assertEqual(cm.exception.code, 1)
+        self.assertIn("settings.yaml create.cloneMissing: 'yes please': want true or false",
+                      self.err)
+
+    def test_a_dry_run_neither_asks_nor_clones(self):
+        rc, asked, cloned = self.create_missing("--dry-run", answer="n", tty=True)
+        self.assertEqual(rc, 0, self.err)
+        self.assertEqual((asked, cloned), ([], []))
+        self.assertIn("(needs clone)", self.err)
+
+    def test_a_create_saves_the_state_first_then_makes_and_checks_the_vm(self):
+        self.assertEqual(self.create("--name", "demo"), 0, self.err)
+        st = state_mod.load("demo", self.env)
+        self.assertEqual(st["image"], self.KEY)
+        self.assertEqual(st["primaryDir"], os.path.realpath(self.repo))
+        self.assertEqual(st["repos"], [os.path.realpath(self.repo)])
+        self.assertEqual(st["disk"], "overlay")
+        # On QEMU: Lima gets the placeholder; then the disk becomes an
+        # overlay on the golden image, checked before and after the start.
+        golden = image.golden_path(self.KEY, self.env)
+        self.assertEqual(self.lima.calls[:5], [
+            ("validate",), ("create", "wmf-sbx-demo"), ("overlay", "wmf-sbx-demo", golden),
+            ("disk_chain", "wmf-sbx-demo", False), ("start", "wmf-sbx-demo")])
+        self.assertEqual(self.lima.calls[5], ("disk_chain", "wmf-sbx-demo", True))
+        tmpl = self.lima.templates["wmf-sbx-demo"]
+        template.check_template(tmpl, host_uid=os.getuid())
+        self.assertEqual(tmpl["images"][0]["location"],
+                         os.path.join(image.cache_root(self.env), "placeholder.qcow2"))
+        self.assertIn("ready", self.err)
+
+    def test_inside_a_nested_sandbox_a_sandbox_gets_8_gib(self):
+        with mock.patch.object(nested, "inside", lambda: True):
+            self.assertEqual(self.create("--name", "inner", "--no-snapshot"), 0, self.err)
+        self.assertEqual(self.lima.templates["wmf-sbx-inner"]["memory"], "8GiB")
+
+    def test_a_qemu_sandbox_starts_through_the_wrapper(self):
+        import wmf_sbx.qemu_wrapper as qw
+        with mock.patch.object(vm.shutil, "which", lambda n: "/usr/bin/" + n):
+            self.assertEqual(self.create("--name", "demo", "--vm-type", "qemu",
+                                         "--no-snapshot"), 0, self.err)
+            env = self.lima.start_envs["wmf-sbx-demo"]
+            var = f"QEMU_SYSTEM_{image.host_arch().upper()}"
+            self.assertEqual(env[var], vm.QEMU_WRAPPER)
+            self.assertEqual(env[qw.REAL_VAR], f"/usr/bin/qemu-system-{image.host_arch()}")
+            self.assertEqual(env[qw.PLAIN_VAR], "1")
+            self.assertEqual(self.create("--name", "other", "--vm-type", "vz"), 0, self.err)
+            self.assertIsNone(self.lima.start_envs["wmf-sbx-other"])
+
+    def test_qemu_env_needs_qemu_and_respects_a_set_qemu(self):
+        with mock.patch.object(vm.shutil, "which", lambda n: None):
+            self.assertEqual(vm.qemu_env("qemu", env={}), {})
+        env = vm.qemu_env("qemu", env={"QEMU_SYSTEM_X86_64": "/opt/q"}, arch="x86_64")
+        self.assertEqual(env["WMF_SBX_QEMU_REAL"], "/opt/q")
+        # never the wrapper as its own QEMU
+        self.assertEqual(vm.qemu_env("qemu", env={"QEMU_SYSTEM_X86_64": vm.QEMU_WRAPPER},
+                                     arch="x86_64"), {})
+
+    def test_full_disk_and_vz_copy_the_golden_image(self):
+        for flags in (["--full-disk", "--vm-type", "qemu"], ["--vm-type", "vz"]):
+            with self.subTest(flags=flags):
+                name = "full" if "--full-disk" in flags else "vz"
+                self.assertEqual(self.create("--name", name, *flags), 0, self.err)
+                self.assertNotIn("disk", state_mod.load(name, self.env))
+                self.assertFalse([c for c in self.lima.calls if c[0] == "overlay"])
+                self.assertEqual(self.lima.templates[f"wmf-sbx-{name}"]["images"][0]["location"],
+                                 image.golden_path(self.KEY, self.env))
+
+    def test_a_wrong_backing_chain_fails_the_create(self):
+        class Flat(FakeLima):
+            def overlay_disk(self, name, backing, env=None):
+                self.calls.append(("overlay", name, backing))   # but no backing file
+
+        lima = Flat()
+        self.assertEqual(self.create("--name", "demo", "--vm-type", "qemu", lima=lima), 1)
+        self.assertIn("has no backing file", self.err)
+        self.assertNotIn(("start", "wmf-sbx-demo"), lima.calls)
+
+    def test_an_untested_lima_gets_a_warning(self):
+        lima = FakeLima()
+        lima.lima_version = "2.3.0"
+        self.assertEqual(self.create("--name", "demo", "--vm-type", "qemu", lima=lima), 0,
+                         self.err)
+        self.assertIn("Lima 2.3.0", self.err)
+        self.assertIn("--full-disk", self.err)
+
+    # -- warm snapshots --
+
+    def snapshots(self):
+        import wmf_sbx.snapshot as snapshot
+        return [(k, g, p, m) for k in snapshot.list_keys(self.env)
+                for g, p, m in snapshot.list_generations(k, self.env)]
+
+    def clone_calls(self):
+        return [i for i in self.lima_inputs if i and ("clone_repo " in i or "refresh_repo " in i)]
+
+    def create_tracking(self, *extra, lima=None):
+        """create(), with the guest scripts' stdin recorded."""
+        lima = lima or FakeLima()
+        self.lima_inputs = []
+        orig = lima.call
+
+        def call(*args, **kw):
+            self.lima_inputs.append(kw.get("input"))
+            return orig(*args, **kw)
+        lima.call = call
+        return self.create(*extra, lima=lima)
+
+    def test_create_records_the_session_variables_for_exec(self):
+        self.assertEqual(self.create("--name", "demo"), 0, self.err)
+        recorded = state_mod.load("demo", self.env)[session_mod.EXEC_ENV_KEY]
+        self.assertEqual(recorded["SANDBOX_NAME"], "demo")
+        self.assertIn("COMPOSER_HOME", recorded)
+        self.assertFalse([k for k in recorded
+                          if k in session_mod.CREDENTIAL_PROXY_ENV or k.startswith("ANTHROPIC_")])
+
+    def test_the_plan_says_which_repos_were_named(self):
+        # setup.py runs `composer update` only in those and core.
+        self.assertEqual(self.create_tracking("--name", "one"), 0, self.err)
+        plan = json.loads(next(i for i in self.lima_inputs if i and '"repos"' in i))
+        self.assertEqual([r.get("requested") for r in plan["repos"]], [True])
+
+    def test_a_cold_create_makes_a_snapshot_after_the_setup(self):
+        import wmf_sbx.snapshot as snapshot
+        self.assertEqual(self.create_tracking("--name", "one"), 0, self.err)
+        (key, _gen, path, meta), = self.snapshots()
+        self.assertIn("this create makes snapshot", self.err)
+        self.assertEqual(meta["sandbox"], "one")
+        self.assertEqual(meta["repos"], [{"canonical": None, "path": os.path.realpath(self.repo),
+                                          "readOnly": False}])
+        self.assertFalse(os.stat(path).st_mode & 0o222)
+        # sealed after the setup, stopped, rebased onto the golden image,
+        # and the sandbox is on a new overlay on the snapshot
+        inputs = [i or "" for i in self.lima_inputs]
+        setup_i = max(i for i, x in enumerate(inputs) if "def mediawiki_setup" in x)
+        seal_i = max(i for i, x in enumerate(inputs) if "cloud-init clean --logs" in x)
+        self.assertLess(setup_i, seal_i)
+        self.assertIn(("stop", "wmf-sbx-one"), self.lima.calls)
+        self.assertIn(("rebase", os.path.join(snapshot.key_dir(key, self.env),
+                                              "." + os.path.basename(path)),
+                       image.golden_path(self.KEY, self.env)), self.lima.calls)
+        self.assertEqual(self.lima.backings["wmf-sbx-one"], path)
+        self.assertEqual(state_mod.load("one", self.env)["snapshot"], path)
+        self.assertIn(snapshot.borrower_name(key),
+                      subprocess.run(["git", "-C", self.repo, "config", "--get-all",
+                                      "wmfSbx.borrower"], capture_output=True,
+                                     text=True).stdout)
+
+    def test_the_next_create_of_the_same_repos_is_warm(self):
+        with open(self.config, "w") as f:   # freeze at every create
+            f.write("imageCache:\n  snapshotInterval: 0m\n")
+        self.assertEqual(self.create("--name", "one"), 0, self.err)
+        (_key, _g1, first, _m), = self.snapshots()
+        self.assertEqual(self.create_tracking("--name", "two"), 0, self.err)
+        self.assertIn("+ warm: from snapshot", self.err)
+        self.assertEqual(state_mod.load("two", self.env).get("disk"), "overlay")
+        # its disk was an overlay on the snapshot; its clones were refreshed
+        self.assertIn(("overlay", "wmf-sbx-two", first), self.lima.calls)
+        self.assertTrue(any("\nrefresh_repo " in i for i in self.clone_calls()))
+        self.assertFalse(any("\nclone_repo " in i for i in self.clone_calls()))
+        # and it froze the next generation
+        self.assertEqual(len(self.snapshots()), 2)
+
+    def test_a_warm_create_from_a_fresh_snapshot_does_not_freeze(self):
+        self.assertEqual(self.create("--name", "one"), 0, self.err)
+        (_key, _g, first, _m), = self.snapshots()
+        self.assertEqual(self.create("--name", "two"), 0, self.err)
+        self.assertIn("+ no new snapshot:", self.err)
+        self.assertIn("imageCache.snapshotInterval: 1d)", self.err)
+        self.assertEqual(len(self.snapshots()), 1)
+        self.assertNotIn(("stop", "wmf-sbx-two"), self.lima.calls)
+        self.assertEqual(state_mod.load("two", self.env)["snapshot"], first)
+        self.assertEqual(self.lima.backings["wmf-sbx-two"], first)
+
+    def test_an_old_snapshot_is_frozen_again(self):
+        import wmf_sbx.snapshot as snapshot
+        self.assertEqual(self.create("--name", "one"), 0, self.err)
+        (key, gen, _p, meta), = self.snapshots()
+        meta["created"] = "2026-01-01T00:00:00+00:00"
+        snapshot.write_meta(os.path.join(snapshot.key_dir(key, self.env), gen + ".json"), meta)
+        self.assertEqual(self.create("--name", "two"), 0, self.err)
+        self.assertRegex(self.err, r"frozen in \d+ s")
+        self.assertIn(("stop", "wmf-sbx-two"), self.lima.calls)
+        new = state_mod.load("two", self.env)["snapshot"]
+        self.assertNotEqual(new, _p)
+        self.assertTrue(os.path.exists(new))
+
+    def test_cold_and_no_snapshot(self):
+        self.assertEqual(self.create("--name", "one"), 0, self.err)
+        self.assertEqual(self.create_tracking("--name", "two", "--cold"), 0, self.err)
+        self.assertIn("+ cold: --cold", self.err)
+        self.assertFalse(any("\nrefresh_repo " in i for i in self.clone_calls()))
+        self.assertEqual(len(self.snapshots()), 2)
+        self.assertEqual(self.create("--name", "three", "--no-snapshot"), 0, self.err)
+        self.assertEqual(len(self.snapshots()), 2)
+        self.assertNotIn("snapshot", state_mod.load("three", self.env))
+
+    def test_a_replaced_host_repo_makes_it_cold(self):
+        import wmf_sbx.snapshot as snapshot
+        self.assertEqual(self.create("--name", "one"), 0, self.err)
+        (key, _g, _p, _m), = self.snapshots()
+        subprocess.run(["git", "-C", self.repo, "config", "--unset-all", "wmfSbx.borrower"],
+                       check=True)
+        self.assertEqual(self.create_tracking("--name", "two"), 0, self.err)
+        self.assertIn("was replaced or removed", self.err)
+        self.assertFalse(any("\nrefresh_repo " in i for i in self.clone_calls()))
+        self.assertIn(snapshot.borrower_name(key),
+                      subprocess.run(["git", "-C", self.repo, "config", "--get-all",
+                                      "wmfSbx.borrower"], capture_output=True,
+                                     text=True).stdout)
+
+    def test_vz_makes_no_snapshot(self):
+        self.assertEqual(self.create("--name", "one", "--vm-type", "vz"), 0, self.err)
+        self.assertEqual(self.snapshots(), [])
+
+    def test_the_sandbox_that_froze_keeps_its_setup_log(self):
+        # The seal removes the setup log and status (a later create writes
+        # its own); this sandbox gets its own back once it runs on the
+        # snapshot (otherwise its ~/.wmf-sbx is empty).
+        import wmf_sbx.snapshot as snapshot
+        lima = FakeLima()
+        self.assertEqual(self.create_tracking("--name", "one", lima=lima), 0, self.err)
+        inputs = [i or "" for i in self.lima_inputs]
+        keep_i = inputs.index(snapshot.keep_script())
+        seal_i = max(i for i, x in enumerate(inputs) if "cloud-init clean --logs" in x)
+        restore_i = inputs.index("S0VQVA==\n")
+        self.assertLess(keep_i, seal_i)
+        self.assertLess(seal_i, restore_i)
+        self.assertIn(("shell", "--workdir=" + vm.ENGINEER_HOME, "wmf-sbx-one", "--",
+                       "sudo", "bash", "-c", snapshot.RESTORE_SCRIPT), lima.shells())
+        self.assertNotIn("could not", self.err)
+
+    def test_a_failed_freeze_keeps_the_sandbox_on_its_own_disk(self):
+        class NoRebase(FakeLima):
+            def rebase_disk(self, path, backing):
+                raise lima_mod.LimaError("qemu-img rebase failed")
+        lima = NoRebase()
+        self.assertEqual(self.create("--name", "one", lima=lima), 0, self.err)
+        self.assertIn("The sandbox is fine", self.err)
+        self.assertEqual(self.snapshots(), [])
+        self.assertTrue(os.path.exists(lima.disk_path("wmf-sbx-one", self.env)))
+        self.assertEqual(lima.vms["wmf-sbx-one"], "Running")
+
+    def walk_create(self, *extra, maps=({}, {})):
+        """A --dry-run create with the dependency walk (offline): its exit
+        status, and how often it fetched WMF CI's maps."""
+        fetched = []
+
+        def fetch_maps(*a, **kw):
+            fetched.append(1)
+            return maps
+        argv = ["--config", self.config, "--image", self.KEY, "--dry-run",
+                "--name", "demo", self.repo] + list(extra)
+        with mock.patch.object(create.ci_mod, "fetch_maps", fetch_maps), \
+                mock.patch.object(create.deps_mod, "fetch_manifest",
+                                  lambda canonical, warn=None, **kw: None):
+            self.lima = FakeLima()
+            rc = self.quiet(create.main, argv, lima=self.lima, env=self.env,
+                            build=self.fake_build, inputs_fn=self.fake_inputs,
+                            prompt=lambda q: "")
+        return rc, len(fetched)
+
+    def test_ci_deps_are_fetched_once_per_create(self):
+        other = os.path.join(self.tmp, "src", "other")
+        git_repo(other)
+        self.assertEqual(self.walk_create(other), (0, 1), self.err)
+
+    def test_no_ci_deps_and_no_deps_fetch_nothing(self):
+        for flag in ("--no-ci-deps", "--no-deps"):
+            with self.subTest(flag=flag):
+                self.assertEqual(self.walk_create(flag), (0, 0), self.err)
+
+    def test_unreachable_ci_deps_warn_and_go_on(self):
+        self.assertEqual(self.walk_create(maps=None), (0, 1), self.err)
+        self.assertIn("could not fetch WMF CI's dependency lists", self.err)
+        self.assertIn("--no-ci-deps", self.err)
+
+    def test_dry_run_creates_nothing_and_prints_the_config(self):
+        self.assertEqual(self.create("--dry-run", "--name", "demo"), 0, self.err)
+        self.assertEqual(self.lima.calls, [])
+        self.assertIsNone(state_mod.load("demo", self.env))
+        self.assertIn("plain: false", self.err)
+        self.assertIn("wmf-sbx-demo", self.err)
+
+    def test_without_image_the_current_inputs_are_built(self):
+        self.assertEqual(self.create("--name", "demo", inputs=False), 0, self.err)
+        self.assertEqual(self.built, [self.inputs])
+        self.assertEqual(state_mod.load("demo", self.env)["image"], image.cache_key(self.inputs))
+
+    def date_image(self, created):
+        path = os.path.join(image.entry_dir(self.KEY, self.env), "manifest.json")
+        with open(path, "w") as f:
+            json.dump({"key": self.KEY, "created": created, "inputs": self.MANIFEST_INPUTS}, f)
+
+    def test_a_create_removes_old_unused_images(self):
+        self.date_image("2026-01-01T00:00:00+00:00")
+        self.assertEqual(self.create("--name", "demo", inputs=False), 0, self.err)
+        self.assertFalse(os.path.exists(image.entry_dir(self.KEY, self.env)))
+        self.assertIn("removed 1 unused golden image(s) and snapshot(s) older than 7 days", self.err)
+
+    def test_a_create_keeps_unused_images_younger_than_the_gc_age(self):
+        now = datetime.datetime.now(datetime.timezone.utc)
+        self.date_image((now - datetime.timedelta(days=3)).isoformat(timespec="seconds"))
+        self.assertEqual(self.create("--name", "demo", inputs=False), 0, self.err)
+        self.assertTrue(os.path.isdir(image.entry_dir(self.KEY, self.env)))
+
+    def old_entry_for_the_inputs(self):
+        """A cached image of self.inputs, built in January."""
+        self.fake_build(self.inputs)
+        with open(os.path.join(image.entry_dir(image.cache_key(self.inputs), self.env),
+                               "manifest.json"), "w") as f:
+            json.dump({"created": "2026-01-01T00:00:00+00:00", "inputs": self.inputs}, f)
+        self.built = []
+
+    def test_an_old_golden_image_is_built_again(self):
+        self.old_entry_for_the_inputs()
+        self.assertEqual(self.create("--name", "demo", inputs=False), 0, self.err)
+        (built,) = self.built
+        self.assertIn("epoch", built)
+        self.assertEqual(state_mod.load("demo", self.env)["image"], image.cache_key(built))
+        self.assertIn("building a new one", self.err)
+
+    def test_a_cold_snapshot_is_not_made_on_an_image_about_to_expire(self):
+        self.fake_build(self.inputs)
+        created = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
+            days=13, hours=12)
+        with open(os.path.join(image.entry_dir(image.cache_key(self.inputs), self.env),
+                               "manifest.json"), "w") as f:
+            json.dump({"created": created.isoformat(), "inputs": self.inputs}, f)
+        self.built = []
+        self.assertEqual(self.create("--name", "demo", inputs=False), 0, self.err)
+        (built,) = self.built
+        self.assertIn("epoch", built)
+        # Without a snapshot to make, the image has a day and a half left.
+        self.built = []
+        self.assertEqual(self.create("--name", "other", "--no-snapshot", inputs=False), 0,
+                         self.err)
+        self.assertNotIn("epoch", self.built[0])
+
+    def test_no_expire_keeps_an_old_golden_image(self):
+        self.old_entry_for_the_inputs()
+        self.assertEqual(self.create("--name", "demo", "--no-expire", inputs=False), 0,
+                         self.err)
+        self.assertEqual(self.built, [self.inputs])
+        self.assertIn("create --cold", self.err)
+
+    def test_the_gc_age_is_a_setting(self):
+        with open(self.config, "w") as f:
+            f.write("imageCache:\n  gcAge: 2d\n")
+        now = datetime.datetime.now(datetime.timezone.utc)
+        self.date_image((now - datetime.timedelta(days=3)).isoformat(timespec="seconds"))
+        self.assertEqual(self.create("--name", "demo", inputs=False), 0, self.err)
+        self.assertFalse(os.path.exists(image.entry_dir(self.KEY, self.env)))
+
+    def test_latest_uses_the_newest_cached_image_and_builds_nothing(self):
+        self.env[image.TREE_OVERRIDE_VAR] = "latest"
+        self.assertEqual(self.create("--name", "demo", inputs=False), 0, self.err)
+        self.assertEqual(self.built, [])
+        self.assertEqual(state_mod.load("demo", self.env)["image"], self.KEY)
+        self.assertIn("the newest cached one", self.err)
+
+    def test_latest_with_an_empty_cache_builds(self):
+        self.env[image.TREE_OVERRIDE_VAR] = "latest"
+        shutil.rmtree(image.entry_dir(self.KEY, self.env))
+        self.assertEqual(self.create("--name", "demo", inputs=False), 0, self.err)
+        self.assertEqual(self.built, [self.inputs])
+
+    def test_a_cached_image_removes_nothing(self):
+        other = "fedcba9876543210"
+        shutil.copytree(image.entry_dir(self.KEY, self.env), image.entry_dir(other, self.env))
+        self.date_image("2026-01-01T00:00:00+00:00")
+        self.assertEqual(self.create("--name", "demo"), 0, self.err)
+        self.assertTrue(os.path.isdir(image.entry_dir(other, self.env)))
+
+    def test_nested_installs_lima_and_records_it(self):
+        inputs = []
+        lima = FakeLima()
+        orig = lima.call
+
+        def call(*args, **kw):
+            inputs.append(kw.get("input") or "")
+            return orig(*args, **kw)
+        lima.call = call
+        self.assertEqual(self.create("--name", "demo", "--nested", lima=lima), 0, self.err)
+        st = state_mod.load("demo", self.env)
+        self.assertTrue(st["nested"])
+        # The inner repos go in the engineer's home path, as on the host.
+        src = os.path.join(os.path.normpath(self.env["HOME"]), "wmf-sbx-src")
+        self.assertEqual(st["nestedSrc"], src)
+        tmpl = lima.templates["wmf-sbx-demo"]
+        self.assertEqual((tmpl["memory"], tmpl["disk"]), ("14GiB", "120GiB"))
+        (script,) = [i for i in inputs if "usermod -aG kvm agent" in i]
+        self.assertIn(f"lima-{nested.LIMA_VERSION}-Linux-", script)
+        self.assertIn("sha256sum -c", script)
+        self.assertIn(nested.MARKER, script)
+        self.assertIn(f'path: "{src}/extensions/{{name}}"', script)
+
+    def test_nested_refuses_a_home_the_vm_uses_itself(self):
+        self.env["HOME"] = "/home/agent"
+        self.assertEqual(self.create("--name", "demo", "--nested"), 1)
+        self.assertIn("--nested: /home/agent/wmf-sbx-src is under /home/agent", self.err)
+
+    def egress_create(self, *extra, lima=None, flag="--egress-proxy", missing=(), name="demo"):
+        def make_ca(name, env=None):
+            egress.make_dir(name, env)
+            with open(egress.ca_cert(name, env), "w") as f:
+                f.write("CA\n")
+            return egress.ca_cert(name, env)
+        self.wrapper_env = []
+        with mock.patch.object(egress, "make_ca", side_effect=make_ca) as made, \
+                mock.patch.object(egress, "wrapper_env",
+                                  side_effect=lambda n, e: self.wrapper_env.append(n)
+                                  or {"WMF_SBX_EGRESS_CONFIG": "x"}), \
+                mock.patch.object(egress, "wait_time_sync", return_value=True), \
+                mock.patch.object(egress, "missing_tools", return_value=list(missing)):
+            rc = self.create("--name", name, *([flag] if flag else []), *extra, lima=lima)
+        self.made_ca = made.call_count
+        return rc
+
+    def test_egress_proxy_records_it_and_starts_through_the_wrapper(self):
+        self.assertEqual(self.egress_create(), 0, self.err)
+        st = state_mod.load("demo", self.env)
+        self.assertEqual(st["egress"], "proxy")
+        self.assertEqual(st["vmType"], "qemu")
+        self.assertEqual(self.made_ca, 1)
+        tmpl = self.lima.templates["wmf-sbx-demo"]
+        self.assertEqual(tmpl["vmType"], "qemu")
+        self.assertIn(egress.ca_cert("demo", self.env), tmpl["caCerts"]["files"])
+        self.assertEqual(tmpl["hostResolver"], {"enabled": False})
+        self.assertIn("192.168.5.100", tmpl["provision"][0]["script"])
+        # its first start, and the start on its snapshot after the freeze
+        self.assertEqual(self.wrapper_env, ["demo", "demo"])
+        self.assertEqual(self.lima.start_env, {"WMF_SBX_EGRESS_CONFIG": "x"})
+        self.assertIn("snapshot", st)
+        self.assertIn("(the first boot runs the provisioning, behind the host egress proxy)",
+                      self.err)
+
+    def test_egress_proxy_refuses_vz(self):
+        self.assertEqual(self.egress_create("--vm-type", "vz"), 1)
+        self.assertIn("qemu", self.err.lower())
+        self.assertIsNone(state_mod.load("demo", self.env))
+
+    def test_egress_proxy_with_nested(self):
+        with mock.patch.object(nested, "host_base", return_value="/cache/base/b.qcow2"):
+            self.assertEqual(self.egress_create("--nested"), 0, self.err)
+        st = state_mod.load("demo", self.env)
+        self.assertEqual((st["egress"], st["nested"], st["vmType"]), ("proxy", True, "qemu"))
+        # The install's curl of Lima goes through it.
+        install = [c for c in self.lima.shells() if c[4:6] == ("sudo", "env")]
+        self.assertEqual(len(install), 1, self.lima.shells())
+        self.assertIn(f"https_proxy={egress.proxy_url()}", install[0])
+        # The base image comes from the host: its mirror redirect is refused.
+        self.assertIn(("copy", "/cache/base/b.qcow2",
+                       f"wmf-sbx-demo:{nested.STAGED_BASE}", False), self.lima.calls)
+
+    def test_a_plain_nested_create_downloads_the_base_image_in_the_guest(self):
+        with mock.patch.object(nested, "host_base") as host_base:
+            self.assertEqual(self.create("--name", "demo", "--nested"), 0, self.err)
+        host_base.assert_not_called()
+        self.assertFalse([c for c in self.lima.calls if c[0] == "copy"
+                          and c[2].endswith(nested.STAGED_BASE)])
+
+    def test_behind_the_egress_proxy_by_default(self):
+        self.assertEqual(self.egress_create(flag=None), 0, self.err)
+        st = state_mod.load("demo", self.env)
+        self.assertEqual((st["egress"], st["vmType"]), ("proxy", "qemu"))
+        self.assertEqual(self.lima.start_env, {"WMF_SBX_EGRESS_CONFIG": "x"})
+        self.assertNotIn("not behind the host egress proxy", self.err)
+        self.assertIn("this create makes snapshot", self.err)
+
+    def test_warm_snapshots_behind_the_egress_proxy_are_their_own(self):
+        import wmf_sbx.snapshot as snapshot
+        self.assertEqual(self.egress_create(name="one"), 0, self.err)
+        (_k, _g, _p, meta), = self.snapshots()
+        self.assertTrue(meta["egress"])
+        # A second egress sandbox of the same repos starts from it ...
+        self.assertEqual(self.egress_create(name="two"), 0, self.err)
+        self.assertIn("+ warm: from snapshot", self.err)
+        self.assertIn("(made by one)", self.err)
+        # ... a plain one does not: its disk would have the guest side of
+        # the proxy (resolv.conf, the proxy variables).
+        self.assertEqual(self.egress_create(name="three", flag="--no-egress-proxy"), 0,
+                         self.err)
+        self.assertIn("+ cold: no snapshot of these repos yet", self.err)
+        self.assertEqual(sorted(m["egress"] for _k, _g, _p, m in self.snapshots()),
+                         [False, True])
+        self.assertEqual(len(snapshot.list_keys(self.env)), 2)
+
+    def test_the_auth_proxy_is_the_default_behind_the_egress_proxy_without_a_token(self):
+        import wmf_sbx.authproxy as authproxy
+        self.assertEqual(self.egress_create(), 0, self.err)
+        self.assertTrue(state_mod.load("demo", self.env)[authproxy.STATE_KEY])
+        self.assertIn("+ auth proxy", self.err)
+
+    def test_an_inference_token_keeps_the_credential_proxy(self):
+        import wmf_sbx.authproxy as authproxy
+        self.env["ANTHROPIC_API_KEY"] = "x"
+        self.assertEqual(self.egress_create(), 0, self.err)
+        self.assertNotIn(authproxy.STATE_KEY, state_mod.load("demo", self.env))
+        self.assertEqual(self.egress_create("--auth-proxy", name="two"), 0, self.err)
+        self.assertTrue(state_mod.load("two", self.env)[authproxy.STATE_KEY])
+
+    def test_no_auth_proxy_and_no_egress_proxy(self):
+        import wmf_sbx.authproxy as authproxy
+        self.assertEqual(self.egress_create("--no-auth-proxy"), 0, self.err)
+        self.assertNotIn(authproxy.STATE_KEY, state_mod.load("demo", self.env))
+        self.assertEqual(self.egress_create(flag="--no-egress-proxy", name="two"), 0, self.err)
+        self.assertNotIn(authproxy.STATE_KEY, state_mod.load("two", self.env))
+
+    def test_auth_proxy_needs_the_egress_proxy(self):
+        self.assertEqual(self.egress_create("--auth-proxy", flag="--no-egress-proxy"), 1)
+        self.assertIn("--auth-proxy needs the host egress proxy", self.err)
+        self.assertIsNone(state_mod.load("demo", self.env))
+        # nor when the egress proxy falls back (vz)
+        self.assertEqual(self.egress_create("--auth-proxy", "--vm-type", "vz", flag=None), 1)
+        self.assertIn("--auth-proxy needs the host egress proxy", self.err)
+
+    def test_settings_create_auth_proxy(self):
+        settings = os.path.join(self.tmp, "settings.yaml")
+        with open(settings, "w", encoding="utf-8") as f:
+            f.write("create:\n  authProxy: true\n")
+        self.assertEqual(self.egress_create("--config", settings, flag="--no-egress-proxy"), 1)
+        self.assertIn("--auth-proxy needs the host egress proxy", self.err)
+
+    def test_no_egress_proxy_is_the_guests_own_route(self):
+        self.assertEqual(self.egress_create(flag="--no-egress-proxy"), 0, self.err)
+        self.assertNotIn("egress", state_mod.load("demo", self.env))
+        self.assertNotIn("WMF_SBX_EGRESS_CONFIG", self.lima.start_env or {})
+        self.assertEqual(self.made_ca, 0)
+        self.assertNotIn("not behind the host egress proxy", self.err)
+
+    def test_the_default_falls_back_on_vz_with_a_warning(self):
+        self.assertEqual(self.egress_create("--vm-type", "vz", flag=None), 0, self.err)
+        st = state_mod.load("demo", self.env)
+        self.assertNotIn("egress", st)
+        self.assertEqual(st["vmType"], "vz")
+        self.assertIn("the guest, not the host, enforces its network policy", self.err)
+        self.assertIn("`--vm-type qemu`", self.err)
+
+    def test_the_default_falls_back_without_the_hosts_tools(self):
+        self.assertEqual(self.egress_create(flag=None, missing=["nono"]), 0, self.err)
+        self.assertNotIn("egress", state_mod.load("demo", self.env))
+        self.assertIn("warning: the host has no nono, so demo is not behind", self.err)
+
+    def test_egress_proxy_without_the_hosts_tools_is_an_error(self):
+        self.assertEqual(self.egress_create(missing=["nono", "openssl"]), 1)
+        self.assertIn("--egress-proxy needs nono, openssl on the host's PATH", self.err)
+        self.assertIsNone(state_mod.load("demo", self.env))
+
+    def test_not_nested_by_default(self):
+        self.assertEqual(self.create("--name", "demo", "--memory", "6GiB"), 0, self.err)
+        self.assertNotIn("nested", state_mod.load("demo", self.env))
+        tmpl = self.lima.templates["wmf-sbx-demo"]
+        self.assertEqual((tmpl["memory"], tmpl["disk"]), ("6GiB", template.DEFAULT_DISK))
+        self.assertFalse(any("usermod -aG kvm" in " ".join(map(str, c))
+                             for c in self.lima.calls))
+
+    def test_a_size_under_1gib_stops_before_anything_is_made(self):
+        for argv in (["--memory", "4"], ["--disk", "60"], ["--memory", "512MiB"]):
+            with self.subTest(argv=argv):
+                self.assertEqual(self.create("--name", "demo", *argv), 1)
+                self.assertIn(f"error: {argv[0]} {argv[1]!r} is less than 1GiB", self.err)
+                self.assertEqual(self.lima.calls, [])
+                self.assertIsNone(state_mod.load("demo", self.env))
+
+    def test_a_size_in_bytes_is_taken(self):
+        self.assertEqual(self.create("--name", "demo", "--memory", "4294967296"), 0, self.err)
+        self.assertEqual(self.lima.templates["wmf-sbx-demo"]["memory"], "4294967296")
+
+    def test_sudo_records_it_behind_the_egress_proxy(self):
+        with mock.patch.object(session_mod, "session_plan",
+                               wraps=session_mod.session_plan) as plan:
+            self.assertEqual(self.egress_create("--sudo", flag=None), 0, self.err)
+        self.assertTrue(plan.call_args.kwargs["sudo"])
+        st = state_mod.load("demo", self.env)
+        self.assertEqual((st["sudo"], st["egress"], st["vmType"]), (True, "proxy", "qemu"))
+        script = self.lima.templates["wmf-sbx-demo"]["provision"][0]["script"]
+        self.assertIn('AGENT_SUDO="1"', script)
+        self.assertIn("+ sudo: the agent has passwordless sudo", self.err)
+
+    def test_settings_create_sudo_is_the_default(self):
+        with open(self.config, "w") as f:
+            f.write("create:\n  sudo: true\n")
+        self.assertEqual(self.egress_create(flag=None), 0, self.err)
+        self.assertTrue(state_mod.load("demo", self.env)["sudo"])
+
+    def test_session_sudo_is_not_read(self):
+        with open(self.config, "w") as f:
+            f.write("session:\n  sudo: true\n")
+        self.assertEqual(self.egress_create(flag=None), 0, self.err)
+        self.assertNotIn("sudo", state_mod.load("demo", self.env))
+        self.assertIn("unknown `session:` key(s): sudo", self.err)
+
+    def test_no_sudo_overrides_the_setting(self):
+        with open(self.config, "w") as f:
+            f.write("create:\n  sudo: true\n")
+        self.assertEqual(self.egress_create("--no-sudo", flag=None), 0, self.err)
+        self.assertNotIn("sudo", state_mod.load("demo", self.env))
+
+    def test_not_sudo_by_default(self):
+        self.assertEqual(self.egress_create(flag=None), 0, self.err)
+        self.assertNotIn("sudo", state_mod.load("demo", self.env))
+        script = self.lima.templates["wmf-sbx-demo"]["provision"][0]["script"]
+        self.assertIn('AGENT_SUDO=""', script)
+        self.assertNotIn("+ sudo:", self.err)
+
+    def test_sudo_does_not_fall_back_from_the_egress_proxy(self):
+        self.assertEqual(self.egress_create("--sudo", "--vm-type", "vz", flag=None), 1)
+        self.assertIn("--sudo needs QEMU", self.err)
+        self.assertEqual(self.egress_create("--sudo", flag=None, missing=["nono"]), 1)
+        self.assertIn("--sudo needs nono on the host's PATH", self.err)
+        self.assertIsNone(state_mod.load("demo", self.env))
+
+    def test_sudo_refuses_no_egress_proxy(self):
+        self.assertEqual(self.egress_create("--sudo", flag="--no-egress-proxy"), 1)
+        self.assertIn("--sudo needs the host egress proxy", self.err)
+        self.assertEqual(self.lima.calls, [])
+
+    def test_sudo_nested_installs_the_loopback_forwarder(self):
+        with mock.patch.object(nested, "host_base", return_value="/cache/base/b.qcow2"), \
+                mock.patch.object(nested, "install_script", wraps=nested.install_script) as made:
+            self.assertEqual(self.egress_create("--sudo", "--nested", flag=None), 0, self.err)
+        self.assertEqual(made.call_args.kwargs["forward"],
+                         f"{egress.EGRESS_ADDR}:{egress.EGRESS_PORT}")
+        st = state_mod.load("demo", self.env)
+        self.assertTrue(st["sudo"] and st["nested"] and st[egress.FORWARD_KEY])
+        self.assertIn(create.NESTED_SUDO_WARNING, self.err)
+        (install,) = [c for c in self.lima.shells() if c[4:6] == ("sudo", "env")]
+        # The install runs before the forwarder exists: the proxy itself.
+        self.assertIn(f"https_proxy={egress.proxy_url()}", install)
+
+    def test_a_nono_mode_nested_create_gets_the_forwarder_too(self):
+        with mock.patch.object(nested, "host_base", return_value="/cache/base/b.qcow2"):
+            self.assertEqual(self.egress_create("--nested"), 0, self.err)
+        self.assertTrue(state_mod.load("demo", self.env)[egress.FORWARD_KEY])
+        self.assertIn(create.NESTED_WARNING, self.err)
+
+    def test_a_nested_create_with_no_egress_proxy_has_no_forwarder(self):
+        with mock.patch.object(nested, "install_script", wraps=nested.install_script) as made:
+            self.assertEqual(self.create("--name", "demo", "--nested"), 0, self.err)
+        self.assertIsNone(made.call_args.kwargs["forward"])
+        self.assertNotIn(egress.FORWARD_KEY, state_mod.load("demo", self.env))
+
+    def start_create(self, *extra, ttys=False, name="demo"):
+        """create, with resume.main stubbed: (exit status, its calls)."""
+        import wmf_sbx.resume as resume_mod
+        calls = []
+        lima = FakeLima()
+        argv = ["--no-deps", "--config", self.config, "--image", self.KEY, self.repo,
+                "--name", name] + list(extra)
+        def resume(a, lima=None, env=None):
+            calls.append(a)
+            sys.stderr.write("RESUME RAN\n")
+            return 5
+        with mock.patch.object(resume_mod, "main", side_effect=resume):
+            rc = self.quiet(create.main, argv, lima=lima, env=self.env, build=self.fake_build,
+                            inputs_fn=self.fake_inputs, prompt=lambda q: "",
+                            isatty=lambda: ttys, stdout_isatty=lambda: ttys)
+        return rc, calls
+
+    def test_create_starts_the_session_on_a_terminal(self):
+        self.assertEqual(self.start_create(ttys=True), (5, [["demo"]]))
+        self.assertIn("+ wmf-sbx resume demo", self.err)
+        # the name is free for the session's time
+        self.assertNotIn("demo", state_mod.reserved_names(self.env))
+
+    def test_the_ready_block_comes_after_the_session(self):
+        # Printed before it, the block scrolls away, and the last line is
+        # Claude Code's `claude --resume UUID`.
+        self.start_create(ttys=True)
+        self.assertLess(self.err.index("RESUME RAN"), self.err.index("Sandbox demo is ready"))
+        self.assertTrue(self.err.rstrip().endswith("the agent's work"), self.err[-200:])
+
+    def test_create_does_not_start_one_in_a_script(self):
+        self.assertEqual(self.start_create(), (0, []))
+        self.assertIn("Sandbox demo is ready", self.err)
+
+    def test_start_and_no_start_win(self):
+        self.assertEqual(self.start_create("--no-start", ttys=True), (0, []))
+        self.assertEqual(self.start_create("--start", name="two")[1], [["two"]])
+
+    def test_a_dry_run_starts_nothing(self):
+        self.assertEqual(self.start_create("--dry-run", "--start"), (0, []))
+
+    def test_a_name_another_create_is_making_is_refused_at_once(self):
+        # Otherwise two creates of one --name both go on, and the second
+        # fails only at `limactl create`.
+        held = state_mod.reserve("demo", self.env)
+        self.addCleanup(held.close)
+        lima = FakeLima()
+        self.assertEqual(self.create("--name", "demo", lima=lima), 1)
+        self.assertIn("another wmf-sbx create is making a sandbox named 'demo'", self.err)
+        self.assertFalse([c for c in lima.calls if c[0] in ("create", "start")])
+
+    def test_a_default_name_another_create_is_making_gets_a_suffix(self):
+        held = state_mod.reserve("sbx-demo", self.env)
+        self.addCleanup(held.close)
+        self.assertEqual(self.create(), 0, self.err)
+        self.assertIsNotNone(state_mod.load("sbx-demo-2", self.env))
+
+    def test_the_name_is_free_again_after_the_create(self):
+        self.assertEqual(self.create("--name", "demo"), 0, self.err)
+        self.assertNotIn("demo", state_mod.reserved_names(self.env))
+        state_mod.reserve("demo", self.env).close()
+
+    def test_a_name_from_settings_is_used_and_not_made_unique(self):
+        with open(self.config, "w") as f:
+            f.write("create:\n  name: mine\n")
+        self.assertEqual(self.create(), 0, self.err)
+        self.assertIsNotNone(state_mod.load("mine", self.env))
+        self.assertEqual(self.create(lima=FakeLima({"wmf-sbx-mine": "Stopped"})), 1)
+        self.assertIn("exists already", self.err)
+
+    def test_settings_dry_run_and_no_dry_run(self):
+        # Every option has a pair, so a settings default can be undone.
+        with open(self.config, "w") as f:
+            f.write("create:\n  dryRun: true\n  remotes: false\n")
+        self.assertEqual(self.create("--name", "demo"), 0, self.err)
+        self.assertIsNone(state_mod.load("demo", self.env))
+        self.assertEqual(self.create("--name", "demo", "--no-dry-run"), 0, self.err)
+        self.assertIsNotNone(state_mod.load("demo", self.env))
+        self.assertNotIn("git fetch demo", self.err)
+
+    def test_the_default_name_avoids_lima_instances_too(self):
+        lima = FakeLima({"wmf-sbx-sbx-demo": "Stopped"})
+        self.assertEqual(self.create(lima=lima), 0, self.err)
+        self.assertIsNotNone(state_mod.load("sbx-demo-2", self.env))
+
+    def test_a_failed_invariant_fails_the_create(self):
+        lima = FakeLima(invariants=[False] * len(vm.INVARIANTS))
+        self.assertEqual(self.create("--name", "demo", lima=lima), 1)
+        self.assertIn("security invariant", self.err)
+
+    def test_a_failed_vm_create_keeps_the_state_for_rm(self):
+        class Broken(FakeLima):
+            def start(self, name, timeout=None, extra_env=None):
+                raise lima_mod.LimaError("boom")
+        self.assertEqual(self.create("--name", "demo", lima=Broken()), 1)
+        self.assertIsNotNone(state_mod.load("demo", self.env))
+        self.assertIn("wmf-sbx rm demo", self.err)
+
+    def test_a_missing_or_changed_image_is_refused(self):
+        g = image.golden_path(self.KEY, self.env)
+        os.chmod(g, 0o644)
+        self.assertEqual(self.create("--name", "demo"), 1)
+        self.assertIn("writable", self.err)
+
+
+# -- start, stop, status, ls ----------------------------------------------
+
+class StartStopStatusTests(Env):
+
+    def test_start_boots_a_stopped_vm_and_checks_it(self):
+        lima = self.sandbox(status="Stopped")
+        self.assertEqual(self.quiet(start.main, ["sbx-demo"], lima=lima, env=self.env), 0, self.err)
+        self.assertIn(("start", "wmf-sbx-sbx-demo"), lima.calls)
+
+    def test_start_fails_on_a_broken_invariant(self):
+        lima = self.sandbox(lima=FakeLima(invariants=[True] * (len(vm.INVARIANTS) - 1) + [False]))
+        self.assertEqual(self.quiet(start.main, ["sbx-demo"], lima=lima, env=self.env), 1)
+        self.assertIn("FAIL", self.err)
+
+    def test_start_refuses_a_sandbox_wmf_sbx_does_not_own(self):
+        lima = FakeLima({"wmf-sbx-other": "Stopped"})
+        self.assertEqual(self.quiet(start.main, ["other"], lima=lima, env=self.env), 1)
+        self.assertEqual(lima.calls, [])
+
+    def test_stop(self):
+        lima = self.sandbox()
+        self.assertEqual(self.quiet(stop.main, ["sbx-demo"], lima=lima, env=self.env), 0)
+        self.assertEqual(lima.vms["wmf-sbx-sbx-demo"], "Stopped")
+
+    def test_a_start_of_a_qemu_sandbox_goes_through_the_wrapper(self):
+        lima = FakeLima({"wmf-sbx-sbx-demo": "Stopped"})
+        lima.configs["wmf-sbx-sbx-demo"] = "vmType: qemu\nmemory: 8GiB\n"
+        with mock.patch.object(vm.shutil, "which", lambda n: "/usr/bin/" + n):
+            vm.ensure_running("sbx-demo", lima=lima, log=lambda m: None, env=self.env)
+        self.assertEqual(lima.start_envs["wmf-sbx-sbx-demo"]["WMF_SBX_QEMU_PLAIN"], "1")
+        lima.vms["wmf-sbx-sbx-demo"] = "Stopped"
+        lima.configs["wmf-sbx-sbx-demo"] = "vmType: vz\n"
+        vm.ensure_running("sbx-demo", lima=lima, log=lambda m: None, env=self.env)
+        self.assertIsNone(lima.start_envs["wmf-sbx-sbx-demo"])
+
+    def hostagent(self, pid="4242"):
+        """A Lima home with the instance's host agent pidfile."""
+        self.env["LIMA_HOME"] = os.path.join(self.tmp, "lima")
+        d = os.path.join(self.env["LIMA_HOME"], "wmf-sbx-sbx-demo")
+        os.makedirs(d)
+        with open(os.path.join(d, "ha.pid"), "w") as f:
+            f.write(pid + "\n")
+
+    def test_stop_refuses_a_host_agent_outside_the_sandbox(self):
+        # An earlier nono session started the VM: Landlock gives EPERM,
+        # and limactl would wait 3 minutes for nothing.
+        lima = self.sandbox()
+        self.hostagent()
+
+        def kill(pid, sig):
+            self.assertEqual((pid, sig), (4242, 0))
+            raise PermissionError(1, "Operation not permitted")
+        with mock.patch.object(vm.os, "kill", kill):
+            self.assertEqual(self.quiet(stop.main, ["sbx-demo"], lima=lima, env=self.env), 1)
+        self.assertNotIn(("stop", "wmf-sbx-sbx-demo"), lima.calls)
+        self.assertIn("pid 4242", self.err)
+        self.assertIn("limactl stop wmf-sbx-sbx-demo", self.err)
+
+    def test_stop_goes_ahead_after_a_stale_pidfile(self):
+        lima = self.sandbox()
+        self.hostagent()
+
+        def kill(pid, sig):
+            raise ProcessLookupError(3, "No such process")
+        with mock.patch.object(vm.os, "kill", kill):
+            self.assertEqual(self.quiet(stop.main, ["sbx-demo"], lima=lima, env=self.env), 0,
+                             self.err)
+        self.assertIn(("stop", "wmf-sbx-sbx-demo"), lima.calls)
+
+    def test_status_is_good_for_a_running_sound_sandbox(self):
+        lima = self.sandbox()
+        self.assertEqual(self.quiet(status_mod.main, ["sbx-demo"], lima=lima, env=self.env), 0,
+                         self.out + self.err)
+        self.assertIn("checksum matches", self.out)
+
+    def test_status_shows_the_mode(self):
+        lima = self.sandbox(status="Stopped")
+        self.quiet(status_mod.main, ["sbx-demo"], lima=lima, env=self.env)
+        self.assertIn("mode      unfenced+nono: the agent has no sudo", self.out)
+        st = state_mod.load("sbx-demo", self.env)
+        st["sudo"] = True
+        state_mod.save(st, self.env)
+        self.quiet(status_mod.main, ["sbx-demo"], lima=lima, env=self.env)
+        self.assertIn("mode      unfenced+sudo:", self.out)
+        st[egress.STATE_KEY] = egress.STATE_VALUE
+        state_mod.save(st, self.env)
+        self.quiet(status_mod.main, ["sbx-demo"], lima=lima, env=self.env)
+        self.assertIn("mode      fenced+sudo: the agent has sudo", self.out)
+        del st["sudo"]
+        state_mod.save(st, self.env)
+        self.quiet(status_mod.main, ["sbx-demo"], lima=lima, env=self.env)
+        self.assertIn("mode      fenced+nono: the agent has no sudo", self.out)
+
+    def test_status_shows_the_egress_proxy_of_a_sandbox_behind_it(self):
+        lima = self.sandbox(status="Stopped")
+        st = state_mod.load("sbx-demo", self.env)
+        st["egress"] = "proxy"
+        state_mod.save(st, self.env)
+        with mock.patch.object(egress, "status_lines",
+                               return_value=[("proxy: x", True), ("CA expired", False)]) as sl:
+            rc = self.quiet(status_mod.main, ["sbx-demo"], lima=lima, env=self.env)
+        self.assertEqual(rc, 1)
+        self.assertEqual(sl.call_args.kwargs["running"], False)
+        self.assertIn("egress    proxy: x\n", self.out)
+        self.assertRegex(self.out, r"egress    .*PROBLEM.* CA expired")
+
+    def test_status_reports_a_changed_image_and_a_missing_vm(self):
+        lima = self.sandbox(status=None)
+        g = image.golden_path(self.KEY, self.env)
+        os.chmod(g, 0o644)
+        self.assertEqual(self.quiet(status_mod.main, ["sbx-demo"], lima=lima, env=self.env), 1)
+        self.assertIn("MISSING", self.out)
+        self.assertIn("PROBLEM", self.out)
+
+    def test_ls_shows_lima_sandboxes(self):
+        lima = self.sandbox()
+        self.assertEqual(self.quiet(ls.main, [], lima=lima, env=self.env), 0)
+        self.assertIn("sbx-demo", self.out)
+        self.assertIn("unfenced+nono", self.out)
+
+
+# -- exec -----------------------------------------------------------------
+
+class ExecTests(Env):
+
+    def test_exec_runs_as_the_agent_in_the_primary_workspace(self):
+        lima = self.sandbox(status="Stopped")
+        rc = self.quiet(exec_mod.main, ["sbx-demo", "--", "git", "status"], lima=lima, env=self.env)
+        self.assertEqual(rc, 0)
+        self.assertIn(("start", "wmf-sbx-sbx-demo"), lima.calls)
+        argv = lima.shells()[-1]
+        i = argv.index("--")
+        self.assertEqual(argv[i + 1:i + 8], ("sudo", "-H", "-u", "agent", "env", "-C",
+                                             "/home/agent"))
+        # PATH, then the variables (SANDBOX_NAME, ...), then the command.
+        self.assertTrue(argv[i + 8].startswith("PATH="))
+        j = argv.index("sh", i + 9)
+        self.assertTrue(all("=" in a for a in argv[i + 9:j]), argv[i + 9:j])
+        self.assertEqual(argv[j:j + 2], ("sh", "-c"))
+        self.assertEqual(argv[-4:], ("sh", "/home/me/src/demo", "git", "status"))
+
+    def test_an_explicit_workdir_is_used_as_is(self):
+        lima = self.sandbox()
+        self.quiet(exec_mod.main, ["-w", "/srv/x", "sbx-demo", "--", "ls"], lima=lima, env=self.env)
+        argv = lima.shells()[-1]
+        i = argv.index("--")
+        self.assertEqual(argv[i + 6:i + 8], ("-C", "/srv/x"))
+        self.assertEqual(argv[-1], "ls")
+
+    def test_exec_gives_the_agent_the_guests_proxy(self):
+        # sudo drops the proxy Lima put in the guest's environment; a
+        # nested sandbox's inner VM has no other way out
+        # (mw-install-browser gets ENETUNREACH).
+        lima = self.sandbox()
+        env = dict(self.env, HTTPS_PROXY="http://nono:pw@127.0.0.1:50723")
+        for args in (["sbx-demo", "--", "ls"], ["-w", "/srv/x", "sbx-demo", "--", "ls"]):
+            with self.subTest(args=args):
+                self.quiet(exec_mod.main, args, lima=lima, env=env)
+                self.assertIn("HTTPS_PROXY=http://nono:pw@192.168.5.2:50723",
+                              lima.shells()[-1])
+
+    def test_exec_in_a_nested_sandbox_uses_the_forwarder(self):
+        # sudo has no nono proxy on the guest's loopback for the inner VMs.
+        lima = self.sandbox()
+        st = state_mod.load("sbx-demo", self.env)
+        st.update(egress="proxy", nested=True)
+        state_mod.save(st, self.env)
+        self.quiet(exec_mod.main, ["sbx-demo", "--", "ls"], lima=lima, env=self.env)
+        self.assertIn(f"HTTPS_PROXY={egress.proxy_url()}", lima.shells()[-1])
+        st[egress.FORWARD_KEY] = True
+        state_mod.save(st, self.env)
+        self.quiet(exec_mod.main, ["sbx-demo", "--", "ls"], lima=lima, env=self.env)
+        self.assertIn("HTTPS_PROXY=http://127.0.0.1:3128", lima.shells()[-1])
+
+    def test_exec_names_the_sandbox_as_a_session_does(self):
+        # bin/git-review-check reads $SANDBOX_NAME (`git safe-reset local`).
+        lima = self.sandbox()
+        for args in (["sbx-demo", "--", "ls"], ["-w", "/srv/x", "sbx-demo", "--", "ls"]):
+            with self.subTest(args=args):
+                self.quiet(exec_mod.main, args, lima=lima, env=self.env)
+                self.assertIn("SANDBOX_NAME=sbx-demo", lima.shells()[-1])
+
+    def test_exec_has_the_session_variables_from_the_host_state(self):
+        # `wmf-sbx exec NAME bash` needs $MW_INSTALL_PATH: `composer phan`
+        # in an extension fails without it.
+        lima = self.sandbox()
+        st = state_mod.load("sbx-demo", self.env)
+        st[session_mod.EXEC_ENV_KEY] = {"MW_INSTALL_PATH": "/h/core", "MW_SERVER": "http://x"}
+        state_mod.save(st, self.env)
+        for args in (["sbx-demo", "--", "ls"], ["-w", "/srv/x", "sbx-demo", "--", "ls"]):
+            with self.subTest(args=args):
+                self.quiet(exec_mod.main, args, lima=lima, env=self.env)
+                self.assertIn("MW_INSTALL_PATH=/h/core", lima.shells()[-1])
+        # --engineer runs as Lima's user, without the agent's variables.
+        self.quiet(exec_mod.main, ["--engineer", "-w", "/srv/x", "sbx-demo", "--", "ls"],
+                   lima=lima, env=self.env)
+        self.assertNotIn("MW_INSTALL_PATH=/h/core", lima.shells()[-1])
+
+    def test_exec_returns_the_commands_status(self):
+        lima = self.sandbox(lima=FakeLima(rc=7))
+        self.assertEqual(self.quiet(exec_mod.main, ["sbx-demo", "--", "false"],
+                                    lima=lima, env=self.env), 7)
+
+    def test_engineer_refuses_an_agent_writable_workdir(self):
+        lima = self.sandbox()
+        for wd in ("/home/agent", "/home/agent/x", "/tmp", "/tmp/y"):
+            with self.subTest(wd=wd):
+                self.assertEqual(self.quiet(exec_mod.main, ["--engineer", "-w", wd, "sbx-demo",
+                                                            "--", "ls"], lima=lima, env=self.env), 1)
+                self.assertIn("agent can write", self.err)
+
+    def test_engineer_runs_without_sudo_u_agent(self):
+        lima = self.sandbox()
+        self.assertEqual(self.quiet(exec_mod.main, ["--engineer", "sbx-demo", "--", "id"],
+                                    lima=lima, env=self.env), 0)
+        argv = lima.shells()[-1]
+        self.assertNotIn("agent", argv[argv.index("--") + 1:])
+
+    def test_engineer_in_a_sudo_sandbox_says_the_agent_has_root_too(self):
+        lima = self.sandbox()
+        self.assertEqual(self.quiet(exec_mod.main, ["--engineer", "sbx-demo", "--", "id"],
+                                    lima=lima, env=self.env), 0)
+        self.assertNotIn("sudo sandbox", self.err)
+        st = state_mod.load("sbx-demo", self.env)
+        st["sudo"] = True
+        state_mod.save(st, self.env)
+        self.assertEqual(self.quiet(exec_mod.main, ["--engineer", "sbx-demo", "--", "id"],
+                                    lima=lima, env=self.env), 0)
+        self.assertIn("sbx-demo is a sudo sandbox: the agent has root in the VM too", self.err)
+
+    def test_the_command_can_start_before_the_double_dash(self):
+        lima = self.sandbox()
+        for argv, cmd in ((["git", "status"], ("git", "status")),
+                          (["git", "--", "status"], ("git", "--", "status")),
+                          (["wmf-sbx", "exec", "b", "--", "ls"],
+                           ("wmf-sbx", "exec", "b", "--", "ls"))):
+            with self.subTest(argv=argv):
+                self.quiet(exec_mod.main, ["sbx-demo"] + argv, lima=lima, env=self.env)
+                self.assertEqual(lima.shells()[-1][-len(cmd):], cmd)
+
+    def test_a_command_is_required(self):
+        lima = self.sandbox()
+        with self.assertRaises(SystemExit):
+            self.quiet(exec_mod.main, ["sbx-demo"], lima=lima, env=self.env)
+
+    def test_settings_exec_engineer(self):
+        settings = os.path.join(self.tmp, "settings.yaml")
+        with open(settings, "w", encoding="utf-8") as f:
+            f.write("exec:\n  engineer: true\n")
+        lima = self.sandbox()
+        for argv, agent in ((["sbx-demo"], False), (["--no-engineer", "sbx-demo"], True)):
+            with self.subTest(argv=argv):
+                self.assertEqual(self.quiet(exec_mod.main, ["--config", settings] + argv
+                                            + ["--", "id"], lima=lima, env=self.env), 0,
+                                 self.err)
+                argv = lima.shells()[-1]
+                self.assertEqual("agent" in argv[argv.index("--") + 1:], agent)
+
+
+# -- cp -------------------------------------------------------------------
+
+class CpTests(Env):
+
+    def test_copy_in_stages_then_the_agent_copies(self):
+        lima = self.sandbox()
+        src = os.path.join(self.tmp, "f.txt")
+        open(src, "w").close()
+        self.assertEqual(self.quiet(cp.main, [src, "sbx-demo:notes/f.txt"], lima=lima,
+                                    env=self.env), 0, self.err)
+        copies = [c for c in lima.calls if c[0] == "copy"]
+        self.assertEqual(copies, [("copy", src, "wmf-sbx-sbx-demo:/tmp/wmf-sbx-cp.AbC123/", False)])
+        agent_cp = [s for s in lima.shells() if "cp" in s and "agent" in s][0]
+        self.assertEqual(agent_cp[-2:], ("/tmp/wmf-sbx-cp.AbC123/f.txt",
+                                         "/home/me/src/demo/notes/f.txt"))
+
+    def test_copy_out_has_the_agent_stage_it(self):
+        lima = self.sandbox()
+        dst = os.path.join(self.tmp, "out")
+        self.assertEqual(self.quiet(cp.main, ["sbx-demo:/home/me/src/demo/README", dst],
+                                    lima=lima, env=self.env), 0, self.err)
+        staging = [s for s in lima.shells() if any("mktemp" in a for a in s)][0]
+        self.assertIn("agent", staging)
+        copies = [c for c in lima.calls if c[0] == "copy"]
+        self.assertEqual(copies, [("copy", "wmf-sbx-sbx-demo:/tmp/wmf-sbx-cp.AbC123/README",
+                                   dst, False)])
+
+    def test_r_is_accepted_and_a_directory_is_copied_whole(self):
+        lima = self.sandbox()
+        src = os.path.join(self.tmp, "dir")
+        os.makedirs(src)
+        for flag in ("-r", "-R", "--recursive", "--no-recursive", None):
+            with self.subTest(flag=flag):
+                argv = ([flag] if flag else []) + [src, "sbx-demo:notes"]
+                self.assertEqual(self.quiet(cp.main, argv, lima=lima, env=self.env), 0, self.err)
+                copy = [c for c in lima.calls if c[0] == "copy"][-1]
+                self.assertEqual((copy[1], copy[3]), (src, True))
+
+    def test_at_least_one_side_is_in_a_sandbox(self):
+        lima = self.sandbox()
+        self.assertEqual(self.quiet(cp.main, ["/a", "/b"], lima=lima, env=self.env), 1)
+        self.assertIn("NAME:PATH", self.err)
+
+    def test_sandbox_to_sandbox_goes_through_a_host_temp_dir(self):
+        lima = self.sandbox()
+        self.sandbox("other", primary="/home/me/src/other", lima=lima)
+        steps = []
+
+        def copy_out(name, src, dest, lima):
+            steps.append(("out", name, src, dest))
+            with open(dest, "w") as f:
+                f.write("x")
+
+        def copy_in(name, src, dest, lima):
+            steps.append(("in", name, src, dest))
+            self.assertTrue(os.path.exists(src))
+        with mock.patch.object(cp, "copy_out", copy_out), mock.patch.object(cp, "copy_in", copy_in):
+            rc = self.quiet(cp.main, ["sbx-demo:notes.txt", "other:/tmp/x/notes.txt"],
+                            lima=lima, env=self.env)
+        self.assertEqual(rc, 0, self.err)
+        (out, into) = steps
+        self.assertEqual(out[1:3], ("sbx-demo", "/home/me/src/demo/notes.txt"))
+        self.assertEqual(into[1], "other")
+        self.assertEqual((into[2], into[3]), (out[3], "/tmp/x/notes.txt"))
+        self.assertFalse(os.path.exists(os.path.dirname(out[3])))   # removed
+        self.assertIn("->", self.err)
+
+    def test_the_host_temp_dir_goes_on_failure_too(self):
+        lima = self.sandbox()
+        self.sandbox("other", primary="/home/me/src/other", lima=lima)
+        staged = []
+
+        def copy_out(name, src, dest, lima):
+            staged.append(dest)
+            open(dest, "w").close()
+
+        def copy_in(name, src, dest, lima):
+            raise vm.VmError("boom")
+        with mock.patch.object(cp, "copy_out", copy_out), mock.patch.object(cp, "copy_in", copy_in):
+            rc = self.quiet(cp.main, ["sbx-demo:/a", "other:/b"], lima=lima, env=self.env)
+        self.assertEqual(rc, 1)
+        self.assertFalse(os.path.exists(os.path.dirname(staged[0])))
+
+    # -- several sources, and wildcards --
+
+    def files(self, *names):
+        paths = []
+        for n in names:
+            paths.append(os.path.join(self.tmp, n))
+            open(paths[-1], "w").close()
+        return paths
+
+    def test_several_host_sources_go_into_a_sandbox_directory(self):
+        lima = self.sandbox()
+        a, b = self.files("a.txt", "b.txt")
+        with mock.patch.object(cp, "guest_is_dir", return_value=True):
+            self.assertEqual(self.quiet(cp.main, [a, b, "sbx-demo:notes"], lima=lima,
+                                        env=self.env), 0, self.err)
+        self.assertEqual([c[1] for c in lima.calls if c[0] == "copy"], [a, b])
+
+    def test_several_sources_need_a_directory(self):
+        lima = self.sandbox()
+        a, b = self.files("a.txt", "b.txt")
+        self.assertEqual(self.quiet(cp.main, [a, b, "sbx-demo:notes"], lima=lima,
+                                    env=self.env), 1)
+        self.assertIn("must be a directory that exists", self.err)
+        self.assertEqual(self.quiet(cp.main, ["sbx-demo:/a", "sbx-demo:/b",
+                                              os.path.join(self.tmp, "a.txt")],
+                                    lima=lima, env=self.env), 1)
+
+    def test_the_sources_are_on_one_side(self):
+        lima = self.sandbox()
+        a, = self.files("a.txt")
+        self.assertEqual(self.quiet(cp.main, [a, "sbx-demo:/b", "sbx-demo:/c"], lima=lima,
+                                    env=self.env), 1)
+        self.assertIn("all be on the host, or all in one sandbox", self.err)
+
+    def test_a_quoted_host_wildcard_is_expanded(self):
+        lima = self.sandbox()
+        a, b = self.files("a.txt", "b.txt")
+        self.files("c.log")
+        with mock.patch.object(cp, "guest_is_dir", return_value=True):
+            self.assertEqual(self.quiet(cp.main, [os.path.join(self.tmp, "*.txt"),
+                                                  "sbx-demo:notes"], lima=lima,
+                                        env=self.env), 0, self.err)
+        self.assertEqual([c[1] for c in lima.calls if c[0] == "copy"], [a, b])
+        self.assertEqual(self.quiet(cp.main, [os.path.join(self.tmp, "*.none"),
+                                              "sbx-demo:notes"], lima=lima, env=self.env), 1)
+        self.assertIn("no match", self.err)
+
+    def test_a_sandbox_wildcard_is_expanded_in_the_sandbox(self):
+        lima = self.sandbox()
+        out = []
+        with mock.patch.object(cp, "expand_guest",
+                               return_value=["/home/me/src/demo/a.txt",
+                                             "/home/me/src/demo/b.txt"]) as expand, \
+                mock.patch.object(cp, "copy_out",
+                                  lambda name, src, dest, lima: out.append((src, dest))):
+            self.assertEqual(self.quiet(cp.main, ["sbx-demo:*.txt", self.tmp], lima=lima,
+                                        env=self.env), 0, self.err)
+        expand.assert_called_once()
+        self.assertEqual(expand.call_args.args[1], "/home/me/src/demo/*.txt")
+        self.assertEqual(out, [("/home/me/src/demo/a.txt", self.tmp),
+                               ("/home/me/src/demo/b.txt", self.tmp)])
+
+    def test_expand_guest_reads_the_agents_nul_separated_matches(self):
+        lima = self.sandbox()
+        orig = lima.call
+
+        def call(*args, **kw):
+            if args[0] == "shell" and cp.GUEST_GLOB in args:
+                lima.calls.append(("call",) + args)
+                return Done(stdout="/x/b c.txt\0/x/a.txt\0")
+            return orig(*args, **kw)
+        lima.call = call
+        self.assertEqual(cp.expand_guest("sbx-demo", "/x/*.txt", lima),
+                         ["/x/a.txt", "/x/b c.txt"])
+        glob_call = [c for c in lima.calls if cp.GUEST_GLOB in c][0]
+        self.assertIn("agent", glob_call)
+        self.assertEqual(glob_call[-1], "/x/*.txt")
+
+    def test_a_relative_path_without_a_workspace_is_in_the_agents_home(self):
+        lima = self.sandbox(primary=None)
+        src = os.path.join(self.tmp, "f.txt")
+        open(src, "w").close()
+        self.assertEqual(self.quiet(cp.main, [src, "sbx-demo:x.txt"], lima=lima, env=self.env), 0)
+        agent_cp = [s for s in lima.shells() if "cp" in s and "agent" in s][0]
+        self.assertEqual(agent_cp[-1], "/home/agent/x.txt")
+
+
+class CaRefreshTests(Env):
+    """A stopped sandbox's start refreshes the extra CA file (a nested
+    sandbox's inner VMs get the current session's nono CA)."""
+
+    def test_a_start_refreshes_the_ca_file_a_running_vm_does_not(self):
+        calls = []
+        with mock.patch.object(image, "extra_ca_files", lambda env=None: calls.append(env) or []):
+            lima = self.sandbox(status="Stopped")
+            vm.ensure_running("sbx-demo", lima=lima, log=lambda m: None, env=self.env)
+            self.assertEqual(len(calls), 1)
+            vm.ensure_running("sbx-demo", lima=lima, log=lambda m: None, env=self.env)
+            self.assertEqual(len(calls), 1)
+
+    def test_a_refresh_failure_does_not_stop_the_start(self):
+        def fail(env=None):
+            raise image.ImageError("no such file")
+        logs = []
+        with mock.patch.object(image, "extra_ca_files", fail):
+            lima = self.sandbox(status="Stopped")
+            vm.ensure_running("sbx-demo", lima=lima, log=logs.append, env=self.env)
+        self.assertIn(("start", "wmf-sbx-sbx-demo"), lima.calls)
+        self.assertTrue(any("could not refresh" in m for m in logs))
+
+
+# -- rm -------------------------------------------------------------------
+
+class RmTests(Env):
+
+    def test_rm_refuses_a_sandbox_wmf_sbx_does_not_own(self):
+        lima = FakeLima({"wmf-sbx-stranger": "Running"})
+        self.assertEqual(self.quiet(rm.main, ["stranger"], lima=lima, env=self.env,
+                                    confirm=lambda q: "y"), 1)
+        self.assertIn("wmf-sbx-stranger", lima.vms)
+
+    def test_no_enter_or_no_answer_leaves_everything(self):
+        lima = self.sandbox()
+        egress.write_config("sbx-demo", self.env)
+
+        def eof(q):
+            raise EOFError
+        for label, answer in (("n", lambda q: "n"), ("enter", lambda q: ""), ("EOF", eof)):
+            with self.subTest(answer=label):
+                asked = []
+                self.assertEqual(self.quiet(rm.main, ["sbx-demo"], lima=lima, env=self.env,
+                                            confirm=lambda q: asked.append(q) or answer(q)), 1)
+                self.assertTrue(asked[-1].endswith("[y/N] "), asked)
+                self.assertIn("wmf-sbx-sbx-demo", lima.vms)
+                self.assertIsNotNone(state_mod.load("sbx-demo", self.env))
+                self.assertTrue(os.path.exists(egress.egress_dir("sbx-demo", self.env)))
+                self.assertNotIn("Traceback", self.err)
+
+    def test_yes_deletes_the_vm_and_the_state(self):
+        lima = self.sandbox()
+        self.assertEqual(self.quiet(rm.main, ["sbx-demo"], lima=lima, env=self.env,
+                                    confirm=lambda q: "y"), 0, self.err)
+        self.assertNotIn("wmf-sbx-sbx-demo", lima.vms)
+        self.assertIsNone(state_mod.load("sbx-demo", self.env))
+
+    def test_rm_deletes_the_egress_directory(self):
+        lima = self.sandbox()
+        egress.write_config("sbx-demo", self.env)
+        self.assertEqual(self.quiet(rm.main, ["-f", "sbx-demo"], lima=lima, env=self.env,
+                                    confirm=lambda q: "y"), 0, self.err)
+        self.assertFalse(os.path.exists(egress.egress_dir("sbx-demo", self.env)))
+
+    def test_no_terminal_is_an_error_before_the_checks(self):
+        # A stopped VM is not started for checks whose answer is no.
+        lima = self.sandbox(status="Stopped")
+        st = state_mod.load("sbx-demo", self.env)
+        st["remotes"] = [{"hostDir": "/home/me/src/demo", "remote": "sbx-demo"}]
+        state_mod.save(st, self.env)
+        with mock.patch.object(rm.prompt_mod, "interactive", return_value=False):
+            self.assertEqual(self.quiet(rm.main, ["sbx-demo"], lima=lima, env=self.env), 1)
+        self.assertIn("no terminal to ask on. Pass --force", self.err)
+        self.assertNotIn(("start", "wmf-sbx-sbx-demo"), lima.calls)
+        self.assertIn("wmf-sbx-sbx-demo", lima.vms)
+        self.assertIsNotNone(state_mod.load("sbx-demo", self.env))
+
+    def test_force_asks_nothing(self):
+        lima = self.sandbox()
+        def never(q):
+            raise AssertionError("asked")
+        self.assertEqual(self.quiet(rm.main, ["-f", "sbx-demo"], lima=lima, env=self.env,
+                                    confirm=never), 0)
+        self.assertNotIn("wmf-sbx-sbx-demo", lima.vms)
+
+    def test_dry_run_changes_nothing(self):
+        lima = self.sandbox()
+        self.assertEqual(self.quiet(rm.main, ["--dry-run", "sbx-demo"], lima=lima, env=self.env,
+                                    confirm=lambda q: "y"), 0)
+        self.assertIn("wmf-sbx-sbx-demo", lima.vms)
+        self.assertIsNotNone(state_mod.load("sbx-demo", self.env))
+
+    def test_prune_forgets_a_sandbox_whose_vm_is_gone(self):
+        lima = self.sandbox(status=None)
+        self.sandbox(name="alive", lima=lima)
+        self.assertEqual(self.quiet(rm.main, ["--prune"], lima=lima, env=self.env), 0, self.err)
+        self.assertIsNone(state_mod.load("sbx-demo", self.env))
+        self.assertIsNotNone(state_mod.load("alive", self.env))
+
+    def uncommitted(self, lima, stdout, returncode=0):
+        st = state_mod.load("sbx-demo", self.env)
+        st["repos"] = ["/home/me/src/demo", "/home/me/src/other"]
+        state_mod.save(st, self.env)
+        lima.uncommitted_result = Done(returncode=returncode, stdout=stdout)
+
+    def test_rm_reports_uncommitted_files_before_it_asks(self):
+        lima = self.sandbox()
+        self.uncommitted(lima, "\x1e0\n?? notes.txt\n M x.php\n\x1e1\n")
+        asked = []
+        self.quiet(rm.main, ["sbx-demo"], lima=lima, env=self.env,
+                   confirm=lambda q: asked.append(sys.stderr.getvalue()) or "n")
+        self.assertIn("/home/me/src/demo: 2 uncommitted files", asked[0])
+        self.assertIn("?? notes.txt", asked[0])
+        self.assertNotIn("/home/me/src/other", self.err)
+        (shell,) = [s for s in lima.shells() if vm.UNCOMMITTED_SCRIPT in s]
+        self.assertIn("agent", shell)
+        self.assertEqual(shell[-2:], ("/home/me/src/demo", "/home/me/src/other"))
+
+    def test_rm_warns_when_it_cannot_check(self):
+        lima = self.sandbox()
+        self.uncommitted(lima, "", returncode=255)
+        self.quiet(rm.main, ["sbx-demo"], lima=lima, env=self.env, confirm=lambda q: "n")
+        self.assertIn("could not check the sandbox for uncommitted files", self.err)
+
+    def test_rm_does_not_start_a_stopped_vm_to_check(self):
+        lima = self.sandbox(status="Stopped")
+        self.quiet(rm.main, ["sbx-demo"], lima=lima, env=self.env, confirm=lambda q: "n")
+        self.assertNotIn(("start", "wmf-sbx-sbx-demo"), lima.calls)
+        self.assertIn("did not check it for uncommitted files", self.err)
+
+    def test_rm_force_does_not_check(self):
+        lima = self.sandbox()
+        self.uncommitted(lima, "\x1e0\n?? notes.txt\n")
+        self.quiet(rm.main, ["-f", "sbx-demo"], lima=lima, env=self.env)
+        self.assertEqual([s for s in lima.shells() if vm.UNCOMMITTED_SCRIPT in s], [])
+
+    def test_settings_rm_force_and_no_force(self):
+        settings = os.path.join(self.tmp, "settings.yaml")
+        with open(settings, "w", encoding="utf-8") as f:
+            f.write("rm:\n  force: true\n")
+        lima = self.sandbox()
+        self.quiet(rm.main, ["--config", settings, "--no-force", "sbx-demo"], lima=lima,
+                   env=self.env, confirm=lambda q: "n")
+        self.assertIn("wmf-sbx-sbx-demo", lima.vms)
+        def never(q):
+            raise AssertionError("asked")
+        self.assertEqual(self.quiet(rm.main, ["--config", settings, "sbx-demo"], lima=lima,
+                                    env=self.env, confirm=never), 0, self.err)
+        self.assertNotIn("wmf-sbx-sbx-demo", lima.vms)
+
+
+if __name__ == "__main__":
+    unittest.main()

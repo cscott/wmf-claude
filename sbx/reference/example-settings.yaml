@@ -1,0 +1,114 @@
+# Example ~/.config/wmf-sbx/settings.yaml (sbx/README.md, "Getting
+# started"). Copy it there and change the paths to your own layout. It is
+# also a test fixture for resolve.py.
+
+# Where each repo lives on your machine. wmf-sbx names repos by their
+# Gerrit or GitLab project ("gerrit:mediawiki/extensions/Cite"); a rule maps
+# a project to a directory. A repo that is not there yet is cloned there,
+# after `create` asks you (see `create:` below).
+# An exact rule (no {name} or **) wins over a wildcard; among wildcards,
+# the most specific one wins.
+repos:
+  - match: "gerrit:mediawiki/core"
+    path: "~/Wikimedia/core"
+  - match: "gerrit:mediawiki/services/parsoid"
+    path: "~/Wikimedia/Parsoid"
+
+  # {name} is the last path segment.
+  - match: "gerrit:mediawiki/extensions/{name}"
+    path: "~/Wikimedia/Extensions/{name}"
+  - match: "gerrit:mediawiki/skins/{name}"
+    path: "~/Wikimedia/Skins/{name}"
+
+  # A prefix that would otherwise collide with the catch-all below.
+  - match: "gerrit:analytics/{name}"
+    path: "~/Wikimedia/analytics-{name}"
+
+  # ** is zero or more leading segments: the fallback for everything else.
+  - match: "gerrit:**/{name}"
+    path: "~/Wikimedia/{name}"
+  - match: "gitlab:**/{name}"
+    path: "~/Wikimedia/{name}"
+
+# Settings for every new sandbox's Claude Code (sbx/README.md,
+# "settings.yaml").
+session:
+  model: opus
+  permission_mode: acceptEdits   # or bypassPermissions, plan, auto, default
+  theme: dark
+  # ste: false                   # leave out the ASD-STE100 writing rule
+  # settings: false              # take no option defaults from this file
+                                 # (--settings overrides)
+
+# Defaults for the options of each command (sbx/README.md, "Option
+# defaults"): `VERB: {someFlag: value}` for `wmf-sbx VERB
+# --some-flag`. The command line overrides each; null is "no default
+# here". `wmf-sbx VERB --help` names the key of each option.
+create: {}
+  # name: sbx-main               # --name: always this sandbox name
+  # start: false                 # --no-start: start no session
+  # deps: false                  # --no-deps
+  # ciDeps: false                # --no-ci-deps
+  # phanDeps: false              # --no-phan-deps
+  # dev: false                   # --no-dev
+  # suggests: false              # --no-suggests
+  # cloneMissing: true           # --clone-missing: clone missing repos without asking
+  # resetAll: true               # --reset-all
+  # remotes: false               # --no-remotes
+  # vmType: qemu                 # --vm-type (null: vz on macOS, qemu elsewhere)
+  # cold: true                   # --cold
+  # snapshot: false              # --no-snapshot
+  # expire: false                # --no-expire (null: imageCache.expire)
+  # fullDisk: true               # --full-disk
+  # cpus: 4                      # --cpus
+  # memory: 8GiB                 # --memory (null: 8GiB, more with --nested)
+  # disk: 60GiB                  # --disk
+  # nested: true                 # --nested (LOWER SECURITY)
+  # image: KEY                   # --image
+  # egressProxy: true            # --egress-proxy (null: where the host can)
+  # authProxy: true              # --auth-proxy: the shared /login (null: when no token)
+  # sudo: true                   # --sudo (LOWER SECURITY)
+  # dryRun: true                 # --dry-run
+
+# Environment variables for every new sandbox's sessions (in the agent's
+# ~/.claude/settings.json `env`). Not ANTHROPIC_* or NO_PROXY: wmf-sbx sets
+# those for the credential proxy.
+environment: {}
+  # GERRITUA: "MW-CI-Tools/1.0 (you@example.org; purpose=gitiles queries)"
+  # CLAUDE_CODE_DISABLE_1M_CONTEXT: "1"
+
+# Extra Debian packages for the golden image. They are part of its cache
+# key, so a change here builds a new image at the next `create`.
+packages: []
+  # - nano
+
+# The golden image cache. `image gc` (and the end of each `create`)
+# removes the images that no sandbox uses and that are older than gcAge.
+# A golden image older than maxAge is built again at the next `create`
+# (with the Debian updates since); with expire: false it is kept, with a
+# warning (as `create --no-expire` does once). A warm create freezes a
+# new snapshot only when the one it started from is older than
+# snapshotInterval. Durations: 14d, 12h, 30m, or a number of days.
+imageCache: {}
+  # gcAge: 7d
+  # maxAge: 14d
+  # expire: true
+  # snapshotInterval: 1d
+
+# A dependency in extension.json `requires` that is a display name, not a
+# project ("Abuse Filter"): map it to a project by hand.
+dependency_overrides: {}
+  # "Abuse Filter": "gerrit:mediawiki/extensions/AbuseFilter"
+
+# The name a repo gets under core's extensions/ or skins/, when it is not
+# the project's last path segment or the manifest's name.
+link_overrides: {}
+  # "gerrit:mediawiki/extensions/Example": "ExampleExtension"
+
+# Dependencies that no manifest declares, for the repos you name on the
+# command line (not for their dependencies). `create` adds WMF CI's own
+# (integration/config) by default; this is for others, for example one
+# you are adding.
+extra_dependencies: {}
+  # gerrit:mediawiki/extensions/Example:
+  #   - gerrit:mediawiki/extensions/OtherThing

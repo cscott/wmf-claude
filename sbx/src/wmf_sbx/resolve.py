@@ -1,0 +1,666 @@
+#!/usr/bin/env python3
+"""Resolve a repo name to a canonical Gerrit/GitLab path and a local
+directory to use (or clone into) as an sbx workspace.
+
+Two steps (sbx/README.md, Architecture):
+
+  1. name -> canonical "scheme:path" string (Gerrit REST lookup for a bare
+     short name, then a GitLab lookup if Gerrit has no match; explicit
+     scheme or an already-qualified path is used as-is).
+  2. canonical path -> local directory, via the `repos:` rules of the
+     user's ~/.config/wmf-sbx/settings.yaml (longest-match-first among existing
+     directories; longest match outright when nothing exists yet to clone).
+
+Requires PyYAML only for reading the config file; the resolution/matching
+logic itself has no dependencies, so it's directly unit-testable.
+"""
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+from . import color as color_mod
+from . import deps as deps_mod
+from . import prompt as prompt_mod
+
+try:
+    import yaml
+except ImportError:  # pragma: no cover - exercised only when yaml is absent
+    yaml = None
+
+GERRIT_URL = "https://gerrit.wikimedia.org/r/projects/"
+DEFAULT_CONFIG = os.path.join(
+    os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
+    "wmf-sbx", "settings.yaml")
+_UNKNOWN_NOTED = set()
+CONFIG_DEFAULTS = {"repos": [], "environment": {}, "packages": [],
+                   "dependency_overrides": {}, "link_overrides": {},
+                   "extra_dependencies": {}, "imageCache": {}, "create": {}}
+_SCHEME_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9+.-]*):(.*)$")
+
+
+class ResolutionError(Exception):
+    """A user-facing resolution failure (ambiguous name, no matching rule,
+    unreachable Gerrit, etc.) -- as opposed to a programming error."""
+
+
+# --------------------------------------------------------------------------
+# Step 1: name -> canonical "scheme:path"
+# --------------------------------------------------------------------------
+
+def is_raw_path(spec):
+    """True if spec is a literal filesystem path rather than a repo name
+    or scheme:path spec -- real Gerrit/GitLab project paths never start
+    with these characters, so this is unambiguous. Bare '.' and '..' are
+    included too (not just './' and '../') since a shell never appends a
+    trailing separator to those on its own."""
+    return spec in (".", "..") or spec.startswith(("/", "~", "./", "../"))
+
+
+def split_scheme(spec):
+    """"gerrit:mediawiki/core" -> ("gerrit", "mediawiki/core").
+    No scheme present -> (None, spec)."""
+    m = _SCHEME_RE.match(spec)
+    if m:
+        return m.group(1), m.group(2)
+    return None, spec
+
+
+def strip_xssi(body):
+    # Gerrit prefixes every JSON response with a )]}' XSSI guard line.
+    if body.startswith(")]}'"):
+        return body.split("\n", 1)[1]
+    return body
+
+
+_ARCHIVED_MARKER = "[ARCHIVED]"
+
+
+def gerrit_search(substring, opener=None):
+    """Query Gerrit's REST API for projects whose path contains `substring`
+    anywhere (the server does the substring match; we still filter the
+    result down to an exact final-segment match ourselves).
+
+    Returns (names, archived): `names` is every matching full Gerrit project
+    path, and `archived` is the subset of those names whose description
+    contains "[ARCHIVED]" (WMF's convention for retired repos -- e.g.
+    gerrit:mediawiki/extensions/Parsoid, a defunct extension that shares a
+    final path segment with the live gerrit:mediawiki/services/parsoid, or
+    gerrit:analytics/asana-stats, which has no live namesake at all).
+    Archived projects are never excluded here -- a bare name whose *only*
+    match is archived still needs to resolve; callers use
+    `archived` to warn the user, not to filter results."""
+    params = {"m": substring}
+    # "d" (description) is a bare flag in Gerrit's REST API, not a
+    # key=value param -- we always ask for it since we need descriptions to
+    # flag archived projects.
+    url = GERRIT_URL + "?" + urllib.parse.urlencode(params) + "&d"
+    opener = opener or deps_mod.gerrit_opener(deps_mod.gerrit_user_agent())
+    try:
+        with opener(url, timeout=10) as resp:
+            body = resp.read().decode("utf-8")
+    except (urllib.error.URLError, OSError) as e:
+        raise ResolutionError(f"Could not reach Gerrit ({url}): {e}") from e
+    try:
+        data = json.loads(strip_xssi(body))
+    except json.JSONDecodeError as e:
+        raise ResolutionError(f"Unexpected response from Gerrit ({url}): {e}") from e
+    archived = {
+        name for name, info in data.items()
+        if _ARCHIVED_MARKER in (info.get("description") or "")
+    }
+    return list(data.keys()), archived
+
+
+GITLAB_HOST = "gitlab.wikimedia.org"
+GITLAB_API = f"https://{GITLAB_HOST}/api/v4"
+# Top-level groups a bare name is searched in, in priority order; the next
+# group is only consulted when the previous one has no match. Personal
+# namespaces are deliberately absent: ~half of the instance's projects
+# are people's forks (a bare "wmf-claude" matches twenty of them and one
+# real repo), and a fork is never what a bare name means.
+GITLAB_SEARCH_GROUPS = ("repos", "toolforge-repos")
+_GITLAB_MAX_PAGES = 5
+_GITLAB_TIMEOUT = 30
+
+
+def _gitlab_get(url, timeout=_GITLAB_TIMEOUT):
+    """GET a GitLab API URL, anonymously. Returns (parsed JSON, the
+    X-Next-Page header or ""), or (None, "") for a 404 -- a project that
+    is private, renamed or absent all look the same to an anonymous
+    caller, and callers treat them all as "not there"."""
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            body = resp.read().decode("utf-8")
+            next_page = resp.headers.get("X-Next-Page", "") or ""
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None, ""
+        raise ResolutionError(f"GitLab answered {e.code} for {url}") from e
+    except (urllib.error.URLError, OSError) as e:
+        raise ResolutionError(f"Could not reach GitLab ({url}): {e}") from e
+    try:
+        return json.loads(body), next_page
+    except json.JSONDecodeError as e:
+        raise ResolutionError(f"Unexpected response from GitLab ({url}): {e}") from e
+
+
+def _gitlab_paths(url, get):
+    paths = []
+    for page in range(1, _GITLAB_MAX_PAGES + 1):
+        data, next_page = get(f"{url}&page={page}")
+        paths.extend(p["path_with_namespace"] for p in data or [])
+        if not next_page:
+            break
+    return paths
+
+
+def gitlab_search(substring, get=_gitlab_get):
+    """GitLab's counterpart of gerrit_search: returns (names, archived),
+    `names` being the full path of every project whose name or path
+    contains `substring`, `archived` the subset marked archived.
+
+    Searches the GITLAB_SEARCH_GROUPS in order and stops at the first one
+    with any hit. `simple=true` leaves the `archived` flag out of each
+    project, so the archived subset costs a second query with
+    `archived=true` -- made only when the first found something. Anonymous
+    (measured: the instance answers this without a token;
+    `/search?scope=projects` does not)."""
+    for group in GITLAB_SEARCH_GROUPS:
+        base = f"{GITLAB_API}/groups/{group}/projects?" + urllib.parse.urlencode({
+            "include_subgroups": "true", "search": substring,
+            "simple": "true", "per_page": "100",
+        })
+        names = _gitlab_paths(base, get)
+        if names:
+            archived = set(_gitlab_paths(base + "&archived=true", get)) & set(names)
+            return names, archived
+    return [], set()
+
+
+def gitlab_project(path, get=_gitlab_get):
+    """The full project record for `path` ("repos/team/name"), or None if
+    an anonymous caller can't see one."""
+    data, _ = get(f"{GITLAB_API}/projects/{urllib.parse.quote(path, safe='')}")
+    return data
+
+
+_MAX_FORK_DEPTH = 5
+
+
+def gitlab_upstream(path, project=gitlab_project):
+    """The project a merge request from `path` would really target, as a
+    path. GitLab and GitHub work by fork-and-MR, so a checkout's `origin`
+    may be somebody's personal fork rather than the project itself.
+
+    Follows `forked_from_project` -- GitLab's name for the "upstream
+    project" -- to its root, unless `mr_default_target_self` says the fork
+    takes MRs into itself, in which case it *is* its own upstream. Anything
+    unknowable (a private or missing project, a field the anonymous API
+    left out) means "this one": guessing a different upstream is worse
+    than not knowing one. `project` is injectable for tests."""
+    seen = {path}
+    for _ in range(_MAX_FORK_DEPTH):
+        info = project(path)
+        if not info or info.get("mr_default_target_self") is True:
+            break
+        parent = (info.get("forked_from_project") or {}).get("path_with_namespace")
+        if not parent or parent in seen:
+            break
+        seen.add(parent)
+        path = parent
+    return path
+
+
+_GITLAB_URL_RE = re.compile(
+    r"^(?:https?://gitlab\.wikimedia\.org/"
+    r"|(?:ssh://)?git@gitlab-ssh\.wikimedia\.org(?::\d+)?[:/])"
+    r"(?P<path>.+?)(?:\.git)?/?$"
+)
+
+
+def canonical_from_url(url):
+    """"gitlab:<path>" for a gitlab.wikimedia.org clone URL (https, or ssh
+    in either its scp-like or ssh:// form), else None. It reads what a
+    checkout's `origin` already says, so no lookup is needed."""
+    m = _GITLAB_URL_RE.match((url or "").strip())
+    return f"gitlab:{m.group('path')}" if m else None
+
+
+def git_origin_url(path, run=subprocess.run):
+    """`origin`'s URL in the checkout at `path`, or None (not a repo, no
+    origin, git missing). stdin is DEVNULL for the usual reason."""
+    try:
+        result = run(
+            ["git", "-C", path, "remote", "get-url", "origin"],
+            capture_output=True, text=True, stdin=subprocess.DEVNULL,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    return (result.stdout or "").strip() or None
+
+
+def _pick_exact(rest, scheme, names, archived, warn, prompt=None):
+    """Narrow forge search hits to the one whose final path segment is
+    `rest` (case-insensitively; both forges' searches are plain substring
+    matches, so "Cite" also returns "CiteDrawer"). Returns the canonical,
+    or None when nothing matches. When it is ambiguous, `prompt` (a
+    prompt.Prompt) lets the engineer pick one; with no prompt, or no
+    choice, it raises. A non-archived hit beats an archived one; `warn`
+    hears about an archived pick."""
+    exact = sorted(
+        name for name in names
+        if name.rsplit("/", 1)[-1].casefold() == rest.casefold()
+    )
+    if not exact:
+        return None
+    pool = [name for name in exact if name not in archived] or exact
+    if len(pool) > 1:
+        labels = [f"{scheme}:{name}" for name in pool]
+        i = prompt.pick(f"{rest!r} matches more than one project:", labels) if prompt else None
+        if i is not None:
+            return labels[i]
+        listing = "\n".join(f"  {label}" for label in labels)
+        raise ResolutionError(
+            f"{rest!r} is ambiguous, matches:\n{listing}\n"
+            "Pass one of these full paths instead of the bare name."
+        )
+    chosen = pool[0]
+    if warn is not None and chosen in archived:
+        warn(f"warning: {scheme}:{chosen} is marked {_ARCHIVED_MARKER} in "
+             f"{scheme.capitalize()}.")
+    return f"{scheme}:{chosen}"
+
+
+def resolve_canonical_path(spec, search=gerrit_search, warn=None, gitlab=None, prompt=None):
+    """Step 1. `search` is injectable for testing -- it takes a substring
+    and returns (names, archived), see gerrit_search. `warn`, if given, is
+    called with a message when the resolved bare name turns out to be an
+    archived project -- it's still resolved either way, never silently
+    dropped.
+
+    Among case-insensitively-matching candidates, a non-archived one is
+    preferred by default over an archived one sharing the same final
+    segment (e.g. bare "Parsoid" resolves to the live
+    gerrit:mediawiki/services/parsoid over the archived
+    gerrit:mediawiki/extensions/Parsoid) -- pass the full gerrit:... path
+    instead of the bare name if you specifically want the archived one.
+
+    `gitlab`, if given, is a gitlab_search-shaped function tried only when
+    Gerrit has no match. Gerrit stays first because it is where the
+    MediaWiki code is and answers in well under a second; GitLab's answer
+    takes seconds. A name that is in both must be spelled `gitlab:...`.
+    It is off by default so a caller that hands in a fake `search` cannot
+    reach the network by accident; `resolve` turns it on. `prompt`: see
+    _pick_exact."""
+    scheme, rest = split_scheme(spec)
+    if scheme is not None:
+        # Already fully qualified: used as-is, no lookup.
+        return f"{scheme}:{rest}"
+    if "/" in rest:
+        # A full Gerrit path was given, just without the "gerrit:" prefix.
+        return f"gerrit:{rest}"
+
+    names, archived = search(rest)
+    found = _pick_exact(rest, "gerrit", names, archived, warn, prompt)
+    if found is not None:
+        return found
+    if gitlab is None:
+        raise ResolutionError(f"No Gerrit project found matching {rest!r}.")
+    names, archived = gitlab(rest)
+    found = _pick_exact(rest, "gitlab", names, archived, warn, prompt)
+    if found is None:
+        raise ResolutionError(
+            f"No Gerrit or GitLab project found matching {rest!r}.")
+    return found
+
+
+# --------------------------------------------------------------------------
+# Step 2: canonical path -> local directory
+# --------------------------------------------------------------------------
+
+def _segments(scheme_path):
+    scheme, rest = split_scheme(scheme_path)
+    if scheme is None:
+        raise ValueError(f"{scheme_path!r} has no scheme (gerrit:/gitlab:).")
+    return scheme, (rest.split("/") if rest else [])
+
+
+def match_rule(pattern, canonical):
+    """Return a dict of captured names if `pattern` matches `canonical`,
+    else None. Both are "scheme:a/b/c" strings. Grammar: a segment is a
+    literal, "**" (zero or more segments, at most one per pattern), or
+    "{name}" (final segment only, captures exactly one segment)."""
+    pat_scheme, pat_segs = _segments(pattern)
+    can_scheme, can_segs = _segments(canonical)
+    if pat_scheme != can_scheme:
+        return None
+
+    if pat_segs and pat_segs[-1].startswith("{") and pat_segs[-1].endswith("}"):
+        name_var = pat_segs[-1][1:-1]
+        prefix_pat = pat_segs[:-1]
+    else:
+        name_var = None
+        prefix_pat = pat_segs
+
+    if name_var is None:
+        return {} if prefix_pat == can_segs else None
+
+    if not can_segs:
+        return None  # nothing left to capture as {name}
+    body, captured = can_segs[:-1], can_segs[-1]
+
+    if "**" in prefix_pat:
+        if prefix_pat.count("**") > 1:
+            raise ValueError(f"Pattern {pattern!r} has more than one '**'.")
+        wi = prefix_pat.index("**")
+        before, after = prefix_pat[:wi], prefix_pat[wi + 1:]
+        if len(body) < len(before) + len(after):
+            return None
+        if body[:len(before)] != before:
+            return None
+        if after and body[-len(after):] != after:
+            return None
+    else:
+        if body != prefix_pat:
+            return None
+
+    return {name_var: captured}
+
+
+def specificity(pattern):
+    """Number of literal segments -- used to rank overlapping rules."""
+    _, segs = _segments(pattern)
+    return sum(1 for s in segs if s != "**" and not (s.startswith("{") and s.endswith("}")))
+
+
+def matching_rules(canonical, rules):
+    """rules: [{"match": pattern, "path": template}, ...]. Returns
+    [(rule, captures), ...] sorted most-specific first; ties keep the
+    original config order."""
+    scored = []
+    for idx, rule in enumerate(rules):
+        captures = match_rule(rule["match"], canonical)
+        if captures is not None:
+            scored.append((specificity(rule["match"]), idx, rule, captures))
+    scored.sort(key=lambda t: (-t[0], t[1]))
+    return [(rule, captures) for _, _, rule, captures in scored]
+
+
+def expand_path(template, captures):
+    return os.path.expanduser(template.format(**captures))
+
+
+def exact_rule_canonicals(rules):
+    """Reverse map: realpath'd directory -> canonical "scheme:path" string,
+    for every *exact* rule (no "**"/"{name}") in `rules`. An exact rule's
+    `match` already *is* its canonical path, so this needs no Gerrit/GitLab
+    lookup -- it's how wmf_sbx/kit.py identifies which known repo a raw
+    filesystem-path argument (see is_raw_path) actually is,
+    so kit environment variables like MW_CORE_REPO can be wired up even
+    when a repo was passed as a literal path rather than a resolved name."""
+    mapping = {}
+    for rule in rules:
+        _scheme, segs = _segments(rule["match"])
+        if any(s == "**" or (s.startswith("{") and s.endswith("}")) for s in segs):
+            continue
+        mapping[os.path.realpath(expand_path(rule["path"], {}))] = rule["match"]
+    return mapping
+
+
+def gitreview_value(path, key):
+    """The value of `key` (`host`, `project`) in <path>/.gitreview, or
+    None if the file doesn't exist or has no such line."""
+    try:
+        with open(os.path.join(path, ".gitreview"), encoding="utf-8") as f:
+            for line in f:
+                k, sep, value = line.partition("=")
+                if sep and k.strip() == key:
+                    return value.strip()
+    except OSError:
+        pass
+    return None
+
+
+def gitreview_project(path):
+    """Return the Gerrit project path recorded in <path>/.gitreview's
+    "project=" line (any trailing ".git" stripped), or None if the file
+    doesn't exist or has no such line."""
+    project = gitreview_value(path, "project")
+    if project is not None and project.endswith(".git"):
+        project = project[:-len(".git")]
+    return project
+
+
+def reverse_resolve(path, rules, exists=os.path.isdir, gitreview_project=gitreview_project,
+                    origin_url=git_origin_url):
+    """The inverse of Step 2: given a local directory, identify the
+    canonical "scheme:path" it corresponds to and the settings.yaml `repos:` rule (if
+    any) that maps to it. Returns (canonical, rule); either or both may be
+    None if nothing can be identified (see below).
+
+    A ".gitreview" file's "project=" line, if present, is authoritative --
+    settings.yaml `repos:` rules are hand-maintained and can go stale (see
+    resolve_directory's belt-and-suspenders check above), so it's used even
+    if it disagrees with what a rule would have predicted for this path. In
+    that case `rule` is whichever configured rule's expansion actually
+    produces this exact directory, or None if none does (report this case
+    as "<no rule>" -- the .gitreview project is still authoritative, it's
+    just not one settings.yaml knows how to reproduce).
+
+    Without a .gitreview (not a Gerrit checkout, or not cloned yet), falls
+    back to the config's *exact* (no "**"/"{name}") rules only -- see
+    exact_rule_canonicals. A wildcard rule can't be inverted from a bare
+    directory alone: many different canonicals can collapse to the same
+    local path template (e.g. "gerrit:**/{name}" -> "~/Wikimedia/{name}"
+    loses which Gerrit namespace "{name}" came from), so a .gitreview (or
+    an exact rule, which has only one possible canonical by construction)
+    is required to resolve that ambiguity.
+
+    Failing both, a gitlab.wikimedia.org `origin` URL in the checkout's own
+    git config names the project (canonical_from_url); `origin_url` is
+    injectable for tests."""
+    expanded = os.path.expanduser(path)
+    if not exists(expanded):
+        raise ResolutionError(f"{path!r} is not an existing directory.")
+    recorded = gitreview_project(expanded)
+    if recorded is not None:
+        canonical = f"gerrit:{recorded}"
+    else:
+        canonical = exact_rule_canonicals(rules).get(os.path.realpath(expanded))
+        if canonical is not None:
+            rule = next((r for r in rules if r["match"] == canonical), None)
+            return canonical, rule
+        # Last resort, and the only one a GitLab checkout has: its own
+        # `origin` names the project.
+        canonical = canonical_from_url(origin_url(expanded))
+        if canonical is None:
+            return None, None
+    for rule, captures in matching_rules(canonical, rules):
+        if os.path.realpath(expand_path(rule["path"], captures)) == os.path.realpath(expanded):
+            return canonical, rule
+    return canonical, None
+
+
+def resolve_directory(canonical, rules, exists=os.path.isdir, gitreview_project=gitreview_project):
+    """Step 2. Returns (path, rule, needs_clone).
+
+    Belt-and-suspenders check: a Gerrit canonical whose candidate directory
+    already exists AND has a .gitreview file is only accepted if that
+    file's "project=" line agrees with what we expect there -- settings.yaml
+    rules are hand-maintained and directories get renamed/repurposed, so an
+    existing directory at the expected path isn't proof it's the right
+    checkout. A directory with no .gitreview (or a scheme other than
+    gerrit, which .gitreview doesn't apply to) is accepted as before,
+    trusting the rule. On a mismatch we keep looking at the next
+    (less-specific) candidate, exactly like a plain missing directory --
+    UNLESS the most-specific candidate (the one that would otherwise become
+    the fresh-clone target) is itself an existing-but-mismatched directory:
+    "needs_clone" means "safe to git clone into this path", which isn't
+    true of a directory that already holds the wrong checkout, so that's a
+    hard error instead of a silent needs_clone."""
+    candidates = matching_rules(canonical, rules)
+    if not candidates:
+        raise ResolutionError(f"No config rule matches {canonical!r}.")
+    can_scheme, can_rest = split_scheme(canonical)
+    for rule, captures in candidates:
+        path = expand_path(rule["path"], captures)
+        if not exists(path):
+            continue
+        if can_scheme == "gerrit":
+            recorded = gitreview_project(path)
+            if recorded is not None and recorded != can_rest:
+                continue
+        return path, rule, False
+    rule, captures = candidates[0]
+    path = expand_path(rule["path"], captures)
+    if exists(path):
+        recorded = gitreview_project(path) if can_scheme == "gerrit" else None
+        raise ResolutionError(
+            f"{path} already exists, but its .gitreview says {recorded!r}, "
+            f"not {can_rest!r} -- refusing to treat it as a fresh-clone "
+            "target. Fix or remove it, or adjust settings.yaml."
+        )
+    return path, rule, True
+
+
+# --------------------------------------------------------------------------
+# Config loading and CLI
+# --------------------------------------------------------------------------
+
+def load_config(path=DEFAULT_CONFIG, warn=lambda msg: print(msg, file=sys.stderr)):
+    """The settings file as a dict with every key of CONFIG_DEFAULTS (and
+    `session` if set). An unknown top-level section gets a warning, once
+    per run."""
+    if not os.path.exists(path):
+        return {k: type(v)() for k, v in CONFIG_DEFAULTS.items()}
+    if yaml is None:
+        raise ResolutionError(
+            f"PyYAML is required to read {path} but isn't installed.\n"
+            "Install it in a venv, e.g.:\n"
+            "  python3 -m venv ~/.venvs/wmf-sbx && ~/.venvs/wmf-sbx/bin/pip install pyyaml\n"
+            "and run this script with that venv's python3."
+        )
+    with open(path, encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    if not isinstance(data, dict):
+        raise ResolutionError(f"{path}: want a mapping at the top level")
+    # A section this wmf-sbx does not know: a typo, or one that a newer
+    # wmf-sbx reads. Warn and carry on, so that one file serves both.
+    from .__main__ import COMMANDS
+    known = set(CONFIG_DEFAULTS) | {"session"} | set(COMMANDS)
+    for key in sorted(set(data) - known, key=str):
+        if (path, key) not in _UNKNOWN_NOTED:
+            _UNKNOWN_NOTED.add((path, key))
+            warn(color_mod.warning(f"warning: {path}: unknown section `{key}:`; ignored"))
+    for key, default in CONFIG_DEFAULTS.items():
+        if data.get(key) is None:
+            data[key] = type(default)()
+        elif not isinstance(data[key], type(default)):
+            raise ResolutionError(f"{path}: `{key}:` must be a "
+                                  f"{'list' if isinstance(default, list) else 'mapping'}")
+    return data
+
+
+def resolve(spec, config_path=DEFAULT_CONFIG, search=gerrit_search, exists=os.path.isdir,
+            warn=lambda msg: print(msg, file=sys.stderr), gitlab=gitlab_search, prompt=None):
+    """End-to-end convenience entry point. Returns (canonical, path, rule,
+    needs_clone). `prompt`: see _pick_exact."""
+    config = load_config(config_path)
+    if search is gerrit_search:
+        # GERRITUA (deps.gerrit_opener), from the shell or the settings.
+        opener = deps_mod.gerrit_opener(deps_mod.gerrit_user_agent(config))
+
+        def search(substring):
+            return gerrit_search(substring, opener=opener)
+
+    canonical = resolve_canonical_path(spec, search=search, warn=warn, gitlab=gitlab,
+                                       prompt=prompt)
+    path, rule, needs_clone = resolve_directory(canonical, config["repos"], exists=exists)
+    return canonical, path, rule, needs_clone
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "name", nargs="?", default=None,
+        help="Bare name, full Gerrit path, or scheme:path (e.g. Cite, "
+        "mediawiki/extensions/Cite, gerrit:mediawiki/extensions/Cite)"
+    )
+    parser.add_argument(
+        "--path", help="Reverse lookup: given a local directory, identify the "
+        "canonical Gerrit/GitLab project and settings.yaml `repos:` rule it corresponds "
+        "to, instead of resolving NAME to a directory"
+    )
+    parser.add_argument("--json", action=argparse.BooleanOptionalAction, default=False,
+                        help="Machine-readable output")
+    from . import cli as cli_mod   # cli imports this module
+    args, config = cli_mod.parse_args(parser, argv, "resolve")
+
+    if (args.name is None) == (args.path is None):
+        parser.error("give exactly one of NAME or --path")
+    if args.name is not None and is_raw_path(args.name):
+        # A directory, as `create` takes one: look it up the other way.
+        args.path, args.name = args.name, None
+
+    if args.path is not None:
+        try:
+            canonical, rule = reverse_resolve(args.path, config["repos"])
+        except ResolutionError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 1
+        if canonical is None:
+            print(
+                f"error: no canonical project found for {args.path!r} "
+                "(no .gitreview, and no exact settings.yaml `repos:` rule matches this "
+                "directory).",
+                file=sys.stderr,
+            )
+            return 1
+        # realpath so this reports the path wmf-sbx-create would actually
+        # mount, not the symlink the engineer typed -- see create._SBX_ROOT.
+        path = os.path.realpath(os.path.expanduser(args.path))
+        if args.json:
+            print(json.dumps({
+                "canonical": canonical,
+                "path": path,
+                "rule": rule["match"] if rule else None,
+                "needs_clone": False,
+            }))
+        else:
+            print(f"canonical: {canonical}")
+            print(f"path:      {path} (exists)")
+            print(f"rule:      {rule['match'] if rule else '<no rule>'}")
+        return 0
+
+    try:
+        canonical, path, rule, needs_clone = resolve(args.name, args.config,
+                                                     prompt=prompt_mod.Prompt())
+    except ResolutionError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+    if args.json:
+        print(json.dumps({
+            "canonical": canonical,
+            "path": path,
+            "rule": rule["match"],
+            "needs_clone": needs_clone,
+        }))
+    else:
+        print(f"canonical: {canonical}")
+        print(f"path:      {path}{' (needs clone)' if needs_clone else ' (exists)'}")
+        print(f"rule:      {rule['match']}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

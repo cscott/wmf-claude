@@ -1,0 +1,200 @@
+#!/usr/bin/env python3
+"""The repositories of a sandbox (DESIGN.md, "Repositories and git transport").
+
+Host to VM: the host's git dir of each repository is mounted read-only
+at /run/wmf-sbx/host/<host path> (template.py). In the VM, a `git clone
+--shared` of that mount is at the host path of the repository, so
+the alternates point into the mount. After a host `git fetch`, the agent
+sees the new objects at once (`git fetch local`).
+
+VM to host: the host repository gets a remote with the sandbox's name and
+the URL wmfsbx://NAME/PATH, which git-remote-wmfsbx (remote_helper.py)
+serves with `git upload-pack` in the VM. remotes.py adds the remote and
+suspends gc.
+
+The git dir is `git rev-parse --git-common-dir`, so that a worktree
+mounts the repository's git dir. The clone is on the branch that the
+host checkout is on (detached when the host's HEAD is).
+
+A host repository that borrows objects itself (its own alternates file:
+`git clone --shared` or `--reference`) has those object dirs mounted too,
+and the clone in the VM lists their mounts in its alternates. The case
+that needs it: `create` in a sandbox, of a sandbox's clone, whose
+alternates name /run/wmf-sbx/host/<path>/.git/objects. In the inner VM
+that is the mount of the clone's own git dir, not the host's objects
+(git fails with "unable to read tree").
+"""
+
+import os
+import shlex
+import subprocess
+
+from . import deps as deps_mod
+from . import remotes as remotes_mod
+from . import template as template_mod
+from . import vm as vm_mod
+
+GUEST_SCRIPT = os.path.join(os.path.dirname(os.path.realpath(__file__)),
+                            "sandbox-repos.sh")
+SCHEME = "wmfsbx"
+
+# Host paths that a clone cannot have in the VM: the guest uses them
+# itself, or they are not persistent (/tmp is a tmpfs on Debian 13).
+RESERVED_PREFIXES = ("/bin", "/boot", "/dev", "/etc", "/lib", "/opt", "/proc",
+                     "/root", "/run", "/sbin", "/srv", "/sys", "/tmp", "/usr",
+                     "/var", vm_mod.AGENT_HOME, vm_mod.ENGINEER_HOME)
+
+
+class RepoError(Exception):
+    """A user-facing problem with a host repository."""
+
+
+def check_vm_path(path):
+    """Refuse a host path that the clone cannot have in the VM."""
+    if not os.path.isabs(path) or os.path.normpath(path) != path or path.startswith("//"):
+        raise RepoError(f"{path!r} is not a normal absolute path")
+    for prefix in RESERVED_PREFIXES:
+        if path == prefix or path.startswith(prefix + "/"):
+            raise RepoError(
+                f"{path} is under {prefix}, which the VM uses itself; the clone "
+                f"in the VM has the host path. Move the checkout.")
+    if any(c in path for c in "\n\0"):
+        raise RepoError(f"{path!r} has a newline or NUL in it")
+
+
+def alternates(gitdir, limit=5):
+    """The object dirs that `gitdir` borrows from, through its alternates
+    file and theirs (as git follows them, up to `limit` deep), each once,
+    as real absolute paths. Missing ones are left out: git ignores them,
+    and so does the clone in the VM."""
+    out = []
+    todo = [(os.path.join(gitdir, "objects"), 0)]
+    while todo:
+        objects, depth = todo.pop(0)
+        try:
+            with open(os.path.join(objects, "info", "alternates"), encoding="utf-8") as f:
+                lines = f.read().splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith("#") or line.startswith('"'):
+                continue
+            alt = os.path.realpath(os.path.join(objects, line))
+            if alt in out or not os.path.isdir(alt) or alt == os.path.realpath(objects):
+                continue
+            out.append(alt)
+            if depth + 1 < limit:
+                todo.append((alt, depth + 1))
+    return out
+
+
+def host_repo(path, run=subprocess.run, predicted=False):
+    """{path, gitDir, alternates, branch, sha} of the host checkout at
+    `path` (`alternates`: the object dirs it borrows from).
+
+    `predicted` is for a dry run of a repository that is not cloned yet:
+    its git dir is then PATH/.git, and the branch and commit are not
+    known."""
+    check_vm_path(path)
+    if predicted:
+        return {"path": path, "gitDir": os.path.join(path, ".git"), "alternates": [],
+                "branch": None, "sha": None}
+    res = remotes_mod.git(path, ["rev-parse", "--path-format=absolute", "--git-common-dir"], run)
+    if res.returncode != 0:
+        raise RepoError(f"{path} is not a git repository; a sandbox gets git "
+                        f"repositories only (their git dirs are mounted)")
+    gitdir = os.path.realpath(res.stdout.strip())
+    res = remotes_mod.git(path, ["rev-parse", "--verify", "-q", "HEAD^{commit}"], run)
+    if res.returncode != 0:
+        raise RepoError(f"{path} has no commit yet")
+    sha = res.stdout.strip()
+    res = remotes_mod.git(path, ["symbolic-ref", "-q", "--short", "HEAD"], run)
+    branch = res.stdout.strip() if res.returncode == 0 else None
+    return {"path": path, "gitDir": gitdir, "alternates": alternates(gitdir),
+            "branch": branch or None, "sha": sha}
+
+
+def git_dirs(repos):
+    """The dirs to mount, each once (two worktrees share one): the git
+    dirs, then the object dirs they borrow from."""
+    seen = []
+    for d in ([r["gitDir"] for r in repos]
+              + [a for r in repos for a in r.get("alternates", ())]):
+        if d not in seen:
+            seen.append(d)
+    return seen
+
+
+def remote_url(name, path):
+    return f"{SCHEME}://{name}{path}"
+
+
+def _call(fn, *args):
+    return fn + " " + " ".join(shlex.quote(str(a)) for a in args)
+
+
+def guest_scripts(repos, upstreams, keep, readonly, refresh=False):
+    """(root script, {owner: clone script}) for the guest.
+
+    `upstreams` is {path: upstream URL}; `keep` is the set of paths that
+    stay on the host's commit (the repos named on the command line,
+    unless --reset-all); `readonly` is the set of ':ro' paths, which the
+    engineer owns, so the agent can read them but not change them.
+    `refresh`: the clones are in the VM already, from a warm snapshot
+    (refresh_repo)."""
+    with open(GUEST_SCRIPT, encoding="utf-8") as f:
+        lib = f.read()
+    root = [lib]
+    clones = {}
+    for r in repos:
+        path = r["path"]
+        owner = template_mod.ENGINEER if path in readonly else vm_mod.AGENT
+        mount = template_mod.mount_point(r["gitDir"])
+        root.append(_call("prepare", mount, path, owner, *(["refresh"] if refresh else [])))
+        clones.setdefault(owner, [lib]).append(_call(
+            "refresh_repo" if refresh else "clone_repo", mount, path, r["branch"] or "", r["sha"],
+            upstreams.get(path, ""), "0" if path in keep else "1",
+            *[template_mod.mount_point(a) for a in r.get("alternates", ())]))
+    return "\n".join(root) + "\n", {o: "\n".join(s) + "\n" for o, s in clones.items()}
+
+
+def git_config_exports(user_agent):
+    """Shell lines that give each git in a clone script Gerrit's user agent
+    (deps.gerrit_git_config), or "". In the script, which goes to the VM
+    on stdin, and not in its argv: the value is a secret, and `ps` shows
+    an argv."""
+    pairs = deps_mod.git_config_env(deps_mod.gerrit_git_config(user_agent))
+    return "".join(f"export {k}={shlex.quote(v)}\n" for k, v in sorted(pairs.items()))
+
+
+def clone_in_vm(name, repos, upstreams, keep, readonly=(), lima=None, env=None,
+                refresh=False, user_agent=None):
+    """Make the clones in the VM, or bring a warm snapshot's up to date
+    (`refresh`). `user_agent`: GERRITUA, for the fetch from Gerrit. Raises
+    RepoError if one fails."""
+    root, clones = guest_scripts(repos, upstreams, keep, set(readonly), refresh=refresh)
+    exports = git_config_exports(user_agent)
+    res = vm_mod.shell(name, ["sudo", "bash", "-s"], lima=lima, input=root,
+                       check=False, capture=False)
+    if res.returncode != 0:
+        raise RepoError(f"preparing the clone directories in the VM failed "
+                        f"(exit {res.returncode})")
+    proxy = vm_mod.guest_proxy_env(name, env)
+    for owner, script in clones.items():
+        if owner == vm_mod.AGENT:
+            argv = vm_mod.agent_argv(["bash", "-s"], env=proxy)
+        else:
+            argv = ["env"] + [f"{k}={v}" for k, v in sorted(proxy.items())] + ["bash", "-s"]
+        res = vm_mod.shell(name, argv, lima=lima, input=exports + script, check=False,
+                           capture=False)
+        if res.returncode != 0:
+            raise RepoError(f"cloning in the VM failed (exit {res.returncode})")
+
+
+def remote_candidates(name, repos):
+    """The host remotes for remotes.sync_remotes: one per repository,
+    ':ro' ones too, because their clones also borrow the host's objects
+    and gc must stay off for them."""
+    return [{"hostDir": r["path"], "remote": name, "url": remote_url(name, r["path"]),
+             "sandboxPath": r["path"]} for r in repos]

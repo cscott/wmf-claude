@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# mw-install-browser: install Chrome for Testing and chromedriver in *this*
+# sandbox, for the karma (`grunt karma:chrome`) and selenium (`wdio`) suites.
+# Runs INSIDE a sandbox, as the agent. It needs no sudo.
+#
+# Why this exists: Debian has no Chrome, and Debian's chromium lags the
+# release that wdio asks for. The browser therefore comes from the Chrome
+# for Testing CDN, through `@puppeteer/browsers`, which MediaWiki core
+# already has in `node_modules`. The shared libraries that Chrome needs are
+# in the image (image.py IMAGE_PACKAGES).
+#
+# The install is on demand, not at create time: it is about 420 MB, and most
+# sandboxes never run a browser test. It takes under a minute.
+#
+#   mw-install-browser          # install, link, and check
+#
+# Run it again to move to the current stable release.
+#
+# /usr/bin/chromium and /usr/bin/chromedriver, the paths WMF CI uses, are
+# wrappers in the image. They run the links that this script makes in
+# $LINKS, and the chromium wrapper adds --no-sandbox: Chrome's own sandbox
+# cannot start under nono (NoNewPrivs, and no user namespaces), so nono is
+# the sandbox around the browser. See ~/MEDIAWIKI-TESTING.md §5.
+set -uo pipefail
+
+CACHE="${PUPPETEER_CACHE_DIR:-$HOME/.cache/puppeteer}"
+CORE="${MW_INSTALL_PATH:-}"
+CLI="node_modules/@puppeteer/browsers/lib/cjs/main-cli.js"
+# Keep in step with the wrappers in sbx/src/wmf_sbx/image-build.sh.
+LINKS="${WMF_SBX_BROWSER_LINKS:-/home/agent/.cache/wmf-sbx-browser}"
+
+die() { echo "mw-install-browser: $*" >&2; exit 1; }
+# Progress goes to stderr: install_one writes the path it found to stdout.
+step() { echo "mw-install-browser: $*" >&2; }
+
+[ -n "$CORE" ] || die "MW_INSTALL_PATH is not set; run this in a sandbox that has a MediaWiki core checkout"
+[ -f "$CORE/$CLI" ] || die "no $CLI in $CORE; run \`npm ci\` in the core checkout first"
+command -v node >/dev/null || die "need node on PATH"
+
+# 1. The browser and the driver, from the Chrome for Testing CDN.
+#    `install` prints "<name>@<version> <path>" on the last line, and is a
+#    no-op when that version is already in the cache.
+install_one() {
+  local what="$1" out
+  step "downloading $what"
+  out=$(node "$CORE/$CLI" install "$what" --path "$CACHE" 2>&1)
+  if [ $? -ne 0 ]; then
+    echo "$out" >&2
+    case "$out" in
+      *403*) die "the Chrome download was refused with 403. This sandbox's" \
+                 "network policy is narrower than the kit asks for. Only the" \
+                 "engineer can widen it, on the host; report the message above" \
+                 "and stop." ;;
+      *) die "could not install $what" ;;
+    esac
+  fi
+  echo "$out" | awk 'NF { last = $NF } END { print last }'
+}
+
+chrome=$(install_one chrome@stable) || exit 1
+driver=$(install_one chromedriver@stable) || exit 1
+[ -x "$chrome" ] || die "the install did not leave an executable at '$chrome'"
+[ -x "$driver" ] || die "the install did not leave an executable at '$driver'"
+
+# 2. The shared libraries. The image has them; a library that is missing
+#    is an image bug, which the agent cannot fix.
+missing=$( { ldd "$chrome"; ldd "$driver"; } 2>/dev/null | awk '/not found/ { print $1 }' | sort -u)
+[ -z "$missing" ] || die "Chrome needs libraries that the image lacks:" \
+  $missing "-- report this to the engineer (sbx/src/wmf_sbx/image.py" \
+  "IMAGE_PACKAGES) and stop."
+
+# 3. The links that the /usr/bin wrappers run.
+step "linking $LINKS/chrome and $LINKS/chromedriver"
+mkdir -p "$LINKS" || die "could not make $LINKS"
+ln -sfn "$chrome" "$LINKS/chrome" || die "could not link $LINKS/chrome"
+ln -sfn "$driver" "$LINKS/chromedriver" || die "could not link $LINKS/chromedriver"
+
+# 4. Prove it starts. Chrome writes D-Bus and network-manager errors to
+#    stderr in a container; they are noise, so show them only on a failure.
+step "checking the browser"
+log=$(mktemp "${TMPDIR:-/tmp}/mw-install-browser.XXXXXX") || die "mktemp failed"
+trap 'rm -f "$log"' EXIT
+dom=$(/usr/bin/chromium --headless --dump-dom about:blank 2>"$log")
+case "$dom" in
+  *"<html"*) ;;
+  *) cat "$log" >&2; die "/usr/bin/chromium did not render about:blank" ;;
+esac
+
+echo "mw-install-browser: ready."
+/usr/bin/chromium --version
+/usr/bin/chromedriver --version

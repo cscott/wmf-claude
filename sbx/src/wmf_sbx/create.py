@@ -1,0 +1,1067 @@
+#!/usr/bin/env python3
+"""`wmf-sbx create`: make a sandbox, a Lima VM (DESIGN.md, "Architecture").
+
+This module resolves the repos named on the command line (resolve.py),
+walks the MediaWiki dependencies (deps.py), clones what is missing, and
+then makes the VM: main() finds or builds the golden image (image.py),
+generates the instance config (template.py), saves the state and boots
+the VM (vm.py).
+
+The other helpers here make the upstream and link plans for the in-VM
+setup, and find the Phabricator username for the session.
+"""
+
+import argparse
+import datetime
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+from . import authproxy as authproxy_mod
+from . import ci_deps as ci_mod
+from . import cli as cli_mod
+from . import color as color_mod
+from . import deps as deps_mod
+from . import disk as disk_mod
+from . import egress as egress_mod
+from . import resolve as resolve_mod
+from . import state as state_mod
+from . import image as image_mod
+from . import kit as kit_mod
+from . import lima as lima_mod
+from . import mediawiki as mediawiki_mod
+from . import nested as nested_mod
+from . import prompt as prompt_mod
+from . import remotes as remotes_mod
+from . import repos as repos_mod
+from . import session as session_mod
+from . import snapshot as snapshot_mod
+from . import template as template_mod
+from . import vm as vm_mod
+
+# `create --nested` says this first (SECURITY.md, section 6a).
+NESTED_WARNING = ("warning: a nested sandbox is less secure: nono gives the agent /dev/kvm, "
+                  "Lima's sockets and more hosts. Use it only to work on wmf-claude itself.")
+# The same, for `--sudo --nested`: the agent has root in the VM already, so
+# only the hosts are new.
+NESTED_SUDO_WARNING = ("warning: a nested sandbox is less secure: its egress proxy allows "
+                       "more hosts, for image builds. Use it only to work on wmf-claude itself.")
+
+# A default create on vz (macOS) or a host without what the egress proxy
+# needs: the sandbox it makes has the guest's own route.
+EGRESS_FALLBACK = ("warning: {why}, so {name} is not behind the host egress proxy: the "
+                   "guest, not the host, enforces its network policy. {fix}")
+
+
+def egress_choice(requested, vm_type, name, env, missing=None, flag="--egress-proxy"):
+    """(behind the egress proxy, a warning or None) for a create.
+
+    `requested` is --egress-proxy (True), --no-egress-proxy (False), or
+    neither (None): then it is the default where the host can run it, and
+    a fallback with a warning where it cannot. Raises VmError for an
+    explicit request that cannot be had; `flag` names what asked for it
+    (--sudo needs the proxy too)."""
+    if requested is False:
+        return False, None
+    if vm_type == "vz":
+        if requested:
+            raise vm_mod.VmError(f"{flag} needs QEMU (--vm-type qemu); vz has "
+                                 "no restrict=on network")
+        return False, EGRESS_FALLBACK.format(
+            why="the egress proxy needs QEMU and this is vz", name=name,
+            fix="`--vm-type qemu` puts it behind the proxy; `--no-egress-proxy` "
+                "leaves out this warning.")
+    lacking = egress_mod.missing_tools(env) if missing is None else missing
+    if lacking:
+        if requested:
+            raise vm_mod.VmError(f"{flag} needs {', '.join(lacking)} on the "
+                                 f"host's PATH")
+        return False, EGRESS_FALLBACK.format(
+            why=f"the host has no {', '.join(lacking)}", name=name,
+            fix="Install it for the proxy; `--no-egress-proxy` leaves out this warning.")
+    return True, None
+
+
+CLONE_URL_BUILDERS = {
+    "gerrit": lambda path: f"https://gerrit.wikimedia.org/r/{path}",
+    "gitlab": lambda path: f"https://gitlab.wikimedia.org/{path}.git",
+}
+
+
+class LaunchError(Exception):
+    """A user-facing failure building or running the sbx command."""
+
+
+def clone_url(canonical):
+    scheme, path = resolve_mod.split_scheme(canonical)
+    try:
+        builder = CLONE_URL_BUILDERS[scheme]
+    except KeyError:
+        raise LaunchError(f"Don't know how to clone {scheme!r} repos.") from None
+    return builder(path)
+
+
+def host_upstream_url(host_dir, run=subprocess.run):
+    """The URL the host's own checkout at `host_dir` already has configured
+    as `origin` -- or None if it isn't a git repo, has no `origin`, or that
+    `origin` isn't something the sandbox can actually fetch.
+
+    This is upstream_plan's fallback for a repo whose canonical name isn't
+    known -- most commonly a raw filesystem-path argument (is_raw_path)
+    that canonicals_for_kit couldn't identify, because it's a GitLab clone
+    (no .gitreview -- that's Gerrit-only) with no exact settings.yaml `repos:` rule
+    either. Reading the host's own git config instead needs no
+    forge-specific knowledge at all: it works for any already-cloned
+    directory, whatever it was cloned from.
+
+    Only an http(s) URL is used: the sandbox has no SSH agent by design,
+    so an ssh://, git@host:path, or bare local-path
+    origin on the host -- all common for an engineer's own checkout --
+    would just be unreachable from inside the sandbox. `local` (the
+    read-only mount of the host checkout) stays the fallback for those,
+    same as for an unidentifiable repo."""
+    url = resolve_mod.git_origin_url(host_dir, run=run)
+    return url if url and url.startswith(("http://", "https://")) else None
+
+
+def upstream_plan(resolved, run=subprocess.run,
+                  gitlab_upstream=resolve_mod.gitlab_upstream):
+    """{local_dir: upstream_clone_url} for the repos we can name an upstream
+    for, so the sandbox clone can call the real upstream remote `origin`
+    and the host mirror `local`.
+
+    Two ways to learn the upstream, tried in order: a resolved canonical
+    (gerrit:/gitlab:) via clone_url() -- what do_clone would have cloned
+    from -- or, failing that, whatever `origin` the host's own checkout
+    already has configured (host_upstream_url). The second needs no
+    project identification at all, so it covers any already-cloned
+    directory clone_url()/canonical resolution can't name.
+
+    A gitlab: canonical that is a fork is followed to its root project
+    (gitlab_upstream), so `origin` in the sandbox is the real upstream and
+    not the engineer's personal fork. If GitLab does not answer, the
+    canonical's own URL is used.
+
+    A repo with neither is simply absent: the clone keeps the host mirror
+    as `origin` and git-safe-reset falls back to it."""
+    plan = {}
+    for canonical, path in resolved:
+        url = None
+        if canonical is not None:
+            try:
+                if canonical.startswith("gitlab:"):
+                    try:
+                        canonical = "gitlab:" + gitlab_upstream(
+                            canonical[len("gitlab:"):])
+                    except resolve_mod.ResolutionError:
+                        pass
+                url = clone_url(canonical)
+            except LaunchError:
+                url = None
+        if url is None:
+            url = host_upstream_url(path, run=run)
+        if url is not None:
+            plan[path] = url
+    return plan
+
+
+def default_sandbox_name(primary_canonical):
+    _, path = resolve_mod.split_scheme(primary_canonical)
+    slug = re.sub(r"[^A-Za-z0-9-]+", "-", path.rsplit("/", 1)[-1]).strip("-").lower()
+    return f"sbx-{slug}" if slug else "sbx-sbx"
+
+
+def unique_sandbox_name(name, existing, prompt=input):
+    """If `name` collides with a name in `existing` (see
+    existing_sandbox_names), ask the user to pick a different one. An empty response accepts
+    the first
+    free auto-suffixed alternative ("name-2", "name-3", ...); the loop
+    repeats -- re-suggesting a fresh suffix each time -- until whatever the
+    user settles on doesn't collide."""
+    while name in existing:
+        suffix = 2
+        suggestion = f"{name}-{suffix}"
+        while suggestion in existing:
+            suffix += 1
+            suggestion = f"{name}-{suffix}"
+        response = prompt(
+            f"A sandbox named {name!r} already exists. Enter a different "
+            f"name, or press Enter to use {suggestion!r}: "
+        ).strip()
+        name = response or suggestion
+    return name
+
+
+def split_ro_suffix(spec):
+    """Splits a trailing ':ro' opt-out suffix off a repo argument. The suffix is stripped here
+    so the
+    rest of the pipeline (repo resolution, realpath'ing, nested-mount
+    checks) sees a plain path.
+
+    The suffix makes the repo read-only in the sandbox: the plan's
+    `readOnly` (kit.build_plan), which setup turns into a read-only clone
+    instead of a writable one.
+
+    Returns (spec_without_suffix, is_ro)."""
+    if spec.endswith(":ro"):
+        return spec[: -len(":ro")], True
+    return spec, False
+
+
+is_raw_path = resolve_mod.is_raw_path
+
+
+def resolve_repo(spec, config_path, prompt=None):
+    """Resolve one repo spec. Returns (canonical, realpath'd local dir,
+    needs_clone). The dir is realpath'd because the VM clones each repo
+    at its host path, and a symlinked path would not match.
+
+    A spec that looks like a literal filesystem path (see is_raw_path)
+    bypasses repo resolution entirely: this is how a directory that does
+    not fit the one-canonical-repo model gets in; canonical is None for
+    these."""
+    if is_raw_path(spec):
+        path = os.path.realpath(os.path.expanduser(spec))
+        if not os.path.isdir(path):
+            raise resolve_mod.ResolutionError(f"{spec!r} is not an existing directory.")
+        return None, path, False
+    canonical, path, _rule, needs_clone = resolve_mod.resolve(spec, config_path, prompt=prompt)
+    return canonical, os.path.realpath(os.path.expanduser(path)), needs_clone
+
+
+def do_clone(canonical, path, run=subprocess.run, which=shutil.which, user_agent=None):
+    """Clone `canonical` at `path` on the host. A Gerrit clone then gets
+    `git review -s` (the `gerrit` remote and the commit-msg hook), as the
+    engineer's own checkouts have; if that fails the clone is still good,
+    so it is a warning. `user_agent`: GERRITUA, which git sends to Gerrit
+    only (deps.gerrit_git_config), in the environment and not the argv."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    url = clone_url(canonical)
+    print(color_mod.dim(f"+ git clone {url} {path}"), file=sys.stderr)
+    try:
+        git_env = deps_mod.git_config_env(deps_mod.gerrit_git_config(user_agent),
+                                          os.environ)
+    except ValueError:
+        git_env = {}  # the engineer's own GIT_CONFIG_COUNT is wrong; git says so
+    env = dict(os.environ, **git_env) if git_env else None
+    result = run(["git", "clone", url, path], env=env)
+    if result.returncode != 0:
+        raise LaunchError(f"git clone {url} {path} failed (exit {result.returncode}).")
+    if resolve_mod.split_scheme(canonical)[0] != "gerrit":
+        return
+    if which("git-review") is None:
+        color_mod.warn(f"{path}: git-review is not installed, so the clone has no `gerrit` "
+                       f"remote or commit-msg hook; install it and run `git review -s` there.")
+        return
+    print(color_mod.dim(f"+ git -C {path} review -s"), file=sys.stderr)
+    result = run(["git", "-C", path, "review", "-s"], env=env)
+    if result.returncode != 0:
+        color_mod.warn(f"{path}: `git review -s` failed (exit {result.returncode}); run it "
+                       f"there before you send a patch.")
+
+
+def confirm_clones(missing, clone_missing, interactive, prompt=input):
+    """True if the repos in `missing` ([(canonical, path), ...]) may be
+    cloned on the host. `clone_missing` (--clone-missing, or settings.yaml
+    create.cloneMissing) says yes without asking; otherwise the engineer
+    is asked, and with no terminal to ask on the answer is no."""
+    if not missing or clone_missing:
+        return True
+    if not interactive:
+        return False
+    listed = "\n".join(f"  {canonical} -> {path}" for canonical, path in missing)
+    print(f"{len(missing)} repo(s) are not on this machine yet:\n{listed}", file=sys.stderr)
+    return prompt_mod.Prompt(ask=prompt, isatty=lambda: True).confirm(
+        "Clone them there now?")
+
+
+def find_nested_mount_conflict(dirs):
+    """The repos are cloned in the VM at their host paths, so one inside
+    another (for example ~/src as an extra while the primary is
+    ~/src/wmf-claude) cannot work. dirs must already be realpath'd.
+    Returns the (ancestor, descendant) pair, or None if there's no
+    conflict."""
+    for a in dirs:
+        for b in dirs:
+            if a == b:
+                continue
+            if b.startswith(a + os.sep):
+                return a, b
+    return None
+
+
+def expand_dependencies(resolved, split, config, config_path, include_dev=True,
+                        include_suggests=True, fetch=None, warn=None, ci_maps=None,
+                        phan_deps=True):
+    """Grow the explicitly-named repo list into its full MediaWiki
+    dependency closure. Returns
+    (resolved, split, origins_by_path, unreachable) -- `unreachable` being
+    the repos whose manifests couldn't be fetched, i.e. the reason to
+    distrust the closure.
+
+    `ci_maps` is WMF CI's two dependency maps (ci_deps.fetch_maps), or
+    None: CI's dependencies of each named repo (without the phan map's,
+    with phan_deps False) are added to settings.yaml `extra_dependencies:`.
+
+    Discovery reads manifests from local checkouts where they exist and
+    from gitiles otherwise, so nothing is cloned until the whole plan is
+    known and `--dry-run` can show the real closure rather than the part
+    of it that happens to already be on disk.
+
+    Discovered repos are always extras (the primary stays whatever was
+    named first, and `wmf-sbx create` requires the primary be read/write
+    anyway) and never ':ro' -- you may well need to edit a dependency.
+    """
+    warn = warn or color_mod.warn
+    # Looked up here rather than as a default argument so tests (and
+    # anything else) can substitute the network call by patching the module.
+    if fetch is None:
+        opener = deps_mod.gerrit_opener(deps_mod.gerrit_user_agent(config))
+
+        def fetch(canonical, warn=None):
+            return deps_mod.fetch_manifest(canonical, opener=opener, warn=warn)
+    rules = config["repos"]
+
+    def local_dir(canonical):
+        try:
+            path, _rule, needs_clone = resolve_mod.resolve_directory(canonical, rules)
+        except resolve_mod.ResolutionError:
+            return None
+        return None if needs_clone else path
+
+    roots = [canonical for canonical, _path in canonicals_for_kit(resolved, rules)]
+    try:
+        extras = deps_mod.extra_edges(config.get("extra_dependencies"))
+    except ValueError as e:
+        raise resolve_mod.ResolutionError(f"{config_path}: {e}") from None
+    if ci_maps is not None:
+        for root, ci in ci_mod.edges(roots, *ci_maps, include_phan=phan_deps).items():
+            extras[root] = list(dict.fromkeys(extras.get(root, []) + ci))
+    unreachable = set()
+    discovered, origins = deps_mod.walk(
+        roots,
+        deps_mod.make_manifest_for(local_dir, fetch=fetch, warn=warn,
+                                   unreachable=unreachable),
+        include_dev=include_dev,
+        include_suggests=include_suggests,
+        overrides=config.get("dependency_overrides") or {},
+        warn=warn,
+        extras=extras,
+    )
+
+    resolved = list(resolved)
+    split = list(split)
+    origins_by_path = {}
+    for canonical in discovered:
+        chain = deps_mod.origin_chain(canonical, origins, roots)
+        try:
+            entry = resolve_repo(canonical, config_path)
+        except resolve_mod.ResolutionError as e:
+            # Loud, not silent: a dropped dependency doesn't announce
+            # itself -- it surfaces much later as failing tests inside the
+            # sandbox, which is a far worse experience than an error here.
+            raise resolve_mod.ResolutionError(
+                f"{e}\n{canonical} was pulled in as a dependency "
+                f"({' -> '.join(chain)}). Add a settings.yaml `repos:` rule for it, or "
+                f"re-run with --no-deps."
+            ) from None
+        resolved.append(entry)
+        split.append((canonical, False))
+        origins_by_path[entry[1]] = chain
+    return resolved, split, origins_by_path, unreachable
+
+
+def link_plan(resolved_for_kit, overrides=None, warn=None):
+    """{local_dir: (link_name, link_dir)} for every repo that should be
+    symlinked into the core clone. Computed here, on the host, because it needs both the canonical
+    names (which only exist here) and the parsed manifests.
+
+    A repo with no manifest and no place in mediawiki/{extensions,skins}
+    isn't linked at all: that's a container directory or a service, not
+    something `wfLoadExtension` can find.
+    """
+    warn = warn or color_mod.warn
+    links = {}
+    for canonical, path in resolved_for_kit:
+        manifest = deps_mod.read_manifest(path, warn=warn) if os.path.isdir(path) else None
+        section = deps_mod.link_section(canonical, manifest)
+        if section is None:
+            continue
+        if canonical is None:
+            # An unidentified raw path: the directory the user typed is the
+            # only name we have, and it's the same thing the basename rule
+            # would pick for a canonical anyway.
+            name = os.path.basename(path.rstrip(os.sep))
+        else:
+            name = deps_mod.link_name(canonical, manifest, overrides=overrides, warn=warn)
+        links[path] = (name, section)
+    return links
+
+
+def canonicals_for_kit(resolved, rules):
+    """resolved: [(canonical_or_None, path, needs_clone), ...]. A raw-path
+    argument (canonical is None -- see is_raw_path) is run through
+    resolve_mod.reverse_resolve (checking its .gitreview, then the config's
+    exact rules) so a known repo passed by literal path still gets
+    identified for the plan's environment variables (MW_CORE_REPO and
+    friends), not just one passed by resolvable name. Returns
+    [(canonical_or_None, path), ...] for kit.build_plan."""
+    result = []
+    for canonical, path, _needs_clone in resolved:
+        if canonical is None:
+            # is_raw_path arguments are already existence-checked by
+            # resolve_repo before we ever get here; don't re-stat.
+            canonical, _rule = resolve_mod.reverse_resolve(path, rules, exists=lambda p: True)
+        result.append((canonical, path))
+    return result
+
+
+# --- The Phabricator username for the in-VM MCP setup ----------------------
+#
+# The MCP servers run in the VM, anonymously (session.wmf_claude_setup).
+# The host only supplies the engineer's Phabricator username, which
+# wmf-claude-setup takes from $WMF_CLAUDE_PHAB_USER.
+
+
+def phabricator_username(run=subprocess.run, env=None):
+    """The username mcp-phabricator filters "my tasks" by.
+
+    `$WMF_CLAUDE_PHAB_USER` on the host, as for `claude-vm create`; else
+    the host's own registration, from `claude mcp get phabricator`
+    (`setup.sh` registers it).
+
+    Not prompted for: wmf-sbx-create runs non-interactively often enough,
+    and the server works without it -- anonymous, public data only, the
+    username is a default filter.
+    """
+    env = os.environ if env is None else env
+    override = env.get("WMF_CLAUDE_PHAB_USER")
+    if override:
+        return override
+    try:
+        result = run(["claude", "mcp", "get", "phabricator"],
+                     capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    match = re.search(r"PHABRICATOR_USERNAME=([^\s\"']+)", result.stdout or "")
+    return match.group(1) if match else None
+
+
+def lima_sandbox_names(lima, env=None):
+    """Names that are taken: every wmf-sbx state file, every name that a
+    running create has reserved, and every Lima instance named
+    wmf-sbx-NAME."""
+    names = set(state_mod.list_names(env)) | state_mod.reserved_names(env)
+    names |= lima_mod.sandbox_names(lima)
+    return names
+
+
+# A cold create does not make a snapshot on a golden image with less than
+# this to go before imageCache.maxAge: it builds the image again first.
+SNAPSHOT_GRACE = datetime.timedelta(days=1)
+
+
+def usable_snapshot(skey, env, run=subprocess.run):
+    """The key's newest generation, (gen, path, meta), or None. None also
+    when a host repo no longer lists the key as a gc borrower: it was
+    replaced, and the snapshot may name objects that are gone."""
+    found = snapshot_mod.newest(skey, env)
+    if found is None:
+        return None
+    missing = snapshot_mod.borrowers_intact(skey, snapshot_mod.host_dirs(found[2]), run=run)
+    if missing:
+        color_mod.warn(f"snapshot {skey}: {missing[0]} was replaced or "
+                       f"removed since it was made; this create is cold.")
+        return None
+    return found
+
+
+def _ago(delta):
+    minutes = int(delta.total_seconds() // 60)
+    return f"{minutes // 60} h {minutes % 60} min" if minutes >= 60 else f"{minutes} min"
+
+
+def gc_old_images(key, env, config, say):
+    """At the end of a create: `image gc`, keeping the sandbox's own
+    image. A failure is a warning: the sandbox does not depend on it."""
+    try:
+        gone = image_mod.gc_images(env=env, config=config, keep={key})
+    except (OSError, image_mod.ImageError) as e:
+        color_mod.warn(f"could not remove old golden images ({e})")
+        return
+    if gone:
+        freed = sum(n for _k, n in gone)
+        say(f"+ removed {len(gone)} unused golden image(s) and snapshot(s) older than "
+            f"{image_mod.gc_age(config).days} days, {freed / 2**30:.1f} GiB: "
+            + ", ".join(k for k, _n in gone))
+
+
+def main(argv=None, run=subprocess.run, lima=None, env=None, build=None,
+         inputs_fn=None, prompt=input, now=None, isatty=None, stdout_isatty=None):
+    """`wmf-sbx create`.
+
+    1. resolve the repos and walk the dependencies;
+    2. find the golden image in the cache, or build it (image.py);
+    3. clone the missing repos on the host (asked for before step 2:
+       confirm_clones), and find each repo's git dir;
+    4. generate the sandbox's Lima config (template.py), which mounts the
+       git dirs read-only;
+    5. save the state, then create and boot the VM, whose disk is a
+       copy-on-write overlay on the golden image on QEMU, a copy of it on
+       vz, and which runs the provisioning;
+    6. check the security invariants;
+    7. clone the repos in the VM at their host paths, and add the
+       host remotes, which also suspend gc (repos.py, remotes.py);
+    8. the session setup (session.py): wmf-claude-setup registers the MCP
+       servers, as the agent;
+    9. the MediaWiki setup and the session files, as the agent
+       (mediawiki.py, setup.py).
+
+    `wmf-sbx resume NAME` then starts Claude Code (resume.py)."""
+    parser = argparse.ArgumentParser(description="Create a wmf-sbx sandbox (a Lima VM).")
+    parser.add_argument(
+        "primary", help="Repo for the sandbox's primary workspace; append ':ro' for read-only"
+    )
+    parser.add_argument(
+        "extra", nargs="*",
+        help="Additional repos to make available in the sandbox; append ':ro' for read-only"
+    )
+    parser.add_argument("--name", help="Sandbox name (default: derived from the primary repo)")
+    parser.add_argument(
+        "--deps", action=argparse.BooleanOptionalAction, default=True,
+        help="--no-deps: use only the repos named on the command line -- no MediaWiki "
+        "dependency walk, no implicit core/Vector",
+    )
+    parser.add_argument("--ci-deps", action=argparse.BooleanOptionalAction, default=True,
+                        help="--no-ci-deps: do not add WMF CI's dependencies of the named "
+                        "repos (integration/config, fetched from gitiles)")
+    parser.add_argument("--phan-deps", action=argparse.BooleanOptionalAction, default=True,
+                        help="--no-phan-deps: add CI's test dependencies, but not those "
+                        "only its phan job checks out")
+    parser.add_argument("--dev", action=argparse.BooleanOptionalAction, default=True,
+                        help="--no-dev: skip 'dev-requires' when walking dependencies")
+    parser.add_argument("--suggests", action=argparse.BooleanOptionalAction, default=True,
+                        help="--no-suggests: skip 'suggests' when walking dependencies")
+    parser.add_argument("--clone-missing", action=argparse.BooleanOptionalAction, default=False,
+                        help="clone the repos that are not on this machine yet, at the "
+                        "settings.yaml path, without asking. Default: ask, and with no "
+                        "terminal fail")
+    parser.add_argument("--start", action=argparse.BooleanOptionalAction, default=None,
+                        help="start Claude Code in the new sandbox, as `wmf-sbx resume NAME` "
+                        "does. Default: start when stdin and stdout are a terminal; "
+                        "--no-start never does")
+    parser.add_argument("--reset-all", action=argparse.BooleanOptionalAction, default=False,
+                        help="Reset every clone to upstream master, the repos "
+                        "named on the command line too")
+    parser.add_argument("--remotes", action=argparse.BooleanOptionalAction, default=True,
+                        help="--no-remotes: don't touch any host .git/config: no remote "
+                        "to fetch the sandbox's work, and gc is not suspended")
+    parser.add_argument("--vm-type", choices=sorted(template_mod.MOUNT_TYPES),
+                        help="Lima driver (default: vz on macOS, qemu elsewhere)")
+    parser.add_argument("--cold", action=argparse.BooleanOptionalAction, default=False,
+                        help="do not start from the warm snapshot of these repos; make a "
+                             "new one (and a new golden image, if it is old)")
+    parser.add_argument("--snapshot", action=argparse.BooleanOptionalAction, default=True,
+                        help="--no-snapshot: neither start from a warm snapshot nor make one")
+    parser.add_argument("--expire", action=argparse.BooleanOptionalAction, default=None,
+                        help="--no-expire: keep using a golden image older than "
+                             "settings.yaml imageCache.maxAge (14 days), with a warning; "
+                             "for a demo. Default: settings.yaml imageCache.expire")
+    parser.add_argument("--full-disk", action=argparse.BooleanOptionalAction, default=False,
+                        help="on QEMU too, give the sandbox a full copy of the golden "
+                             "image, not a copy-on-write overlay on it")
+    parser.add_argument("--cpus", type=int, default=template_mod.DEFAULT_CPUS)
+    parser.add_argument("--memory",
+                        help=f"default {template_mod.DEFAULT_MEMORY} "
+                        f"({nested_mod.MEMORY} with --nested, {nested_mod.INNER_MEMORY} "
+                        f"inside a nested sandbox)")
+    parser.add_argument("--disk",
+                        help=f"default {template_mod.DEFAULT_DISK} "
+                        f"({nested_mod.DISK} with --nested)")
+    parser.add_argument("--nested", action=argparse.BooleanOptionalAction, default=False,
+                        help="LOWER SECURITY, only to work on wmf-claude itself: let the agent "
+                        "run Lima VMs of its own (QEMU, Lima, /dev/kvm; nono grants more)")
+    parser.add_argument("--image", metavar="KEY",
+                        help="use this cached golden image (`wmf-sbx image ls`) "
+                        "instead of the one for the current inputs")
+    parser.add_argument("--egress-proxy", action=argparse.BooleanOptionalAction,
+                        default=None,
+                        help="the default on QEMU: the VM's only way out is a proxy on "
+                        "the host, with the profile's allowlist (`wmf-sbx allow` adds a "
+                        "host); the VM has no route and no DNS of its own. "
+                        "--no-egress-proxy: the guest's own route, nono in the guest "
+                        "the only allowlist, and warm snapshots")
+    parser.add_argument("--auth-proxy", action=argparse.BooleanOptionalAction, default=None,
+                        help="sign in with /login in the sandbox: the host egress proxy "
+                        "keeps the login, shared by every sandbox with --auth-proxy; the "
+                        "VM gets only phantoms. --no-auth-proxy: the inference-only "
+                        "token of `wmf-sbx login` (or $ANTHROPIC_API_KEY). Default: the "
+                        "auth proxy behind the egress proxy when the host has no such "
+                        "token")
+    parser.add_argument("--sudo", action=argparse.BooleanOptionalAction, default=False,
+                        help="give the agent passwordless sudo, and run Claude Code without "
+                        "nono: the VM and the host egress proxy are the boundary (QEMU "
+                        "only)")
+    parser.add_argument(
+        "--dry-run", action=argparse.BooleanOptionalAction, default=False,
+        help="Print the plan, the image key and the Lima config; build, clone "
+        "and create nothing"
+    )
+    args, config = cli_mod.parse_args(parser, argv, "create")
+    try:
+        # Before the resolving and the image build: a wrong size would
+        # only show when the VM boots.
+        for option, size in (("--memory", args.memory), ("--disk", args.disk)):
+            if size is not None:
+                template_mod.check_size(option, size)
+    except template_mod.TemplateError as e:
+        return color_mod.fail(e)
+    lima = lima or lima_mod.Limactl(run=run)
+    env = os.environ if env is None else env
+
+    def say(msg):
+        print(color_mod.dim(msg), file=sys.stderr)
+
+    try:
+        split = [split_ro_suffix(spec) for spec in [args.primary] + args.extra]
+        resolved = [resolve_repo(spec, args.config, prompt=prompt_mod.Prompt())
+                    for spec, _is_ro in split]
+        origins_by_path = {}
+        unreachable = set()
+        if args.deps:
+            ci_maps = None
+            if args.ci_deps:
+                # Once per create, for every repo named.
+                ci_maps = ci_mod.fetch_maps(
+                    deps_mod.gerrit_opener(deps_mod.gerrit_user_agent(config)),
+                    warn=color_mod.warn)
+                if ci_maps is None:
+                    color_mod.warn("could not fetch WMF CI's dependency lists "
+                                   "(integration/config); the sandbox gets the manifests' "
+                                   "dependencies only. --no-ci-deps skips the lookup.")
+            resolved, split, origins_by_path, unreachable = expand_dependencies(
+                resolved, split, config, args.config,
+                include_dev=args.dev,
+                include_suggests=args.suggests,
+                ci_maps=ci_maps, phan_deps=args.phan_deps,
+            )
+    except resolve_mod.ResolutionError as e:
+        return color_mod.fail(e)
+    # Claude Code's first-run questions and warnings: shown in the
+    # engineer's first sandbox, answered by create in every later one.
+    quiet = session_mod.first_run_seen(env)
+    if not quiet:
+        print("note: this is your first wmf-sbx sandbox: its first session shows Claude "
+              "Code's first-run questions and warnings. Later sandboxes skip them.",
+              file=sys.stderr)
+    try:
+        preferences = config.get("session") or {}
+        session_mod.preference_settings(
+            preferences, warn=lambda m: print(color_mod.warning(m), file=sys.stderr))
+        session_mod.check_environment(config["environment"])
+    except session_mod.SessionError as e:
+        return color_mod.fail(e)
+    sudo = args.sudo
+    # A root agent can undo anything in its guest, so the network policy
+    # must sit on the host (DESIGN.md, "The egress proxy and `--sudo`").
+    if sudo and args.egress_proxy is False:
+        print(color_mod.error("error: --sudo needs the host egress proxy; it cannot be "
+                              "--no-egress-proxy"), file=sys.stderr)
+        return 1
+
+    for (spec, is_ro), (canonical, path, needs_clone) in zip(split, resolved):
+        ro_note = " (read-only)" if is_ro else ""
+        chain = origins_by_path.get(path)
+        via = f" [via {' -> '.join(c.rsplit('/', 1)[-1] for c in chain)}]" if chain else ""
+        if canonical is None:
+            print(f"  {spec} -> {path} (raw path){ro_note}{via}", file=sys.stderr)
+        else:
+            status = "needs clone" if needs_clone else "exists"
+            print(f"  {spec} -> {canonical} -> {path} ({status}){ro_note}{via}", file=sys.stderr)
+    if origins_by_path:
+        print(f"  ({len(origins_by_path)} of these {len(resolved)} were discovered "
+              f"by the dependency walk; --no-deps skips it)", file=sys.stderr)
+    if unreachable:
+        listed = "\n".join(f"    {c}" for c in sorted(unreachable))
+        color_mod.warn(f"{len(unreachable)} manifest(s) could not be fetched, "
+                       f"so the plan above may be missing repos:\n{listed}")
+        if not args.dry_run:
+            print(color_mod.error(
+                "error: refusing to create a sandbox from an incomplete dependency "
+                "closure. Wait a minute and re-run, or pass --no-deps."), file=sys.stderr)
+            return 1
+
+    # A clone writes to the engineer's disk, outside the sandbox: ask
+    # first, before the slow work (the golden image) starts.
+    missing = [(canonical, path) for canonical, path, needs_clone in resolved if needs_clone]
+    interactive = (isatty or sys.stdin.isatty)()
+    if not args.dry_run and not confirm_clones(missing, args.clone_missing, interactive,
+                                               prompt=prompt):
+        print(color_mod.error(
+            f"error: {len(missing)} repo(s) are not on this machine, and were not "
+            f"cloned{'' if interactive else ' (no terminal to ask on)'}. Clone them "
+            f"yourself, or re-run with --clone-missing (settings.yaml: "
+            f"create.cloneMissing: true)."), file=sys.stderr)
+        return 1
+
+    _primary_canonical, primary_dir, _ = resolved[0]
+    nested_src = None
+    if args.nested:
+        # The inner sandboxes' repos, at the engineer's home path, as on
+        # the host (nested.SRC_NAME).
+        nested_src = nested_mod.src_dir(env.get("HOME") or os.path.expanduser("~"))
+        try:
+            repos_mod.check_vm_path(nested_src)
+        except repos_mod.RepoError as e:
+            return color_mod.fail(f"--nested: {e}")
+    conflict = find_nested_mount_conflict([path for _c, path, _n in resolved])
+    if conflict is not None:
+        ancestor, descendant = conflict
+        print(color_mod.error(
+            f"error: {descendant!r} is inside {ancestor!r} -- narrow one of the "
+            "paths, or drop the redundant one."), file=sys.stderr)
+        return 1
+
+    reservation = None
+    try:
+        taken = lima_sandbox_names(lima, env)
+        name_source = (resolved[0][0] if resolved[0][0] is not None
+                       else os.path.basename(primary_dir))
+        name = args.name or unique_sandbox_name(
+            default_sandbox_name(name_source), taken, prompt=prompt)
+        state_mod.validate_name(name)
+        vm_mod.instance_name(name)
+        if args.name and name in state_mod.reserved_names(env):
+            raise vm_mod.VmError(f"another wmf-sbx create is making a sandbox named "
+                                 f"{name!r} now; give this one another --name")
+        if args.name and name in taken:
+            raise vm_mod.VmError(f"a sandbox named {name!r} exists already")
+        # The name is this create's until it ends, before the slow part
+        # (the golden image), so a second create of it stops here.
+        while not args.dry_run and reservation is None:
+            try:
+                reservation = state_mod.reserve(name, env)
+            except state_mod.StateError:
+                if args.name:
+                    raise
+                taken.add(name)                 # another create took it just now
+                name = unique_sandbox_name(name, taken, prompt=prompt)
+
+        # On QEMU the disk is an overlay on the golden image, and Lima gets
+        # the placeholder; `vz` copies the golden image. Warm snapshots
+        # need the overlay (DESIGN.md, "Disks and warm snapshots").
+        vm_type = args.vm_type or ("qemu" if args.egress_proxy or sudo
+                                   else template_mod.default_vm_type())
+        egress, warning = egress_choice(True if sudo else args.egress_proxy, vm_type,
+                                        name, env, flag="--sudo" if sudo else "--egress-proxy")
+        if warning:
+            print(color_mod.warning(warning), file=sys.stderr)
+        if egress:
+            older = egress_mod.nono_version_warning(image_mod.nono_version(), env)
+            if older:
+                print(color_mod.warning(older), file=sys.stderr)
+        auth = authproxy_mod.choose(args.auth_proxy, bool(egress), env)
+        if auth:
+            say("+ auth proxy: /login in the sandbox; the host egress proxy keeps the "
+                "login, shared with the other auth-proxy sandboxes")
+        if sudo:
+            say("+ sudo: the agent has passwordless sudo; the VM and the host egress "
+                "proxy are its boundary")
+        overlay = disk_mod.uses_overlay(vm_type) and not args.full_disk
+        use_snapshots = overlay and args.snapshot
+        readonly = {path for (_spec, is_ro), (_c, path, _n) in zip(split, resolved) if is_ro}
+        snap_repos = [(c, path, path in readonly) for c, path, _n in resolved]
+
+        def snapshot_for(golden_key):
+            """(key, the newest usable generation or None)."""
+            skey = snapshot_mod.snapshot_key(golden_key, snap_repos, nested=args.nested,
+                                             egress=bool(egress))
+            return skey, (None if args.cold else usable_snapshot(skey, env, run=run))
+
+        # The golden image: the cache entry for the current inputs, built
+        # when it is missing, or the one --image names, or with
+        # WMF_SBX_GIT_HASH_OVERRIDE=latest the newest cached one.
+        latest = (image_mod.newest_image(env) if not args.image
+                  and image_mod.wants_latest(env) else None)
+        if args.image or latest:
+            key = args.image or latest[0]
+            if latest:
+                say(f"+ golden image {key} (the newest cached one: "
+                    f"{image_mod.TREE_OVERRIDE_VAR}={image_mod.LATEST})")
+            image_mod.verify_entry(key, env)
+            with open(os.path.join(image_mod.entry_dir(key, env), "manifest.json"),
+                      encoding="utf-8") as f:
+                image_inputs = json.load(f)["inputs"]
+            arch = image_inputs["arch"]
+            claude_version = (image_inputs.get("claude") or {}).get("version")
+        else:
+            inputs = (inputs_fn() if inputs_fn
+                      else image_mod.image_inputs(env=env, packages=config["packages"]))
+            # The newest image of these inputs, or a new one when it is
+            # older than imageCache.maxAge. A cold snapshot is not
+            # made on an image with less than SNAPSHOT_GRACE to go.
+            base_inputs = inputs
+            expire = args.expire
+            inputs, note = image_mod.choose_inputs(
+                inputs, env=env, config=config, expire=expire, renew=args.cold, now=now)
+            if use_snapshots and snapshot_for(image_mod.cache_key(inputs))[1] is None:
+                inputs, note = image_mod.choose_inputs(
+                    base_inputs, env=env, config=config, expire=expire, renew=args.cold,
+                    now=now, min_left=SNAPSHOT_GRACE)
+            if note and note.startswith("warning"):
+                print(color_mod.warning(note), file=sys.stderr)
+            elif note:
+                say(note)
+            key = image_mod.cache_key(inputs)
+            arch = inputs["arch"]
+            claude_version = (inputs.get("claude") or {}).get("version")
+            cached = os.path.isdir(image_mod.entry_dir(key, env))
+            say(f"+ golden image {key} ({'in the cache' if cached else 'to build'})")
+            if not args.dry_run:
+                if build:
+                    build(inputs, lima=lima, run=run, env=env, log=say)
+                else:
+                    image_mod.build(inputs, lima=lima, run=run, env=env, log=say,
+                                    busy=image_mod.busy_prompt(interactive, prompt=prompt))
+        golden = image_mod.golden_path(key, env)
+        skey, snap = snapshot_for(key) if use_snapshots else (None, None)
+        backing = snap[1] if snap else golden
+        disk_image = (disk_mod.placeholder_path(image_mod.cache_root(env)) if overlay
+                      else golden)
+        if snap:
+            say(f"+ warm: from snapshot {skey}/{snap[0]} (made by {snap[2].get('sandbox')})")
+        elif use_snapshots:
+            say(f"+ cold: {'--cold' if args.cold else 'no snapshot of these repos yet'}; "
+                f"this create makes snapshot {skey}")
+        if overlay:
+            say(f"+ disk: a copy-on-write overlay on {backing}")
+            if not args.dry_run:
+                lima.placeholder(image_mod.cache_root(env))
+                warning = disk_mod.lima_version_warning(lima.version())
+                if warning:
+                    print(color_mod.warning(warning), file=sys.stderr)
+
+        if not args.dry_run:
+            for canonical, path, needs_clone in resolved:
+                if needs_clone:
+                    do_clone(canonical, path,
+                             user_agent=deps_mod.gerrit_user_agent(config))
+        repos = [repos_mod.host_repo(path, run=run, predicted=args.dry_run and needs_clone)
+                 for _c, path, needs_clone in resolved]
+
+        tmpl = template_mod.sandbox_template(
+            disk_image, arch, gitdirs=repos_mod.git_dirs(repos), vm_type=vm_type,
+            cpus=args.cpus,
+            memory=args.memory or (nested_mod.MEMORY if args.nested
+                                   else nested_mod.INNER_MEMORY if nested_mod.inside()
+                                   else template_mod.DEFAULT_MEMORY),
+            disk=args.disk or (nested_mod.DISK if args.nested else template_mod.DEFAULT_DISK),
+            nested=args.nested,
+            proxy_ports=template_mod.loopback_proxy_ports(env),
+            ca_files=image_mod.extra_ca_files(env),
+            egress_ca=egress_mod.ca_cert(name, env) if egress else None, sudo=sudo)
+    except (state_mod.StateError, vm_mod.VmError, image_mod.ImageError,
+            template_mod.TemplateError, lima_mod.LimaError, repos_mod.RepoError,
+            LaunchError, disk_mod.DiskError, authproxy_mod.AuthProxyError) as e:
+        return color_mod.fail(e)
+
+    if args.dry_run:
+        say(f"+ would create sandbox {name!r} (Lima instance {vm_mod.instance_name(name)}) "
+            f"with this config:")
+        print(color_mod.dim(image_mod.yaml.safe_dump(tmpl, sort_keys=False)),
+              file=sys.stderr, end="")
+        return 0
+
+    # The state first: a create that fails half-way leaves a VM that
+    # `wmf-sbx rm NAME` can then remove.
+    stamp = (now or datetime.datetime.now(datetime.timezone.utc)).isoformat(timespec="seconds")
+    state = state_mod.new_state(
+        name, created=stamp, primary_dir=primary_dir, image=key,
+        vm_type=tmpl["vmType"], repos=[path for _c, path, _n in resolved],
+        read_only=sorted(readonly))
+    if args.nested:
+        state["nested"] = True
+        state["nestedSrc"] = nested_src
+    if overlay:
+        state["disk"] = "overlay"
+    if snap:
+        state["snapshot"] = snap[1]
+    if egress:
+        state[egress_mod.STATE_KEY] = egress_mod.STATE_VALUE
+    if sudo:
+        state["sudo"] = True
+    if auth:
+        state[authproxy_mod.STATE_KEY] = True
+    state_mod.save(state, env)
+    try:
+        if egress:
+            say(f"+ egress CA {egress_mod.ca_cert(name, env)} (behind the host egress proxy)")
+            egress_mod.make_ca(name, env)
+        vm_mod.create(name, tmpl, lima=lima, log=say, backing=backing if overlay else None,
+                      env=env)
+    except (vm_mod.VmError, lima_mod.LimaError, egress_mod.EgressError) as e:
+        color_mod.fail(e)
+        print(f"  the state is kept; `wmf-sbx rm {name}` removes what was made.",
+              file=sys.stderr)
+        return 1
+
+    from . import start as start_mod
+    print(f"{name}: created; checking it", file=sys.stderr)
+    if not start_mod.check(name, lima=lima, env=env):
+        return color_mod.fail(f"{name} breaks a security invariant; do not use it. "
+                              f"`wmf-sbx rm {name}`.")
+
+    if args.nested:
+        print(color_mod.error(NESTED_SUDO_WARNING if sudo else NESTED_WARNING), file=sys.stderr)
+        say("+ nested: QEMU and Lima in the sandbox, the agent in the kvm group")
+        base = image_mod.base_image(arch)
+        staged = None
+        if egress:
+            # The host gives it the base image: behind the egress proxy
+            # its download's mirror redirect is refused.
+            try:
+                host_copy = nested_mod.host_base(base, env=env, log=say)
+                say(f"+ limactl copy {host_copy} {nested_mod.STAGED_BASE}")
+                lima.copy(host_copy, f"{vm_mod.instance_name(name)}:{nested_mod.STAGED_BASE}")
+            except (nested_mod.NestedError, lima_mod.LimaError) as e:
+                color_mod.fail(e)
+                print(f"  `wmf-sbx rm {name}` removes what was made.", file=sys.stderr)
+                return 1
+            staged = nested_mod.STAGED_BASE
+        # Behind the egress proxy, a forwarder to it on the loopback, for
+        # inner VMs when no session nono listens there (egress.FORWARD_PORT).
+        forward = (f"{egress_mod.EGRESS_ADDR}:{egress_mod.EGRESS_PORT}" if egress else None)
+        script = nested_mod.install_script(arch, base, nested_src, staged=staged,
+                                           forward=forward)
+        # Behind the egress proxy, its variables: curl has no other way out.
+        argv = (["sudo", "env"] + [f"{k}={v}" for k, v in
+                                   sorted(vm_mod.guest_proxy_env(name, env).items())]
+                + ["bash", "-s"])
+        res = vm_mod.shell(name, argv, lima=lima, input=script, check=False, capture=False)
+        if res.returncode != 0:
+            color_mod.fail(f"installing QEMU and Lima in the sandbox failed "
+                           f"(exit {res.returncode})")
+            print(f"  `wmf-sbx rm {name}` removes what was made.", file=sys.stderr)
+            return 1
+        if forward:
+            state[egress_mod.FORWARD_KEY] = True
+            state_mod.save(state, env)
+
+    # The clones in the VM, then the host remotes. Requested repos keep
+    # the host's branch; dependencies go to upstream master, and
+    # --reset-all resets every repo.
+    requested = {path for _c, path, _n in resolved if path not in origins_by_path}
+    keep = set() if args.reset_all else requested | {primary_dir}
+    # Raw paths get their canonical names here (.gitreview, the config's
+    # rules), for the upstream URLs and the MediaWiki roles (core, links).
+    resolved_for_kit = canonicals_for_kit(resolved, config["repos"])
+    try:
+        upstreams = upstream_plan(resolved_for_kit, run=run)
+        repos_mod.clone_in_vm(name, repos, upstreams, keep, readonly=readonly,
+                              lima=lima, env=env, refresh=snap is not None,
+                              user_agent=deps_mod.gerrit_user_agent(config))
+    except (repos_mod.RepoError, lima_mod.LimaError) as e:
+        color_mod.fail(e)
+        print(f"  `wmf-sbx rm {name}` removes what was made.", file=sys.stderr)
+        return 1
+    if not args.remotes:
+        color_mod.warn("--no-remotes: the host cannot fetch from this "
+                       "sandbox, and gc stays on in the host repos, so a host "
+                       "`git gc --prune=now` can break the clones in the VM.")
+    else:
+        added, skipped = remotes_mod.sync_remotes(
+            name, repos_mod.remote_candidates(name, repos), run=run,
+            warn=color_mod.warn)
+        state["remotes"], state["skipped"] = added, skipped
+        state_mod.save(state, env)
+        if added and not shutil.which("git-remote-wmfsbx"):
+            print(color_mod.warning(
+                f"warning: git-remote-wmfsbx is not on PATH, so `git fetch {name}` "
+                f"will fail (\"git: 'remote-wmfsbx' is not a git command\"): add "
+                f"wmf-claude's sbx/bin to PATH (in ~/.profile or your shell's rc "
+                f"file)."), file=sys.stderr)
+
+    plan = kit_mod.build_plan(
+        resolved_for_kit,
+        links=link_plan(resolved_for_kit, overrides=config.get("link_overrides") or {}),
+        readonly_dirs=readonly, primary=primary_dir, requested=requested | {primary_dir})
+    plan["session"] = session_mod.session_plan(
+        name, resolved_for_kit, readonly, identity=session_mod.git_identity(run=run, env=env),
+        preferences=preferences, claude_version=claude_version, quiet=quiet,
+        environment=config["environment"], sudo=sudo)
+    # `wmf-sbx exec` gives a command the session's variables (MW_INSTALL_PATH
+    # and the others) from here, not from the guest's settings.json, which
+    # the agent can write: exec runs outside nono.
+    state[session_mod.EXEC_ENV_KEY] = session_mod.exec_env(plan["session"]["env"])
+    state_mod.save(state, env)
+    try:
+        session_mod.wmf_claude_setup(
+            name, phabricator_username(run=run, env=env), lima=lima, env=env)
+        mediawiki_mod.run_setup(name, plan, lima=lima, env=env)
+    except (mediawiki_mod.SetupError, session_mod.SessionError, lima_mod.LimaError) as e:
+        color_mod.fail(e)
+        print(f"  The VM, the clones and the host remotes are kept; fix the "
+              f"problem with `wmf-sbx exec {name} -- ...`, or `wmf-sbx rm {name}`.",
+              file=sys.stderr)
+        return 1
+
+    fresh = None
+    if snap and not args.cold:
+        made = image_mod.created(snap[2])
+        age = (now or datetime.datetime.now(datetime.timezone.utc)) - made if made else None
+        if age is not None and age < image_mod.snapshot_interval(config):
+            fresh = age
+    if fresh is not None:
+        say(f"+ no new snapshot: {skey}/{snap[0]} is {_ago(fresh)} old "
+            f"(settings.yaml imageCache.snapshotInterval: "
+            f"{image_mod.duration(image_mod.snapshot_interval(config))}); the sandbox stays on it")
+    elif use_snapshots:
+        meta = {"golden": key, "nested": bool(args.nested), "egress": bool(egress),
+                "repos": [{"canonical": c, "path": p, "readOnly": ro} for c, p, ro in snap_repos]}
+        try:
+            state["snapshot"] = snapshot_mod.freeze(
+                name, skey, golden, meta, lima=lima, env=env, run=run, log=say,
+                warn=color_mod.warn)
+            state_mod.save(state, env)
+        except (snapshot_mod.SnapshotError, vm_mod.VmError, lima_mod.LimaError) as e:
+            color_mod.warn(f"{e}. The sandbox is fine; the next create of "
+                           f"these repos is cold.")
+
+    gc_old_images(key, env, config, say)
+    start = args.start if args.start is not None else (
+        interactive and (stdout_isatty or sys.stdout.isatty)())
+    if not start:
+        _print_ready(name, args.remotes)
+        return 0
+    # The name is the sandbox's now; the session can be long.
+    if reservation is not None:
+        reservation.close()
+    from . import resume as resume_mod
+    say(f"\n+ wmf-sbx resume {name}   (--no-start: do not)")
+    # The block comes after the session, as the last thing on the terminal,
+    # not Claude Code's `claude --resume UUID`, which is not how to resume
+    # a sandbox.
+    try:
+        return resume_mod.main([name], lima=lima, env=env)
+    finally:
+        _print_ready(name, args.remotes)
+
+
+def _print_ready(name, remotes):
+    print(f"\nSandbox {name} is ready (Lima instance {vm_mod.instance_name(name)}).\n"
+          f"  wmf-sbx resume {name}          start Claude Code in it\n"
+          f"  wmf-sbx exec {name} -- CMD     run a command as the agent\n"
+          f"  wmf-sbx status {name}          check it\n"
+          f"  wmf-sbx stop|start {name}\n"
+          f"  wmf-sbx rm {name}\n"
+          + ("" if not remotes else
+             f"  git fetch {name}               (on the host, in a repo) the agent's work\n"),
+          file=sys.stderr, end="")
+
+if __name__ == "__main__":
+    sys.exit(main())

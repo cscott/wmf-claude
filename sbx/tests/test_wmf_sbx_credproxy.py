@@ -280,6 +280,21 @@ class ProxyTests(unittest.TestCase):
         self.assertEqual(headers["host"], cp.UPSTREAM)
         self.assertNotIn(self.proxy.phantom, json.dumps(headers))
 
+    def test_each_response_closes_the_connection(self):
+        # nono's forward proxy copies a response until this side closes.
+        for path in ("/v1/messages", "/api/oauth/profile"):
+            with self.subTest(path=path):
+                s = socket.create_connection(("127.0.0.1", self.proxy.port), timeout=10)
+                self.addCleanup(s.close)
+                s.sendall(b"POST %s HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\n"
+                          b"x-api-key: %s\r\nContent-Length: 2\r\n\r\n{}"
+                          % (path.encode(), self.proxy.phantom.encode()))
+                data = b""
+                while chunk := s.recv(65536):
+                    data += chunk
+                head = data.split(b"\r\n\r\n")[0].lower()
+                self.assertIn(b"\r\nconnection: close", head)
+
     def test_a_bearer_phantom_gets_the_real_token(self):
         proxy = self.make_proxy(cp.Source("oauth", "t", lambda: REAL_TOKEN))
         status, _ = self.request("POST", "/v1/messages", body=b"{}", proxy=proxy,
@@ -372,9 +387,11 @@ class ProxyTests(unittest.TestCase):
             conn = http.client.HTTPConnection("127.0.0.1", self.proxy.port, timeout=10)
             conn.request("POST", "/v1/stream", body=b"{}",
                          headers={"x-api-key": self.proxy.phantom})
+            # The response's "connection: close" takes conn.sock from conn.
+            sock = conn.sock
             resp = conn.getresponse()
             resp.read(1000)
-            conn.sock.shutdown(socket.SHUT_RDWR)
+            sock.shutdown(socket.SHUT_RDWR)
             conn.close()
             text = ""
             for _ in range(100):

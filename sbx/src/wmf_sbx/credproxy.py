@@ -301,6 +301,16 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
+    def end_headers(self):
+        """One request per connection. A nono session reaches this proxy
+        through nono's HTTP forward proxy, which (0.80) sends the client's
+        request on unchanged and copies the response until this side
+        closes; on a kept-alive connection it waits, and the session's
+        next request on that connection waits too (RAN: 47 minutes for a
+        10-check prompt). send_header sets close_connection."""
+        self.send_header("connection", "close")
+        super().end_headers()
+
     def _guarded(self):
         """_serve, but a client that goes away is no error: Claude Code
         closes a streamed response when the engineer interrupts it (RAN:

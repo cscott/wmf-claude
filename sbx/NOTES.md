@@ -1310,15 +1310,43 @@ A2.0 results (in the nested `dev` VM, nono 0.78.0, 2026-10-13):
   sandbox made before needs a new `create`), and `--upstream-bypass` for the address (plus
   `--allow-domain 192.168.5.2` off the egress proxy); the clipboard shim sends a CONNECT to
   nono's proxy when `NONO_PROXY_TOKEN` is set (RAN with 0.80: the text arrives; a 502 is
-  reported). `--sudo` sessions have no nono and keep the direct path. Not RAN yet: a nono
-  session with this change; a nested sandbox's inner credential proxy, which connects to
-  the outer one at 192.168.5.100 from under the outer session's nono (likely refused too).
+  reported). `--sudo` sessions have no nono and keep the direct path. RAN since: see the
+  `nono80` and `nest80` items below. Still not RAN: a nested sandbox's inner credential
+  proxy, which connects to the outer one at 192.168.5.100 from under the outer session's
+  nono (likely refused too; `nest80` stopped before it).
 - **nono 0.80 image, `--sudo` session** (RAN by the engineer, sandbox `nono80-sudo`, wmf-claude
   2e819af, 2026-10-16): guest nono 0.80.0; wiki on 4000; bind/connect on 0, 49152, 53247,
   9876 (and 5000: no nono); Gerrit fetch and ls-remote; wiki POST 403, GET 200; kernel.org
   "CONNECT tunnel failed, response 403"; `%2F` path 403; karma started Chrome and
   connected on 9876 (after `mw-install-browser`: `/usr/bin/chromium` is a stub); php has
   ast, intl, mbstring; core's `tests/phpunit/unit/includes/Json` OK (244 tests).
+- **nono 0.80 image, nono session, 9ead433** (RAN by the engineer, sandbox `nono80`,
+  2026-10-16): all checks pass (port window, 5000 EACCES, Gerrit, POST 403, `%2F` 403,
+  karma on Vector, PHPUnit), but the off-allowlist host gets "CONNECT tunnel failed,
+  response 502", not 403. The prompt took 47m54s, against about a minute in a `--sudo`
+  session. Cause (from the nono 0.80 source, `nono-proxy` `forward.rs`/`server.rs`): an
+  absolute-form `http://` request is sent on with the client's headers (no
+  `Connection: close`, which the reverse path adds), and `stream_response` copies until
+  the upstream closes. The credential proxy kept the connection alive with no idle
+  timeout, so nono waited after each response and the session's next request on that
+  connection waited with it. Fix: the credential proxy sends `connection: close` on every
+  response (one request per connection). Not RAN yet. Not the cause: the 4098
+  `--open-port` flags (bin/claude expands `--local-web`'s range; nono 0.80 has no range
+  flag, only the profile's `open_port_range`). The supervisor checks them with one
+  `Vec::contains` per network syscall, and 0.78 sessions had the same list.
+- **nono 0.80, nested, outer nono session** (RAN by the engineer, `nest80`, 9ead433): the
+  outer flags and `NO_PROXY` are as expected and `wl-copy` exits 0. The inner `create`
+  stops at the builder's boot: Lima's hostagent gets `listen udp4 127.0.0.1:0: socket:
+  operation not permitted` (nono 0.80's proxy-mode seccomp; 0.78 ran with
+  `--landlock-only`). So a nested sandbox in a nono session does not work on 0.80; the
+  inner credential proxy was not reached. `wmf-sbx` is not on `PATH` in the outer VM
+  (`sbx/bin/wmf-sbx` in the clone works).
+- **nono 0.80, nested, outer `--sudo` session** (RAN by the engineer, `nest80-sudo`,
+  9ead433): the inner golden image build, `create` (13 checks ok), `resume -- -p` (PONG,
+  `POST /v1/messages 200 1.9s` in the inner credential proxy's log), inner egress (GET
+  200, POST 403, kernel.org 403, ls-remote) all pass. The agent printed
+  `/etc/wmf-sbx/nested` and with it the outer session's phantom; stop and resume the outer
+  sandbox to get a new one.
 
 - **Cypress under nono**: the session grants `~/.config/Cypress` (Electron; without it
   `cypress verify` dies with SIGTRAP) and `/var/lib/xkb` (Xvfb writes its compiled keymaps

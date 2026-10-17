@@ -1066,6 +1066,12 @@ class ResumeMainTests(Env):
                          "-home-c-Projects-Wikimedia-Extensions-Translate")
         self.assertEqual(resume.project_dir("/h/wmf-claude/x.y_z"),
                          "/home/agent/.claude/projects/-h-wmf-claude-x-y-z")
+        # Over 200 characters: cut, then "-" and Java's string hash in base
+        # 36 (the value tests/test-lima.sh checks for claude-context.py enc).
+        long = "/home/agent/work/" + "n" * 230
+        self.assertEqual(resume.project_dir(long),
+                         "/home/agent/.claude/projects/"
+                         + "-home-agent-work-" + "n" * 183 + "-1gtk8j")
 
     def test_info_commands_do_not_mark_it_attached(self):
         self.resume("--", "mcp", "list")

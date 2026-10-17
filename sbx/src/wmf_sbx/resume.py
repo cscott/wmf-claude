@@ -47,8 +47,8 @@ sandboxes made before, too.
 """
 
 import argparse
+import importlib.util
 import os
-import re
 import sys
 
 from . import authproxy as authproxy_mod
@@ -116,12 +116,31 @@ def claude_args_for(cont, claude_args, attached):
     return claude_args
 
 
+def claude_context():
+    """lima/claude-context.py as a module: upstream's copy of Claude
+    Code's rules for its project directories. Its name has a `-`, so it
+    is loaded from its path."""
+    global _CLAUDE_CONTEXT
+    if _CLAUDE_CONTEXT is None:
+        path = os.path.join(image_mod.REPO_ROOT, "lima", "claude-context.py")
+        spec = importlib.util.spec_from_file_location("wmf_sbx_claude_context", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _CLAUDE_CONTEXT = module
+    return _CLAUDE_CONTEXT
+
+
+_CLAUDE_CONTEXT = None
+
+
 def project_dir(cwd):
     """Claude Code's transcript directory for a working directory:
     ~/.claude/projects/ and the path with every character but a letter or
     a digit made `-` (RAN: /home/cananian/Projects/Wikimedia/Extensions/
-    Translate is -home-cananian-Projects-Wikimedia-Extensions-Translate)."""
-    return f"{vm_mod.AGENT_HOME}/.claude/projects/{re.sub(r'[^A-Za-z0-9]', '-', cwd)}"
+    Translate is -home-cananian-Projects-Wikimedia-Extensions-Translate).
+    A name over 200 characters is cut and hashed (claude-context.py enc,
+    checked by upstream against a directory Claude Code made)."""
+    return f"{vm_mod.AGENT_HOME}/.claude/projects/{claude_context().enc(cwd)}"
 
 
 def has_conversation(name, cwd, lima):

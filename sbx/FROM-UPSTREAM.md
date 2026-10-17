@@ -71,11 +71,8 @@ in a `--sudo` session works.
 
 ## 1. Small fixes
 
-- **Project directory names over 200 characters.** `resume.py:121-124`
-  encodes the project directory without Claude Code's rule for long
-  paths: cut to 200 characters, then `-` and Java's string hash of the
-  path in base 36. `lima/claude-context.py enc` has it, checked against a
-  real directory. Use it.
+- **Project directory names over 200 characters.** Done:
+  `resume.project_dir` uses `lima/claude-context.py enc`.
 - **`WMF_CLAUDE_PHAB_USER`.** Upstream's `bin/wmf-claude-setup` takes the
   Phabricator username from it, with no prompt. `session.wmf_claude_setup`
   can pass it, and stop writing `config.json` into the VM and piping

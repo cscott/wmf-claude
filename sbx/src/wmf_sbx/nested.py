@@ -166,8 +166,19 @@ def session_grants(src):
     """bin/claude flags for a nested sandbox's session (N1). The inner VM's
     SSH port needs none: Lima binds a port from the kernel's ephemeral
     range, the window the session opens already (--open-port is connect
-    and listen)."""
-    grants = ["--allow", LIMA_HOME, "--allow-unix-socket-subtree-bind", LIMA_HOME,
+    and listen).
+
+    --sandbox-policy=landlock: nono 0.80's default adds a seccomp filter
+    that refuses UDP sockets, and Lima's hostagent opens one on the
+    loopback ("listen udp4 127.0.0.1:0: socket: operation not
+    permitted", RAN in nest80). Landlock only is the 0.78 posture
+    (--landlock-only): nono's proxy still enforces the allowlist (RAN:
+    200 for an allowed host, refused for another), but an opened port
+    can be reached on any address, and UDP is not refused. The VM's
+    nftables is the second layer: off the VM, the agent gets TCP 80 and
+    443 and DNS to Lima's resolver only."""
+    grants = ["--sandbox-policy=landlock",
+              "--allow", LIMA_HOME, "--allow-unix-socket-subtree-bind", LIMA_HOME,
               "--allow-file", "/dev/kvm",
               # The session's phantom, for the inner sandboxes (resume).
               "--read-file", MARKER]

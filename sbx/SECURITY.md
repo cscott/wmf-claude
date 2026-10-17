@@ -292,8 +292,8 @@ control comes with `--sudo` mode.)
 on wmf-claude or wmf-sbx itself; for all other work, do not pass
 `--nested`.** Inside the sandbox VM, nono gives the agent more: the
 attack surface of the outer VM's kernel through `/dev/kvm`, Lima's and
-QEMU's sockets and data, more writable directories, and more download
-hosts. The host boundary (section 1) is the same, but the nono layer in
+QEMU's sockets and data, more writable directories, more download
+hosts, and no seccomp network layer (below). The host boundary (section 1) is the same, but the nono layer in
 the sandbox is weaker.
 
 For work on wmf-sbx itself, a nested sandbox lets the agent run Lima VMs
@@ -306,6 +306,14 @@ the inner sandboxes (§4) (`nested.py`). The install also downloads the Debian b
 `/var/cache/wmf-sbx/base`, checked against the digest that wmf-sbx
 pins. What changes:
 
+- A nono session runs with `--sandbox-policy=landlock`: Landlock only,
+  as before nono 0.80 (§3). Lima's hostagent opens a UDP socket, which
+  nono 0.80's seccomp layer refuses. So the agent can open UDP sockets
+  and reach an opened port on any address, and io_uring is not refused.
+  nono's proxy still enforces the domain allowlist, and the VM's
+  nftables still limits the agent, off the VM, to TCP 80 and 443 and
+  DNS to Lima's resolver. A nested sandbox made with `--sudo` has no
+  nono at all (§6b).
 - `/dev/kvm` is a large kernel interface, but it is the sandbox VM's
   kernel, which the agent already shares; the host's hypervisor is not
   exposed beyond what nested virtualisation already is.

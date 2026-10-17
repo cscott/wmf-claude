@@ -6,6 +6,7 @@ with:
 The proxy ran against api.anthropic.com in L1 (sbx/NOTES.md, "Shared
 login"); here it forwards to a fake upstream on the loopback."""
 
+import base64
 import contextlib
 import http.client
 import http.server
@@ -441,6 +442,56 @@ class ProxyTests(unittest.TestCase):
         self.assertEqual(path, "/v1/messages")
         self.assertEqual(headers["authorization"], "Bearer outer-phantom")
         self.assertEqual(headers["host"], f"127.0.0.1:{port}")
+
+    def test_in_a_nono_session_a_nested_proxy_goes_through_nonos_proxy(self):
+        # nono 0.80 refuses a connect off the loopback: a CONNECT to its
+        # proxy, which goes to the enclosing session's proxy.
+        in_a_nested_sandbox(self)
+        port = self.upstream.server_address[1]
+        server = socket.socket()
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        self.addCleanup(server.close)
+        heads = []
+
+        def relay():
+            conn, _ = server.accept()
+            buf = b""
+            while b"\r\n\r\n" not in buf:
+                buf += conn.recv(65536)
+            head, _, rest = buf.partition(b"\r\n\r\n")
+            heads.append(head.decode())
+            up = socket.create_connection(("127.0.0.1", port))
+            conn.sendall(b"HTTP/1.1 200 Connection established\r\n\r\n")
+            up.sendall(rest)
+
+            def pipe(a, b):
+                while (data := a.recv(65536)):
+                    b.sendall(data)
+                b.shutdown(socket.SHUT_WR)
+            t = threading.Thread(target=pipe, args=(up, conn), daemon=True)
+            t.start()
+            pipe(conn, up)
+            t.join(5)
+            conn.close()
+            up.close()
+        threading.Thread(target=relay, daemon=True).start()
+        nono = f"http://nono:tok@127.0.0.1:{server.getsockname()[1]}"
+        proxy = cp.CredentialProxy(cp.Source("oauth", "t", lambda: "outer-phantom"),
+                                   env={"ANTHROPIC_BASE_URL": f"http://192.0.2.1:{port}",
+                                        "NONO_PROXY_TOKEN": "tok", "HTTP_PROXY": nono},
+                                   log_path=self.log)
+        proxy.start()
+        self.addCleanup(proxy.stop)
+        status, _ = self.request("POST", "/v1/messages", body=b"{}", proxy=proxy,
+                                 headers={"Authorization": f"Bearer {proxy.phantom}"})
+        self.assertEqual(status, 200)
+        (head,) = heads
+        self.assertTrue(head.startswith(f"CONNECT 192.0.2.1:{port} HTTP/1."), head)
+        self.assertIn("Proxy-Authorization: Basic "
+                      + base64.b64encode(b"nono:tok").decode(), head)
+        (_m, _p, headers, _b), = FakeUpstream.seen
+        self.assertEqual(headers["authorization"], "Bearer outer-phantom")
 
     def test_each_proxy_has_its_own_phantom(self):
         other = self.make_proxy(cp.Source("api-key", "t", lambda: REAL_KEY))

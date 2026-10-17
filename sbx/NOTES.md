@@ -1311,9 +1311,10 @@ A2.0 results (in the nested `dev` VM, nono 0.78.0, 2026-10-13):
   `--allow-domain 192.168.5.2` off the egress proxy); the clipboard shim sends a CONNECT to
   nono's proxy when `NONO_PROXY_TOKEN` is set (RAN with 0.80: the text arrives; a 502 is
   reported). `--sudo` sessions have no nono and keep the direct path. RAN since: see the
-  `nono80` and `nest80` items below. Still not RAN: a nested sandbox's inner credential
-  proxy, which connects to the outer one at 192.168.5.100 from under the outer session's
-  nono (likely refused too; `nest80` stopped before it).
+  `nono80` and `nest80` items below. The clipboard works in `nono80`, `nest80` and
+  `nest80-sudo` (RAN by the engineer). A nested sandbox's inner credential proxy connected
+  to the outer one at 192.168.5.100 directly; under nono it now sends a CONNECT to nono's
+  proxy, as the clipboard shim does (`credproxy.upstream_connection`). Not RAN yet.
 - **nono 0.80 image, `--sudo` session** (RAN by the engineer, sandbox `nono80-sudo`, wmf-claude
   2e819af, 2026-10-16): guest nono 0.80.0; wiki on 4000; bind/connect on 0, 49152, 53247,
   9876 (and 5000: no nono); Gerrit fetch and ls-remote; wiki POST 403, GET 200; kernel.org
@@ -1330,7 +1331,9 @@ A2.0 results (in the nested `dev` VM, nono 0.78.0, 2026-10-13):
   the upstream closes. The credential proxy kept the connection alive with no idle
   timeout, so nono waited after each response and the session's next request on that
   connection waited with it. Fix: the credential proxy sends `connection: close` on every
-  response (one request per connection). Not RAN yet. Not the cause: the 4098
+  response (one request per connection). RAN by the engineer at f38e6e5, in `nono80`
+  after a stop and resume: all 10 checks pass, in 33s; the off-allowlist host still gets
+  502 (nono's proxy, not the egress proxy, refuses it). Not the cause: the 4098
   `--open-port` flags (bin/claude expands `--local-web`'s range; nono 0.80 has no range
   flag, only the profile's `open_port_range`). The supervisor checks them with one
   `Vec::contains` per network syscall, and 0.78 sessions had the same list.
@@ -1340,7 +1343,13 @@ A2.0 results (in the nested `dev` VM, nono 0.78.0, 2026-10-13):
   operation not permitted` (nono 0.80's proxy-mode seccomp; 0.78 ran with
   `--landlock-only`). So a nested sandbox in a nono session does not work on 0.80; the
   inner credential proxy was not reached. `wmf-sbx` is not on `PATH` in the outer VM
-  (`sbx/bin/wmf-sbx` in the clone works).
+  (`sbx/bin/wmf-sbx` in the clone works). Now: a nested sandbox's nono sessions run with
+  `--sandbox-policy=landlock` (`nested.session_grants`), nono 0.80's Landlock-only mode,
+  which is the 0.78 `--landlock-only` posture. RAN (this VM, the 0.80.0 binary): with it,
+  a UDP socket on the loopback is allowed (EPERM without it), a TCP connect to
+  192.168.5.2:80 is still refused, and nono's proxy still gives 200 for an allowed host and
+  refuses kernel.org. Not RAN yet: a nested sandbox in a nono session with this change.
+  If it does not work, nested sandboxes take `--sudo` only (agreed with the engineer).
 - **nono 0.80, nested, outer `--sudo` session** (RAN by the engineer, `nest80-sudo`,
   9ead433): the inner golden image build, `create` (13 checks ok), `resume -- -p` (PONG,
   `POST /v1/messages 200 1.9s` in the inner credential proxy's log), inner egress (GET

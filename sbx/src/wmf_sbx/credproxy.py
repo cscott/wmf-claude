@@ -269,14 +269,35 @@ def upstream_url(env=None):
     return (u.scheme, u.hostname, u.port or (443 if u.scheme == "https" else 80))
 
 
+def _tunnel_auth(proxy):
+    """(proxy URL parts, CONNECT headers) for a proxy URL with user:password."""
+    p = urllib.parse.urlsplit(proxy)
+    headers = {}
+    if p.username:
+        cred = f"{urllib.parse.unquote(p.username)}:{urllib.parse.unquote(p.password or '')}"
+        headers["Proxy-Authorization"] = "Basic " + base64.b64encode(cred.encode()).decode()
+    return p, headers
+
+
 def upstream_connection(env=None, ca_files=()):
     """A connection to upstream_url: plain HTTP directly (an enclosing
     sandbox's credential proxy, which its guest reaches without a proxy),
+    or through a CONNECT to nono's proxy when this runs in a nono session;
     HTTPS through $HTTPS_PROXY if set."""
     env = os.environ if env is None else env
     scheme, host, port = upstream_url(env)
     if scheme == "http":
-        return http.client.HTTPConnection(host, port, timeout=600)
+        # nono 0.80 refuses a connect off the loopback, even on an opened
+        # port, and does not open the enclosing proxy's port any more. Its
+        # proxy goes to that address directly (session.launcher_argv:
+        # --upstream-bypass), as for the clipboard shim (RAN in nono80).
+        proxy = env.get("HTTP_PROXY") or env.get("http_proxy")
+        if not (env.get("NONO_PROXY_TOKEN") and proxy):
+            return http.client.HTTPConnection(host, port, timeout=600)
+        p, headers = _tunnel_auth(proxy)
+        conn = http.client.HTTPConnection(p.hostname, p.port or 80, timeout=600)
+        conn.set_tunnel(host, port, headers=headers)
+        return conn
     context = ssl.create_default_context()
     for path in ca_files:
         context.load_verify_locations(cafile=path)
@@ -284,11 +305,7 @@ def upstream_connection(env=None, ca_files=()):
     if not proxy:
         return http.client.HTTPSConnection(host, port, timeout=600, context=context)
     # set_tunnel: a plain-HTTP CONNECT to the proxy, then TLS to UPSTREAM.
-    p = urllib.parse.urlsplit(proxy)
-    headers = {}
-    if p.username:
-        cred = f"{urllib.parse.unquote(p.username)}:{urllib.parse.unquote(p.password or '')}"
-        headers["Proxy-Authorization"] = "Basic " + base64.b64encode(cred.encode()).decode()
+    p, headers = _tunnel_auth(proxy)
     conn = http.client.HTTPSConnection(p.hostname, p.port or 80, timeout=600, context=context)
     conn.set_tunnel(host, port, headers=headers)
     return conn

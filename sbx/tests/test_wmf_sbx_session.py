@@ -302,6 +302,8 @@ class LauncherTests(unittest.TestCase):
         # The session's phantom, for an inner resume (credproxy).
         self.assertIn("--read-file " + nested.MARKER, grants)
         self.assertIn("--allow /home/eng/wmf-sbx-src", grants)
+        # Lima's hostagent opens a UDP socket, which 0.80's seccomp refuses.
+        self.assertIn("--sandbox-policy=landlock", grants)
 
     def run_stop_inner(self, list_out, nono_running=False, stop_rc=0):
         """stop_inner_script with fake pgrep and runuser (which runs the
